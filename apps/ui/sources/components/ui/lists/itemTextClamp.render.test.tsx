@@ -57,6 +57,79 @@ async function paintedLines(
 }
 
 describe('itemTextClamp is the clamp Item actually paints', () => {
+    it('lets page preference labels and consequences grow with their content, including compact density', async () => {
+        const { Item } = await import('./Item');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        const title = 'Automatically include sessions started outside Happier on this machine';
+        const detail = 'Only session metadata is discovered. Session contents stay on your machine until you open a session.';
+        const page = (text: string) => paintedLines(
+            <ListPresentationProvider value="page">
+                <Item title={title} subtitle={detail} mode="info" density="compact" />
+            </ListPresentationProvider>,
+            text,
+        );
+
+        // numberOfLines is the native Text boundary's truncation contract; absence lets the
+        // complete label and consequence remain visible as text scaling/narrow widths grow them.
+        expect(await page(title)).toBeNull();
+        expect(await page(detail)).toBeNull();
+    });
+
+    it('does not hide page copy when a title has a badge or the description is a primitive fragment', async () => {
+        const { Item } = await import('./Item');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        const { View } = await import('react-native');
+        const title = 'Include sessions started outside Happier automatically';
+        const detail = 'Discovery reads metadata only and leaves session contents on this computer.';
+        const page = (text: string) => paintedLines(
+            <ListPresentationProvider value="page">
+                <Item title={title} titleAccessory={<View testID="badge" />} subtitle={<>{detail}</>} mode="info" />
+            </ListPresentationProvider>,
+            text,
+        );
+
+        expect(await page(title)).toBeNull();
+        expect(await page(detail)).toBeNull();
+    });
+
+    it('keeps explicit page line limits and compact grouped rows authoritative', async () => {
+        const { Item } = await import('./Item');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        const { View } = await import('react-native');
+        const title = 'A deliberately summarized collection row';
+        const detail = 'A detail that its caller deliberately summarizes';
+
+        expect(await paintedLines(
+            <ListPresentationProvider value="page">
+                <Item title={title} titleAccessory={<View testID="badge" />} subtitle={detail} titleLines={2} subtitleLines={3} />
+            </ListPresentationProvider>, title,
+        )).toBe(2);
+        expect(await paintedLines(
+            <ListPresentationProvider value="page">
+                <Item title={title} subtitle={detail} titleLines={2} subtitleLines={3} />
+            </ListPresentationProvider>, detail,
+        )).toBe(3);
+        expect(await paintedLines(
+            <ListPresentationProvider value="page">
+                <ListPresentationProvider value="grouped">
+                    <Item title={title} subtitle={detail} titleAccessory={<View testID="badge" />} />
+                </ListPresentationProvider>
+            </ListPresentationProvider>, title,
+        )).toBe(1);
+        expect(await paintedLines(
+            <ListPresentationProvider value="page">
+                <ListPresentationProvider value="grouped">
+                    <Item title={title} subtitle={detail} />
+                </ListPresentationProvider>
+            </ListPresentationProvider>, detail,
+        )).toBe(1);
+        expect(await paintedLines(
+            <ListPresentationProvider value="page">
+                <Item title={title} subtitle={detail} rowRole="menu" />
+            </ListPresentationProvider>, detail,
+        )).toBe(1);
+    });
+
     it('paints the title clamp the rule reports, with and without a subtitle', async () => {
         const { Item } = await import('./Item');
         const { resolveItemTitleMaxLines } = await import('./itemTextClamp');

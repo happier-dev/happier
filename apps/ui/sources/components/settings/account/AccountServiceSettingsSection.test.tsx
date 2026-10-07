@@ -628,6 +628,14 @@ describe('Account Service settings continuation composition', () => {
 
         expect(screen.findByTestId('settings-account-service-invitation')).not.toBeNull();
         expect(screen.findByTestId('settings-account-service-benefits')).not.toBeNull();
+        // The failure and its recovery action share a narrow phone row. Its title must
+        // grow with the text rather than hide the reason the service cannot be used.
+        const notice = screen.findAll((node) => node.props.testID === 'settings-account-service-notice'
+            && typeof node.props.title === 'string')[0]!;
+        const paintedTitle = screen.findAll((node) => node.props.children === notice.props.title
+            && typeof node.props.numberOfLines === 'number');
+        expect(paintedTitle.length).toBeGreaterThan(0);
+        expect(paintedTitle.every((node) => node.props.numberOfLines <= 0)).toBe(true);
         expect(screen.findAllByProps({ testID: 'settings-account-service-methods' })).toHaveLength(0);
         expect(screen.findAllByType(ItemRowActions)).toHaveLength(0);
         // One way to change the service: the notice carries it, so the section header does not.

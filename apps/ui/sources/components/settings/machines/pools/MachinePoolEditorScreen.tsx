@@ -492,7 +492,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         <ItemList keyboardShouldPersistTaps="handled">
             <SettingsPageHeader
                 testID="settings.machinePools.editor.header"
-                alwaysShowTitle
+                alwaysShowTitle={!isNew || draft.name.trim().length > 0}
                 title={pageTitle}
                 description={t('machinePools.benefit')}
                 // A pool has no mark of its own; the Home it belongs to is its one fact.
@@ -716,7 +716,7 @@ function MachinePoolHomeChooserScreen() {
     const projections = useMachinePoolProjections(viewModel.visibleMachineGroups);
 
     return <ItemList>
-        <SettingsPageHeader alwaysShowTitle title={t('machinePools.newPoolTitle')} description={t('machinePools.benefit')} />
+        <SettingsPageHeader title={t('machinePools.newPoolTitle')} description={t('machinePools.benefit')} />
         <ItemGroup title={t('homeGovernance.chooseHome')}>
             {viewModel.visibleMachineGroups.map((group, index) => {
                 const projection = projections[index];

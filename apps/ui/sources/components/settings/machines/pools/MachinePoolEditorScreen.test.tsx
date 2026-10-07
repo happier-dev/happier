@@ -21,6 +21,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resetMachinePoolSyncRuntimeForTests } from '@/sync/engine/machines/machinePoolSyncRuntime';
 import { FocusReturnProvider } from '@/keyboard/focusReturn';
 import { machinePoolSettingsRowTestId } from '../sections/MachinePoolsSection';
+import { t } from '@/text';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -213,8 +214,16 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
         if (!artifact) return Response.json({}, { status: 404 });
         if (init?.method === 'POST') {
             const update = input as ArtifactUpdateRequest;
+            if ((update.expectedHeaderVersion !== undefined && update.expectedHeaderVersion !== artifact.headerVersion)
+                || (update.expectedBodyVersion !== undefined && update.expectedBodyVersion !== artifact.bodyVersion)) {
+                return Response.json({ success: false, error: 'version-mismatch' });
+            }
             if (update.header !== undefined) { artifact.header = update.header; artifact.headerVersion++; }
             if (update.body !== undefined) { artifact.body = update.body; artifact.bodyVersion = (artifact.bodyVersion ?? 0) + 1; }
+            // Private revision metadata is part of the same server CAS as the body.
+            // Dropping it leaves the real reader with metadata for the previous revision.
+            if (update.provenance !== undefined) artifact.provenance = update.provenance;
+            if (update.provenanceDataEncryptionKey !== undefined) artifact.provenanceDataEncryptionKey = update.provenanceDataEncryptionKey;
             return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
         }
         return Response.json(artifact);
@@ -321,6 +330,14 @@ describe('MachinePoolEditorScreen', () => {
                 <MachinePoolEditorScreen serverId={boundaries.serverId} />
             </NavigationTitleChromeProvider>,
         );
+
+        const headingTexts = () => screen.root.findAll((node) =>
+            typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+        ).map((node) => node.props.children);
+        expect(headingTexts()).not.toContain(t('machinePools.newPoolTitle'));
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Build farm'));
+        expect(headingTexts()).toContain('Build farm');
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', ''));
 
         const published = boundaries.navigation.setOptions.mock.calls
             .map(([options]) => options as { headerRight?: () => React.ReactElement; headerLeft?: () => React.ReactElement })
@@ -509,9 +526,10 @@ describe('MachinePoolEditorScreen', () => {
     });
 
     it('keeps human Delete confirmation and restores the form after its pending approval is rejected', async () => {
-        boundaries.randomUUID
-            .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
-            .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
+        let nextId = 0;
+        // Invocation provenance and Artifact identity both use the OS randomness
+        // boundary. Keep them unique without assuming an internal call sequence.
+        boundaries.randomUUID.mockImplementation(() => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}`);
         boundaries.pools = [poolView(1)];
         await act(async () => publishBoundaryState());
         getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
@@ -528,13 +546,15 @@ describe('MachinePoolEditorScreen', () => {
 
         await chooseDelete(screen);
         await vi.waitFor(() => expect(boundaries.artifacts.size).toBe(1));
+        const rejectedArtifactId = [...boundaries.artifacts.keys()][0];
         expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
         expect(boundaries.remove).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
         await act(async () => {
-            await createDefaultActionExecutor().execute('approval.request.decide', {
-                artifactId: [...boundaries.artifacts.keys()][0], decision: 'reject',
+            const rejected = await createDefaultActionExecutor().execute('approval.request.decide', {
+                artifactId: rejectedArtifactId, decision: 'reject',
             }, { serverId: boundaries.serverId, surface: 'ui' });
+            expect(rejected).toMatchObject({ ok: true, result: { status: 'rejected' } });
         });
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(false));
         expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Unsaved change');
@@ -545,9 +565,11 @@ describe('MachinePoolEditorScreen', () => {
         // not to the stale next-row target computed for the abandoned delete proposal.
         await screen.pressByTestIdAsync('settings.machinePools.editor.save');
         await vi.waitFor(() => expect(boundaries.artifacts.size).toBe(2));
+        const nextArtifactId = [...boundaries.artifacts.keys()].find((id) => id !== rejectedArtifactId);
+        expect(nextArtifactId).toBeDefined();
         await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
         expect(boundaries.push).toHaveBeenLastCalledWith(
-            `/inbox/approvals/00000000-0000-4000-8000-000000000002?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
+            `/inbox/approvals/${nextArtifactId}?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
         );
     });
 
@@ -1089,9 +1111,21 @@ describe('MachinePoolEditorScreen', () => {
     it('asks for an exact Home when the searchable create route has no Home parameter', async () => {
         boundaries.pools = [];
         await act(async () => publishBoundaryState());
-        const { MachinePoolEditorRoute } = await import('./MachinePoolEditorScreen');
+        const [{ MachinePoolEditorRoute }, { NavigationTitleChromeProvider }] = await Promise.all([
+            import('./MachinePoolEditorScreen'),
+            import('@/components/ui/layout/PageHeader'),
+        ]);
 
-        const screen = await renderScreen(<MachinePoolEditorRoute params={{}} />);
+        const screen = await renderScreen(
+            <NavigationTitleChromeProvider showsTitle>
+                <MachinePoolEditorRoute params={{}} />
+            </NavigationTitleChromeProvider>,
+        );
+
+        const headings = screen.root.findAll((node) =>
+            typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+        ).map((node) => node.props.children);
+        expect(headings).not.toContain(t('machinePools.newPoolTitle'));
 
         expect(screen.findByTestId(`settings.machinePools.home.${boundaries.serverId}`)).not.toBeNull();
         expect(screen.findByTestId('settings.machinePools.editor.name')).toBeNull();

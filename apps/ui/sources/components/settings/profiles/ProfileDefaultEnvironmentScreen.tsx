@@ -28,7 +28,6 @@ export const ProfileDefaultEnvironmentScreen = React.memo(function ProfileDefaul
         <ItemList>
             <PageHeader
                 testID="settings.profiles.defaultEnvironment.header"
-                alwaysShowTitle
                 title={t('profiles.noProfile')}
                 description={t('profiles.noProfileDescription')}
                 leading={(

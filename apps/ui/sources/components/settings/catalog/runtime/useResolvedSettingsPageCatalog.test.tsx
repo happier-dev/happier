@@ -763,6 +763,11 @@ describe('useResolvedSettingsPageCatalog', () => {
 
     it('lists the pages a query names before the rows of those pages, however many rows match', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const { NOTIFICATIONS_SETTINGS } = await import('@/components/settings/notifications/notificationsSettings');
+        const { settingRendersOnHost } = await import('../settingDeclarations');
+        const matchingSettings = Object.values(NOTIFICATIONS_SETTINGS.settings)
+            .filter((ref) => settingRendersOnHost(ref, { os: 'web', desktop: false }));
+        for (const ref of matchingSettings) searchWordsState.overrides[ref.titleKey] = 'settings.notifications control';
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
 
         // Notifications declares dozens of rows whose path names the page; the page still comes first.
@@ -771,7 +776,13 @@ describe('useResolvedSettingsPageCatalog', () => {
         const firstSettingIndex = results.findIndex((result: any) => result.setting);
         const lastPageIndex = results.map((result: any) => !result.setting).lastIndexOf(true);
         expect(firstSettingIndex === -1 || lastPageIndex < firstSettingIndex).toBe(true);
-        expect(results.some((result: any) => result.setting?.anchor.startsWith('notifications.'))).toBe(true);
+        // A broad query must retain every matching row, including matches beyond a former result cap.
+        expect(matchingSettings.length).toBeGreaterThan(20);
+        for (const ref of matchingSettings) {
+            expect(results).toContainEqual(expect.objectContaining({
+                setting: expect.objectContaining({ anchor: ref.anchor }),
+            }));
+        }
 
         await hook.unmount();
     });

@@ -1,18 +1,38 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { HubSetupSection } from './HubSetupSection';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { storage } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
+import '@/sync/syncEngine';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const state = vi.hoisted(() => ({
-    machines: [] as unknown[],
+    machines: [] as Machine[],
     machineListSettled: true,
-    dismissed: false,
     show: null as null | ((options: unknown) => void),
     window: { width: 1600, height: 900 },
     push: null as null | ((href: unknown) => void),
 }));
+installDisconnectedServerSocketBoundary();
+let artifact = createHomeHubArtifactHttpBoundary('account-checklist');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+// Resolve the real presentation/Action graph at collection, outside per-behavior deadlines.
+const restoreActionLoader = await installRealActionExecutorModuleLoader();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -44,65 +64,47 @@ vi.mock('@/modal', async () => {
     }) as never;
     return createModalModuleMock({ spies: { show } }).module;
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useAllMachines: () => state.machines,
-        useIsActiveMachineListSettled: () => state.machineListSettled,
-    });
-});
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
-}));
-// Device storage for the recovery-key flag, and the server's feature answer (HTTP).
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getRecoveryKeyReminderDismissed: async () => state.dismissed,
-            setRecoveryKeyReminderDismissed: async (value: boolean) => { state.dismissed = value; return true; },
-            getCachedRecoveryKeyReminderDismissed: () => null,
-        },
-        isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
-    };
-});
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => ({ features: { auth: { ui: { recoveryKeyReminder: { enabled: true } } } } }),
-    getCachedReadyServerFeatures: () => null,
-}));
-// The plugins machine's cached answer (none in this launch).
-vi.mock('@/components/settings/plugins/model/pluginAdministrationSummary', () => ({
-    usePluginAdministrationSummary: () => ({ known: false, awaitingDecision: 0, userInstalled: 0 }),
-}));
-vi.mock('@/hooks/session/useConnectTerminal', () => ({
-    useConnectTerminal: () => ({ connectTerminal: vi.fn(), isLoading: false }),
-}));
-vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
-    useScannedAuthUrlProcessor: () => ({ processAuthUrl: vi.fn() }),
-}));
-
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await connection?.dispose();
+    connection = undefined;
+    artifact = createHomeHubArtifactHttpBoundary('account-checklist');
     state.machines = [];
     state.machineListSettled = true;
-    state.dismissed = false;
     state.window = { width: 1600, height: 900 };
     state.push = null;
     vi.unstubAllGlobals();
-    // No `vi.resetModules()` per case: re-importing this section's module graph for every case kept
-    // each previous graph alive and ran the worker out of memory (see HubSetupSection.test.tsx).
 });
+afterAll(() => restoreActionLoader());
 
-async function renderSection(presentation?: 'tiles' | 'checklist') {
-    const [{ HubSetupSection }, { ListPresentationProvider }] = await Promise.all([
-        import('./HubSetupSection'),
-        import('@/components/ui/lists/listPresentation'),
-    ]);
+function publishMachines() {
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(connection!.home.id), accountId: 'account-checklist' };
+    storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope,
+        machines: Object.fromEntries(state.machines.map(machine => [machine.id, machine])),
+        machineListByServerId: { [scope.serverId]: state.machines },
+        machineListStatusByServerId: { [scope.serverId]: state.machineListSettled ? 'idle' : 'loading' } });
+}
+
+async function renderSection() {
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://checklist-layout.test', accountId: 'account-checklist', request: (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/features') return Promise.resolve(Response.json(createRootLayoutFeaturesResponse()));
+        if (path === '/v1/machines') return Promise.resolve(Response.json(state.machines.map(machine => ({
+            ...machine, metadata: encodePlainMachineStoredContent(machine.metadata), daemonState: encodePlainMachineStoredContent(machine.daemonState),
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        } satisfies FetchedMachineRow))));
+        return artifact.request(url, init);
+    } });
+    publishMachines();
     // Both hubs are pages: the checklist's progress lives in the page section header.
     const screen = await renderScreen(
-        <ListPresentationProvider value="page"><HubSetupSection presentation={presentation} /></ListPresentationProvider>,
+        <InjectedAuthProvider credentials={connection.credentials}>
+            <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+                phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(connection.home.id), platform: 'web',
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                <ListPresentationProvider value="page"><HubSetupSection presentation="checklist" /></ListPresentationProvider>
+            </AppShellPluginUiProjectionValueProvider>
+        </InjectedAuthProvider>,
     );
     await flushHookEffects({ cycles: 3 });
     return screen;
@@ -113,48 +115,57 @@ const progress = (done: number, total: number) => `settingsOverview.setupProgres
 
 describe('HubSetupSection as a checklist (Settings Overview)', () => {
     it('counts every row it shows on this computer, plus the steps already done', async () => {
-        state.machines = [{ id: 'm1', metadata: null }];
-        const screen = await renderSection('checklist');
+        state.machines = [createMachineFixture({ id: 'm1', metadata: null })];
+        const screen = await renderSection();
 
-        // Done: a machine exists (its row has left). Shown: the recovery key and "Add your phone".
+        // A plain Account has no recovery key. The existing machine is done; phone setup remains.
         expect(screen.findByTestId('hub-setup.addMachine')).toBeNull();
-        expect(screen.findByTestId('hub-setup.recoveryKey')).toBeTruthy();
+        expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeTruthy();
-        expect(screen.getTextContent()).toContain(progress(1, 3));
+        expect(screen.getTextContent()).toContain(progress(1, 2));
     });
 
     it('on a phone, connecting a computer is one step: Scan, with "Paste link" beside it', async () => {
-        state.machines = [{ id: 'm1', metadata: null }];
+        state.machines = [createMachineFixture({ id: 'm1', metadata: null })];
         state.window = { width: 360, height: 800 };
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' });
-        const screen = await renderSection('checklist');
+        const screen = await renderSection();
 
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeNull();
         // One row, two ways to complete it.
         expect(screen.findByTestId('hub-setup.connectComputer')).toBeTruthy();
         expect(screen.findByTestId('settings-connect-terminal-scan')).toBeTruthy();
         expect(screen.findByTestId('settings-connect-terminal-enter-url')).toBeTruthy();
-        // Done: a machine. Shown: the recovery key and connecting a computer.
-        expect(screen.getTextContent()).toContain(progress(1, 3));
+        expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
+        // Done: a machine. Shown: connecting a computer, with two actions but counted once.
+        expect(screen.getTextContent()).toContain(progress(1, 2));
     });
 
     it('does not count "Add a machine" while the machine list is not known yet', async () => {
-        state.machineListSettled = false;
-        const screen = await renderSection('checklist');
+        const screen = await renderSection();
+        // The restored Account performs a real machine hydration. Exercise a subsequent unknown
+        // snapshot after that hydration, rather than racing its successful HTTP answer.
+        await act(async () => {
+            state.machineListSettled = false;
+            publishMachines();
+        });
 
         expect(screen.findByTestId('hub-setup.addMachine')).toBeNull();
-        expect(screen.getTextContent()).toContain(progress(0, 2));
+        expect(screen.getTextContent()).toContain(progress(0, 1));
     });
 
     it('a step that is done leaves the list and counts as done', async () => {
-        state.dismissed = true;
-        // The reminder reads the stored answer once per launch: this case is a new launch.
-        vi.resetModules();
-        state.machines = [{ id: 'm1', metadata: null }];
-        const screen = await renderSection('checklist');
+        const screen = await renderSection();
+        expect(screen.findByTestId('hub-setup.addMachine')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(progress(0, 2));
 
-        expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
+        await act(async () => {
+            state.machines = [createMachineFixture({ id: 'm1', metadata: null })];
+            publishMachines();
+        });
+
+        expect(screen.findByTestId('hub-setup.addMachine')).toBeNull();
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeTruthy();
-        expect(screen.getTextContent()).toContain(progress(2, 3));
+        expect(screen.getTextContent()).toContain(progress(1, 2));
     });
 });

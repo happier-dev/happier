@@ -18,14 +18,6 @@ installUiListsCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
-    normalizeNodeForView: (node: unknown) => node,
-}));
-
-vi.mock('@/components/ui/lists/useResolvedItemDensity', () => ({
-    useResolvedItemDensity: () => 'comfortable',
-}));
-
 type ProviderId = 'off' | 'hosted' | 'openai' | 'codex' | 'none';
 
 let ItemGroupComponent: typeof import('./ItemGroup')['ItemGroup'];

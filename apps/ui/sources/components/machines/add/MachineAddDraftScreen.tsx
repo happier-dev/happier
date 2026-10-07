@@ -61,7 +61,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         <ItemList keyboardShouldPersistTaps="handled">
             <PageHeader
                 testID="settings.machines.draft.header"
-                alwaysShowTitle
+                alwaysShowTitle={Boolean(draftRow?.entityTitle)}
                 title={draftRow?.title ?? t('machineAdd.newMachine')}
                 description={t('addFlows.addMachineDescription')}
                 meta={[{ key: 'home', icon: 'house', text: t('addFlows.machineJoinsHome', { home: homeName }) }]}

@@ -74,6 +74,7 @@ describe('PageHeader title and navigation chrome (R2)', () => {
     it('edits an entity name and description inline, in the page even under a native title', async () => {
         const onChangeTitle = vi.fn();
         const onChangeDescription = vi.fn();
+        const onCommitTitle = vi.fn();
         function Harness() {
             const [title, setTitle] = React.useState('Release');
             return (
@@ -86,7 +87,8 @@ describe('PageHeader title and navigation chrome (R2)', () => {
                             value: title,
                             placeholder: 'Untitled workflow',
                             accessibilityLabel: 'Workflow name',
-                            onChangeText: (next) => { onChangeTitle(next); setTitle(next); },
+                            onChangeText: (next) => { onChangeTitle(next); setTitle(next.trim()); },
+                            onCommit: onCommitTitle,
                             testID: 'page-header-title-input',
                         }}
                         descriptionEditor={{
@@ -110,6 +112,9 @@ describe('PageHeader title and navigation chrome (R2)', () => {
         expect(descriptionInput.props.multiline).toBe(true);
 
         await act(async () => { titleInput().props.onFocus?.({ nativeEvent: {} }); });
+        await act(async () => { titleInput().props.onChangeText('Release '); });
+        // A normalized owner echo must not eat the space needed for the next word.
+        expect(titleInput().props.value).toBe('Release ');
         await act(async () => { titleInput().props.onChangeText('Release 0.3'); });
         expect(titleInput().props.value).toBe('Release 0.3');
         // Escape restores the name held when editing began.
@@ -118,12 +123,30 @@ describe('PageHeader title and navigation chrome (R2)', () => {
         });
         expect(onChangeTitle).toHaveBeenLastCalledWith('Release');
         expect(titleInput().props.value).toBe('Release');
+        await act(async () => { titleInput().props.onBlur(); });
+        expect(onCommitTitle).toHaveBeenCalled();
+        onCommitTitle.mockClear();
+        await act(async () => { titleInput().props.onFocus(); });
+        await act(async () => { titleInput().props.onChangeText('Release candidate '); });
+        expect(titleInput().props.value).toBe('Release candidate ');
+        await act(async () => { titleInput().props.onBlur(); });
+        expect(titleInput().props.value).toBe('Release candidate');
+        expect(onCommitTitle).toHaveBeenCalledOnce();
+        onCommitTitle.mockClear();
+        // Enter during composition belongs to the input method, not the commit action.
+        const compositionPreventDefault = vi.fn();
+        await act(async () => {
+            titleInput().props.onKeyPress?.({ nativeEvent: { key: 'Enter', isComposing: true }, preventDefault: compositionPreventDefault });
+        });
+        expect(compositionPreventDefault).not.toHaveBeenCalled();
+        expect(onCommitTitle).not.toHaveBeenCalled();
         // Enter commits rather than inserting a newline into a name.
         const preventDefault = vi.fn();
         await act(async () => {
             titleInput().props.onKeyPress?.({ nativeEvent: { key: 'Enter' }, preventDefault });
         });
         expect(preventDefault).toHaveBeenCalled();
+        expect(onCommitTitle).toHaveBeenCalledOnce();
         expect(onChangeTitle).not.toHaveBeenCalledWith(expect.stringContaining('\n'));
     });
 });

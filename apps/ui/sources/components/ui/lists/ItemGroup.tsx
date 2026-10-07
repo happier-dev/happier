@@ -603,7 +603,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         style={headerStyle as HappierPageSectionHeaderProps['style']}
                     />
                 ) : isPage ? (
-                    virtualizedSegment?.first !== false ? <View style={styles.pageHeaderNoTitle} /> : null
+                    virtualizedSegment?.first !== false ? <View style={[styles.pageHeaderNoTitle, headerStyle]} /> : null
                 ) : title ? (
                     <View style={[styles.header, headerStyle]}>
                         {typeof title === 'string' ? (
@@ -616,7 +616,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     </View>
                 ) : virtualizedSegment?.first !== false ? (
                     // Add top margin when there's no title
-                    <View style={styles.headerNoTitle} />
+                    <View style={[styles.headerNoTitle, headerStyle]} />
                 ) : null}
 
                 {/* Content Container. A page section decides its rows' leading column once; only page

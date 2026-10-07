@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -52,12 +53,72 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+// Keep the existing full preview graph's import order before list-only cases;
+// its real storage graph contains reciprocal facade imports.
+await import('./SessionSettingPreviews');
+
 afterEach(() => {
     standardCleanup();
     settingsReads.keys.length = 0;
 });
 
 describe('Session settings previews', () => {
+    it.each(['density', 'layout'] as const)('does not repeat real %s preview work when a parent recreates unchanged tile props', async (kind) => {
+        const { SessionListDensityPreview, SessionListLayoutPreview } = await import('./SessionListPreview');
+        // A selection-ring update recreates JSX at both real callers. Observe
+        // descendant hooks without replacing their store or presentation logic.
+        const preview = () => kind === 'density'
+            ? <SessionListDensityPreview density="detailed" />
+            : <SessionListLayoutPreview layout="layout:projects" />;
+        const screen = await renderScreen(preview());
+        expect(settingsReads.keys).toContain('useLocalSetting:uiFontScale');
+        settingsReads.keys.length = 0;
+
+        await screen.update(preview());
+
+        expect(settingsReads.keys).toEqual([]);
+    });
+
+    it('keeps changed list-preview choices and descendant font-scale subscriptions responsive', async () => {
+        const { SessionListDensityPreview, SessionListLayoutPreview } = await import('./SessionListPreview');
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const { Platform, StyleSheet } = await import('react-native');
+        const originalPlatform = Platform.OS;
+        const originalScale = getStorage().getState().localSettings.uiFontScale;
+        // The real Text adapter scales host metrics on native. Platform is the
+        // external boundary; keep the store hooks and Text implementation real.
+        Platform.OS = 'ios';
+        try {
+            await act(async () => { getStorage().getState().applyLocalSettings({ uiFontScale: 1 }, { persist: false }); });
+            const screen = await renderScreen(<>
+                <SessionListDensityPreview density="detailed" />
+                <SessionListLayoutPreview layout="layout:projects" />
+            </>);
+            const text = () => screen.findAllByType('Text')[0];
+            const detailedSize = StyleSheet.flatten(text().props.style).fontSize;
+            expect(detailedSize).toBeGreaterThan(0);
+            expect(screen.getTextContent()).toContain('~/website');
+
+            await screen.update(<>
+                <SessionListDensityPreview density="narrow" />
+                <SessionListLayoutPreview layout="layout:active_inactive" />
+            </>);
+            expect(screen.getTextContent()).not.toContain('~/website');
+            const originalSize = StyleSheet.flatten(text().props.style).fontSize;
+            expect(originalSize).toBeGreaterThan(0);
+            expect(originalSize).toBeLessThan(detailedSize);
+            settingsReads.keys.length = 0;
+
+            await act(async () => { getStorage().getState().applyLocalSettings({ uiFontScale: 1.4 }, { persist: false }); });
+
+            expect(settingsReads.keys).toContain('useLocalSetting:uiFontScale');
+            expect(StyleSheet.flatten(text().props.style).fontSize).toBeCloseTo(originalSize * 1.4);
+        } finally {
+            await act(async () => { getStorage().getState().applyLocalSettings({ uiFontScale: originalScale }, { persist: false }); });
+            Platform.OS = originalPlatform;
+        }
+    });
+
     it('renders real list, transcript and composer pieces from static props without reading display settings', async () => {
         const previews = await import('./SessionSettingPreviews');
         const listPreviews = await import('./SessionListPreview');
