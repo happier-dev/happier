@@ -65,6 +65,8 @@ const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
       ? ['--cwd', 'apps/ui', '-s', 'typecheck']
       : project === 'apps/cli/tsconfig.json'
         ? ['--cwd', 'apps/cli', '-s', 'typecheck']
+      : project === 'apps/server/tsconfig.json'
+        ? ['--cwd', 'apps/server', '-s', 'typecheck']
       : project === 'packages/tests/tsconfig.json'
         ? ['--cwd', 'packages/tests', '-s', 'typecheck']
       : ['tsc', '-p', project, '--noEmit'],

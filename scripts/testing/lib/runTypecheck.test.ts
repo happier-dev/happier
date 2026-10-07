@@ -98,6 +98,9 @@ test('compiler-only typecheck executes compilers after preparation and reports c
   assert.deepEqual(uiCommands, [['--cwd', 'apps/ui', '-s', 'typecheck']]);
   const cliCommands = executed.filter((args) => args.includes('apps/cli'));
   assert.deepEqual(cliCommands, [['--cwd', 'apps/cli', '-s', 'typecheck']]);
+  const serverCommands = executed.filter((args) => args.includes('apps/server'));
+  assert.deepEqual(serverCommands, [['--cwd', 'apps/server', '-s', 'typecheck']],
+    'server compilation must use the package owner that prepares generated Prisma clients');
   const testsCommands = executed.filter((args) => args.includes('packages/tests'));
   assert.deepEqual(testsCommands, [['--cwd', 'packages/tests', '-s', 'typecheck']]);
   const uiPackage = JSON.parse(readFileSync('apps/ui/package.json', 'utf8')) as {
@@ -112,7 +115,7 @@ test('compiler-only typecheck executes compilers after preparation and reports c
     'tsconfig.foundation.json', 'tsconfig.core.json', 'tsconfig.source.json', 'tsconfig.test.json',
   ]);
   for (const args of executed.slice(2)) {
-    if (!uiCommands.includes(args) && !cliCommands.includes(args) && !testsCommands.includes(args)) {
+    if (!uiCommands.includes(args) && !cliCommands.includes(args) && !serverCommands.includes(args) && !testsCommands.includes(args)) {
       assert.equal(args[0], 'tsc');
       assert.ok(args.includes('--noEmit'));
     }
