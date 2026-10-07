@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
+import { pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../scripts/build-owned/bundledPluginMembership';
 
 const cliProjectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -67,6 +69,55 @@ describe('CLI test global setup', () => {
             expect((await stat(executablePath)).mode & 0o111).toBe(0o111);
         }
         expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
+    });
+
+    it('verifies the actual bundled publication prerequisite from source-unit global setup without a full CLI dist build', async () => {
+        const repoRoot = resolve(cliProjectRoot, '..', '..');
+        const packageNames = readBundledPluginPackageNames(repoRoot);
+        const failurePath = join(cliProjectRoot, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH);
+        const distEntrypoint = join(cliProjectRoot, 'dist', 'index.mjs');
+        const outputPresent = async (path: string) => await stat(path).then(() => true).catch((error: unknown) => {
+            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+            throw error;
+        });
+        const manifestPaths = packageNames.map((packageName) => join(
+            repoRoot, 'packages', 'plugins', pluginPackageNameToPackageId(packageName), '.happier-plugin', 'plugin.json',
+        ));
+        const [publicationMetadataPresent, cliDistPresent, packedManifestPresence] = await Promise.all([
+            outputPresent(failurePath),
+            outputPresent(distEntrypoint),
+            Promise.all(manifestPaths.map(outputPresent)),
+        ]);
+        // The public Vitest configuration already awaited test-setup.unit.ts.
+        // Verify its real source-only publication, without running preparation
+        // twice or deleting outputs. Dist presence is an observation, not a
+        // claim about bytes that may have existed before global setup.
+        console.info('CLI source-unit global setup publication', {
+            publicationMetadataPresent,
+            cliDistPresent,
+            bundledPackageCount: packageNames.length,
+            packedManifestCount: packedManifestPresence.filter(Boolean).length,
+        });
+        expect(packageNames.length).toBeGreaterThan(0);
+
+        const publication = parseBundledPluginPublicationFailures(await readFile(failurePath, 'utf8'));
+        // Import the real consumer only inside the keeper, so a cold inventory cannot
+        // prevent this keeper from collecting before its prerequisite assertion.
+        const { readCurrentBundledPluginPublicationFailures } = await import('./plugins/projection/registry/builtIn/locators');
+        expect(readCurrentBundledPluginPublicationFailures()).toEqual(publication);
+        const failedPackageNames = new Set(publication.map((failure) => failure.packageName));
+        for (const packageName of failedPackageNames) expect(packageNames).toContain(packageName);
+        const { ingestPluginManifestV2 } = await import('@happier-dev/protocol/plugins/manifest/ingest');
+        for (const packageName of packageNames) {
+            if (failedPackageNames.has(packageName)) continue;
+            const packageRoot = join(repoRoot, 'packages', 'plugins', pluginPackageNameToPackageId(packageName));
+            const manifest: unknown = JSON.parse(await readFile(join(packageRoot, '.happier-plugin', 'plugin.json'), 'utf8'));
+            const ingestion = ingestPluginManifestV2(manifest);
+            expect(ingestion.ok, packageName).toBe(true);
+            if (ingestion.ok && ingestion.manifest.entrypoints?.daemon) {
+                expect((await stat(resolve(packageRoot, ingestion.manifest.entrypoints.daemon))).size, packageName).toBeGreaterThan(0);
+            }
+        }
     });
 
     it('runs the canonical dist build for full mode', async () => {
@@ -138,6 +189,7 @@ describe('CLI test global setup', () => {
 
     it('uses the canonical repo dist build lock for mutable CLI dist outputs', async () => {
         delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+        const { projectRoot } = await createSetupFixture();
         const ensureBuildArtifactsReadyOnce = vi.fn(async () => undefined);
         vi.doMock('./testSetupBuildCoordinator', () => ({
             ensureBuildArtifactsReadyOnce,
@@ -148,20 +200,21 @@ describe('CLI test global setup', () => {
         await setup({
             buildMode: 'full',
             dependencies: {
-                resolveProjectRoot: () => cliProjectRoot,
+                resolveProjectRoot: () => projectRoot,
             },
         });
 
         expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledWith(
             expect.objectContaining({
-                lockPath: join(resolve(cliProjectRoot, '..', '..'), '.project', 'tmp', 'cli-dist-build.lock'),
+                lockPath: join(resolve(projectRoot, '..', '..'), '.project', 'tmp', 'cli-dist-build.lock'),
             }),
         );
     });
 
     it('forwards the canonical lock lease to the nested dist build process', async () => {
         delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
-        const distEntrypoint = join(cliProjectRoot, 'dist', 'index.mjs');
+        const { projectRoot } = await createSetupFixture();
+        const distEntrypoint = join(projectRoot, 'dist', 'index.mjs');
         vi.doMock('node:fs', async (importOriginal) => {
             const actual = await importOriginal<typeof import('node:fs')>();
             return {
@@ -193,7 +246,7 @@ describe('CLI test global setup', () => {
         await setup({
             buildMode: 'full',
             dependencies: {
-                resolveProjectRoot: () => cliProjectRoot,
+                resolveProjectRoot: () => projectRoot,
             },
         });
 
