@@ -88,10 +88,38 @@ describe('generic wait observation', () => {
       expect(result.disposition).toBe(observation === 'timeout' ? 'observation_timeout' : observation === 'paused' ? 'unsupported_condition' : 'matched');
     },
   );
-  it.each(['needs_attention', 'terminal_or_needs_attention'] as const)('does not substitute execution terminal evidence for %s', async (kind) => {
+  it.each(['needs_attention', 'terminal_or_needs_attention'] as const)('consumes the execution owner attention evidence for %s', async (kind) => {
     expect(await executeWaitActionV1({ target, condition: { kind } }, {
-      execution: async () => { throw new Error('Unsupported selectors must not arm terminal waits'); },
-    })).toMatchObject({ disposition: 'unsupported_condition' });
+      execution: async (_target, options) => waitForExecutionRunTerminal({
+        runId: target.runId, timeoutMs: options.timeoutMs, signal: options.signal,
+        condition: options.condition.kind === 'needs_attention' ? 'needs_attention' : 'terminal_or_needs_attention',
+        readRun: async () => ({ ok: true, data: { run: { ...run('running'),
+          attention: { kind: 'permission_required', requestIds: ['permission-1'] } } } }),
+        waitForTerminal: async () => { throw new Error('Attention must not await terminal custody'); },
+      }),
+    })).toMatchObject({ disposition: 'matched', snapshot: { disposition: 'needs_attention', status: 'running' } });
+  });
+  it.each(['terminal', 'needs_attention', 'terminal_or_needs_attention'] as const)('delegates workflow %s selection to FIN', async (kind) => {
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      id: runId, origin: { kind: 'direct' }, state: 'running', attentionRequired: true,
+      revision: 1, machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+      availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true,
+        inspectExecution: false, disabledReasons: [] }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+    const conditions = kind === 'terminal' ? ['terminal'] as const : kind === 'needs_attention' ? ['attention'] as const : ['terminal', 'attention'] as const;
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account',
+      storage: { execute: async (request) => {
+        expect(request).toMatchObject({ conditions: [...conditions] });
+        return kind === 'terminal' ? { run: { ...summary, state: 'succeeded', attentionRequired: false }, observation: 'terminal', matchedCondition: 'terminal' }
+          : { run: summary, observation: 'needs_attention', matchedCondition: 'attention' };
+      } }, definitions: { get: async () => { throw new Error('wait_requires_no_definition'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: () => null, randomBytes: () => { throw new Error('read_needs_no_randomness'); } });
+    const result = await executeWaitActionV1({ target: { kind: 'workflow_run', serverId: 'home', runId }, condition: { kind } }, {
+      workflow: async (_target, options) => owner.execute({ actionId: 'workflow.run.wait', input: { runId,
+        conditions: options.condition.kind === 'terminal' ? ['terminal'] : options.condition.kind === 'needs_attention' ? ['attention'] : ['terminal', 'attention'] }, context: {} }),
+    });
+    expect(result).toMatchObject({ disposition: 'matched', snapshot: { observation: kind === 'terminal' ? 'terminal' : 'needs_attention' } });
   });
   it('does not invent plugin conditions before their contribution lands', async () => {
     expect(await executeWaitActionV1({
