@@ -159,10 +159,12 @@ const stylesheet = StyleSheet.create(() => ({
 
 const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonly<{
     draft: NewSessionDraftProjection;
-    availability?: NewSessionDraftAvailabilitySummary;
+    machineUnavailable: boolean;
+    pluginUnavailable: boolean;
+    attachmentNeedsAttention: boolean;
     onContinue: (draftId: string, scope?: ServerAccountScope) => void;
     onDelete: (draftId: string, scope?: ServerAccountScope) => Promise<boolean>;
-    pressableRef: React.Ref<FocusableDraftTarget>;
+    registerRowTarget: (draftId: string, target: FocusableDraftTarget | null) => void;
     deleteDisabled: boolean;
     density: SessionRowDensity;
     serverId: string | null;
@@ -183,7 +185,11 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
     const deleteGlyphColor = !props.deleteDisabled && (deleteHovered || deletePressed)
         ? theme.colors.state.danger.foreground
         : theme.colors.text.secondary;
-    const presentation = buildNewSessionDraftRowPresentation(props.draft, props.availability);
+    const presentation = buildNewSessionDraftRowPresentation(props.draft, {
+        machineUnavailable: props.machineUnavailable,
+        pluginUnavailable: props.pluginUnavailable,
+        attachmentNeedsAttention: props.attachmentNeedsAttention,
+    });
     // Schema parsing returns a fresh public-reference object. Preserve it for
     // the draft revision so the observer effect does not refetch on each state
     // projection and create a render/request loop.
@@ -200,6 +206,9 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
         existingPublicRef: runnerActivation.publicRef,
     });
     const draftId = props.draft.draftId;
+    const pressableRef = React.useCallback((target: FocusableDraftTarget | null) => {
+        props.registerRowTarget(draftId, target);
+    }, [draftId, props.registerRowTarget]);
     const activationStatusKey = runnerDraftStatusKey(runnerLaunch.status);
     const statusKey = props.draft.status === 'conflict'
         ? presentation.statusKey
@@ -310,7 +319,7 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
                 </View>
             )}
             rightElementOutsidePressable
-            pressableRef={props.pressableRef}
+            pressableRef={pressableRef}
         />
     );
 });
@@ -338,19 +347,26 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
         if (target) rowTargetsRef.current.set(draftId, target);
         else rowTargetsRef.current.delete(draftId);
     }, []);
+    // Deletion reads the committed list at invocation time. Editing another
+    // draft must not replace every row's delete handler.
+    const deletionPropsRef = React.useRef(props);
+    React.useLayoutEffect(() => {
+        deletionPropsRef.current = props;
+    }, [props]);
     const handleDelete = React.useCallback(async (draftId: string) => {
-        const deletedIndex = props.drafts.findIndex((draft) => draft.draftId === draftId);
-        const candidateDraftIds = props.drafts
+        const current = deletionPropsRef.current;
+        const deletedIndex = current.drafts.findIndex((draft) => draft.draftId === draftId);
+        const candidateDraftIds = current.drafts
             .map((draft, index) => ({ draftId: draft.draftId, distance: Math.abs(index - deletedIndex), index }))
             .filter((candidate) => candidate.draftId !== draftId)
             .sort((left, right) => left.distance - right.distance || right.index - left.index)
             .map((candidate) => candidate.draftId);
-        const deleted = props.rowScope
-            ? await props.onDelete(draftId, props.rowScope)
-            : await props.onDelete(draftId);
+        const deleted = current.rowScope
+            ? await current.onDelete(draftId, current.rowScope)
+            : await current.onDelete(draftId);
         if (deleted) setPendingFocusRestore({ deletedDraftId: draftId, candidateDraftIds });
         return deleted;
-    }, [props.drafts, props.onDelete, props.rowScope]);
+    }, []);
     React.useEffect(() => {
         if (!pendingFocusRestore) return;
         if (props.drafts.some((draft) => draft.draftId === pendingFocusRestore.deletedDraftId)) return;
@@ -392,10 +408,12 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
                     <NewSessionDraftRow
                         key={draft.draftId}
                         draft={draft}
-                        availability={props.availabilityByDraftId?.[draft.draftId]}
+                        machineUnavailable={props.availabilityByDraftId?.[draft.draftId]?.machineUnavailable === true}
+                        pluginUnavailable={props.availabilityByDraftId?.[draft.draftId]?.pluginUnavailable === true}
+                        attachmentNeedsAttention={props.availabilityByDraftId?.[draft.draftId]?.attachmentNeedsAttention === true}
                         onContinue={props.onContinue}
                         onDelete={handleDelete}
-                        pressableRef={(target) => registerRowTarget(draft.draftId, target)}
+                        registerRowTarget={registerRowTarget}
                         deleteDisabled={props.deleteDisabledDraftIds?.has(draft.draftId) === true}
                         density={props.density ?? 'default'}
                         serverId={props.serverId ?? null}
