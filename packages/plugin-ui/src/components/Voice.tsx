@@ -18,7 +18,8 @@ export type VoiceMarkArtProps = Readonly<{
 /** A decorative specimen of the one Brand mark. Wrap it in a labelled control when interactive. */
 export function VoiceMarkArt({ fallback, ...input }: VoiceMarkArtProps): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
-  return <>{host?.renderVoiceMarkArt?.(input) ?? fallback}</>;
+  const presented = useHappierUiAnimationActivityInternal();
+  return <>{host?.renderVoiceMarkArt?.({ ...input, still: presented ? input.still : true }) ?? fallback}</>;
 }
 
 export type StatusCellProps = Readonly<{

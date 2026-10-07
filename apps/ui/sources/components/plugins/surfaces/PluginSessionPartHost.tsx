@@ -8,7 +8,7 @@ import {
     EmbeddedSessionTranscriptPart,
     type SessionViewEmbeddedPresentation,
 } from '@/components/sessions/shell/embedded/EmbeddedSessionProvider';
-import { EmbeddedSessionStatePublication } from '@/components/sessions/shell/embedded/EmbeddedSessionParts';
+import { EmbeddedSessionControllerClaimsScope, EmbeddedSessionStatePublication } from '@/components/sessions/shell/embedded/EmbeddedSessionParts';
 import { EmbeddedSessionUnavailable } from '@/components/sessions/shell/embedded/EmbeddedSessionUnavailable';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
@@ -97,11 +97,13 @@ function PluginSessionController(props: Readonly<{
     return (
         <PluginSurfaceNestingBoundary>
             {serverId === null ? (
-                <EmbeddedSessionStatePublication
-                    state="unavailable"
-                    transcript={<EmbeddedSessionUnavailable />}
-                    arrangement={props.children}
-                />
+                <EmbeddedSessionControllerClaimsScope>
+                    <EmbeddedSessionStatePublication
+                        state="unavailable"
+                        transcript={<EmbeddedSessionUnavailable />}
+                        arrangement={props.children}
+                    />
+                </EmbeddedSessionControllerClaimsScope>
             ) : (
                 <EmbeddedSessionProvider
                     target={target}

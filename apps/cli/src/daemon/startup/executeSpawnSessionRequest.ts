@@ -975,9 +975,7 @@ export async function executeSpawnSessionRequest(
                     ? { connectedServiceMaterializationIdentityV1: connectedServiceMaterializationIdentity }
                     : {}),
                 hasConnectedServiceAuth:
-                    connectedServiceAuth !== null
-                    && connectedServiceAuth
-                        .ongoingRuntimeRegistrationAllowed !== false,
+                    connectedServiceAuth !== null,
                 ...(activateConnectedAccountSessionBindingOnCanonicalSession
                     ? {
                         activateConnectedAccountSessionBindingOnCanonicalSession,

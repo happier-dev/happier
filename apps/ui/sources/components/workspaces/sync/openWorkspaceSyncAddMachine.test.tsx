@@ -47,9 +47,6 @@ vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
 vi.mock('@/components/ui/pathPicker/PathSelectionList', () => ({
     PathSelectionList: (props: Record<string, unknown>) => React.createElement('PathSelectionList', props),
 }));
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children),
-}));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
 }));
@@ -104,10 +101,9 @@ describe('Project Add machine modal', () => {
         const config = shownModal.mock.calls[0]?.[0];
         const screen = await renderScreen(React.createElement(config.component, { ...config.props, onClose: vi.fn(), setChrome: vi.fn() }));
 
-        const { Item } = await import('@/components/ui/lists/Item');
-        const source = screen.findAllByType(Item).find((node) => String(node.props.title).startsWith('workspaceSync.endpoint.source'));
-        expect(source?.props.title).toBe('workspaceSync.endpoint.source:{"label":"~/project"}');
-        expect(source?.props.detail).toBe('Source');
+        expect(screen.getTextContent()).toContain('workspaceSync.endpoint.source:{"label":"~/project"}');
+        expect(screen.getTextContent()).toContain('Source');
+        expect(screen.getTextContent()).not.toContain('/home/source/project');
     });
 
     it('preserves the shared raw policy draft and submits exact-replica destination intent', async () => {

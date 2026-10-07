@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 import { readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata } from '@happier-dev/agents';
 
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -76,6 +77,22 @@ afterEach(async () => {
 });
 
 describe('Agent runtime session bridge authorization', () => {
+  it('publishes exact canonical Session identity without accepting longer or rewritten ids', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-identity-authority-'));
+    roots.push(happyHomeDir);
+    const path = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir, publicReleaseRing: 'stable' });
+    const sessionId = 's'.repeat(SessionIndexedIdentifierMaxLengthV1);
+    const input = {
+      path, happyHomeDir, publicReleaseRing: 'stable' as const, sessionId,
+      runner: { pid: 1234, processStartTimeMs: 1_717_171_717_000, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'snapshot:runner-a' },
+      retainedAgent: createRetainedAgent(), httpPort: 31_001, capability: 'A'.repeat(43),
+    };
+    expect((await publishAgentRuntimeDaemonServiceAuthority(input)).document.sessionId).toBe(sessionId);
+    for (const invalidId of [`${sessionId}s`, ' lead', 'lead ']) {
+      await expect(publishAgentRuntimeDaemonServiceAuthority({ ...input, sessionId: invalidId })).rejects.toThrow();
+    }
+    expect((await readAgentRuntimeDaemonServiceAuthority(input))?.sessionId).toBe(sessionId);
+  });
   it('carries the selected runtime through bootstrap and Session creation into the real opener', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-selected-runtime-bootstrap-'));
     roots.push(happyHomeDir);

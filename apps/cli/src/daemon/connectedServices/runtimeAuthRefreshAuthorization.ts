@@ -1,13 +1,20 @@
-import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 import { z } from 'zod';
-import { ConnectedAccountServiceKeyIngressSchema, ConnectedServiceProfileIdSchema, ConnectedServiceAuthGroupIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupIdSchema, ConnectedServiceProfileIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/registry';
 
+export const ConnectedServiceRuntimeAuthRefreshServiceIdSchema = z.string().trim().min(1).transform((value, ctx) => {
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(value);
+  if (serviceId) return serviceId;
+  ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid connected service identity' });
+  return z.NEVER;
+});
+
 export const ConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('profile'), serviceId: ConnectedAccountServiceKeyIngressSchema,
+  z.object({ kind: z.literal('profile'), serviceId: ConnectedServiceRuntimeAuthRefreshServiceIdSchema,
     profileId: ConnectedServiceProfileIdSchema }).strict(),
-  z.object({ kind: z.literal('group'), serviceId: ConnectedAccountServiceKeyIngressSchema,
+  z.object({ kind: z.literal('group'), serviceId: ConnectedServiceRuntimeAuthRefreshServiceIdSchema,
     groupId: ConnectedServiceAuthGroupIdSchema, activeProfileId: ConnectedServiceProfileIdSchema,
     fallbackProfileId: ConnectedServiceProfileIdSchema, generation: z.number().int().nonnegative() }).strict(),
 ]);

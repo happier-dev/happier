@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import type { AgentId } from '@happier-dev/agents';
 import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import { deserializeSessionCreationCorrespondenceV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { deserializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
@@ -498,7 +498,8 @@ export function partitionProviderSessionArgs(
       );
       if (!equalsValue) i += 1;
       try {
-        sessionCreationCorrespondence = deserializeSessionCreationCorrespondenceV1(raw);
+        const value: unknown = JSON.parse(raw);
+        sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse(value);
       } catch {
         console.error(chalk.red('Invalid --session-creation-correspondence-v1 value'));
         process.exit(1);

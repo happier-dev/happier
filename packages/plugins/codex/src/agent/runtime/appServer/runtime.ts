@@ -50,7 +50,7 @@ import {
   readCodexAuthStoreProviderAccountIdFromJson,
   type CodexActiveProviderAccount,
 } from '../../auth/services/runtime/auth/accountId.js';
-import { readCodexAuthTokensFromJson, type CodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
+import { readCodexAuthTokensFromNativeHome } from '../../cli/auth/environment.js';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../auth/services/quota/runtimeRateLimits.js';
 import { resolveCodexUsageSubjectRef } from '../../auth/services/usage/identity.js';
 import {
@@ -917,15 +917,7 @@ export function createCodexAppServerRuntime(
   const resolveCurrentPolicy = (): CodexAppServerPolicy | null =>
     currentPermissionPolicyOverride ?? params.resolveCurrentPolicy?.() ?? null;
 
-  const readHostOwnedAuthTokens = async (): Promise<CodexEnvironmentAuthTokens> => {
-    try {
-      const bytes = (await params.host.nativeHome?.readFiles(['auth.json']))?.['auth.json'];
-      if (!bytes) return readCodexAuthTokensFromJson(null);
-      return readCodexAuthTokensFromJson(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
-    } catch {
-      return readCodexAuthTokensFromJson(null);
-    }
-  };
+  const readHostOwnedAuthTokens = () => readCodexAuthTokensFromNativeHome(params.host.nativeHome);
   const readHostOwnedAuthStoreProof = async () => {
     try {
       const bytes = (await params.host.nativeHome?.readFiles(['auth.json']))?.['auth.json'];
@@ -2606,17 +2598,7 @@ export function createCodexAppServerRuntime(
               ...buildCodexAppServerLegacyPermissionParams({ policy, target: 'turn' }),
             });
           });
-      const response = await requestTurnStart(requestParams).catch(async (error: unknown) => {
-        // A Codex app-server that predates structured turn input items rejects them with
-        // invalid params. The user's text still has to reach the provider rather than failing
-        // the turn outright.
-        if (turnInput.length <= 1 || turnInput.some((item) => item.type === 'image' || item.type === 'localImage')
-          || !isCodexAppServerInvalidParamsError(error)) throw error;
-        return await requestTurnStart({
-          ...requestParams,
-          input: buildCodexAppServerTurnInput({ text: prompt }),
-        });
-      });
+      const response = await requestTurnStart(requestParams);
       const agentTurnId = readTurnId(response);
       nativeReadyThreadId = activeTurn.threadId;
       publishThreadIdentity(activeTurn.threadId);
@@ -2737,15 +2719,7 @@ export function createCodexAppServerRuntime(
       });
     };
     try {
-      try {
-        await requestSteer(steerInput);
-      } catch (error) {
-        // A Codex app-server that predates structured turn input items rejects them with
-        // invalid params; the steered text must still reach the provider.
-        if (steerInput.length <= 1 || steerInput.some((item) => item.type === 'image' || item.type === 'localImage')
-          || !isCodexAppServerInvalidParamsError(error)) throw error;
-        await requestSteer(buildCodexAppServerTurnInput({ text: message }));
-      }
+      await requestSteer(steerInput);
     } catch (error) {
       const steerError = error instanceof Error ? error : new Error(String(error));
       clearPendingProviderPrompt(pendingProviderPrompt, steerError);
@@ -3182,11 +3156,29 @@ export function createCodexAppServerRuntime(
         text,
         ...(structuredInput === undefined ? {} : { structuredInput }),
       };
+      const resolveStructuredInputRefusal = (error: unknown, method: 'turn/start' | 'turn/steer') => {
+        if (!isCodexAppServerInvalidParamsError(error)) return null;
+        const rejectedInput = buildCodexAppServerTurnInput(turnInput);
+        if (!rejectedInput.some((item) => item.type !== 'text')) return null;
+        const errorCode = readRecord(error)?.code;
+        params.host.logger.warn('Codex app-server rejected structured input', {
+          method,
+          ...buildCodexAppServerSafeErrorIdentity(error),
+          ...(typeof errorCode === 'number' && Number.isFinite(errorCode) ? { errorCode } : {}),
+        });
+        return {
+          status: 'unsupported' as const,
+          diagnostic: rejectedInput.some((item) => item.type === 'image' || item.type === 'localImage')
+            ? 'codex_image_input_unsupported'
+            : 'codex_structured_input_rejected',
+        };
+      };
       if (options?.deliverAs === 'steer') {
         try { await steerInFlightTurn(turnInput, options); }
         catch (error) {
-          if (!isCodexAppServerInvalidParamsError(error) || !buildCodexAppServerTurnInput(turnInput).some((item) => item.type === 'image' || item.type === 'localImage')) throw error;
-          return { status: 'unsupported', diagnostic: 'codex_image_input_unsupported' };
+          const refusal = resolveStructuredInputRefusal(error, 'turn/steer');
+          if (!refusal) throw error;
+          return refusal;
         }
         return acceptedSendResult();
       }
@@ -3194,8 +3186,9 @@ export function createCodexAppServerRuntime(
       observeCompletionInBackground(submitted);
       try { await submitted; }
       catch (error) {
-        if (!isCodexAppServerInvalidParamsError(error) || !buildCodexAppServerTurnInput(turnInput).some((item) => item.type === 'image' || item.type === 'localImage')) throw error;
-        return { status: 'unsupported', diagnostic: 'codex_image_input_unsupported' };
+        const refusal = resolveStructuredInputRefusal(error, 'turn/start');
+        if (!refusal) throw error;
+        return refusal;
       }
       return acceptedSendResult();
     },

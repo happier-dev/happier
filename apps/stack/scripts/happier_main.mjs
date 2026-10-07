@@ -6,7 +6,7 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir, getStackName, resolveExplicitStackEnvFilePath } from './utils/paths/paths.mjs';
 import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
-import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
+import { getPublicServerUrlEnvOverride, resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from './utils/server/urls.mjs';
 import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveStackEnvPath } from './utils/paths/paths.mjs';
 import {
@@ -35,9 +35,7 @@ function isNodeRuntimeEntrypoint(entrypoint) {
 }
 
 function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl }) {
-  if (!existsSync(join(cliHomeDir, 'settings.json'))) return;
   const serverId = String(env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
-  if (!serverId) return;
   const args = buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl });
   const result =
     resolvedCli.kind === 'runtime'
@@ -224,7 +222,8 @@ async function main() {
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
   const stackEnvPathInfo = resolveStackEnvPath(stackName, process.env);
   const runtimeStatePath = join(stackEnvPathInfo.baseDir, 'stack.runtime.json');
-  const serverPort = await resolveLocalServerPortForStack({
+  const { runtimePort } = await resolveStackServerEndpoint({ stackName });
+  const serverPort = runtimePort ?? await resolveLocalServerPortForStack({
     env: process.env,
     stackMode: true,
     stackName,
@@ -248,7 +247,7 @@ async function main() {
   });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
-  const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
+  let { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliLaunchSpec = runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null;
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
@@ -298,6 +297,9 @@ async function main() {
   const isStackScopedInvocation =
     Boolean(stackCliHomeOverride) ||
     Boolean(stackEnvFilePath && existsSync(stackEnvFilePath));
+  if (isStackScopedInvocation) {
+    publicServerUrl = await resolveStackCanonicalServerUrl({ env: process.env, serverPort, stackName });
+  }
   const explicitHomeDir = String(env.HAPPIER_HOME_DIR ?? '').trim();
   const explicitStackIdentityHomeDir =
     isIdentityScopedCliHomeDir(explicitHomeDir) && isPathInside(stackEnvPathInfo.baseDir, explicitHomeDir)
@@ -346,8 +348,8 @@ async function main() {
   // otherwise commands can silently target another stack's daemon/server.
   if (!prefixServerSelection.hasExplicitSelection && !settingsDefaults) {
     if (isStackScopedInvocation) {
-      delete env.HAPPIER_PUBLIC_SERVER_URL;
-      delete env.HAPPIER_LOCAL_SERVER_URL;
+      env.HAPPIER_PUBLIC_SERVER_URL = publicServerUrl;
+      env.HAPPIER_LOCAL_SERVER_URL = internalServerUrl;
       env.HAPPIER_SERVER_URL = internalServerUrl;
       env.HAPPIER_WEBAPP_URL = publicServerUrl;
     } else {

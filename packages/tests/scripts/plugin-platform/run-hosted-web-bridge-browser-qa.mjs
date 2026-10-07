@@ -75,6 +75,7 @@ function surfaceSnapshot(overrides = {}) {
       radii: { small: 4, control: 6, panel: 10, pill: 999 },
       typography: {
         body: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
+        reading: { fontSize: 15, lineHeight: 22, fontWeight: '400' },
         label: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
         title: { fontSize: 18, lineHeight: 24, fontWeight: '700' },
         caption: { fontSize: 11, lineHeight: 14, fontWeight: '400' },

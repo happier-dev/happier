@@ -10,6 +10,7 @@ import {
     REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS,
     formatReactNativeEnrichedMarkdownWebStreamingPatchFailure,
     verifyReactNativeEnrichedMarkdownWebStreamingPatch,
+    verifyUiPatchedDependencies,
 } from './verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import { repairReactNativeEnrichedMarkdownWebStreamingPatch } from './repairReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 
@@ -33,6 +34,27 @@ const VISIBILITY_MARKERS = [
     ['src/web/streamingReveal.ts', '.start <= start'],
     ['lib/module/web/streamingReveal.js', '.start <= start'],
 ];
+
+test('UI dependency preflight verifies both app-local and hoisted patched copies', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-patched-copy-preflight-'));
+    const fixture = createPatchedPackageFixture();
+    const uiPackageDir = path.join(root, 'apps', 'ui');
+    const appCopy = path.join(uiPackageDir, 'node_modules', 'react-native-enriched-markdown');
+    const hoistedCopy = path.join(root, 'node_modules', 'react-native-enriched-markdown');
+    try {
+        fs.cpSync(fixture, appCopy, { recursive: true });
+        fs.cpSync(fixture, hoistedCopy, { recursive: true });
+        assert.doesNotThrow(() => verifyUiPatchedDependencies({ uiPackageDir }));
+        fs.unlinkSync(path.join(hoistedCopy, 'lib/module/web/streamingReveal.js'));
+        assert.throws(() => verifyUiPatchedDependencies({ uiPackageDir }));
+        fs.cpSync(fixture, hoistedCopy, { recursive: true });
+        fs.unlinkSync(path.join(appCopy, 'lib/module/web/streamingReveal.js'));
+        assert.throws(() => verifyUiPatchedDependencies({ uiPackageDir }));
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(fixture, { recursive: true, force: true });
+    }
+});
 
 function createPatchedPackageFixture() {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'enriched-markdown-patch-fixture-'));

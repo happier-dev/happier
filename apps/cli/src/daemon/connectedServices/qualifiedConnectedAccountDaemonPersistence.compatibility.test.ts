@@ -1,283 +1,64 @@
-import {
-  buildConnectedServiceCredentialRecord,
-  ConnectedServiceCredentialRecordV1Schema,
-  FeaturesResponseSchema,
-  type BuiltInLegacyConnectedServiceId,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createQualifiedConnectedAccountDaemonPersistence,
-} from './qualifiedConnectedAccountDaemonPersistence';
+import { createQualifiedConnectedAccountDaemonPersistence } from './qualifiedConnectedAccountDaemonPersistence';
 
 const claudeSubscriptionService = Object.freeze({
   pluginId: 'happier.agent.claude',
   localId: 'claude-subscription',
 });
-const credentialRevision = 'csr_abcdefghijklmnopqrstuv';
 const revisionedPeerFeatures = FeaturesResponseSchema.parse({
   features: {},
-  capabilities: {
-    connectedServices: {
-      credentialDelete: { revisionGuard: true },
-    },
-  },
+  capabilities: { connectedServices: { credentialDelete: { revisionGuard: true } } },
 });
 const exactPeerFeatures = FeaturesResponseSchema.parse({
-  features: {
-    sharing: {
-      pendingQueueV2: { enabled: true },
-    },
-  },
+  features: { sharing: { pendingQueueV2: { enabled: true } } },
   capabilities: {},
 });
-const legacyRecord = buildConnectedServiceCredentialRecord({
-  now: 1_000,
-  serviceId: 'claude-subscription',
-  profileId: 'work',
-  kind: 'token',
-  token: {
-    token: 'setup-token',
-    providerAccountId: 'provider-account',
-    providerEmail: 'person@example.test',
-  },
-});
-// Golden wire record emitted by cli-v0.2.1 at
-// b1d15a8a9c241737d1ca9b167459901e6259173a.
-const unsupportedGeminiOauthRecord =
-  ConnectedServiceCredentialRecordV1Schema.parse({
-    v: 1,
-    serviceId: 'gemini',
-    profileId: 'old-oauth',
-    kind: 'oauth',
-    createdAt: 1_000,
-    updatedAt: 1_000,
-    expiresAt: null,
-    oauth: {
-      accessToken: 'historical-access',
-      refreshToken: 'historical-refresh',
-      idToken: null,
-      scope: null,
-      tokenType: 'Bearer',
-      providerAccountId: null,
-      providerEmail: null,
-      raw: null,
-    },
-    token: null,
-  });
 
-type LegacyPlainCredentialRead = Readonly<{
-  revisionSemantics: 'revisioned';
-  credentialRevision: string;
-  content: Readonly<{
-    t: 'plain';
-    v: ConnectedServiceCredentialRecordV1;
-  }>;
-}>;
-
-type LegacyProfileList = Readonly<{
-  serviceId: BuiltInLegacyConnectedServiceId;
-  profiles: readonly Readonly<{
-    profileId: string;
-    status:
-      | 'connected'
-      | 'refreshing'
-      | 'needs_reauth'
-      | 'refresh_failed_retryable';
-    kind?: 'oauth' | 'token' | null;
-  }>[];
-}>;
-
-function createLegacyApi() {
-  return {
-    getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-    getServerFeaturesSnapshot: vi.fn(async () => undefined),
-    getConnectedServiceCredentialPlain: vi.fn(async (): Promise<
-      LegacyPlainCredentialRead
-    > => ({
-      revisionSemantics: 'revisioned' as const,
-      credentialRevision,
-      content: { t: 'plain' as const, v: legacyRecord },
-    })),
-    getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    registerConnectedServiceCredentialPlain: vi.fn(async () => ({
-      success: true as const,
-      credentialRevision,
-    })),
-    registerConnectedServiceCredentialSealed: vi.fn(async () => ({
-      success: true as const,
-      credentialRevision,
-    })),
-    listConnectedServiceProfiles: vi.fn(async (): Promise<
-      LegacyProfileList
-    > => ({
-      serviceId: 'claude-subscription' as const,
-      profiles: [{
-        profileId: 'work',
-        status: 'connected' as const,
-        kind: 'token' as const,
-      }],
-    })),
-  };
-}
-
-function createRevisionedPeerPersistence(legacyCredentialApi: ReturnType<
-  typeof createLegacyApi
->) {
-  return createQualifiedConnectedAccountDaemonPersistence({
-    credentials: {
-      token: 'token',
-      encryption: {
-        type: 'legacy',
-        secret: new Uint8Array(32).fill(7),
-      },
-    },
-    getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-    readCredential: vi.fn(async () => null),
-    readConfiguration: vi.fn(async () => null),
-    mutateCredential: vi.fn(),
-    mutateConfiguration: vi.fn(),
-    resolveServerFeaturesSnapshot: () => ({
-      status: 'ready',
-      features: revisionedPeerFeatures,
-    }),
-    legacyCredentialApi,
-    secrets: {
-      admit: vi.fn(async () => undefined),
-      has: vi.fn(async () => false),
-      read: vi.fn(async () => null),
-    },
-  });
-}
-
-describe('qualified Connected Account daemon old-peer compatibility', () => {
-  it('projects a revisioned peer account without fabricating configuration readiness', async () => {
-    const legacyCredentialApi = createLegacyApi();
-    const persistence = createRevisionedPeerPersistence(legacyCredentialApi);
-
-    await expect(
-      persistence.profiles.list(claudeSubscriptionService),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        ref: {
-          service: claudeSubscriptionService,
-          accountId: 'work',
-        },
-        revisionSemantics: 'revisioned',
-        credentialRevision,
-        authenticationModeId: 'setup-token',
-        configurationReady: false,
-        configurationRevision: null,
-      }),
-    ]);
-  });
-
-  it('projects revisioned Gemini OAuth as needs_reauth without granting currentness authority', async () => {
-    const legacyCredentialApi = createLegacyApi();
-    legacyCredentialApi.listConnectedServiceProfiles.mockResolvedValue({
-      serviceId: 'gemini',
-      profiles: [{
-        profileId: 'old-oauth',
-        status: 'connected',
-        kind: 'oauth',
-      }],
-    });
-    legacyCredentialApi.getConnectedServiceCredentialPlain.mockResolvedValue({
-      revisionSemantics: 'revisioned',
-      credentialRevision,
-      content: { t: 'plain', v: unsupportedGeminiOauthRecord },
-    });
-    const persistence = createRevisionedPeerPersistence(legacyCredentialApi);
-
-    await expect(
-      persistence.profiles.list({
-        pluginId: 'happier.agent.gemini',
-        localId: 'gemini-account',
-      }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        ref: {
-          service: {
-            pluginId: 'happier.agent.gemini',
-            localId: 'gemini-account',
-          },
-          accountId: 'old-oauth',
-        },
-        status: 'needs_reauth',
-        authenticationModeId: null,
-        kind: 'oauth',
-        configurationReady: false,
-      }),
-    ]);
-
-    await expect(
-      persistence.attempts.accounts.readExact({
-        service: {
-          pluginId: 'happier.agent.gemini',
-          localId: 'gemini-account',
-        },
-        accountId: 'old-oauth',
-      }),
-    ).rejects.toMatchObject({
-      code: 'connected_account_legacy_operation_unsupported',
-    });
-    expect(
-      legacyCredentialApi.getConnectedServiceCredentialPlain,
-    ).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps exact unfenced passive reads on the legacy seam without fabricating qualified revisions', async () => {
-    const legacyCredentialApi = createLegacyApi();
+describe('qualified Connected Account daemon old-peer refusal', () => {
+  it.each([
+    { name: 'revisioned scalar peer', service: claudeSubscriptionService, exactPeer: false },
+    { name: 'historical Gemini OAuth scalar peer', service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' }, exactPeer: false },
+    { name: 'exact released unfenced peer', service: claudeSubscriptionService, exactPeer: true },
+  ])('refuses $name before credential reads or outward effects', async ({ service, exactPeer }) => {
+    // These injected ports are genuine V4 network/storage boundaries. An old
+    // peer must be refused before dispatch; retained 0.2 DATA is tested through
+    // qualified snapshots in the established-owner and default-resolver suites.
+    const getAccountEncryptionMode = vi.fn(async () => 'plain' as const);
+    const listProfiles = vi.fn(async () => { throw new Error('Unexpected qualified list dispatch'); });
+    const readCredential = vi.fn(async () => null);
+    const readConfiguration = vi.fn(async () => null);
+    const mutateCredential = vi.fn();
+    const mutateConfiguration = vi.fn();
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(7),
-        },
-      },
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      resolveServerFeaturesSnapshot: () => ({
-        status: 'ready',
-        features: exactPeerFeatures,
-      }),
-      resolveSessionSyncPendingInputServerContractResult: () => ({
-        mode: 'released_server_v0_2_1',
-        runtimeActivity: 'legacy',
-        pendingInput: 'released_server_v0_2_1',
-        publisherAuthority: 'indeterminate',
-        sessionConnectionEpoch: 4,
-        socket: { connected: true },
-      }),
-      legacyCredentialApi,
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
+      getAccountEncryptionMode,
+      listProfiles,
+      readCredential,
+      readConfiguration,
+      mutateCredential,
+      mutateConfiguration,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: exactPeer ? exactPeerFeatures : revisionedPeerFeatures }),
+      ...(exactPeer ? {
+        resolveSessionSyncPendingInputServerContractResult: () => ({
+          mode: 'released_server_v0_2_1' as const,
+          runtimeActivity: 'legacy' as const,
+          pendingInput: 'released_server_v0_2_1' as const,
+          publisherAuthority: 'indeterminate' as const,
+          sessionConnectionEpoch: 4,
+          socket: { connected: true },
+        }),
+      } : {}),
+      secrets: { admit: vi.fn(async () => undefined), has: vi.fn(async () => false), read: vi.fn(async () => null) },
     });
 
-    await expect(
-      persistence.profiles.list(claudeSubscriptionService),
-    ).rejects.toMatchObject({
-      code: 'connected_account_legacy_operation_unsupported',
-    });
-    await expect(
-      persistence.attempts.accounts.readExact({
-        service: claudeSubscriptionService,
-        accountId: 'work',
-      }),
-    ).rejects.toMatchObject({
-      code: 'connected_account_legacy_operation_unsupported',
-    });
-    expect(legacyCredentialApi.listConnectedServiceProfiles)
-      .not.toHaveBeenCalled();
-    expect(legacyCredentialApi.getConnectedServiceCredentialPlain)
-      .not.toHaveBeenCalled();
+    await expect(persistence.profiles.list(service)).rejects.toMatchObject({ code: 'connected_account_capability_indeterminate' });
+    await expect(persistence.attempts.accounts.readExact({ service, accountId: 'work' })).rejects.toMatchObject({ code: 'connected_account_capability_indeterminate' });
+    expect(listProfiles).not.toHaveBeenCalled();
+    expect(readCredential).not.toHaveBeenCalled();
+    expect(readConfiguration).not.toHaveBeenCalled();
+    expect(mutateCredential).not.toHaveBeenCalled();
+    expect(mutateConfiguration).not.toHaveBeenCalled();
   });
 });

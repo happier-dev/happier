@@ -7,7 +7,6 @@ import {
   DEFAULT_BOUNDED_LOG_MAX_BYTES,
 } from '../proc/boundedLog.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
-import { stopStackWithEnv } from './stop.mjs';
 import { readStackRuntimeStateFile } from './runtime_state.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
 
@@ -39,6 +38,7 @@ const ownerPid = parsePositiveInt(parseFlagValue('--owner-pid'), 0);
 const ownerStartedAtRaw = parseFlagValue('--owner-started-at');
 const ownerStartedAt = normalizeStackRuntimeOwnerStartedAt(ownerStartedAtRaw);
 const pollMs = parsePositiveInt(parseFlagValue('--poll-ms'), 1000);
+const watchesParent = parseFlagValue('--owner-ipc') === 'true';
 const logFile = parseFlagValue('--log-file');
 const logMaxBytes = parsePositiveInt(
   parseFlagValue('--log-max-bytes'),
@@ -120,6 +120,7 @@ async function sweepOwnedRuntime(runtimeState = null) {
   const expectedOwnerPid = ownerPid;
   const expectedOwnerStartedAt = ownerStartedAt;
   try {
+    const { stopStackWithEnv } = await import('./stop.mjs');
     const actions = await stopStackWithEnv({
       rootDir,
       stackName,
@@ -258,8 +259,16 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => finalize(0));
 }
 
+function startPolling() {
+  if (pollTimer || stopping) return;
+  // Disconnect can precede process exit. Keep the canonical liveness and
+  // incarnation checks until the owner is actually gone.
+  pollTimer = setInterval(() => {
+    void tick();
+  }, pollMs);
+}
+
+if (watchesParent) process.once('disconnect', startPolling);
 await writeLog(`watching owner pid=${ownerPid}`);
 await tick();
-pollTimer = setInterval(() => {
-  void tick();
-}, pollMs);
+if (!watchesParent || !process.connected) startPolling();

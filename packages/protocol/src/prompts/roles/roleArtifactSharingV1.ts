@@ -1,11 +1,12 @@
 import type { ArtifactSharingKindAdapterV1, ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
 import { RoleArtifactV1Schema } from './roleArtifactV1.js';
 import type { RoleActionEntryV1 } from './roleActionsV1.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 function readRole(resource: ArtifactSharingResourceV1) {
   if (resource.header.kind !== 'role.v1' || typeof resource.body !== 'string') return null;
   try {
-    const parsed = RoleArtifactV1Schema.safeParse(JSON.parse(resource.body));
+    const parsed = createStoredReadSchema(RoleArtifactV1Schema).safeParse(JSON.parse(resource.body));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;

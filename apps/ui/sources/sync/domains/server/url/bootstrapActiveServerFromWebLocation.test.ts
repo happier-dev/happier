@@ -8,9 +8,17 @@ function randomScope(): string {
 }
 
 function stubWebLocation(href: string) {
+    const location = { href };
+    const history = {
+        state: null as unknown,
+        replaceState: vi.fn((state: unknown, _title: string, relativeUrl: string) => {
+            history.state = state;
+            location.href = new URL(relativeUrl, location.href).href;
+        }),
+    };
     vi.stubGlobal('window', {
-        location: { href },
-        history: { replaceState: vi.fn() },
+        location,
+        history,
     });
     const lockTails = new Map<string, Promise<void>>();
     vi.stubGlobal('navigator', {
@@ -177,7 +185,7 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         await upsertServerProfile({ serverUrl: 'http://localhost:53288', source: 'manual' });
         const { resolveWebServerUrlOverrideAction } = await import('./resolveAuthenticatedWebServerUrlOverrideAction');
         expect(resolveWebServerUrlOverrideAction({ bootstrappedServerUrl: 'http://localhost:53288' })).toEqual({
-            kind: 'refresh_auth', cleanedRelativeUrl: '/',
+            kind: 'refresh_auth', serverUrl: 'http://happier-qa.localhost:53288',
         });
     });
 
@@ -245,21 +253,21 @@ describe('bootstrapActiveServerFromWebLocation', () => {
 
     it('removes the URL intent only after the server connection and auth commit succeeds', async () => {
         const events: string[] = [];
+        stubWebLocation('https://app.example.test/session/session-1?server=https%3A%2F%2Fstack.example.test');
+        vi.mocked(window.history.replaceState).mockImplementation((_state, _title, url) => {
+            events.push(`replace:${String(url)}`);
+        });
         const { commitWebServerUrlOverride } = await importFreshBootstrap();
         await commitWebServerUrlOverride({
             action: {
                 kind: 'switch_server',
                 serverUrl: 'https://stack.example.test',
-                cleanedRelativeUrl: '/session/session-1',
             },
             switchServer: async () => {
                 events.push('connected-and-authenticated');
             },
             refreshAuth: async () => {
                 events.push('refresh-auth');
-            },
-            replaceRelativeUrl: (url) => {
-                events.push(`replace:${url}`);
             },
         });
         expect(events).toEqual([
@@ -269,20 +277,107 @@ describe('bootstrapActiveServerFromWebLocation', () => {
     });
 
     it('retains the URL intent when connection or auth commit rejects', async () => {
-        const replaceRelativeUrl = vi.fn();
+        stubWebLocation('https://app.example.test/?server=https%3A%2F%2Fstack.example.test');
+        const replaceRelativeUrl = window.history.replaceState;
         const { commitWebServerUrlOverride } = await importFreshBootstrap();
         await expect(commitWebServerUrlOverride({
             action: {
                 kind: 'switch_server',
                 serverUrl: 'https://stack.example.test',
-                cleanedRelativeUrl: '/',
             },
             switchServer: async () => {
                 throw new Error('auth failed');
             },
             refreshAuth: async () => {},
-            replaceRelativeUrl,
         })).rejects.toThrow('auth failed');
         expect(replaceRelativeUrl).not.toHaveBeenCalled();
+    });
+
+    it('cleans the current route instead of restoring the route captured before auth refresh', async () => {
+        const serverUrl = 'https://stack.example.test';
+        stubWebLocation(`https://app.example.test/settings/actions/session.spawn_new?server=${encodeURIComponent(serverUrl)}&tab=old#old`);
+        const { commitWebServerUrlOverride, readWebServerUrlOverrideFromLocation } = await importFreshBootstrap();
+        const supplied = readWebServerUrlOverrideFromLocation();
+        if (!supplied) throw new Error('Expected the genuine URL decoder to admit the supplied Home');
+
+        // Browser location/history and completion of external auth are the boundaries;
+        // the override decoder and commit owner remain real.
+        let completeAuth!: () => void;
+        const authPending = new Promise<void>((resolve) => { completeAuth = resolve; });
+        const commit = commitWebServerUrlOverride({
+            action: { kind: 'refresh_auth', serverUrl: supplied.serverUrl },
+            switchServer: async () => { throw new Error('Same-Home refresh must not switch Homes'); },
+            refreshAuth: () => authPending,
+        });
+        expect(window.history.replaceState).not.toHaveBeenCalled();
+
+        window.location.href = `https://app.example.test/settings/sub-agent?server=${encodeURIComponent(serverUrl)}&panel=delegation#report-back`;
+        completeAuth();
+        await commit;
+
+        expect(new URL(window.location.href)).toMatchObject({
+            pathname: '/settings/sub-agent',
+            search: '?panel=delegation',
+            hash: '#report-back',
+        });
+    });
+
+    it.each([
+        {
+            reason: 'a different supplied Home',
+            href: 'https://app.example.test/settings/sub-agent?server=https%3A%2F%2Fother.example.test&panel=delegation#report-back',
+        },
+        {
+            reason: 'navigation that already removed the supplied intent',
+            href: 'https://app.example.test/settings/sub-agent?panel=delegation#report-back',
+        },
+        {
+            reason: 'terminal-owned server parameters',
+            href: 'https://app.example.test/terminal/connect?server=https%3A%2F%2Fstack.example.test#key=terminal-fixture',
+        },
+    ])('does not consume $reason when auth completion arrives later', async ({ href }) => {
+        const serverUrl = 'https://stack.example.test';
+        stubWebLocation(`https://app.example.test/settings/actions/session.spawn_new?server=${encodeURIComponent(serverUrl)}`);
+        const { commitWebServerUrlOverride, readWebServerUrlOverrideFromLocation } = await importFreshBootstrap();
+        const supplied = readWebServerUrlOverrideFromLocation();
+        if (!supplied) throw new Error('Expected the genuine URL decoder to admit the supplied Home');
+        let completeAuth!: () => void;
+        const authPending = new Promise<void>((resolve) => { completeAuth = resolve; });
+        const commit = commitWebServerUrlOverride({
+            action: { kind: 'refresh_auth', serverUrl: supplied.serverUrl },
+            switchServer: async () => { throw new Error('Same-Home refresh must not switch Homes'); },
+            refreshAuth: () => authPending,
+        });
+
+        window.location.href = href;
+        completeAuth();
+        await commit;
+
+        expect(window.location.href).toBe(href);
+    });
+
+    it('does not clean a supplied intent after its mounted owner cancels the pending commit', async () => {
+        stubWebLocation('https://app.example.test/settings/sub-agent?server=https%3A%2F%2Fstack.example.test&panel=delegation#report-back');
+        const { commitWebServerUrlOverride, readWebServerUrlOverrideFromLocation } = await importFreshBootstrap();
+        const supplied = readWebServerUrlOverrideFromLocation();
+        if (!supplied) throw new Error('Expected the genuine URL decoder to admit the supplied Home');
+        const controller = new AbortController();
+        let completeAuth!: () => void;
+        const authPending = new Promise<void>((resolve) => { completeAuth = resolve; });
+        const retainedHref = window.location.href;
+        // Forward the mounted Gate's existing lifecycle signal, not a new auth
+        // cancellation mechanism. Completion can arrive despite owner retirement.
+        const params = {
+            action: { kind: 'refresh_auth' as const, serverUrl: supplied.serverUrl },
+            signal: controller.signal,
+            switchServer: async () => { throw new Error('Same-Home refresh must not switch Homes'); },
+            refreshAuth: () => authPending,
+        };
+        const commit = commitWebServerUrlOverride(params);
+        controller.abort();
+        completeAuth();
+        await commit;
+
+        expect(window.location.href).toBe(retainedHref);
     });
 });

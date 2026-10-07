@@ -1,4 +1,4 @@
-import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -12,7 +12,7 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 
 import { createCliActionDeps } from './createCliActionDeps';
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
-import { getSharedBlockingApprovalCoordinator } from './approvals/blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 type MutableActionExecutorDeps = {
   -readonly [Key in keyof ActionExecutorDeps]: ActionExecutorDeps[Key];
@@ -97,13 +97,14 @@ export function createCliActionExecutorHarness(
           })) : null;
         },
       });
-      return { ...result, request: ApprovalRequestSchema.parse(result.request) };
+      return { ...result, request: StoredApprovalRequestSchema.parse(result.request) };
     },
     approvalsResolveBlockingDecision: async (args: ApprovalResolveBlockingDecisionArgs) =>
       await coordinator.resolveBlockingDecision({
         artifactId: args.artifactId,
         request: args.request,
         decision: args.decision,
+        decisionAuthority: args.decisionAuthority,
       }),
     isActionEnabled,
     isActionApprovalRequired,

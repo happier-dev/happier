@@ -29,6 +29,8 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 export type SessionRuntimeControls = {
+  /** Current prepared coding policy, projected by the Session prompt-plan owner. */
+  readCodingPromptBehavior?: () => import('@happier-dev/protocol').CodingPromptBehaviorV1 | null;
   /** Host-owned effective configuration, not caller metadata or provider guesses. */
   readEffectiveInputConfiguration?: () => Readonly<{
     modelSelection: import('@happier-dev/protocol').ProviderBoundModelRef | null;

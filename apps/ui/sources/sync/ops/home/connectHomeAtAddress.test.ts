@@ -219,22 +219,21 @@ describe('connectHomeAtAddress', () => {
         expect(profileFacts()).toEqual(before);
     });
 
-    it('waits for valid public features beyond the foreground fallback budget before adopting the Home', async () => {
+    it('waits for valid slow public features before adopting the Home', async () => {
         const { operation, before, profileFacts } = await owner();
-        const { FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const immediateFetch = boundary.fetch.getMockImplementation()!;
         vi.useFakeTimers();
         boundary.fetch.mockImplementation(async (url: RequestInfo | URL) => {
             if (String(url).endsWith('/v1/features')) {
-                await new Promise<void>((resolve) => setTimeout(resolve, FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS * 2));
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_600));
             }
             return immediateFetch(url);
         });
 
         const connection = operation.connectHomeAtAddress(input());
-        await vi.advanceTimersByTimeAsync(FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS);
+        await vi.advanceTimersByTimeAsync(800);
         expect(profileFacts()).toEqual(before);
-        await vi.advanceTimersByTimeAsync(FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS);
+        await vi.advanceTimersByTimeAsync(800);
         expect((await connection).kind).toBe('connected');
         expect(profileFacts().length).toBe(before.length + 1);
     });

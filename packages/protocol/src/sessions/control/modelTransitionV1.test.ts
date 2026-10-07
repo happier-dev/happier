@@ -34,9 +34,11 @@ describe('session model transition host-private control contract', () => {
   });
 
   it('keeps active and requested structured refs in typed failure results', () => {
+    const reason = 'é'.repeat(4_000);
     expect(SessionModelTransitionResultV1Schema.parse({
       ok: false,
       status: 'restart_required',
+      reason,
       activeSelection: {
         agentTargetKey: 'backend:claude',
         providerConnectionId: 'pc_work',
@@ -50,6 +52,7 @@ describe('session model transition host-private control contract', () => {
     })).toMatchObject({
       ok: false,
       status: 'restart_required',
+      reason,
       activeSelection: { providerConnectionId: 'pc_work' },
       requestedSelection: { providerConnectionId: 'pc_other' },
     });

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
+
 const NonEmptyStringSchema = z.string().trim().min(1);
 
 const legacyVendorSkillBackends = {
@@ -87,18 +89,22 @@ function normalizeSkillCatalogItemInput(value: unknown): unknown {
     ?? readString(value.projectionKind)
     ?? legacy.projectionRef
     ?? null;
-  const id = readString(value.id) ?? buildSkillCatalogItemId({
+  const suppliedId = readNonBlankOpaqueIdentifier(value.id);
+  const id = suppliedId ?? buildSkillCatalogItemId({
     backendId,
     name,
     origin: canonicalOrigin,
     projectionRef,
   });
+  const path = readString(value.path) ?? readString(value.location);
 
   return {
     ...value,
     v: 1,
     id,
+    ...(!suppliedId ? { idSource: 'generated' } : {}),
     origin: canonicalOrigin,
+    ...(path ? { path } : {}),
     ...(backendId ? { backendId } : {}),
     ...(projectionRef ? { projectionRef } : {}),
   };
@@ -121,7 +127,7 @@ export type SkillCatalogItemIdentityV1 = Readonly<{
 export function resolveSkillCatalogItemIdentityV1(value: unknown): SkillCatalogItemIdentityV1 | null {
   const normalized = normalizeSkillCatalogItemInput(value);
   if (!isRecord(normalized)) return null;
-  const id = readString(normalized.id);
+  const id = readNonBlankOpaqueIdentifier(normalized.id);
   const name = readString(normalized.name);
   const origin = readString(normalized.origin);
   if (!id || !name || (origin !== 'vendor' && origin !== 'happier')) return null;
@@ -142,7 +148,8 @@ export const SkillCatalogItemV1Schema = z.preprocess(
   z
     .object({
       v: z.literal(1),
-      id: NonEmptyStringSchema,
+      id: NonBlankOpaqueIdentifierSchema,
+      idSource: z.literal('generated').optional(),
       origin: SkillCatalogOriginV1Schema,
       name: NonEmptyStringSchema,
       displayName: NonEmptyStringSchema.optional(),

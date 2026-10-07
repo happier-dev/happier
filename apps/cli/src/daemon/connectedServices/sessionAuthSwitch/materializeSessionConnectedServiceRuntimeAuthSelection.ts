@@ -37,13 +37,6 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   if (!binding || binding.source !== 'connected') return null;
 
   if (typeof params.api.getAccountEncryptionMode !== 'function') return null;
-  if (
-    typeof params.api.getConnectedServiceCredentialPlain !== 'function'
-    && typeof params.api.getConnectedServiceCredentialSealed !== 'function'
-  ) {
-    return null;
-  }
-
   const previousSelections = readConnectedServiceChildSelectionsFromEnv(
     params.input.tracked.spawnOptions?.environmentVariables ?? {},
   );

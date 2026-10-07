@@ -24,4 +24,11 @@ describe('authoring-memory envelopes', () => {
     expect(() => assertAuthoringMemoryContentForModeV1({ t: 'plain', v: 'profile' }, 'e2ee')).toThrow();
     expect(() => assertAuthoringMemoryContentForModeV1({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: {}, randomBytes }) }, 'e2ee')).toThrow();
   });
+
+  it('drops additive persisted envelope fields while mutation content remains strict', () => {
+    const stored = { t: 'plain', v: { opaque: { future: true } }, futureEnvelopeField: true };
+    expect(assertAuthoringMemoryContentForModeV1(stored, 'plain')).toEqual({ t: 'plain', v: stored.v });
+    expect(AuthoringMemoryContentV1Schema.safeParse(stored).success).toBe(false);
+    expect(() => assertAuthoringMemoryContentForModeV1(stored, 'e2ee')).toThrow();
+  });
 });

@@ -89,6 +89,12 @@ export type PosthogIssueQueryDetail = PosthogIssueRow & Readonly<{
     topInAppFrame: PosthogTopFrame | null;
     latestRelease: PosthogLatestRelease | null;
     impact: PosthogAggregations | null;
+    /**
+     * `[SCHEMA]` "Optional compact occurrence sparkline": occurrence counts in equal-width
+     * buckets across the request's `dateRange`, oldest first. `null` when absent or when
+     * any bucket is unreadable — a partial series would draw a shape PostHog never stated.
+     */
+    sparkline: readonly number[] | null;
 }>;
 
 /** `GET error_tracking/issues/{id}/` — the authoritative CRUD metadata plane. */
@@ -228,7 +234,22 @@ export function parsePosthogIssueQueryDetail(value: unknown): PosthogIssueQueryD
         topInAppFrame: parseTopFrame(raw['top_in_app_frame']),
         latestRelease: parseLatestRelease(raw['latest_release']),
         impact: parseAggregations(raw['impact']),
+        sparkline: parseSparkline(raw['sparkline']),
     };
+}
+
+function parseSparkline(value: unknown): readonly number[] | null {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+    const counts: number[] = [];
+    for (const bucket of value) {
+        if (typeof bucket !== 'number' || !Number.isFinite(bucket) || bucket < 0) {
+            return null;
+        }
+        counts.push(bucket);
+    }
+    return counts;
 }
 
 function parseSeverity(value: unknown): PosthogNativeSeverity | null {

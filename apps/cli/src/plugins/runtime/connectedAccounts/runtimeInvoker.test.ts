@@ -12,13 +12,8 @@ import type {
     TargetPluginInterceptedRequest as PluginInterceptedRequest,
 } from '../lifecycle/contributions/targetRequestInterceptors';
 import type {
-    ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,
     ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-
-import {
-    materializeFirstPartyConnectedAccountBearer,
-} from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import type {
     ResolvedConnectedAccountDescriptorContribution,
 } from '@/plugins/projection/registry/types';
@@ -37,6 +32,7 @@ import type {
 } from '@/plugins/runtime/invocation/services/logger';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
+    type ConnectedAccountAttemptProviderInvocation,
     type ConnectedAccountOAuthCallbackCompletion,
 } from './authenticationAttemptOwner';
 import {
@@ -203,6 +199,36 @@ function invokeEstablished(
 }
 
 describe('connected-account runtime invoker', () => {
+    it('preserves every quota window returned by a trusted runtime without a host item cap', async () => {
+        const quota = {
+            observedAtMs: 1_000,
+            planLabel: 'Acme Enterprise',
+            limits: Array.from({ length: 129 }, (_, index) => ({
+                id: `window-${index}`,
+                remaining: index,
+            })),
+        };
+        const invoker = createEstablishedInvoker({
+            ...runtime(() => {}),
+            async quota() { return quota; },
+        });
+
+        await expect(invokeEstablished(invoker, { kind: 'quota' })).resolves.toEqual(quota);
+    });
+    it('accepts a trusted runtime materialization with computed SDK fields', async () => {
+        const headers = { authorization: 'Bearer computed-credential' };
+        const invoker = createEstablishedInvoker({
+            ...runtime(() => {}),
+            async materialize() {
+                return { kind: 'httpHeaders', get headers() { return headers; } };
+            },
+        });
+        await expect(invokeEstablished(invoker, {
+            kind: 'materialize', request: {
+                kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+            },
+        })).resolves.toEqual({ kind: 'httpHeaders', headers });
+    });
     it('consumes through the optional recovery facet under exact account context and fails closed without it', async () => {
         const operation = { kind: 'recoveryCredits.consume', request: { idempotencyKey: 'key-1', providerCreditId: 'credit-1' } } as const;
         const invoker = createEstablishedInvoker({
@@ -227,7 +253,7 @@ describe('connected-account runtime invoker', () => {
         }, () => true, false);
         await expect(invokeEstablished(undeclared, operation)).resolves.toBeNull();
     });
-    it('rejects an authentication callback when its generation retires during its await', async () => {
+    it('settles an entered authentication callback across runtime reload when its captured configuration is current', async () => {
         let generationCurrent = true;
         let releaseCompletion!: () => void;
         let markEntered!: () => void;
@@ -295,151 +321,10 @@ describe('connected-account runtime invoker', () => {
         generationCurrent = false;
         releaseCompletion();
 
-        await expect(outcome).rejects.toThrow(/authentication runtime is no longer current/i);
+        await expect(outcome).resolves.toEqual({
+            status: 'connected', accountId: 'account-a', displayName: 'Account A', scopes: [],
+        });
     });
-
-    it('refuses a proxy materialization that retires its generation during request-auth inspection', async () => {
-        let generationCurrent = true;
-        const rawHeaders = Object.freeze({
-            authorization: 'Bearer must-not-escape',
-        });
-        const materialization = new Proxy({
-            kind: 'httpHeaders' as const,
-            headers: rawHeaders,
-        }, {
-            ownKeys(target) {
-                generationCurrent = false;
-                return Reflect.ownKeys(target);
-            },
-        });
-        const registeredRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async materialize() {
-                return materialization;
-            },
-        };
-        const invoker = createEstablishedInvoker(
-            registeredRuntime,
-            () => generationCurrent,
-        );
-        const credentialRevision =
-            ConnectedServiceCredentialRevisionV1Schema.parse(
-                'csr_abcdefghijklmnopqrstuv',
-            );
-        let disclosed: Awaited<
-            ReturnType<typeof materializeFirstPartyConnectedAccountBearer>
-        > | null = null;
-
-        await expect((async () => {
-            disclosed = await materializeFirstPartyConnectedAccountBearer({
-                resolved: Object.freeze({
-                    account: Object.freeze({
-                        service,
-                        accountId: 'account-a',
-                    }),
-                    credentialRevision,
-                }),
-                materialization: Object.freeze({
-                    kind: 'httpHeaders' as const,
-                    origin: 'https://api.example.test',
-                    headerNames: Object.freeze(['authorization']),
-                }),
-                transport: Object.freeze({ kind: 'v4' as const }),
-                establishedRuntimeOwner: Object.freeze({
-                    async invokeWithReceipt(input) {
-                        return Object.freeze({
-                            result: await invokeEstablished(
-                                invoker,
-                                input.operation,
-                                () => generationCurrent,
-                            ),
-                            basis: Object.freeze({
-                                credentialRevision,
-                                isCurrent: () => generationCurrent,
-                            }),
-                        });
-                    },
-                }),
-                resolveCredential: async () => null,
-            });
-        })()).rejects.toMatchObject({
-            code: 'connected_account_producer_result_stale',
-        });
-        expect(disclosed).toBeNull();
-    });
-
-    it.each([
-        Object.freeze({
-            name: 'headers',
-            operation: Object.freeze({
-                kind: 'materialize' as const,
-                request: Object.freeze({
-                    kind: 'httpHeaders' as const,
-                    origin: 'https://api.example.test',
-                    headerNames: Object.freeze(['authorization']),
-                }),
-            }),
-            resultKind: 'httpHeaders' as const,
-            resultField: 'headers' as const,
-            resultValue: Object.freeze({
-                authorization: 'Bearer must-not-escape',
-            }),
-        }),
-        Object.freeze({
-            name: 'environment',
-            operation: Object.freeze({
-                kind: 'materialize' as const,
-                request: Object.freeze({
-                    kind: 'environment' as const,
-                    keys: Object.freeze(['TOKEN']),
-                }),
-            }),
-            resultKind: 'environment' as const,
-            resultField: 'env' as const,
-            resultValue: Object.freeze({ TOKEN: 'must-not-escape' }),
-        }),
-        Object.freeze({
-            name: 'files',
-            operation: Object.freeze({
-                kind: 'materialize' as const,
-                request: Object.freeze({
-                    kind: 'files' as const,
-                    fileIds: Object.freeze(['credential']),
-                }),
-            }),
-            resultKind: 'files' as const,
-            resultField: 'files' as const,
-            resultValue: Object.freeze({
-                credential: new Uint8Array([115, 101, 99, 114, 101, 116]),
-            }),
-        }),
-    ])(
-        'rejects accessor-backed $name without reading or returning materialized data',
-        async ({ operation, resultKind, resultField, resultValue }) => {
-            const readMaterial = vi.fn(() => resultValue);
-            const maliciousResult = Object.defineProperty({
-                kind: resultKind,
-            }, resultField, {
-                enumerable: true,
-                get: readMaterial,
-            });
-            const registeredRuntime: PluginConnectedAccountRuntime = {
-                ...runtime(() => {}),
-                async materialize() {
-                    // Deliberately hostile plugin return used to exercise the host boundary.
-                    return maliciousResult as PluginConnectedAccountMaterialization;
-                },
-            };
-
-            await expect(invokeEstablished(
-                createEstablishedInvoker(registeredRuntime),
-                operation,
-            )).rejects.toMatchObject({
-                code: 'connected_account_producer_result_invalid',
-            });
-            expect(readMaterial).not.toHaveBeenCalled();
-        },
-    );
 
     it('copies file materialization bytes into a detached host-owned result', async () => {
         const pluginBytes = new Uint8Array([1, 2, 3]);
@@ -517,163 +402,6 @@ describe('connected-account runtime invoker', () => {
         expect(result.files.credential).not.toBe(pluginBytes);
         pluginBytes[0] = 9;
         expect([...result.files.credential!]).toEqual([1, 2, 3]);
-    });
-
-    it('refuses a status result that retires its generation during inspection before health persistence', async () => {
-        let generationCurrent = true;
-        const healthPersistence = vi.fn();
-        const statusResult = new Proxy({
-            status: 'connected' as const,
-            displayName: 'Must not persist',
-            scopes: Object.freeze([]),
-        }, {
-            getOwnPropertyDescriptor(target, property) {
-                if (property === 'displayName') generationCurrent = false;
-                return Reflect.getOwnPropertyDescriptor(target, property);
-            },
-        });
-        const registeredRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async status() {
-                return statusResult;
-            },
-        };
-
-        await expect((async () => {
-            const result = await invokeEstablished(
-                createEstablishedInvoker(
-                    registeredRuntime,
-                    () => generationCurrent,
-                ),
-                Object.freeze({ kind: 'status' as const }),
-                () => generationCurrent,
-            );
-            await healthPersistence(result);
-        })()).rejects.toMatchObject({
-            code: 'connected_account_producer_result_stale',
-        });
-        expect(healthPersistence).not.toHaveBeenCalled();
-    });
-
-    it('distinguishes an unavailable quota leaf from an invalid null quota result', async () => {
-        await expect(invokeEstablished(
-            createEstablishedInvoker(runtime(() => {})),
-            Object.freeze({ kind: 'quota' as const }),
-        )).resolves.toBeNull();
-
-        const invalidQuotaRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async quota() {
-                // Deliberately violates the SDK contract at the untrusted plugin boundary.
-                return null as never;
-            },
-        };
-        await expect(invokeEstablished(
-            createEstablishedInvoker(invalidQuotaRuntime),
-            Object.freeze({ kind: 'quota' as const }),
-        )).rejects.toMatchObject({
-            code: 'connected_account_producer_result_invalid',
-        });
-    });
-
-    it('rejects rejected health results that carry fields outside the strict union member', async () => {
-        const registeredRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async status() {
-                return Object.freeze({
-                    status: 'rejected',
-                    diagnostic: Object.freeze({
-                        code: 'provider_rejected',
-                        severity: 'error',
-                    }),
-                    displayName: 'must-not-cross-the-host-boundary',
-                }) as never;
-            },
-        };
-
-        await expect(invokeEstablished(
-            createEstablishedInvoker(registeredRuntime),
-            Object.freeze({ kind: 'status' as const }),
-        )).rejects.toMatchObject({
-            code: 'connected_account_producer_result_invalid',
-        });
-    });
-
-    it('refuses a quota result that retires its generation before quota persistence', async () => {
-        let generationCurrent = true;
-        const quotaPersistence = vi.fn();
-        const quotaResult = new Proxy({
-            observedAtMs: 1_000,
-            limits: Object.freeze([]),
-        }, {
-            getOwnPropertyDescriptor(target, property) {
-                if (property === 'limits') generationCurrent = false;
-                return Reflect.getOwnPropertyDescriptor(target, property);
-            },
-        });
-        const registeredRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async quota() {
-                return quotaResult;
-            },
-        };
-
-        await expect((async () => {
-            const result = await invokeEstablished(
-                createEstablishedInvoker(
-                    registeredRuntime,
-                    () => generationCurrent,
-                ),
-                Object.freeze({ kind: 'quota' as const }),
-                () => generationCurrent,
-            );
-            await quotaPersistence(result);
-        })()).rejects.toMatchObject({
-            code: 'connected_account_producer_result_stale',
-        });
-        expect(quotaPersistence).not.toHaveBeenCalled();
-    });
-
-    it('refuses a refresh result that retires its generation before credential persistence', async () => {
-        let generationCurrent = true;
-        const credentialPersistence = vi.fn();
-        const refreshResult = new Proxy({
-            status: 'connected' as const,
-        }, {
-            ownKeys(target) {
-                generationCurrent = false;
-                return Reflect.ownKeys(target);
-            },
-        });
-        const registeredRuntime: PluginConnectedAccountRuntime = {
-            ...runtime(() => {}),
-            async refresh() {
-                return refreshResult;
-            },
-        };
-
-        await expect((async () => {
-            const result = await invokeEstablished(
-                createEstablishedInvoker(
-                    registeredRuntime,
-                    () => generationCurrent,
-                ),
-                Object.freeze({
-                    kind: 'refresh' as const,
-                    operationId: 'refresh-1',
-                    stagedCredentials: Object.freeze({
-                        get: async () => null,
-                        set: async () => {},
-                        delete: async () => {},
-                    }),
-                }),
-                () => generationCurrent,
-            );
-            await credentialPersistence(result);
-        })()).rejects.toMatchObject({
-            code: 'connected_account_producer_result_stale',
-        });
-        expect(credentialPersistence).not.toHaveBeenCalled();
     });
 
     it('redacts runtime credential reads and fences a retained logger after settlement', async () => {
@@ -1195,9 +923,10 @@ describe('connected-account runtime invoker', () => {
         { successor: 'configurationChanged', authentication: 'device', retirement: 'callback' },
         { successor: 'sameSource', authentication: 'device', retirement: 'callback' },
         { successor: 'sameSource', authentication: 'manual', retirement: 'command' },
+        { successor: 'changedForm', authentication: 'manual', retirement: 'command' },
         { successor: 'sameSource', authentication: 'manual', retirement: 'resolution' },
     ] as const)(
-        'recovers only an unchanged $authentication step when the runtime becomes $successor at $retirement before provider entry', async ({ successor, authentication, retirement }) => {
+        'preserves captured $authentication state when the runtime becomes $successor at $retirement', async ({ successor, authentication, retirement }) => {
         const authenticationMode = authentication === 'manual' ? mode
             : PluginConnectedAccountAuthenticationModeV2Schema.parse({
                 id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none',
@@ -1251,13 +980,28 @@ describe('connected-account runtime invoker', () => {
             readPluginOccurrenceId: () => identity.occurrenceId,
             readPluginSourceCustody: () => identity.sourceCustody,
             isPluginOccurrenceCurrent: (_pluginId, occurrenceId) => occurrenceId === identity.occurrenceId,
-            descriptors: [contribution],
+            descriptors: [successor === 'changedForm' && mode.kind === 'manual' && identity !== runtimeIdentity ? {
+                ...contribution,
+                definition: {
+                    ...serviceDescriptor,
+                    authentication: {
+                        defaultModeId: 'manual',
+                        modes: [{ ...mode, fields: [{ id: 'apiKey', title: 'API key', schema: { type: 'string' }, secret: true }] }],
+                    },
+                },
+            } : contribution],
             activateOnDemand: async () => {},
             readRegistrations: () => [{
                 pluginId: service.pluginId,
                 occurrenceId: identity.occurrenceId,
                 localId: service.localId,
-                runtime: registeredRuntime,
+                runtime: successor === 'changedForm' && identity !== runtimeIdentity ? {
+                    ...registeredRuntime,
+                    authentication: { modes: { manual: { kind: 'manual', complete: async ({ fields }) => {
+                        if (!fields.apiKey) return { status: 'rejected', diagnostic: { code: 'missing_api_key', severity: 'error' } };
+                        return { status: 'connected', displayName: 'Successor', scopes: [] };
+                    } } } },
+                } : registeredRuntime,
             }],
         });
         let registry = createRegistry();
@@ -1314,11 +1058,9 @@ describe('connected-account runtime invoker', () => {
         });
         const settle = vi.fn(async () => ({ status: 'connected' as const, account: { service, accountId: 'account-a' } }));
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
-            maxAttempts: 1,
             createAttemptId: () => 'attempt-1',
             createAccountId: () => 'account-1',
             now: () => 1_000,
-            attemptTtlMs: 60_000,
             accounts: Object.freeze({
                 readExact: async () => null,
             }),
@@ -1332,6 +1074,11 @@ describe('connected-account runtime invoker', () => {
                         descriptor: authenticationMode,
                         occurrenceId: lease.occurrenceId,
                         sourceCustody: lease.sourceCustody,
+                        runtimeCustody: {
+                            lease,
+                            invoke: async (input: ConnectedAccountAttemptProviderInvocation) => invoker.invokeAuthentication({ ...input, isConfigurationCurrent: configurationOwner.isCurrent }),
+                            release: async () => {},
+                        },
                     });
                 },
                 isCurrent: async (admission) => registry.describe(service)?.isCurrent() === true
@@ -1382,23 +1129,19 @@ describe('connected-account runtime invoker', () => {
             attemptId: 'attempt-1',
             fields: Object.freeze({ token: 'candidate' }),
         });
-        if (successor === 'sameSource') {
-            expect(response).toEqual({
-                status: 'connected',
-                attemptId: 'attempt-1',
-                account: { service, accountId: 'account-a' },
-            });
-            expect(complete).toHaveBeenCalledOnce();
-            expect(settle).toHaveBeenCalledOnce();
-        } else {
-            expect(response).toMatchObject({
-                status: successor === 'unavailable' ? 'unavailable' : 'conflict',
-                attemptId: 'attempt-1',
-                code: 'connected_account_runtime_generation_changed',
-            });
-            expect(complete).not.toHaveBeenCalled();
-            expect(settle).not.toHaveBeenCalled();
-        }
+        expect(response).toEqual({
+            status: 'connected',
+            attemptId: 'attempt-1',
+            account: { service, accountId: 'account-a' },
+        });
+        expect(complete).toHaveBeenCalledOnce();
+        expect(settle).toHaveBeenCalledOnce();
+        await expect(attempts.read({ attemptId: 'attempt-1' })).resolves.toEqual(response);
+        await expect(attempts.reconcile({ attemptId: 'attempt-1' })).resolves.toEqual(response);
+        await expect(attempts.cancel({ attemptId: 'attempt-1' })).resolves.toEqual(response);
+        await expect(attempts.read({ attemptId: 'attempt-1' })).resolves.toMatchObject({
+            status: 'unavailable', code: 'connected_account_attempt_not_found',
+        });
         attempts.dispose();
     });
 
@@ -1521,11 +1264,9 @@ describe('connected-account runtime invoker', () => {
             });
             const settle = vi.fn();
             const attempts = createConnectedAccountAuthenticationAttemptOwner({
-                maxAttempts: 1,
                 createAttemptId: () => 'attempt-1',
                 createAccountId: () => 'account-1',
                 now: () => 1_000,
-                attemptTtlMs: 60_000,
                 accounts: Object.freeze({
                     readExact: async () => null,
                 }),

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { run } from '../utils/proc/proc.mjs';
-import { getRuntimePortExtraEnv, withStackEnv } from './stack_environment.mjs';
+import { withStackEnv } from './stack_environment.mjs';
 
 export async function cmdService({ rootDir, stackName, svcCmd, args = [] }) {
   await withStackEnv({
@@ -26,10 +26,8 @@ export async function cmdRuntime({ rootDir, stackName, runtimeCommand, args = []
 }
 
 export async function cmdTailscale({ rootDir, stackName, subcmd, args }) {
-  const extraEnv = await getRuntimePortExtraEnv(stackName);
   await withStackEnv({
     stackName,
-    ...(extraEnv ? { extraEnv } : {}),
     fn: async ({ env }) => {
       await run(process.execPath, [join(rootDir, 'scripts', 'tailscale.mjs'), subcmd, ...args], { cwd: rootDir, env });
     },
@@ -78,10 +76,8 @@ export async function cmdAuth({ rootDir, stackName, args }) {
   // Forward to scripts/auth.mjs under the stack env.
   // This makes `hstack stack auth <name> ...` resolve CLI home/urls for that stack.
   const forwarded = args[0] === '--' ? args.slice(1) : args;
-  const extraEnv = await getRuntimePortExtraEnv(stackName);
   await withStackEnv({
     stackName,
-    ...(extraEnv ? { extraEnv } : {}),
     fn: async ({ env }) => {
       await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), ...forwarded], { cwd: rootDir, env });
     },

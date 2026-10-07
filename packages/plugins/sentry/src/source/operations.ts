@@ -19,6 +19,7 @@ import type {
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
   TriageGetInputV1Schema,
+  isTriageSourceConnectedAccountInstanceV1,
   TriageListInstancesInputV1Schema,
   TriageScanInputV1Schema,
   type TriageGetResultV1,
@@ -451,6 +452,10 @@ export async function scanSentrySource(
     failure,
   });
 
+  if (!isTriageSourceConnectedAccountInstanceV1(parsed.instance)) {
+    return failed(sourceFailure('unsupported-credential-source'));
+  }
+
   const routed = resolveInstanceDeployment(parsed.instance.localInstanceKey);
   if (!routed.ok) return failed(toTriageFailure(routed.failure));
 
@@ -524,6 +529,10 @@ export async function getSentrySourceEntry(
     }),
     failure,
   });
+
+  if (!isTriageSourceConnectedAccountInstanceV1(parsed.instance)) {
+    return unresolved(sourceFailure('unsupported-credential-source'));
+  }
 
   const routed = admitSentryEntryInvocation({
     localInstanceKey: parsed.instance.localInstanceKey,

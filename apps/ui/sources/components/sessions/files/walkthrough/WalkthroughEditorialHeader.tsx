@@ -55,7 +55,7 @@ export const WalkthroughEditorialHeader = React.memo(function WalkthroughEditori
         fileCount: reading.source.fileCount,
         added: reading.source.added,
         removed: reading.source.removed,
-        linesKnown: true,
+        linesKnown: reading.source.linesKnown,
     };
     const stopped = reading.phase === 'failed' || reading.phase === 'cancelled' || reading.phase === 'partial';
     const facts = (

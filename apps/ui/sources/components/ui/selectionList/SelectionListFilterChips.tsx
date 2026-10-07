@@ -76,6 +76,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     accessibilityLabel={clearable
                         ? [valueLabel, filter.count, filter.clearAccessibilityLabel].filter(Boolean).join(', ')
                         : `${filter.label}: ${valueLabel}`}
+                    {...(filter.accessibilityHint === undefined ? {} : { accessibilityHint: filter.accessibilityHint })}
                     expanded={canOpen ? open : undefined}
                     hasPopup={canOpen ? 'dialog' : undefined}
                     disabled={!canOpen && !clearable}

@@ -1,6 +1,34 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { abandonSpawnedSessionUntilCompleted } from './awaitSpawnedSessionId';
+import { abandonSpawnedSessionBestEffort, abandonSpawnedSessionUntilCompleted } from './awaitSpawnedSessionId';
+
+describe('abandonSpawnedSessionBestEffort', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it('retains accepted cleanup observation for the authored duration instead of imposing a one-hour cap', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SPAWN_ABANDON_TIMEOUT_MS', '7200000');
+    let resolveStartup!: (result: { status: 'success'; sessionId: string }) => void;
+    const startup = new Promise<{ status: 'success'; sessionId: string }>((resolve) => { resolveStartup = resolve; });
+    const stopSession = vi.fn(async () => true);
+    const archiveSession = vi.fn(async () => {});
+    abandonSpawnedSessionBestEffort({
+      spawnNonce: 'accepted-cleanup', reason: 'caller cancelled',
+      resolveSpawnSessionByNonce: () => startup, stopSession, archiveSession,
+    });
+
+    await vi.advanceTimersByTimeAsync(60 * 60_000 + 1);
+    expect(stopSession).not.toHaveBeenCalled();
+    resolveStartup({ status: 'success', sessionId: 'late-session' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopSession).toHaveBeenCalledWith('late-session');
+    expect(archiveSession).toHaveBeenCalledWith('late-session');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe('abandonSpawnedSessionUntilCompleted', () => {
   it('reports completed only after positive canonical cleanup', async () => {

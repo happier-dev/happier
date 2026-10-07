@@ -10,6 +10,21 @@ import type { ScmComparison } from '@happier-dev/protocol';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
+it('shows the explanation gist as readable text without citation destinations or Markdown markers', async () => {
+    const { WalkthroughExplainNotes } = await import('./WalkthroughExplainNotes');
+    const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
+        walkthrough: { state: 'complete', value: { ...SPECIMEN_WALKTHROUGH,
+            stops: SPECIMEN_WALKTHROUGH.stops.map((stop) => ({ ...stop,
+                explanationMarkdown: '**The hook** keeps **[the sheet](finding:run:f1)** aligned with `**flag**`. More detail.',
+            })),
+        } }, analysis: SPECIMEN_ANALYSIS_COMPLETE, reviewed: null });
+    const path = reading.stops[0]!.files[0]!.path;
+    const screen = await renderScreen(<WalkthroughExplainNotes reading={reading} path={path} hunkIndex={0} placement="column" />);
+    expect(screen.getTextContent()).toContain('The hook keeps the sheet aligned with **flag**.');
+    expect(screen.getTextContent()).not.toContain('finding:run:f1');
+    expect(screen.getTextContent()).not.toContain('More detail.');
+});
+
 it('renders a many-hunk reading without traversing global stops or whole-file references per note', async () => {
     const { WalkthroughExplainNotes } = await import('./WalkthroughExplainNotes');
     const path = 'src/many.ts';

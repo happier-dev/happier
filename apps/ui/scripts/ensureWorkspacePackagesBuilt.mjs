@@ -8,11 +8,8 @@ import {
   inspectUsableSourceDevSharedDepsLastGreen,
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
-import {
-  findReactNativeEnrichedMarkdownPackageDirs,
-  formatReactNativeEnrichedMarkdownWebStreamingPatchFailure,
-  verifyReactNativeEnrichedMarkdownWebStreamingPatch,
-} from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
+import { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
+export { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import {
   generateBundledPluginUiArtifacts as generateBundledPluginUiArtifactsDefault,
   resolveBundledPluginUiArtifactsOutputPath,
@@ -48,29 +45,6 @@ export async function hasUsableUiWorkspaceLastGreen({
     { workspaceNames: ['plugin-sdk'] },
   );
   return inspection?.usable === true;
-}
-
-export function verifyUiPatchedDependencies({ uiPackageDir = uiDir } = {}) {
-  const packageDirs = findReactNativeEnrichedMarkdownPackageDirs({
-    repoRootDir: resolve(uiPackageDir, '../..'),
-    expoAppDir: uiPackageDir,
-  });
-  if (packageDirs.length === 0) {
-    throw new Error(
-      '[ui] react-native-enriched-markdown is not installed. Run the canonical UI dependency preparation: '
-      + 'yarn --cwd apps/ui postinstall:real',
-    );
-  }
-
-  const failures = packageDirs.flatMap((packageDir) => {
-    const result = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir });
-    return result.status === 'ok'
-      ? []
-      : [`${packageDir}\n${formatReactNativeEnrichedMarkdownWebStreamingPatchFailure(result)}`];
-  });
-  if (failures.length > 0) {
-    throw new Error(`[ui] patched dependency preflight failed:\n${failures.join('\n\n')}`);
-  }
 }
 
 function readRebuiltBundledPluginWorkspaceNames(result) {

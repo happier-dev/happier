@@ -103,6 +103,11 @@ export type HappierFieldBoxTriggerProps = Readonly<{
   children: ReactNode;
   /** The adapter's chevron (it owns the icon pack). */
   trailing?: ReactNode;
+  /**
+   * `content` (default): sized to its choice, within the trigger bounds. `row`: stacked under its
+   * label, the field spans the row (the bounds are for a field beside a label).
+   */
+  span?: 'content' | 'row';
 }>;
 
 /**
@@ -110,7 +115,7 @@ export type HappierFieldBoxTriggerProps = Readonly<{
  * mark, the value (or placeholder) and a trailing chevron. Not itself
  * pressable — the row or trigger around it owns the interaction and focus.
  */
-export function HappierFieldBoxTrigger({ colors, leading, children, trailing }: HappierFieldBoxTriggerProps) {
+export function HappierFieldBoxTrigger({ colors, leading, children, trailing, span }: HappierFieldBoxTriggerProps) {
   return (
     <View
       style={[HAPPIER_FIELD_BOX_SHAPE, {
@@ -118,7 +123,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing }: 
         alignItems: 'center',
         gap: HAPPIER_FIELD_BOX_METRICS.triggerGapPx,
         minWidth: HAPPIER_FIELD_BOX_METRICS.triggerMinWidthPx,
-        maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx,
+        ...(span === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
         backgroundColor: colors.backgroundColor,
       }]}

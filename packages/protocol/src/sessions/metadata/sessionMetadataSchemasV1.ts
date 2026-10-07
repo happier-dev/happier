@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { z } from 'zod';
 import { SessionPermissionApprovalReviewerClaimV1Schema } from '../permissions/v1.js';
@@ -1055,7 +1056,7 @@ const SessionOwnerHistoryV1Schema = lazyZodSchema(() => z.object({
   }).strict().optional(),
   replaySeedV1: z.object({
     v: z.literal(1),
-    seedText: z.string().max(1_000_000),
+    seedText: z.string(),
     sourceSessionId: BoundedIdentifierSchema,
     sourceCutoffSeqInclusive: z.number().int().nonnegative(),
     createdAtMs: TimestampSchema,
@@ -2538,7 +2539,7 @@ export function parseSessionOwnerMetadataEnvelopeV1(
   } catch {
     return null;
   }
-  const parsed = SessionOwnerMetadataEnvelopeV1Schema.safeParse(value);
+  const parsed = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 

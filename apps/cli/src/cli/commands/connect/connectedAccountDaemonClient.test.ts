@@ -40,8 +40,8 @@ describe('createConnectedAccountDaemonClient', () => {
             }],
           },
         },
-        generation: 'generation-1',
-        immutableGenerationId: 'artifact-1',
+        occurrenceId: 'occurrence-1',
+        sourceCustody: { kind: 'managed', immutableGenerationId: 'artifact-1', installSource: 'archive' },
         accounts: [],
       })
       .mockResolvedValueOnce({

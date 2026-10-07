@@ -14,6 +14,7 @@ import type {
   AgentSessionRealtimeRuntime as ExperimentalAgentSessionRealtimeRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
 import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
@@ -48,6 +49,7 @@ import {
 } from '../../../protocol/runtimeDescriptorV1.js';
 import { createCodexSharedAppServer } from './sharedServer.js';
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
+import { readCodexAuthTokensFromNativeHome } from '../../cli/auth/environment.js';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
 
@@ -119,6 +121,37 @@ async function applyCodexConfigurationOptions(
     changed.push(`options.${id}`);
   }
   return changed;
+}
+
+function createNativeRuntimeAuthRefresh(params: Readonly<{
+  auth: SessionAuthService;
+  nativeHome: CodexAppServerRuntimeHost['nativeHome'];
+  signal: AbortSignal;
+}>): NonNullable<CodexAppServerRuntimeHost['refreshRuntimeAuth']> {
+  return async (request) => {
+    const refreshed = await params.auth.services.refreshRuntimeAuth(request, { signal: params.signal });
+    if (refreshed.status !== 'refreshed') return refreshed;
+    const proof = refreshed.result;
+    const credentialRevision = proof && typeof proof === 'object' && !Array.isArray(proof)
+      && 'credentialRevision' in proof
+      && typeof proof.credentialRevision === 'string' ? proof.credentialRevision : null;
+    if (!credentialRevision) {
+      return { status: 'failed', reason: 'runtime_auth_credential_revision_unavailable' };
+    }
+    // The daemon's proof settles only after this exact home was rematerialized.
+    // Decode native access material here; the Agent never performs a token exchange.
+    const tokens = await readCodexAuthTokensFromNativeHome(params.nativeHome);
+    params.signal.throwIfAborted();
+    if (!tokens.accessToken || !tokens.accountId) {
+      return { status: 'failed', reason: 'runtime_auth_native_materialization_unavailable' };
+    }
+    return { status: 'refreshed', result: {
+      accessToken: tokens.accessToken,
+      chatgptAccountId: tokens.accountId,
+      chatgptPlanType: request.planType ?? null,
+      credentialRevision,
+    } };
+  };
 }
 
 export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
@@ -210,12 +243,11 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
       },
     } : {}),
     refreshRuntimeAuth: async (request) => {
-      const refreshRuntimeAuth = params.context.services.sessions.current?.auth.services.refreshRuntimeAuth;
-      if (!refreshRuntimeAuth) throw new Error('Codex Session-handle runtime authentication is unavailable.');
-      return await refreshRuntimeAuth(
-        request,
-        { signal: params.context.signal },
-      );
+      const auth = params.context.services.sessions.current?.auth;
+      if (!auth) throw new Error('Codex Session-handle runtime authentication is unavailable.');
+      return await createNativeRuntimeAuthRefresh({
+        auth, nativeHome: params.context.session.services.nativeHome, signal: params.context.signal,
+      })(request);
     },
     ...(currentSession ? { publishGeneratedMedia: async (candidate) => {
       if (mediaDisposed) throw new Error('Codex generated-media publication is disposed.');
@@ -247,16 +279,17 @@ export function createCodexNativeAppServerExecutionRunRuntimeHost(params: Readon
   sharedAppServer?: CodexSharedAppServer | null;
 }>): CodexAppServerRuntimeHost {
   const auth = params.context.executionRun.services.auth;
+  const refreshRuntimeAuth: CodexAppServerRuntimeHost['refreshRuntimeAuth'] = auth
+    ? createNativeRuntimeAuthRefresh({
+        auth, nativeHome: params.context.executionRun.services.nativeHome, signal: params.context.signal,
+      })
+    : undefined;
   return {
     baseProcessEnv: params.processEnv,
     ...(params.context.executionRun.services.nativeHome
       ? { nativeHome: params.context.executionRun.services.nativeHome }
       : {}),
-    ...(auth ? {
-      refreshRuntimeAuth: async (request) => await auth.services.refreshRuntimeAuth(
-        request, { signal: params.context.signal },
-      ),
-    } : {}),
+    ...(refreshRuntimeAuth ? { refreshRuntimeAuth } : {}),
     logger: params.context.services.logger,
     ui: params.context.services.interactions,
     createClient: async (clientRequest) => params.sharedAppServer

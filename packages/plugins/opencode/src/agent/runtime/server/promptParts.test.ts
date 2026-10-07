@@ -22,7 +22,10 @@ describe('buildOpenCodePromptParts', () => {
       { type: 'text', text: 'Review this' },
       { type: 'agent', name: 'reviewer' },
       {
-        type: 'text',
+        type: 'skill',
+        id: 'skill-1',
+        name: 'security-review',
+        path: '/repo/.agents/skills/security-review/SKILL.md',
         text: 'Use the security-review skill for this request.',
       },
     ]);

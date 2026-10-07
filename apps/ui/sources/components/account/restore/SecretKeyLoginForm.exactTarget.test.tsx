@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
@@ -16,9 +16,11 @@ import { t } from '@/text';
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn(), targets: [] as Array<{ endpointUrl: string; credentials?: AuthCredentials | null }> }));
 vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (target: { endpointUrl: string; credentials?: AuthCredentials | null }) => {
+    createServerFetchAtEndpoint: (target: { endpointUrl: string; credentials?: AuthCredentials | null; signal?: AbortSignal }) => {
         boundary.targets.push(target);
-        return (path: string, init?: RequestInit) => boundary.request(target.endpointUrl, path, init);
+        return (path: string, init?: RequestInit) => boundary.request(target.endpointUrl, path, {
+            ...init, signal: init?.signal ?? target.signal,
+        });
     },
     serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
 }));
@@ -32,6 +34,70 @@ let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 beforeEach(() => { restore = installLocalStorageMock().restore; boundary.targets.length = 0; boundary.request.mockReset(); });
 afterEach(async () => { await screen?.unmount(); screen = undefined; vi.unstubAllEnvs(); restore(); });
 
+it.each(['focused-unmount', 'exact-unmount', 'exact-retarget'] as const)(
+    'retires %s authentication transport and never commits its late credential', async (retirement) => {
+        const fixture = createDirectoryHttpFixture();
+        const identity = `srv_cancel_${retirement}`;
+        const origin = `https://cancel-${retirement}.test`;
+        const home = await adoptHomeProfile({ descriptor: { ...fixture.home.connectionDescriptor,
+            homeServerIdentityId: identity, canonicalServerUrl: origin, endpoints: [{ kind: 'https', url: origin }] },
+            source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+        await setActiveServerId(home.id, { scope: 'device' });
+        const response = createDeferred<Response>();
+        let redemptionStarted = false;
+        let requestSignal: AbortSignal | null | undefined;
+        boundary.request.mockImplementation(async (_endpoint: string, path: string, init?: RequestInit) => {
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+                serverIdentity: { serverIdentityId: identity }, server: { canonicalServerUrl: origin },
+            } }));
+            if (path === '/v1/auth') {
+                redemptionStarted = true;
+                requestSignal = init?.signal;
+                // A late peer response must be ignored even when the IO boundary cannot cancel.
+                return await response.promise;
+            }
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        const onAuthenticated = vi.fn();
+        const onSuccess = vi.fn();
+        const target = { endpointUrl: home.serverUrl, canonicalServerUrl: home.serverUrl,
+            serverId: identity, serverIdentityId: identity,
+            requireKeyChallengeV2: false };
+        const form = retirement === 'focused-unmount'
+            ? <SecretKeyLoginForm onSuccess={onSuccess} />
+            : <SecretKeyLoginForm target={target} onAuthenticated={onAuthenticated} />;
+        screen = await renderScreen(<AuthProvider initialCredentials={null}>{form}</AuthProvider>);
+        await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
+        let submission!: Promise<unknown>;
+        act(() => { submission = screen!.findByTestId('restore-manual-submit')!.props.onPress(); });
+        try {
+            await act(async () => { await vi.waitFor(() => expect(redemptionStarted).toBe(true)); });
+            if (retirement === 'exact-retarget') {
+                // Equivalent freshly-created target props must keep the original observation alive.
+                await screen.update(<AuthProvider initialCredentials={null}>
+                    <SecretKeyLoginForm target={{ ...target }} onAuthenticated={onAuthenticated} />
+                </AuthProvider>);
+                expect(requestSignal?.aborted).toBe(false);
+                await screen.update(<AuthProvider initialCredentials={null}>
+                    <SecretKeyLoginForm target={{ ...target, endpointUrl: 'https://successor-home.test',
+                        canonicalServerUrl: 'https://successor-home.test', serverIdentityId: 'srv_successor', serverId: 'srv_successor' }}
+                        onAuthenticated={onAuthenticated} />
+                </AuthProvider>);
+            } else {
+                await screen.unmount();
+                screen = undefined;
+            }
+            expect(requestSignal?.aborted).toBe(true);
+        } finally {
+            await act(async () => { response.resolve(Response.json({ token: fixture.token })); await submission; });
+        }
+        expect(onAuthenticated).not.toHaveBeenCalled();
+        expect(onSuccess).not.toHaveBeenCalled();
+        expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: identity })).toBeNull();
+    },
+);
+
 it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before completion while Stack and focus remain A', async (mode) => {
     const fixture = createDirectoryHttpFixture();
     const homeA = await adoptHomeProfile({ descriptor: { ...fixture.home.connectionDescriptor,
@@ -44,6 +110,8 @@ it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before 
     await TokenStorage.setCredentialsForServerUrl(homeA.serverUrl, { serverId: 'srv_home_a' }, credentialsA);
     vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', 'stack');
     vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', homeA.serverUrl);
+    // Retire the preceding case under this case's adopted Home/Stack scope.
+    await TokenStorage.removeCredentialsForServerUrl(homeB.serverUrl, { serverId: 'srv_home_b' });
     let release!: () => void;
     const responseGate = new Promise<void>((resolve) => { release = resolve; });
     let redemptionStarted = false;

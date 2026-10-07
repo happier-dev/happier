@@ -25,6 +25,11 @@ export type SessionControlActionInputById = {
         title: string;
         sessionId?: string | undefined;
     };
+    readonly "session.permission_mode.set": {
+        [x: string]: unknown;
+        sessionId: string;
+        permissionMode: unknown;
+    };
     readonly "session.model.set": {
         [x: string]: unknown;
         sessionId: string;
@@ -168,6 +173,9 @@ export type SessionControlActionResultById = {
     readonly "session.title.set": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "session.permission_mode.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
     readonly "session.model.set": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
@@ -282,6 +290,7 @@ export type SessionControlActionResultById = {
             id: string;
             origin: 'vendor' | 'happier';
             name: string;
+            idSource?: 'generated' | undefined;
             displayName?: string | undefined;
             description?: string | undefined;
             backendId?: string | undefined;
@@ -303,6 +312,7 @@ export type SessionControlActionResultById = {
                 id: string;
                 origin: 'vendor' | 'happier';
                 name: string;
+                idSource?: 'generated' | undefined;
                 displayName?: string | undefined;
                 description?: string | undefined;
                 backendId?: string | undefined;

@@ -78,6 +78,7 @@ function createTestPluginSessionsInventory(
       follow: unavailable,
     }),
     list: vi.fn(async () => ({ items: [], nextCursor: null })),
+    closeList: async () => {},
     attach: vi.fn(async () => { throw new Error('test_unavailable'); }),
     readTranscript: vi.fn(async () => { throw new Error('test_unavailable'); }),
     followTranscript: vi.fn(async () => ({ status: 'unavailable' as const, code: 'test_unavailable' })),
@@ -127,7 +128,7 @@ function createTestPluginSessionsInventory(
 }
 
 describe('Plugin Sessions External Sessions binding', () => {
-  it('publishes the injected six-method author service unchanged', () => {
+  it('publishes the injected author service unchanged', () => {
     const unavailable = Object.freeze({ status: 'unavailable' as const, code: 'not_ready' });
     const external = Object.freeze({
       capabilities: vi.fn(async () => Object.freeze({
@@ -138,6 +139,7 @@ describe('Plugin Sessions External Sessions binding', () => {
         follow: unavailable,
       })),
       list: vi.fn(async () => ({ items: [], nextCursor: null })),
+      closeList: async () => {},
       attach: vi.fn(async () => ({ sessionId: 'session-1' })),
       readTranscript: vi.fn(async () => ({
         mode: 'page' as const,
@@ -166,6 +168,7 @@ describe('Plugin Sessions External Sessions binding', () => {
     expect(Reflect.ownKeys(sessions.external).sort()).toEqual([
       'attach',
       'capabilities',
+      'closeList',
       'followTranscript',
       'list',
       'readTranscript',
@@ -789,6 +792,7 @@ describe('plugin sessions inventory public service boundary', () => {
 
   it('replays and follows the bound Session transcript identically for ordinary and Agent invocations', async () => {
     vi.useFakeTimers();
+    const committedText = `${'x'.repeat(50_001)}complete-tail`;
     const ordinarySocket = createWatchSocket();
     const agentSocket = createWatchSocket();
     socketBoundary.create.mockImplementation(({ sessionId }: { sessionId: string }) => (
@@ -834,7 +838,7 @@ describe('plugin sessions inventory public service boundary', () => {
           seq: 3,
           createdAt: 12,
           messageRole: 'agent',
-          content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'world' } } },
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: committedText } } },
         }] : []),
         ...(latestSequence >= 4 ? [{
           id: 'message-4', seq: 4, createdAt: 13, messageRole: 'agent',
@@ -914,7 +918,7 @@ describe('plugin sessions inventory public service boundary', () => {
     ordinarySocket.emit('update', { id: 'committed', seq: 2, createdAt: 12,
       body: { t: 'new-message', sid: 'session-ordinary', message: {
         id: 'message-3', seq: 3, localId: null, createdAt: 12, updatedAt: 12,
-        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'world' } } },
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: committedText } } },
       } } });
     agentSocket.emit('update', { id: 'turn-committed', seq: 2, createdAt: 12,
       body: { t: 'update-session', id: 'session-agent', latestTurnId: 'turn-1', latestTurnStatus: 'completed' } });
@@ -929,7 +933,7 @@ describe('plugin sessions inventory public service boundary', () => {
         version: 1,
         messageId: 'message-3',
         sender: 'agent',
-        parts: [{ kind: 'text', text: 'world' }],
+        parts: [{ kind: 'text', text: committedText }],
       },
     });
     const messageRequests = get.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith('/messages'));

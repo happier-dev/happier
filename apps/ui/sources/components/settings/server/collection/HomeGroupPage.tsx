@@ -175,7 +175,7 @@ const NewHomeGroupPage = React.memo(function NewHomeGroupPage() {
         <ItemList keyboardShouldPersistTaps="handled">
             <PageHeader
                 testID="settings.homes.groupDraft.header"
-                alwaysShowTitle
+                alwaysShowTitle={name.trim().length > 0}
                 title={name.trim() || t('addFlows.newGroup')}
                 description={t('server.addServerGroupSubtitle')}
                 leading={<HomeMark glyph="stack" size="page" />}

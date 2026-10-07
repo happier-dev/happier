@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import {
@@ -266,16 +265,13 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         assertCurrent(phase?: ConnectedAccountCallbackCurrentnessPhase): Promise<void>;
         lifetime: PluginInvocationLifetime;
     }>> {
-        const lease = await params.resolveRuntime(input.admission.service);
+        const lease = input.admission.runtimeCustody?.lease
+            ?? await params.resolveRuntime(input.admission.service);
         if (!lease) {
             throw new Error('Connected-account runtime is unavailable');
         }
-        if (
-            lease.occurrenceId !== input.admission.occurrenceId
-            || !pluginSourceCustodyV1Equal(lease.sourceCustody, input.admission.sourceCustody)
-            || !sameService(lease.ref, input.admission.service)
-        ) {
-            throw new ConnectedAccountRuntimeInvocationNotStartedError();
+        if (!sameService(lease.ref, input.admission.service)) {
+            throw new Error('Connected-account runtime does not match the captured service');
         }
         const plugin = params.resolvePlugin(lease.ref);
         if (!plugin) {
@@ -296,29 +292,19 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             surface: 'cli',
             signal,
             redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
-            isOccurrenceCurrent: () => !signal.aborted && lease.isCurrent(),
+            // The daemon retains the registry lease through this invocation.
+            // Reload publication does not retire an already-entered auth flow.
+            isOccurrenceCurrent: () => !signal.aborted,
         });
         const assertCurrent = async (
-            phase: ConnectedAccountCallbackCurrentnessPhase = 'afterCallback',
+            _phase: ConnectedAccountCallbackCurrentnessPhase = 'afterCallback',
         ): Promise<void> => {
             if (signal.aborted) {
                 throw signal.reason instanceof Error
                     ? signal.reason
                     : new Error('Connected-account authentication operation was aborted');
             }
-            if (!lease.isCurrent()) {
-                if (phase === 'beforeCallback') {
-                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
-                }
-                throw new Error('Connected-account authentication runtime is no longer current');
-            }
             if (!await input.isConfigurationCurrent(input.context.configuration)) {
-                throw new Error('Connected-account authentication runtime is no longer current');
-            }
-            if (!lease.isCurrent()) {
-                if (phase === 'beforeCallback') {
-                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
-                }
                 throw new Error('Connected-account authentication runtime is no longer current');
             }
         };
@@ -360,7 +346,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     ...(configurationRevocationSignal === undefined
                         ? {}
                         : { configurationRevocationSignal }),
-                    isOccurrenceCurrent: () => lease.isCurrent(),
+                    isOccurrenceCurrent: () => !signal.aborted,
                     ...(params.resolveNetworkAddresses
                         ? { resolveNetworkAddresses: params.resolveNetworkAddresses }
                         : {}),

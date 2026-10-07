@@ -27,7 +27,10 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
     args.signal?.throwIfAborted();
     if (!resource || resource.artifactId !== input.artifactId) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
     if (resource.access !== 'owner') throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
-    if (!getArtifactUseTargetV1(resource).canShare) throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
+    // Existing publications must remain revocable even if the current kind no longer admits new links.
+    if (args.actionId === 'artifact.public_link.create' && !getArtifactUseTargetV1(resource).publicLinkAllowed) {
+      throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
+    }
     const listPath = `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: input.artifactId })}`;
     if (args.actionId === 'artifact.public_link.list') {
       const result = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path: listPath, signal: args.signal }));

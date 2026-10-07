@@ -173,7 +173,7 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
             ? undefined
             : LinearTransition
                 .duration(reanimatedMotionTokens.durationMs.base)
-                .easing(reanimatedMotionTokens.easing.standard.factory())
+                .easing(reanimatedMotionTokens.layoutEasing.standard)
                 .reduceMotion(ReduceMotion.Never)
     ), [reducedMotion]);
     const labelEntering = React.useMemo(() => (

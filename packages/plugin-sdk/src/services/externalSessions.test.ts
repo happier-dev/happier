@@ -38,10 +38,11 @@ type IsRequired<T, Key extends keyof T> = {} extends Pick<T, Key> ? false : true
 type KeysOfUnion<T> = T extends T ? keyof T : never;
 
 describe('External Sessions contextual service contract', () => {
-    it('declares exactly the six contextual methods and a required Sessions service', () => {
+    it('declares contextual methods with explicit list demand release and a required Sessions service', () => {
         expectTypeOf<keyof ExternalSessionsService>().toEqualTypeOf<
             | 'capabilities'
             | 'list'
+            | 'closeList'
             | 'attach'
             | 'readTranscript'
             | 'followTranscript'
@@ -55,6 +56,10 @@ describe('External Sessions contextual service contract', () => {
             query?: ExternalSessionListQuery,
             options?: PluginCancellationOptions,
         ) => Promise<ExternalSessionListPage>>();
+        expectTypeOf<ExternalSessionsService['closeList']>().toEqualTypeOf<(
+            cursor: string,
+            options?: PluginCancellationOptions,
+        ) => Promise<void>>();
         expectTypeOf<ExternalSessionsService['attach']>().toEqualTypeOf<(
             ref: ExternalSessionRef,
             options?: PluginCancellationOptions,

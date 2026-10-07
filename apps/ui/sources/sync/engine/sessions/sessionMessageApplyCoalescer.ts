@@ -1,4 +1,5 @@
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { recordRealtimeFanoutCoalescerActivity } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -9,7 +10,7 @@ export type SessionMessageApplyCoalescerConfig = Readonly<{
     maxBatchSize: number;
 }>;
 
-type TimerHandle = ReturnType<typeof setTimeout>;
+type TimerHandle = () => void;
 
 type SessionMessageApplyOptions = Readonly<{
     deferLeadingBatch?: boolean;
@@ -84,7 +85,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
 
     function clearFlushTimer(state: SessionQueueState): void {
         if (state.timer) {
-            clearTimeout(state.timer);
+            state.timer();
             state.timer = null;
         }
     }
@@ -136,10 +137,10 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
 
     function scheduleFlush(sessionId: string, state: SessionQueueState, windowMs: number): void {
         if (state.timer) return;
-        state.timer = setTimeout(() => {
+        state.timer = armDeadlineTimer(Date.now() + windowMs, () => {
             state.timer = null;
             flush(sessionId);
-        }, windowMs);
+        });
     }
 
     function hasVisibleBlockingQueuedWork(state: SessionQueueState): boolean {

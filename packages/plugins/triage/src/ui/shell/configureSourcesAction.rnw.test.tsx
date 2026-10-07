@@ -273,7 +273,7 @@ describe('the unconfigured PRs & Issues screen', () => {
             .resolves.toBeDefined();
         await expect(toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Save as new view' }))
             .resolves.toBeDefined();
-        await expect(shell.getByRole('button', { name: 'Configure Example Forge' }))
+        await expect(shell.getByRole('button', { name: 'Connect Example Forge' }))
             .resolves.toBeDefined();
         await expect(toolbarMenuItem(shell, 'More', 'menuitem', { name: 'Manage sources' }))
             .resolves.toBeDefined();
@@ -282,8 +282,8 @@ describe('the unconfigured PRs & Issues screen', () => {
     it('takes the reader to the page the source named', async () => {
         const shell = await mountShell({ settingsPageId: 'triage-sources' });
 
-        await expect(shell.getByText('No sources are configured')).resolves.toBeDefined();
-        const configure = await shell.getByRole('button', { name: 'Configure Example Forge' });
+        await expect(shell.getByText('Connect a source')).resolves.toBeDefined();
+        const configure = await shell.getByRole('button', { name: 'Connect Example Forge' });
 
         await act(async () => { await shell.press(configure); });
         await act(async () => { await Promise.resolve(); });
@@ -297,23 +297,15 @@ describe('the unconfigured PRs & Issues screen', () => {
         expect(opened[0]?.subPath).toBeUndefined();
     });
 
-    it('offers every source behind one primary Add a source menu', async () => {
-        // Six equal "Configure X" buttons made the first-run screen a wall of
-        // choices with no primary action. One primary action opens the choice;
-        // every source stays one press away.
+    it('offers every source as its own Connect tile, each opening that source\'s page', async () => {
+        // The lab's first run: a reader picks where their work lives from the sources themselves, each a
+        // destination one press away, rather than hunting for them behind a menu.
         const shell = await mountShell({ settingsPageId: 'triage-sources', secondSource: true });
 
-        await expect(shell.getByText('No sources are configured')).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'Configure Example Forge' }))
-            .resolves.toBeUndefined();
-        await expect(shell.queryByRole('button', { name: 'Configure Example Tracker' }))
-            .resolves.toBeUndefined();
-
-        await expect(toolbarMenuItem(shell, 'Add a source', 'menuitem', { name: 'Example Forge' }))
-            .resolves.toBeDefined();
-        await act(async () => {
-            await pressToolbarMenuItem(shell, 'Add a source', 'menuitem', 'Example Tracker');
-        });
+        await expect(shell.getByText('Connect a source')).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Connect Example Forge' })).resolves.toBeDefined();
+        const tracker = await shell.getByRole('button', { name: 'Connect Example Tracker' });
+        await act(async () => { await shell.press(tracker); });
         await act(async () => { await Promise.resolve(); });
 
         expect(opened).toHaveLength(1);
@@ -344,7 +336,7 @@ describe('the unconfigured PRs & Issues screen', () => {
 
     it('shows no search box while there is nothing to search', async () => {
         const shell = await mountShell({ settingsPageId: 'triage-sources' });
-        await expect(shell.getByText('No sources are configured')).resolves.toBeDefined();
+        await expect(shell.getByText('Connect a source')).resolves.toBeDefined();
         await expect(shell.queryByRole('textbox', { name: 'Search PRs & Issues' })).resolves.toBeUndefined();
 
         const configured = await mountShell({ settingsPageId: 'triage-sources', configured: true });
@@ -357,7 +349,7 @@ describe('the unconfigured PRs & Issues screen', () => {
         const shell = await mountShell({});
 
         await expect(shell.getByText('No sources are configured')).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'Configure Example Forge' }))
+        await expect(shell.queryByRole('button', { name: 'Connect Example Forge' }))
             .resolves.toBeUndefined();
     });
 
@@ -365,7 +357,7 @@ describe('the unconfigured PRs & Issues screen', () => {
         const shell = await mountShell({ settingsPageId: 'triage-sources', canOpenSurface: false });
 
         await expect(shell.getByText('No sources are configured')).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'Configure Example Forge' }))
+        await expect(shell.queryByRole('button', { name: 'Connect Example Forge' }))
             .resolves.toBeUndefined();
     });
 
@@ -373,7 +365,7 @@ describe('the unconfigured PRs & Issues screen', () => {
         const shell = await mountShell({ settingsPageId: 'triage-sources', openRefuses: true });
 
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Configure Example Forge' }));
+            await shell.press(await shell.getByRole('button', { name: 'Connect Example Forge' }));
         });
         await act(async () => { await Promise.resolve(); });
 

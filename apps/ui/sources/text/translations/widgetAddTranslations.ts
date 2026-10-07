@@ -26,6 +26,12 @@ type WidgetAddTranslation = Readonly<{
     panes: string;
     panesHint: string;
     builtIn: string;
+    nativeDescriptions: Readonly<{
+        session_summary: string;
+        agent_plan: string;
+        changes: string;
+        local_services: string;
+    }>;
     noMatch: (params: Readonly<{ query: string }>) => string;
     setupTitle: (params: Readonly<{ widget: string }>) => string;
     editTitle: (params: Readonly<{ widget: string }>) => string;
@@ -138,6 +144,12 @@ export const widgetAddTranslations = {
         panes: 'Panes',
         panesHint: 'added as a link that opens in Details',
         builtIn: 'Built in',
+        nativeDescriptions: {
+            session_summary: 'Activity and next steps for the session you choose.',
+            agent_plan: 'Follow the agent’s plan for the session you choose.',
+            changes: 'Review file changes in the session you choose.',
+            local_services: 'Open local services running for the session you choose.',
+        },
         noMatch: ({ query }) => `No widgets match “${query}”`,
         setupTitle: ({ widget }) => `Set up ${widget}`,
         editTitle: ({ widget }) => `${widget} · inputs`,
@@ -239,6 +251,12 @@ export const widgetAddTranslations = {
         panes: 'Panells',
         panesHint: 's’afegeix com un enllaç que s’obre a Detalls',
         builtIn: 'Integrat',
+        nativeDescriptions: {
+            session_summary: 'Activitat i propers passos de la sessió que triïs.',
+            agent_plan: 'Segueix el pla de l’agent per a la sessió que triïs.',
+            changes: 'Revisa els canvis als fitxers de la sessió que triïs.',
+            local_services: 'Obre els serveis locals de la sessió que triïs.',
+        },
         noMatch: ({ query }) => `Cap giny coincideix amb «${query}»`,
         setupTitle: ({ widget }) => `Configura ${widget}`,
         editTitle: ({ widget }) => `${widget} · entrades`,
@@ -340,6 +358,12 @@ export const widgetAddTranslations = {
         panes: 'Bereiche',
         panesHint: 'als Link hinzugefügt, der in Details öffnet',
         builtIn: 'Integriert',
+        nativeDescriptions: {
+            session_summary: 'Aktivität und nächste Schritte der gewählten Sitzung.',
+            agent_plan: 'Verfolge den Plan des Agenten für die gewählte Sitzung.',
+            changes: 'Prüfe Dateiänderungen in der gewählten Sitzung.',
+            local_services: 'Öffne lokale Dienste der gewählten Sitzung.',
+        },
         noMatch: ({ query }) => `Keine Widgets passen zu „${query}“`,
         setupTitle: ({ widget }) => `${widget} einrichten`,
         editTitle: ({ widget }) => `${widget} · Eingaben`,
@@ -441,6 +465,12 @@ export const widgetAddTranslations = {
         panes: 'Paneles',
         panesHint: 'se añade como un enlace que se abre en Detalles',
         builtIn: 'Integrado',
+        nativeDescriptions: {
+            session_summary: 'Actividad y próximos pasos de la sesión que elijas.',
+            agent_plan: 'Sigue el plan del agente para la sesión que elijas.',
+            changes: 'Revisa los cambios de archivos de la sesión que elijas.',
+            local_services: 'Abre los servicios locales de la sesión que elijas.',
+        },
         noMatch: ({ query }) => `Ningún widget coincide con «${query}»`,
         setupTitle: ({ widget }) => `Configurar ${widget}`,
         editTitle: ({ widget }) => `${widget} · entradas`,
@@ -542,6 +572,12 @@ export const widgetAddTranslations = {
         panes: 'Panneaux',
         panesHint: 'ajouté comme un lien qui s’ouvre dans Détails',
         builtIn: 'Intégré',
+        nativeDescriptions: {
+            session_summary: 'Activité et prochaines étapes de la session choisie.',
+            agent_plan: 'Suivez le plan de l’agent pour la session choisie.',
+            changes: 'Consultez les modifications de fichiers de la session choisie.',
+            local_services: 'Ouvrez les services locaux de la session choisie.',
+        },
         noMatch: ({ query }) => `Aucun widget ne correspond à « ${query} »`,
         setupTitle: ({ widget }) => `Configurer ${widget}`,
         editTitle: ({ widget }) => `${widget} · entrées`,
@@ -643,6 +679,12 @@ export const widgetAddTranslations = {
         panes: 'Pannelli',
         panesHint: 'aggiunto come link che si apre in Dettagli',
         builtIn: 'Integrato',
+        nativeDescriptions: {
+            session_summary: 'Attività e prossimi passi della sessione scelta.',
+            agent_plan: 'Segui il piano dell’agente per la sessione scelta.',
+            changes: 'Rivedi le modifiche ai file della sessione scelta.',
+            local_services: 'Apri i servizi locali della sessione scelta.',
+        },
         noMatch: ({ query }) => `Nessun widget corrisponde a “${query}”`,
         setupTitle: ({ widget }) => `Configura ${widget}`,
         editTitle: ({ widget }) => `${widget} · input`,
@@ -744,6 +786,12 @@ export const widgetAddTranslations = {
         panes: 'ペイン',
         panesHint: '詳細で開くリンクとして追加',
         builtIn: '組み込み',
+        nativeDescriptions: {
+            session_summary: '選んだセッションの活動と次のステップを確認します。',
+            agent_plan: '選んだセッションのエージェントの計画を確認します。',
+            changes: '選んだセッションのファイル変更を確認します。',
+            local_services: '選んだセッションのローカルサービスを開きます。',
+        },
         noMatch: ({ query }) => `「${query}」に一致するウィジェットはありません`,
         setupTitle: ({ widget }) => `${widget} を設定`,
         editTitle: ({ widget }) => `${widget} · 入力`,
@@ -845,6 +893,12 @@ export const widgetAddTranslations = {
         panes: 'Panele',
         panesHint: 'dodane jako link otwierany w Szczegółach',
         builtIn: 'Wbudowane',
+        nativeDescriptions: {
+            session_summary: 'Aktywność i kolejne kroki wybranej sesji.',
+            agent_plan: 'Śledź plan agenta dla wybranej sesji.',
+            changes: 'Przeglądaj zmiany plików w wybranej sesji.',
+            local_services: 'Otwórz lokalne usługi wybranej sesji.',
+        },
         noMatch: ({ query }) => `Brak widżetów pasujących do „${query}”`,
         setupTitle: ({ widget }) => `Skonfiguruj: ${widget}`,
         editTitle: ({ widget }) => `${widget} · dane wejściowe`,
@@ -947,6 +1001,12 @@ export const widgetAddTranslations = {
         panesHint: 'adicionado como um link que abre em Detalhes',
         builtIn: 'Integrado',
         noMatch: ({ query }) => `Nenhum widget corresponde a “${query}”`,
+        nativeDescriptions: {
+            session_summary: 'Atividade e próximos passos da sessão escolhida.',
+            agent_plan: 'Acompanhe o plano do agente para a sessão escolhida.',
+            changes: 'Revise as alterações de arquivos da sessão escolhida.',
+            local_services: 'Abra os serviços locais da sessão escolhida.',
+        },
         setupTitle: ({ widget }) => `Configurar ${widget}`,
         editTitle: ({ widget }) => `${widget} · entradas`,
         editHint: 'Só esta cópia muda. As outras mantêm suas entradas.',
@@ -1047,6 +1107,12 @@ export const widgetAddTranslations = {
         panes: 'Панели',
         panesHint: 'добавляется как ссылка, открывающаяся в «Подробностях»',
         builtIn: 'Встроенное',
+        nativeDescriptions: {
+            session_summary: 'Активность и следующие шаги выбранной сессии.',
+            agent_plan: 'Следите за планом агента для выбранной сессии.',
+            changes: 'Просматривайте изменения файлов в выбранной сессии.',
+            local_services: 'Открывайте локальные сервисы выбранной сессии.',
+        },
         noMatch: ({ query }) => `Нет виджетов по запросу «${query}»`,
         setupTitle: ({ widget }) => `Настроить: ${widget}`,
         editTitle: ({ widget }) => `${widget} · входные данные`,
@@ -1148,6 +1214,12 @@ export const widgetAddTranslations = {
         panes: '面板',
         panesHint: '以链接形式添加，在详情中打开',
         builtIn: '内置',
+        nativeDescriptions: {
+            session_summary: '查看所选会话的活动和后续步骤。',
+            agent_plan: '跟进所选会话中智能体的计划。',
+            changes: '查看所选会话中的文件更改。',
+            local_services: '打开所选会话运行的本地服务。',
+        },
         noMatch: ({ query }) => `没有与“${query}”匹配的小组件`,
         setupTitle: ({ widget }) => `设置 ${widget}`,
         editTitle: ({ widget }) => `${widget} · 输入`,
@@ -1249,6 +1321,12 @@ export const widgetAddTranslations = {
         panes: '面板',
         panesHint: '以連結形式新增，在詳細資訊中開啟',
         builtIn: '內建',
+        nativeDescriptions: {
+            session_summary: '查看所選工作階段的活動與後續步驟。',
+            agent_plan: '追蹤所選工作階段中代理的計畫。',
+            changes: '檢視所選工作階段中的檔案變更。',
+            local_services: '開啟所選工作階段執行的本機服務。',
+        },
         noMatch: ({ query }) => `沒有與「${query}」相符的小工具`,
         setupTitle: ({ widget }) => `設定 ${widget}`,
         editTitle: ({ widget }) => `${widget} · 輸入`,

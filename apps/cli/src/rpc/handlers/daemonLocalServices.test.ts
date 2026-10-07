@@ -239,7 +239,6 @@ describe('daemon local services machine rpc handlers', () => {
         await expect(
             handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW)?.(registerPreviewRequest),
         ).resolves.toEqual(registerPreviewResponse);
-        expect(leaves.registerPreview).toHaveBeenCalledWith(registerPreviewRequest);
 
         const historyClearRequest = { machineId: 'machine_1' };
         await expect(

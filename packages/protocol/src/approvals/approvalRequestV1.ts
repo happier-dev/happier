@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { ActionApprovalSchema } from '../actions/actionApprovalMetadata.js';
@@ -10,7 +11,8 @@ import {
 } from '../sessions/creation/sessionCreationTargetPreparationV1.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { ActionRequiredAuthoritySchema } from '../actions/metadata.js';
-import { isAgentApprovalRequestSurface, isAgentRequestablePresentUserActionId } from '../actions/decisionAuthority.js';
+import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from '../actions/decisionAuthority.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
 import {
   ExternalActionTargetV1Schema,
   ExternalActionExecutionAuthorizationV1Schema,
@@ -389,6 +391,7 @@ export const ApprovalRequestSchema = z.discriminatedUnion('v', [
   ApprovalRequestV2Schema,
 ]);
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+export const StoredApprovalRequestSchema = createStoredReadSchema(ApprovalRequestSchema);
 
 /**
  * Caller principals whose currentness only the exact daemon that admitted them
@@ -432,9 +435,13 @@ export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): bo
   // These Account effects run through the deciding app's authenticated Home
   // adapter, so a daemon's disallowed terminal policy cannot veto human consent.
   // External and plugin provenance still belongs to its original executor.
-  if (isAgentApprovalRequestSurface(origin.surface) && origin.caller.kind === 'host'
+  const actionId = ActionIdSchema.safeParse(approval.actionId);
+  const spec = actionId.success ? getActionSpec(actionId.data) : null;
+  if (isAutomationApprovalRequestSurface(origin.surface) && origin.caller.kind === 'host'
     && !origin.externalActionExecutionAuthorization
-    && isAgentRequestablePresentUserActionId(approval.actionId)) return false;
+    && spec?.executionPlacement === 'account'
+    && spec.approvalInputCustody !== 'live_only'
+    && canRequestPresentUserApprovalForActionInputV1(spec, approval.actionArgs)) return false;
   return SURFACE_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.surface]
     || CALLER_REQUIRES_EXACT_DAEMON_REPLAY_RECORD[origin.caller.kind];
 }

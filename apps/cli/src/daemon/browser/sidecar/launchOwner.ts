@@ -35,6 +35,7 @@ export type BrowserSidecarLaunchOwnerControlAdapterFactoryInput = Readonly<{
     profileDirectory: string;
     binaryResolution: SidecarBrowserBinaryResolution;
     endpointTimeoutMs?: number;
+    signal?: AbortSignal;
     nowMs?: () => number;
     processController?: SidecarProcessController;
     spawnProcess?: SpawnSidecarProcess;
@@ -123,6 +124,7 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
         const endpointSource = await processController.waitForDevToolsEndpointSource({
             sidecarId: privateLaunch.sidecarId,
             timeoutMs: input.endpointTimeoutMs,
+            signal: input.signal,
         });
         if (!endpointSource.ok) {
             await processController.stopAndWait();

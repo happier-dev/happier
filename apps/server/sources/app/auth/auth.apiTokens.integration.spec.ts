@@ -236,13 +236,58 @@ describe("auth (API tokens)", () => {
         });
     });
 
-    it("reads predecessor NULL grants as full access and refuses malformed persisted grants", async () => {
-        const account = await db.account.create({ data: { publicKey: 'pre-grant-reader' } });
-        const token = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Predecessor' });
-        await db.accountApiToken.update({ where: { id: token.tokenId }, data: { accessGrant: getActivePrismaRuntime().DbNull } });
+    it("writes canonical full grants and refuses missing or malformed stored grants", async () => {
+        const account = await db.account.create({ data: { publicKey: 'canonical-grant-reader' } });
+        const token = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Canonical' });
+        expect(await db.accountApiToken.findUniqueOrThrow({ where: { id: token.tokenId }, select: { accessGrant: true } }))
+            .toEqual({ accessGrant: API_TOKEN_FULL_GRANT_V1 });
         expect(await auth.verifyPat(token.token)).toMatchObject({ ok: true, ...fullGrantProjection });
+        await db.accountApiToken.update({ where: { id: token.tokenId }, data: { accessGrant: getActivePrismaRuntime().DbNull } });
+        expect(await auth.verifyPat(token.token)).toEqual({ ok: false, reason: 'invalid_token' });
+        await expect(auth.listApiTokens(account.id)).rejects.toMatchObject({ code: 'invalid_token' });
         await db.accountApiToken.update({ where: { id: token.tokenId }, data: { accessGrant: { v: 99 } } });
         expect(await auth.verifyPat(token.token)).toEqual({ ok: false, reason: 'invalid_token' });
+        await expect(auth.listApiTokens(account.id)).rejects.toMatchObject({ code: 'invalid_token' });
+    });
+
+    it("reads stored grants and embed configurations by known fields while writes remain strict", async () => {
+        const account = await db.account.create({ data: { publicKey: 'stored-grant-projection' } });
+        const grant = { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: ['s1'], machines: [] } };
+        const embedConfig = {
+            v: 1 as const,
+            ui: { attachments: true },
+            newChat: { enabled: false },
+            organization: { folderId: null, tagIds: [] },
+            style: { v: 1 as const, typography: { fontFamily: 'Inter' }, parts: { composer: { radius: 'md' as const } } },
+        };
+        const minted = await auth.createApiToken({
+            accountId: account.id, tokenId: crypto.randomUUID(), label: 'Stored projection', grant, embedConfig,
+        });
+        const storedGrant = { ...grant, ignored: true, targets: { ...grant.targets, ignored: true } };
+        const storedConfig = {
+            ...embedConfig, ignored: true,
+            ui: { ...embedConfig.ui, ignored: true },
+            newChat: { ...embedConfig.newChat, ignored: true },
+            organization: { ...embedConfig.organization, ignored: true },
+            style: {
+                ...embedConfig.style, ignored: true,
+                typography: { ...embedConfig.style.typography, ignored: true },
+                parts: { composer: { ...embedConfig.style.parts.composer, ignored: true }, ignored: true },
+            },
+        };
+        await db.accountApiToken.update({
+            where: { id: minted.tokenId }, data: { accessGrant: storedGrant, embedConfig: storedConfig },
+        });
+        expect(await auth.verifyPat(minted.token)).toMatchObject({ ok: true, grant, embedConfig });
+        expect(await auth.listApiTokens(account.id)).toEqual([expect.objectContaining({ grant, embedConfig })]);
+        await expect(auth.updateApiToken({ accountId: account.id, tokenId: minted.tokenId, grant: storedGrant })).rejects.toThrow();
+        await expect(auth.updateApiToken({ accountId: account.id, tokenId: minted.tokenId, embedConfig: storedConfig })).rejects.toThrow();
+        await auth.updateApiToken({ accountId: account.id, tokenId: minted.tokenId, grant, embedConfig });
+        expect(await db.accountApiToken.findUnique({
+            where: { id: minted.tokenId }, select: { accessGrant: true, embedConfig: true },
+        })).toEqual({ accessGrant: grant, embedConfig });
+        await db.accountApiToken.update({ where: { id: minted.tokenId }, data: { accessGrant: { ...storedGrant, approve: 'true' } } });
+        expect(await auth.verifyPat(minted.token)).toEqual({ ok: false, reason: 'invalid_token' });
     });
 
     it("copies only explicit server-verified evidence into the PAT row and fails malformed snapshots closed", async () => {
@@ -264,6 +309,15 @@ describe("auth (API tokens)", () => {
             authority: "account_automation",
             authenticationEvidence: evidence,
         });
+        await expect(auth.listApiTokens(account.id)).resolves.toEqual([
+            expect.objectContaining({ hasUnattendedTeamAccess: true }),
+        ]);
+
+        await db.accountApiToken.update({
+            where: { id: minted.tokenId },
+            data: { authenticationEvidence: { v: 1, ignored: true, evidence: [{ ...evidence[0], ignored: true }] } },
+        });
+        await expect(auth.verifyToken(minted.token)).resolves.toMatchObject({ authenticationEvidence: evidence });
         await expect(auth.listApiTokens(account.id)).resolves.toEqual([
             expect.objectContaining({ hasUnattendedTeamAccess: true }),
         ]);

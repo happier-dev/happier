@@ -130,6 +130,14 @@ describe('pendingSetupIntent', () => {
             relayUrl: 'https://relay.example.test',
         });
         expect(second).toBe(first);
+
+        setPendingSetupIntent({ branch: 'thisComputer', phase: 'post_auth', relayUrl: 'https://relay.example.test' });
+        const updated = getPendingSetupIntent();
+        expect(updated?.phase).toBe('post_auth');
+        expect(updated).not.toBe(first);
+        expect(getPendingSetupIntent()).toBe(updated);
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
     });
 
     it('notifies subscribers when pending setup intent storage changes', async () => {
@@ -182,13 +190,17 @@ describe('pendingSetupIntent', () => {
             relayUrl: 'https://relay.example.test/',
         });
 
+        const beforeAuth = getPendingSetupIntent();
         await activateServerAccount('https://relay.example.test', 'account-a');
 
-        expect(getPendingSetupIntent()).toEqual({
+        const adopted = getPendingSetupIntent();
+        expect(adopted).toEqual({
             branch: 'thisComputer',
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.example.test',
         });
+        expect(adopted).toBe(beforeAuth);
+        expect(getPendingSetupIntent()).toBe(adopted);
     });
 
     it('debug-logs and drops an unauthenticated pending setup intent when auth lands on a different relay URL', async () => {

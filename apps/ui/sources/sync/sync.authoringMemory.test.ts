@@ -11,6 +11,7 @@ import {
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { loadAuthoringMemoryProjection, saveAuthoringMemoryProjection } from './domains/state/authoringMemoryPersistence';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import { createAccountSettingsScope, type AccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
 import type { Settings } from './domains/settings/settings';
 
@@ -46,6 +47,7 @@ import './syncEngine';
 import { sync, type SyncServerTarget } from './sync';
 import { storage } from './domains/state/storage';
 import { Encryption } from './encryption/encryption';
+import { StaleServerGenerationError } from './http/client';
 
 // Initialize incumbent owner state, without replacing any internal operation.
 type AuthoringRuntimeTestAccess = {
@@ -72,10 +74,54 @@ afterEach(() => {
     storage.getState().resetAuthoringMemory();
     storage.setState(originalSettings);
     network.request.mockReset();
+    if (vi.isMockFunction(console.error)) vi.mocked(console.error).mockRestore();
 });
 
 describe('Sync authoring-memory runtime', () => {
+    it('retires a cancelled bootstrap quietly and bootstraps the current Home on the next settings refresh', async () => {
+        const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+        owner.credentials = { token: 'authoring-cancelled-account' };
+        owner.encryption = null;
+        owner.settingsSecretsKey = null;
+        owner.settingsSecretsReadKeys = [];
+        owner.pendingSettings = {};
+        owner.appliedServerTarget = { serverId: 'https://authoring-cancelled.test', serverUrl: 'https://authoring-cancelled.test', generation: 1 };
+        const scope = createAccountSettingsScope(owner.appliedServerTarget.serverId, 'authoring-cancelled-account');
+        if (!scope) throw new Error('Expected valid Account/Home scope');
+        owner.pendingSettingsScope = scope;
+        owner.authoringMemoryRuntime = null;
+        await storage.getState().activateSettingsScope(scope);
+        let cancelled = true;
+        network.request.mockImplementation(async (path, init) => {
+            if (path === '/v1/account/encryption') {
+                return Response.json({ mode: 'plain', updatedAt: 1 });
+            }
+            if (path === '/v1/account/authoring-memory') {
+                if (cancelled) throw new StaleServerGenerationError();
+                return Response.json({ rows: [
+                    { key: 'lastUsedProfile', revision: 1, content: { t: 'plain', v: 'current-profile' } },
+                ] });
+            }
+            if (path === '/v2/account/settings' && init?.method !== 'POST') {
+                return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            }
+            if (path === '/v1/push-tokens?projectionVersion=2') return Response.json({}, { status: 404 });
+            throw new Error(`Unexpected bootstrap request: ${path}`);
+        });
+
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(owner.authoringMemoryRuntime).toBeNull());
+        expect(storage.getState().authoringMemory.lastUsedProfile).toBeNull();
+        expect(diagnostics).not.toHaveBeenCalled();
+
+        cancelled = false;
+        owner.appliedServerTarget = { ...owner.appliedServerTarget, generation: 2 };
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('current-profile'));
+    });
+
     it('refreshes ordinary Account Settings when authoring-memory storage is unavailable', async () => {
+        const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
         owner.credentials = { token: 'settings-independent-account' };
         owner.encryption = null;
         owner.settingsSecretsKey = null;
@@ -103,6 +149,7 @@ describe('Sync authoring-memory runtime', () => {
         expect(storage.getState().settings.analyticsOptOut).toBe(true);
         await expect(sync.applyAuthoringMemoryDelta({ lastUsedProfile: 'must-not-write' })).rejects.toThrow();
         expect(storage.getState().authoringMemory.lastUsedProfile).toBeNull();
+        expect(diagnostics).toHaveBeenCalledWith('[fireAndForget] Sync.authoringMemory.bootstrap', expect.any(Error));
     });
 
     it('retires only the transferred legacy key and preserves an unrelated raw SecretString sibling exactly under E2EE', async () => {
@@ -187,7 +234,9 @@ describe('Sync authoring-memory runtime', () => {
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path === '/v1/account/authoring-memory/lastUsedProfile') {
-                if (init?.method !== 'POST') return Response.json({ status: 'absent' });
+                if (init?.method !== 'POST') return Response.json(profile === null
+                    ? { status: 'absent' }
+                    : { status: 'present', revision: 0, content: { t: 'plain', v: profile } });
                 const body = AuthoringMemoryMutationRequestV1Schema.parse(JSON.parse(String(init.body)));
                 if (body.content?.t !== 'plain') throw new Error('Plain Account must commit a plain envelope');
                 profile = LegacyLastUsedProfileSchema.parse(body.content.v);
@@ -200,5 +249,15 @@ describe('Sync authoring-memory runtime', () => {
         expect(profile).toBe('profile-new');
         expect(storage.getState().authoringMemory.lastUsedProfile).toBe('profile-new');
         expect(loadAuthoringMemoryProjection(owner.pendingSettingsScope!)).toMatchObject({ lastUsedProfile: 'profile-new' });
+
+        const unchanged = storage.getState().authoringMemory;
+        const persistence = vi.spyOn(getPersistenceStorage(), 'set');
+        try {
+            await sync.applyAuthoringMemoryDelta({ lastUsedProfile: 'profile-new' });
+            expect(storage.getState().authoringMemory).toBe(unchanged);
+            expect(persistence.mock.calls.filter(([key]) => key.startsWith('authoring-memory:'))).toEqual([]);
+        } finally {
+            persistence.mockRestore();
+        }
     });
 });

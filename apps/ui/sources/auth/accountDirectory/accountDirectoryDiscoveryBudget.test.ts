@@ -4,46 +4,43 @@ import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-// The network is the only boundary: the real feature client, its cache and its attempt bound run.
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (options: { endpointUrl: string }) => (path: string, init?: RequestInit) => boundary.request(options.endpointUrl, path, init),
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
+// The network is the boundary; feature decoding, cache and HTTP lifecycle stay real.
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
+    runtimeFetch: boundary.request,
 }));
 
 import { accountDirectoryAuthClient } from './accountDirectoryAuthClient';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createDeferred } from '@/dev/testkit';
 
-/** The shared feature probe's own attempt bound (`REQUEST_ATTEMPT_TIMEOUT_MS`). */
-const FEATURE_PROBE_ATTEMPT_MS = 60_000;
-
-function hangingUntilAborted(_endpoint: string, _path: string, init?: RequestInit): Promise<Response> {
-    return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
-    });
-}
-
-describe('account-service discovery budget', () => {
+describe('account-service discovery lifetime', () => {
     afterEach(() => {
         vi.useRealTimers();
         boundary.request.mockReset();
+        resetServerFeaturesClientForTests();
     });
 
-    it('waits for a slow service instead of reporting it unreachable after a foreground cutoff', async () => {
+    it('waits for a valid slow endpoint observation instead of declaring a pending request unreachable', async () => {
         vi.useFakeTimers();
-        boundary.request.mockImplementation(hangingUntilAborted);
-        let settled: unknown = null;
-        void accountDirectoryAuthClient.discoverAuthenticationMethods({ endpointUrl: 'https://slow-directory.test' })
-            .then((result) => { settled = result; });
+        const response = createDeferred<Response>();
+        let requestSignal: AbortSignal | null | undefined;
+        boundary.request.mockImplementation((_url: unknown, init?: RequestInit) => {
+            requestSignal = init?.signal;
+            return response.promise;
+        });
+        let settled = false;
+        const discovery = accountDirectoryAuthClient.discoverAuthenticationMethods({ endpointUrl: 'https://slow-directory.test' })
+            .then((result) => { settled = true; return result; });
 
-        // Well past any foreground wait, the service is still being checked, not "unreachable".
-        await vi.advanceTimersByTimeAsync(FEATURE_PROBE_ATTEMPT_MS - 1);
-        expect(settled).toBeNull();
-
-        // The owning probe's attempt bound is what ends the check, as a real failure.
-        await vi.advanceTimersByTimeAsync(1);
-        await vi.waitFor(() => expect(settled).toMatchObject({
-            kind: 'endpoint_unavailable',
-            reason: 'probe_failed',
-            snapshot: { status: 'error', reason: 'timeout' },
-        }));
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(settled).toBe(false);
+        expect(requestSignal?.aborted).toBe(false);
+        response.resolve(Response.json({ features: {}, capabilities: {} }));
+        // This endpoint answered as an ordinary Home. A pending request is never an outage.
+        await expect(discovery).resolves.toMatchObject({
+            kind: 'not_account_service',
+            snapshot: { status: 'ready' },
+        });
     });
 });

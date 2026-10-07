@@ -104,6 +104,26 @@ function routeBitbucket(overrides: Readonly<Record<string, StubReply>> = {}) {
 }
 
 describe('Bitbucket listInstances', () => {
+  it('refuses a native credential binding before scan authorization or provider access', async () => {
+    const { connectedAccounts, materializations } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const { http, requests } = createHttpStub(routeBitbucket());
+    const instance = configuredInstance();
+    const result = await scanBitbucketSource(createRuntime(connectedAccounts, http), {
+      v: 1,
+      instance: { ...instance, binding: {
+        purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
+        source: 'native',
+        service: accountRef('account-1').service,
+      } },
+      page: { kind: 'initial', limit: 10 },
+    });
+    expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+    expect(materializations).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
   it('emits one candidate per exact account and workspace UUID', async () => {
     const { connectedAccounts, materializations } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }, { accountId: 'account-2' }],

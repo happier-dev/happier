@@ -1,9 +1,10 @@
 import { useEffect, useRef, type ComponentType, type ReactNode } from 'react';
-import { ActivityIndicator, Animated, Easing, View } from 'react-native';
+import { Animated, Easing, View } from 'react-native';
 import type { EntityDropPreviewV1 } from '@happier-dev/plugin-sdk';
 
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import { HappierSpinner } from '../feedback/Spinner.js';
 import { HAPPIER_MOTION_V1 } from './motion.js';
 
 /**
@@ -62,6 +63,8 @@ export type HappierReleasePreviewHost = Readonly<{
     testID?: string;
   }>>;
   renderGlyph: (glyph: HappierReleaseGlyph, color: string, size: number) => ReactNode;
+  /** Environment-free core hosts bind their canonical spinner's preferences and activity. */
+  renderPendingSpinner?: (size: number, color: string) => ReactNode;
 }>;
 
 /**
@@ -178,6 +181,7 @@ export function HappierReleaseOutcomeStrip(props: Readonly<{
   colors: HappierReleasePreviewColors;
   host: HappierReleasePreviewHost;
   density?: HappierReleasePreviewDensity;
+  reducedMotion?: boolean;
   /** Draw the hairline above the strip (inside the card under the identity). */
   divided?: boolean;
   testID?: string;
@@ -205,7 +209,9 @@ export function HappierReleaseOutcomeStrip(props: Readonly<{
     >
       <View style={{ width: metrics.glyph + 4, height: metrics.outcomeTitle.lineHeight, alignItems: 'center', justifyContent: 'center' }}>
         {outcome.tone === 'pending'
-          ? <ActivityIndicator size="small" color={colors.textSecondary} style={{ transform: [{ scale: 0.7 }] }} />
+          ? host.renderPendingSpinner
+            ? host.renderPendingSpinner(metrics.glyph, colors.textSecondary)
+            : <HappierSpinner size={metrics.glyph} color={colors.textSecondary} reducedMotion={props.reducedMotion} />
           : host.renderGlyph(outcome.tone === 'refused' ? 'refused' : (outcome.glyph ?? 'add'), markColor, metrics.glyph)}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -282,7 +288,7 @@ export function HappierReleasePreviewCard(props: Readonly<{
         </View>
       </View>
       {props.outcome ? (
-        <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} density={density} divided />
+        <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} density={density} reducedMotion={reducedMotion} divided />
       ) : null}
     </Animated.View>
   );
@@ -307,7 +313,7 @@ export function HappierReleaseOutcomePill(props: Readonly<{
         props.style,
       ] as HappierStyleProp}
     >
-      <HappierReleaseOutcomeStrip outcome={props.outcome} colors={props.colors} host={props.host} />
+      <HappierReleaseOutcomeStrip outcome={props.outcome} colors={props.colors} host={props.host} reducedMotion={props.reducedMotion} />
     </Animated.View>
   );
 }
@@ -340,7 +346,7 @@ export function HappierStagedMoveDock(props: Readonly<{
         props.style,
       ] as HappierStyleProp}
     >
-      <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} />
+      <HappierReleaseOutcomeStrip outcome={props.outcome} colors={colors} host={host} reducedMotion={props.reducedMotion} />
       {props.hints.length > 0 ? (
         <View
           style={{

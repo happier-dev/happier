@@ -6,6 +6,22 @@ const publicShare = { id: 'share-1', subject: { kind: 'artifact' as const, id: '
   maxUses: null, useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' as const };
 
 describe('keyholding Artifact public-link Actions', () => {
+  it('lets owners revoke existing layout publications after new publication admission is disabled', async () => {
+    const requests: string[] = [];
+    const execute = createArtifactPublicLinkActionsV1({
+      read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: { kind: 'home-hub-layout.v1' }, encryptionMode: 'plain', dataKey: null }),
+      randomBytes: length => new Uint8Array(length), request: async request => {
+        requests.push(request.method);
+        return request.method === 'GET' ? { publicShares: [publicShare] } : { success: true };
+      },
+    });
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } }))
+      .rejects.toMatchObject({ code: 'artifact_kind_not_shareable' });
+    expect(requests).toEqual([]);
+    await expect(execute({ actionId: 'artifact.public_link.revoke', input: { artifactId: 'artifact-1', shareId: 'share-1' } }))
+      .resolves.toMatchObject({ revoked: true });
+    expect(requests).toEqual(['GET', 'DELETE']);
+  });
   it('reads the existing audit only for a share belonging to the owned Artifact', async () => {
     const accessLog = [{ id: 'visit-1', accessedAt: 2, ipAddress: '127.0.0.1', userAgent: null }];
     const requests: string[] = [];

@@ -1,5 +1,5 @@
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SessionCreationTagV1 } from '@happier-dev/protocol';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
@@ -17,7 +17,7 @@ export function prepareManagedForkDirectory(input: Readonly<{
   if (readSessionDirectoryKind(input.parentMetadata) !== 'managed') return null;
   const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: `session.fork:${input.parentSessionId}`, creationKey: input.spawnNonce });
   const prepared = createManagedSessionDirectories().prepareForCreation({ sessionCreationTag });
-  const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(input.parentMetadata.sessionCreationCorrespondenceV1);
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(input.parentMetadata.sessionCreationCorrespondenceV1);
   const sourceSessionCreationTag = correspondence.success ? correspondence.data.sessionCreationTag : undefined;
   return { directory: prepared.directory, directoryKind: 'managed', sessionCreationTag,
     managedDirectorySeed: { sourceSessionId: input.parentSessionId, sourcePath: input.directory,

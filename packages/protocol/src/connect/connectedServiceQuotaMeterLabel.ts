@@ -25,7 +25,7 @@ const WINDOW_LABEL_TOKEN_OVERRIDES: Readonly<Record<string, string>> = Object.fr
 
 function humanizeWindowLabel(raw: string): string {
     return raw
-        .split(/[_-]+/)
+        .split(/[_:-]+/)
         .map((part) => part.trim().toLowerCase())
         .filter(Boolean)
         .map((part) => Object.prototype.hasOwnProperty.call(WINDOW_LABEL_TOKEN_OVERRIDES, part)

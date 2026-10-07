@@ -24,10 +24,19 @@ function Screen(props: React.ComponentProps<typeof ExpoRouter.Stack.Screen>) {
     return hosted ? null : <ExpoRouter.Stack.Screen {...props} />;
 }
 
+/** Expo parses declaration types before rendering them, so translate only the layout's Screens. */
+function mapStackScreens(child: React.ReactNode): React.ReactNode {
+    if (Array.isArray(child)) return child.map(mapStackScreens);
+    if (React.isValidElement<React.ComponentProps<typeof ExpoRouter.Stack.Screen>>(child) && child.type === Screen) {
+        return <ExpoRouter.Stack.Screen {...child.props} key={child.key ?? undefined} />;
+    }
+    return child;
+}
+
 function StackRoot(props: React.ComponentProps<typeof ExpoRouter.Stack>) {
     const hosted = useDestinationInstanceKey() !== null;
     const outlet = React.useContext(WorkspaceRouteOutlet);
-    return hosted ? <>{outlet}</> : <ExpoRouter.Stack {...props} />;
+    return hosted ? <>{outlet}</> : <ExpoRouter.Stack {...props}>{mapStackScreens(props.children)}</ExpoRouter.Stack>;
 }
 
 export const Stack = Object.assign(StackRoot, { Screen });

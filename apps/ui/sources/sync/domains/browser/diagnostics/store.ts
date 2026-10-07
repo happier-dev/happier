@@ -769,6 +769,46 @@ function sortEvents(events: readonly BrowserDiagnosticEventV1[]): readonly Brows
         .slice(-MAX_BROWSER_DIAGNOSTIC_EVENTS_PER_VIEW);
 }
 
+function acceptedDiagnosticValuesEqual(left: unknown, right: unknown): boolean {
+    const pending = [{ left, right }];
+    const compared = new WeakMap<object, object>();
+    while (pending.length > 0) {
+        const pair = pending.pop()!;
+        if (Object.is(pair.left, pair.right)) continue;
+        if (pair.left === null || pair.right === null || typeof pair.left !== 'object' || typeof pair.right !== 'object') {
+            return false;
+        }
+        if (Array.isArray(pair.left) !== Array.isArray(pair.right)) return false;
+        const leftPrototype = Object.getPrototypeOf(pair.left);
+        const rightPrototype = Object.getPrototypeOf(pair.right);
+        // Unknown trusted data need not be JSON. Non-record instances compare by identity;
+        // primitives (including bigint) and plain data never require serialization.
+        if ((leftPrototype !== Object.prototype && leftPrototype !== null && leftPrototype !== Array.prototype)
+            || (rightPrototype !== Object.prototype && rightPrototype !== null && rightPrototype !== Array.prototype)) return false;
+        if (compared.has(pair.left)) {
+            if (compared.get(pair.left) !== pair.right) return false;
+            continue;
+        }
+        compared.set(pair.left, pair.right);
+        const leftProperties = Object.getOwnPropertyDescriptors(pair.left);
+        const rightProperties = Object.getOwnPropertyDescriptors(pair.right);
+        const keys = Reflect.ownKeys(leftProperties);
+        if (keys.length !== Reflect.ownKeys(rightProperties).length) return false;
+        for (const key of keys) {
+            if (!Object.prototype.hasOwnProperty.call(rightProperties, key)) return false;
+            const previous = Reflect.get(leftProperties, key) as PropertyDescriptor;
+            const next = Reflect.get(rightProperties, key) as PropertyDescriptor | undefined;
+            if (!next || ('value' in previous) !== ('value' in next)) return false;
+            if ('value' in previous) {
+                pending.push({ left: previous.value, right: next.value });
+            } else if (previous.get !== next.get || previous.set !== next.set) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 function appendEvent(
     view: BrowserDiagnosticsViewState | undefined,
     event: BrowserDiagnosticEventV1,
@@ -776,6 +816,11 @@ function appendEvent(
     const previousEvents = view && event.navigationGeneration === view.navigationGeneration
         ? view.events
         : [];
+    const previousEvent = previousEvents.find((candidate) => candidate.eventId === event.eventId);
+    // Compare accepted (and re-sanitized) values, not the producer's raw envelope.
+    if (view && previousEvent && acceptedDiagnosticValuesEqual(previousEvent, event)) {
+        return view;
+    }
     const dedupedEvents = previousEvents.filter((previousEvent) => previousEvent.eventId !== event.eventId);
     return {
         browserSessionId: event.browserSessionId,
@@ -822,6 +867,7 @@ export function applyBrowserDiagnosticEvents(
         }
 
         const nextView = appendEvent(existing, event);
+        if (nextView === existing) continue;
         viewsByKey = {
             ...viewsByKey,
             [key]: nextView,
@@ -829,6 +875,13 @@ export function applyBrowserDiagnosticEvents(
     }
 
     return viewsByKey === state.viewsByKey ? state : { viewsByKey };
+}
+
+export function selectBrowserDiagnosticsEventCount(
+    state: BrowserDiagnosticsUiStore,
+    input: Readonly<{ browserSessionId: string; viewId: string }>,
+): number {
+    return state.viewsByKey[browserViewKey(input)]?.events.length ?? 0;
 }
 
 export function selectBrowserDiagnosticsForView(

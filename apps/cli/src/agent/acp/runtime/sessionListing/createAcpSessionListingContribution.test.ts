@@ -196,6 +196,22 @@ afterEach(async () => {
 });
 
 describe('createAcpSessionListingContribution', () => {
+  it('keeps an invocation without a deadline open until the provider answers', async () => {
+    fixture = await startAcpPeer({
+      answerList: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        return { sessions: [providerSession(1)] };
+      },
+    });
+    const { deadlineAtMs: _deadline, ...request } = listRequest();
+
+    await expect(contributionFor(fixture.port).listCandidates(request)).resolves.toMatchObject({
+      ok: true,
+      value: { candidates: [{ remoteSessionId: ' provider\nsession-1 ' }] },
+    });
+    await expect(fixture.allSocketsClosed()).resolves.toBe(true);
+  }, 20_000);
+
   it('pages exact ACP identities into resume-only candidates and disposes the connection', async () => {
     fixture = await startAcpPeer({
       answerList: () => ({ sessions: [providerSession(1)], nextCursor: ' page\n2 ' }),

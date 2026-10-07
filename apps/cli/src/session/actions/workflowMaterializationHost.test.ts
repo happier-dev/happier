@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, resolveRoleSelectionV1, materializeWorkflowAcceptedSnapshotV1, admitAgentStartV1, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol';
-import { createCredentialedWorkflowMaterializationHostV1, createWorkflowMaterializationHostV1 } from './workflowMaterializationHost';
+import { createCredentialedWorkflowMaterializationHostV1, createWorkflowMaterializationHostV1, type WorkflowMaterializationHostDeps } from './workflowMaterializationHost';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 const credentials = { token: 'workflow-session-admission', encryption: null } as const;
 const sessionId = 'c123456789012345678901234';
 
-function sessionAdmissionHost(machineId: string) {
+function sessionAdmissionHost(machineId: string, readHostActionContract?: WorkflowMaterializationHostDeps['readHostActionContract']) {
   // Only authenticated HTTP and daemon RPC are replaced; Session resolution,
   // owner-metadata opening, Machine authority and the materializer stay real.
   vi.spyOn(axios, 'get').mockImplementation(async (url) => {
@@ -28,7 +28,7 @@ function sessionAdmissionHost(machineId: string) {
     credentials, serverHttpBaseUrl: 'http://127.0.0.1:41371',
     readRoleSelection: async () => ({}), readLaunchProfile: async () => null,
     readWorkflowDefinition: async () => null,
-    readHostActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }),
+    readHostActionContract: readHostActionContract ?? (async () => ({ inputSchema: { type: 'object' }, outputSchema: {} })),
     callMachineAction: async ({ method }) => {
       if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
         protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { installed: {
@@ -48,6 +48,39 @@ function sessionAdmissionHost(machineId: string) {
 
 describe('exact-machine workflow materialization effects', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); resetInMemoryAccountSettingsContextForTests(); });
+
+  it('freezes one Action catalog observation per admission, but rechecks availability on replay', async () => {
+    const contract = { inputSchema: { type: 'object' }, outputSchema: { type: 'string' } };
+    let observed = false;
+    // The executing machine's catalog transport yields one observation; a
+    // redundant fetch would no longer be available. No domain logic is mocked.
+    const host = sessionAdmissionHost('run-machine', async () => {
+      if (observed) return null;
+      observed = true;
+      return contract;
+    });
+    const definition = { version: 1, defaults: {}, blocks: [
+      { kind: 'action', id: 'first', actionId: 'notify_me', input: {} },
+      { kind: 'action', id: 'second', actionId: 'notify_me', input: {} },
+    ] };
+    const context = { source: { kind: 'inline' as const }, inputs: {}, machineId: 'run-machine',
+      executionTarget: { kind: 'session' as const },
+      workspaceTarget: { project: { machineId: 'run-machine', directory: '/repo', checkoutRootPath: '/repo' } },
+      authorization: { principal: { kind: 'host' as const } } };
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ ...await host({ machineId: 'run-machine', directory: '/repo' }),
+      definition, context, admission: { kind: 'user' } });
+    expect(accepted).toMatchObject({ ok: true, snapshot: { materializedLeaves: [
+      { actionContract: contract }, { actionContract: contract },
+    ] } });
+    if (!accepted.ok) throw new Error(JSON.stringify(accepted));
+
+    const unavailableHost = sessionAdmissionHost('run-machine', async () => null);
+    const replay = await materializeWorkflowAcceptedSnapshotV1({
+      ...await unavailableHost({ machineId: 'run-machine', directory: '/repo' }),
+      definition, context, replay: { snapshot: accepted.snapshot }, admission: { kind: 'user' },
+    });
+    expect(replay).toMatchObject({ ok: false, error: { code: 'target_unavailable' } });
+  });
 
   it.each(['origin_session', 'existing_session', 'existing_session_with_agent', 'session_context', 'origin_session_id', 'condition', 'default_origin'] as const)
     ('refuses a cross-Machine %s before the accepted program can run its earlier Action', async (reference) => {

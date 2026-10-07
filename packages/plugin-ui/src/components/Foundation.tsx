@@ -11,6 +11,7 @@ import {
   HappierProgress,
 } from '../presentation/content/Foundation.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
+import { softenHappierWorkColor } from '../presentation/work/workStatus.js';
 import { usePluginHostApi } from '../hostApi/context.js';
 import {
   type PluginUiFocusTarget,
@@ -70,18 +71,35 @@ export function Divider(props: DividerProps): ReactElement {
   );
 }
 
-export type BadgeProps = AuthorText & Readonly<{ tone?: HappierTone; testID?: string; children?: ReactNode }>;
+export type BadgeProps = AuthorText & Readonly<{
+  tone?: HappierTone;
+  /**
+   * `outlined` (default): tone ink inside a tone ring on the elevated surface, for a quiet label.
+   * `tinted`: tone ink on a faint tint of the same tone with no ring, for the one loud fact of a row
+   * ("Review requested"); a neutral tint stays on the elevated surface.
+   */
+  variant?: 'outlined' | 'tinted';
+  testID?: string;
+  children?: ReactNode;
+}>;
 
-export function Badge({ tone = 'neutral', testID, children, ...text }: BadgeProps): ReactElement {
+export function Badge({ tone = 'neutral', variant = 'outlined', testID, children, ...text }: BadgeProps): ReactElement {
   const theme = usePluginTheme();
   const color = theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
   const label = useAuthorText(text);
+  const tinted = variant === 'tinted';
+  // The tint is the tone at the one strength the shared work-state tint uses; a theme colour with no
+  // softened form (a custom rgba) keeps the elevated surface rather than guessing a mix.
+  const tint = tinted && tone !== 'neutral' && tone !== 'secondary' && tone !== 'muted'
+    ? softenHappierWorkColor(color, 0.1)
+    : null;
   return (
     <HappierBadge
       color={color}
-      backgroundColor={theme.colors.elevatedSurface}
-      borderColor={tone === 'neutral' ? theme.colors.border : color}
-      radius={theme.radii.pill}
+      backgroundColor={tint ?? theme.colors.elevatedSurface}
+      // A tinted chip keeps the ring's geometry but not its ink: a translucent tint drawn twice at the edge reads as a ring.
+      borderColor={tinted ? 'transparent' : tone === 'neutral' ? theme.colors.border : color}
+      radius={tinted ? theme.radii.small : theme.radii.pill}
       horizontalPadding={theme.spacing.small}
       verticalPadding={theme.spacing.xsmall}
       testID={testID}
@@ -146,11 +164,33 @@ export function Link({ title, titleKey, url, disabled, testID }: LinkProps): Rea
   );
 }
 
-export type ProgressProps = Readonly<{ value?: number; label: string; labelKey?: string; testID?: string }>;
+export type ProgressProps = Readonly<{
+  value?: number;
+  label: string;
+  labelKey?: string;
+  /**
+   * Shares of one whole (0–1 each), drawn left to right in their tones on one track, such as a
+   * file's lines added and removed. The bar is then one picture named by `label`, not a progress
+   * value, and `value` is not drawn.
+   */
+  segments?: readonly Readonly<{ value: number; tone: HappierTone }>[];
+  testID?: string;
+}>;
 
-export function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement {
+export function Progress({ label, labelKey, segments, ...props }: ProgressProps): ReactElement {
+  const theme = usePluginTheme();
   const resolvedLabel = resolveAuthorText(usePluginTranslation(), label, labelKey) ?? label;
-  return <HappierProgress {...props} label={resolvedLabel} theme={usePluginTheme()} />;
+  return (
+    <HappierProgress
+      {...props}
+      label={resolvedLabel}
+      theme={theme}
+      {...(segments === undefined ? {} : {
+        semantics: 'image' as const,
+        segments: segments.map((segment) => ({ value: segment.value, color: theme.colors[HAPPIER_TONE_COLOR_TOKEN[segment.tone]] })),
+      })}
+    />
+  );
 }
 
 export type BannerProps = Readonly<{

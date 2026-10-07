@@ -1,5 +1,5 @@
 import { BrowserCommandDispatchResultV1Schema, BrowserCommandV1Schema, BrowserDaemonViewV1Schema } from '@happier-dev/protocol/browser/control/v1';
-import type { BrowserCommandDispatchResultV1, BrowserDaemonViewV1, BrowserEventV1, ActionExecutorContext } from '@happier-dev/protocol';
+import type { BrowserCommandDispatchResultV1, BrowserCommandV1, BrowserDaemonViewV1, BrowserEventV1, ActionExecutorContext } from '@happier-dev/protocol';
 
 import {
   browserCommandDispatchFailure,
@@ -34,6 +34,16 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>;
   automation?: () => BrowserAutomationDaemonService | null;
 }>): BrowserDaemonControlRoutes {
+  async function dispatchToBroker(command: BrowserCommandV1): Promise<BrowserCommandDispatchResultV1> {
+    const result = await input.broker.dispatchCommand(command);
+    const parsed = BrowserCommandDispatchResultV1Schema.safeParse(result);
+    if (!parsed.success || parsed.data.commandId !== command.commandId) return invalidBrokerResult(command.commandId);
+    if (typeof parsed.data.adapterKind !== 'undefined' && !isBrowserDaemonControlAdapterKind(parsed.data.adapterKind)) {
+      return invalidBrokerResult(command.commandId);
+    }
+    return parsed.data;
+  }
+
   return {
     listViews(browserSessionId) {
       return (input.broker.listViews?.(browserSessionId) ?? []).map(view => {
@@ -77,20 +87,31 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
         } finally { unsubscribe(); }
       }
 
-      const result = await input.broker.dispatchCommand(command.data);
-      const parsed = BrowserCommandDispatchResultV1Schema.safeParse(result);
-      if (!parsed.success) return invalidBrokerResult(command.data.commandId);
-      if (parsed.data.commandId !== command.data.commandId) {
-        return invalidBrokerResult(command.data.commandId);
+      if ((context?.authority === 'present_user' || context?.authority === 'account_automation') && (
+        command.data.kind === 'navigate' || command.data.kind === 'goBack' || command.data.kind === 'goForward'
+        || command.data.kind === 'reload' || command.data.kind === 'stop'
+      )) {
+        const automation = input.automation?.();
+        if (automation) {
+          const view = input.broker.listViews?.(command.data.browserSessionId).find(candidate => candidate.viewId === command.data.viewId);
+          if (!view) return browserCommandDispatchFailure({ commandId: command.data.commandId,
+            code: 'view_not_found', message: 'No registered Browser daemon adapter owns this view.' });
+          const events: BrowserEventV1[] = [];
+          const unsubscribe = automation.subscribeBrowserEvents(event => {
+            if (event.browserSessionId === view.browserSessionId && 'viewId' in event && event.viewId === view.viewId) events.push(event);
+          });
+          try {
+            const execution = await automation.executeControlCommand(view, context.authority, () => dispatchToBroker(command.data));
+            if (!execution.ok) return browserCommandDispatchFailure({ commandId: command.data.commandId,
+              code: 'permission_denied', message: `Browser input controller refused the command: ${execution.errorCode}.` });
+            const result = execution.value;
+            return result.status === 'dispatched' ? { ...result, events: [...events, ...result.events] } : result;
+          } finally { unsubscribe(); }
+        }
+        if (context.authority === 'account_automation') return browserCommandDispatchFailure({ commandId: command.data.commandId,
+          code: 'adapter_unavailable', message: 'Browser input controller is unavailable.' });
       }
-      if (
-        typeof parsed.data.adapterKind !== 'undefined'
-        && !isBrowserDaemonControlAdapterKind(parsed.data.adapterKind)
-      ) {
-        return invalidBrokerResult(command.data.commandId);
-      }
-
-      return parsed.data;
+      return dispatchToBroker(command.data);
     },
   };
 }

@@ -106,10 +106,16 @@ describe('AddToBoardButton library recovery', () => {
         expect(knownOptions().every((option) => !option.disabled)).toBe(true);
 
         const pending = createDeferred<void>();
+        const beforeRetry = harness.home.requests.length;
         harness.home.answer(serverId, ARTIFACT_LIST_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
         await screen.pressByTestIdAsync('board-add.workflows-failure.retry');
         await screen.pressByTestIdAsync('board-add.runs-failure.retry');
+        await waitForHomeGovernance(async () => {
+            await act(async () => {});
+            expect(harness.home.requests.slice(beforeRetry).map(request => request.path))
+                .toEqual(expect.arrayContaining([ARTIFACT_LIST_PATH, RUN_STORAGE_PATH]));
+        });
         expect(knownOptions()).toHaveLength(2);
         expect(knownOptions().every(option => !option.disabled)).toBe(true);
         await act(async () => { pending.resolve(); await pending.promise; });

@@ -338,6 +338,7 @@ export type RunnerDaemonCurrentGlobalExternalSessionsOwner = Pick<
     PluginServices['sessions']['external'],
     | 'capabilities'
     | 'list'
+    | 'closeList'
     | 'attach'
     | 'readTranscript'
     | 'followTranscript'
@@ -954,6 +955,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 !== 'plugin_services.subscription.close_v1'
             && operation.kind !== 'plugin_mcp.client.close_v1'
             && operation.kind !== 'plugin_exec.launch.release_v1'
+            && operation.kind !== 'plugin_sessions.external.close_list_v1'
             && operation.kind
                 !== 'plugin_storage.transaction.rollback_v1'
         ) {
@@ -1697,6 +1699,9 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     ),
                 );
             }
+            case 'plugin_sessions.external.close_list_v1':
+                await invocation.currentGlobalExternalSessions.closeList(operation.cursor);
+                return result(operation, null);
             case 'plugin_sessions.external.attach_v1':
                 return result(
                     operation,

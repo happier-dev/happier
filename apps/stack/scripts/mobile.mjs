@@ -7,7 +7,7 @@ import { getComponentDir, getComponentRepoDir, getDefaultAutostartPaths, getRoot
 import { ensureDepsInstalled, pmExecBin, pmSpawnBin, requireDir } from './utils/proc/pm.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir } from './utils/expo/expo.mjs';
-import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
+import { resolveServerUrls } from './utils/server/urls.mjs';
 import { resolveMobileExpoConfig } from './utils/mobile/config.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
 import { expoExec } from './utils/expo/command.mjs';
@@ -211,10 +211,10 @@ async function main() {
 
   // Allow happy-stacks to define the default server URL baked into the app bundle.
   // This is read by the app via `process.env.EXPO_PUBLIC_HAPPY_SERVER_URL`.
-  const serverPort = resolveServerPortFromEnv({ env, defaultPort: 3005 });
   const allowEnableTailscale =
     !stackMode || stackName === 'main' || (env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
-  const resolvedUrls = await resolveServerUrls({ env, serverPort, allowEnable: allowEnableTailscale });
+  const resolvedUrls = await resolveServerUrls({ env, allowEnable: allowEnableTailscale });
+  const serverPort = resolvedUrls.serverPort;
   if (resolvedUrls.publicServerUrl && !env.EXPO_PUBLIC_HAPPY_SERVER_URL) {
     env.EXPO_PUBLIC_HAPPY_SERVER_URL = resolvedUrls.publicServerUrl;
   }

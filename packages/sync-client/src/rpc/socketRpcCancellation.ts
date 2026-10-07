@@ -7,15 +7,25 @@ export function createSocketRpcAbortError(): Error {
   return Object.assign(new Error('Socket RPC was aborted by the caller'), { name: 'AbortError', code: 'SOCKET_RPC_ABORTED' });
 }
 export function createSocketIoAckTimeoutError(): Error { return new Error('operation has timed out'); }
+const MAX_NATIVE_TIMER_DELAY_MS = 2_147_483_647;
 export function isSocketIoAckTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message === 'operation has timed out';
 }
 export async function raceSocketIoAckTimeout<T>(promise: Promise<T>, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
   if (!(typeof timeoutMs === 'number' && timeoutMs > 0)) return promise;
   return new Promise<T>((resolve, reject) => {
+    const deadlineAtMs = Date.now() + timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); };
     const onAbort = () => { cleanup(); reject(createSocketRpcAbortError()); };
-    const timer = setTimeout(() => { cleanup(); reject(createSocketIoAckTimeoutError()); }, timeoutMs);
+    const armDeadline = () => {
+      timer = setTimeout(() => {
+        if (Date.now() < deadlineAtMs) { armDeadline(); return; }
+        cleanup();
+        reject(createSocketIoAckTimeoutError());
+      }, Math.min(MAX_NATIVE_TIMER_DELAY_MS, Math.max(0, deadlineAtMs - Date.now())));
+    };
+    armDeadline();
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) { onAbort(); return; }
     promise.then((value) => { cleanup(); resolve(value); }, (error: unknown) => { cleanup(); reject(error); });

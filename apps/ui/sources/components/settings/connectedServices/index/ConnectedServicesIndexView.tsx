@@ -131,7 +131,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 active: membership.inUse,
             };
         });
-        const needsSignIn = sheet.canOpen && normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth';
+        const needsSignIn = normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth';
         const target: QualifiedConnectedAccountPurposeBindingTargetV1 | null = account.kind === 'qualified'
             ? { kind: 'account', account: account.profile.ref }
             : null;
@@ -144,7 +144,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             signedOut: needsSignIn ? {
                 reason: t('connectedServicesSettings.signedOutBy', { service: sheet.label }),
                 consequence: t('connectedServicesCollection.signedOutConsequence'),
-                onSignInAgain: () => props.onSignInAgain(sheet, account.accountId),
+                onSignInAgain: sheet.canAdd ? () => props.onSignInAgain(sheet, account.accountId) : null,
             } : null,
             fixProminence: props.settled ? 'secondary' : props.fixProminence,
             legacyServiceId: sheet.legacyServiceId,
@@ -191,7 +191,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 : undefined);
         return {
             summary,
-            addAccount: sheet.canOpen ? (
+            addAccount: sheet.canAdd ? (
                 <SectionActionButton
                     testID={`connected-services-service:${sheet.serviceKey}:add-account`}
                     icon="plus"
@@ -252,11 +252,17 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 {sectionTitle ? <ItemGroup title={sectionTitle} surface="none">{null}</ItemGroup> : null}
                 <ItemGroup
                     title={sheet.label}
+                    description={header.summary}
                     titleLeading={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="inline" />}
                     titleAccessory={<Text style={styles.gridLabelCount}>{String(sheet.accounts.length)}</Text>}
                     action={props.compact ? undefined : header.addAccount}
                     surface="none"
                 >
+                {sheet.supportDetails ? (
+                    <Item testID={`connected-services-index:${sheet.serviceKey}:support-details`}
+                        title={t('common.details')} subtitle={t('common.unavailable')}
+                        onPress={() => void Modal.alert(t('common.details'), sheet.supportDetails ?? '')} />
+                ) : null}
                 <CardGrid columns={props.compact ? 1 : 2}>
                     {sheet.accounts.map((account) => {
                         const entry = entryFor(sheet, account);

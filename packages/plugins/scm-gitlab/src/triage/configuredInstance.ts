@@ -9,7 +9,11 @@
  * for one deployment can never be sent to another.
  */
 
-import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  isTriageSourceConnectedAccountInstanceV1,
+  type TriageConfiguredSourceConnectedAccountInstanceV1,
+  type TriageConfiguredSourceInstanceV1,
+} from '@happier-dev/triage-protocol/v1';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 
 import { decodeGitlabConfiguration } from './configuration.js';
@@ -33,13 +37,27 @@ export type GitlabConfiguredInvocationResult =
   | Readonly<{ kind: 'failed'; failure: GitlabFailure }>;
 
 export type GitlabConfiguredInstanceResolution =
-  | Readonly<{ kind: 'resolved'; origin: GitlabConfiguredOrigin }>
+  | Readonly<{
+    kind: 'resolved';
+    origin: GitlabConfiguredOrigin;
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1;
+  }>
   | Readonly<{ kind: 'failed'; failure: GitlabFailure }>;
 
 /** Pure configured-instance admission, shared by pre-credential token checks and authorization. */
 export function resolveGitlabConfiguredInstance(
   instance: TriageConfiguredSourceInstanceV1,
 ): GitlabConfiguredInstanceResolution {
+  if (!isTriageSourceConnectedAccountInstanceV1(instance)) {
+    return {
+      kind: 'failed',
+      failure: {
+        class: 'unsupportedContract',
+        code: 'unsupported-credential-source',
+        detail: 'This GitLab source requires a connected account.',
+      },
+    };
+  }
   if (instance.binding.purpose !== GITLAB_CONNECTED_ACCOUNT_PURPOSE) {
     return {
       kind: 'failed',
@@ -65,12 +83,12 @@ export function resolveGitlabConfiguredInstance(
   const admission = admitGitlabV1Deployment(instance.localInstanceKey);
   return admission.kind === 'rejected'
     ? { kind: 'failed', failure: admission.failure }
-    : { kind: 'resolved', origin: admission.origin };
+    : { kind: 'resolved', origin: admission.origin, instance };
 }
 
 function isSameAccount(
-  left: TriageConfiguredSourceInstanceV1['binding']['account'],
-  right: TriageConfiguredSourceInstanceV1['binding']['account'],
+  left: TriageConfiguredSourceConnectedAccountInstanceV1['binding']['account'],
+  right: TriageConfiguredSourceConnectedAccountInstanceV1['binding']['account'],
 ): boolean {
   return left.accountId === right.accountId
     && left.service.pluginId === right.service.pluginId
@@ -83,7 +101,7 @@ function isSameAccount(
  * neither can distinguish two GitLab deployments mounted below the same host.
  */
 async function confirmGitlabConfiguredBaseIsCurrent(input: Readonly<{
-  instance: TriageConfiguredSourceInstanceV1;
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1;
   origin: GitlabConfiguredOrigin;
   connectedAccounts: GitlabConnectedAccounts;
   signal: AbortSignal;
@@ -141,10 +159,10 @@ export async function authorizeGitlabConfiguredInstance(input: Readonly<{
 }>): Promise<GitlabConfiguredInvocationResult> {
   const resolution = resolveGitlabConfiguredInstance(input.instance);
   if (resolution.kind === 'failed') return resolution;
-  const { origin } = resolution;
+  const { origin, instance } = resolution;
 
   const stale = await confirmGitlabConfiguredBaseIsCurrent({
-    instance: input.instance,
+    instance,
     origin,
     connectedAccounts: input.connectedAccounts,
     signal: input.signal,
@@ -153,8 +171,8 @@ export async function authorizeGitlabConfiguredInstance(input: Readonly<{
 
   const authorization = await authorizeGitlabInvocation({
     connectedAccounts: input.connectedAccounts,
-    purpose: input.instance.binding.purpose,
-    account: input.instance.binding.account,
+    purpose: instance.binding.purpose,
+    account: instance.binding.account,
     origin,
     signal: input.signal,
   });
@@ -163,7 +181,7 @@ export async function authorizeGitlabConfiguredInstance(input: Readonly<{
   // Materialization is an awaited authority boundary. Recheck after it so an
   // account retarget cannot make newly minted credentials cross from /A to /B.
   const retargeted = await confirmGitlabConfiguredBaseIsCurrent({
-    instance: input.instance,
+    instance,
     origin,
     connectedAccounts: input.connectedAccounts,
     signal: input.signal,

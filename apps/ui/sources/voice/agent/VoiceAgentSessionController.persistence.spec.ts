@@ -515,6 +515,51 @@ describe('VoiceExecutionTransport (persistence)', () => {
     });
   });
 
+  it('does not migrate or stop a legacy global daemon run during startup when persisted metadata predates the hidden transcript contract', async () => {
+    state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
+    state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_legacy',
+      backendId: 'claude',
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_legacy' },
+      updatedAtMs: 1,
+    };
+    sessionExecutionRunList.mockResolvedValueOnce({
+      runs: [
+        buildExecutionRunPublicState({
+          runId: 'run_legacy',
+          startedAtMs: 1,
+        }),
+      ],
+    });
+    const retainedRun = buildExecutionRunPublicState({
+      runId: 'run_legacy',
+      transcript: { persistenceMode: 'ephemeral', epoch: 1 },
+      voicePolicy: { assistantLanguage: 'fr-FR', welcome: { enabled: false, mode: 'immediate' } },
+      resumeHandle: {
+        kind: 'provider_session.v1',
+        backendTarget: { kind: 'backend', backendId: 'claude' },
+        providerSessionId: 'vs_legacy',
+      },
+    });
+    // Both reconciliation and the post-start read address the same retained Run.
+    sessionExecutionRunGet
+      .mockResolvedValueOnce({ run: retainedRun })
+      .mockResolvedValueOnce({ run: retainedRun });
+
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(sessionExecutionRunStop).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sys_voice',
+        existingRunId: 'run_legacy',
+      }),
+    );
+  });
   it('persists session-scoped daemon run metadata so the run can be reattached after controller recreation', async () => {
     const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
 

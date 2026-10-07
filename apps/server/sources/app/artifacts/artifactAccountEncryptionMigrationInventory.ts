@@ -4,7 +4,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { qualifyPluginArtifactAccountEncryptionMigrationInTx } from '@/app/plugins/availability/operations';
 import { artifactClassificationFromRelations } from './artifactClassification';
 import { readArtifactAccountEncryptionMigrationRowsInTx } from './artifactWriteService';
-import { openArtifactStoredContentPair, openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from './artifactStoredContent';
+import { openArtifactStoredContentPair, openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactStoredProvenanceMatchesAccountMode } from './artifactStoredContent';
 import * as privacyKit from 'privacy-kit';
 
 /** The transition census also owns pagination; ordinary Artifact readers remain unchanged. */
@@ -25,7 +25,7 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
         const provenance = row.provenance ? openArtifactProvenanceBytes({ ...content, bodyVersion: row.bodyVersion,
             provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: row.provenance }) : null;
         if (row.provenance && !provenance) return null;
-        if (!artifactProvenanceMatchesAccountMode({ mode: mode.mode, artifactId: row.id, bodyVersion: row.bodyVersion,
+        if (!artifactStoredProvenanceMatchesAccountMode({ mode: mode.mode, artifactId: row.id, bodyVersion: row.bodyVersion,
             provenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return null;
         const revisions: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['revisions'] = [];
         const envelopes = [{ ...opened, dataEncryptionKey: row.dataEncryptionKey }];

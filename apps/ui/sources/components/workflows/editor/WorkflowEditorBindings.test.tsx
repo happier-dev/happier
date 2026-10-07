@@ -46,6 +46,14 @@ beforeEach(() => {
 afterEach(standardCleanup);
 
 describe('workflow editor declared bindings', () => {
+    it('reads an unselected workflow engine honestly in the closed Inspector', async () => {
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'empty-engine', name: 'Workflow',
+            definition: createWorkflowDefinitionFixture({ defaults: {} }) });
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
+            draft={draft} machineName={null} testIDPrefix="empty" onChange={() => {}} />);
+        const header = screen.findByTestId('empty-group-agent-header')!;
+        expect(header.findAll((node) => String(node.type) === 'Text' && node.children.includes('agentInput.agent.unselected'))).not.toHaveLength(0);
+    });
     it('reads declared input titles rather than wire keys in a read-only settings pane', async () => {
         const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'builtin', name: 'Built-in',
             definition: createWorkflowDefinitionFixture({ inputs: [
@@ -76,6 +84,10 @@ describe('workflow editor declared bindings', () => {
         expect(screen.getTextContent()).not.toContain('detached');
         expect(screen.getTextContent()).not.toContain('read_only');
         expect(screen.getTextContent()).not.toContain('(json)');
+        const card = screen.findByTestId('editor-action-panel-card')!;
+        expect(card.findAll((node) => node.props.testID === 'editor-action-panel-card-title')).not.toHaveLength(0);
+        expect(card.findAll((node) => String(node.type) === 'Text' && node.children.includes('Happier'))).not.toHaveLength(0);
+        expect(screen.tree.findHostByTestId('editor-action-panel-label')?.props.accessibilityLabel).toContain('workflows.a11y.stepContext');
     });
 
     it('edits workflow-local role pins through the same undo history without changing Settings', async () => {

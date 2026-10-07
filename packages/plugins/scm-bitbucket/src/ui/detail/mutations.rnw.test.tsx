@@ -168,7 +168,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
         },
       },
     });
-    await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await expect(detail.getByRole('button', { name: 'Post reply' })).resolves.toBeDefined();
     await detail.press(await detail.getByRole('button', { name: 'Post reply' }));
     expect(recordedWrites().at(-1)).toMatchObject({
@@ -471,7 +471,7 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
       [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]: commentsResult(rows),
     };
     const detail = await mountDetail(launchInput);
-    await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     return detail;
   }
 

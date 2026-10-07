@@ -20,7 +20,7 @@ import {
 } from './registry';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
-import { buildLocalServiceEndpointUrl } from '../inventory/endpoint';
+import { buildLocalServiceEndpointUrl, type LocalServiceEndpointEnricher } from '../inventory/endpoint';
 import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
@@ -36,6 +36,7 @@ export type LocalServicePreviewRoutes = Readonly<{
     getSnapshot(): Promise<LocalServicePreviewSnapshotV1>;
     openOrCreate(
         request: DaemonLocalServicePreviewOpenOrCreateRequestV1,
+        signal?: AbortSignal,
     ): Promise<LocalServicePreviewLifecycleResult<DaemonLocalServicePreviewOpenOrCreateResponseV1>>;
     revoke(
         request: DaemonLocalServicePreviewRevokeRequestV1,
@@ -47,17 +48,9 @@ function previewIdForInventoryEntry(accountId: string, machineId: string, sessio
 }
 
 /**
- * Map a detected loopback listener to the loopback host a private preview embed should load.
- * Loopback entries pass through; a wildcard listener (`0.0.0.0`/`::`) is reachable over
- * loopback so it is normalized to `127.0.0.1`. Anything else (LAN/unknown) is not a private
- * preview and is rejected upstream.
+ * Bind a detected listener using the canonical endpoint owner's observed scheme/loopback host.
+ * LAN/unknown addresses are outside private-preview discovery.
  */
-function resolveLoopbackHost(entry: NormalizedLocalServiceInventoryEntry): string | null {
-    if (entry.address.kind === 'loopback') return entry.address.host;
-    if (entry.address.kind === 'wildcard') return '127.0.0.1';
-    return null;
-}
-
 function buildInventoryPreviewInput(input: Readonly<{
     entry: NormalizedLocalServiceInventoryEntry;
     machineId: string;
@@ -65,10 +58,10 @@ function buildInventoryPreviewInput(input: Readonly<{
     sessionId: string | undefined;
     initialPath: DaemonLocalServicePreviewOpenOrCreateRequestV1['initialPath'];
 }>): RegisterLocalServicePreviewInput | null {
-    const host = resolveLoopbackHost(input.entry);
-    if (!host) return null;
+    if (input.entry.address.kind !== 'loopback' && input.entry.address.kind !== 'wildcard') return null;
     const endpoint = input.entry.endpoint;
     if (!endpoint || (endpoint.scheme !== 'http' && endpoint.scheme !== 'https')) return null;
+    const host = endpoint.host;
     const addressLabel = input.entry.presentation?.addressLabel ?? `${host}:${input.entry.port}`;
     const title = input.entry.presentation?.displayName
         ?? input.entry.presentation?.pageTitle
@@ -93,6 +86,8 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
     server?: LocalServicePreviewServerInput;
     registry: LocalServicePreviewRegistry;
     inventoryRegistry?: LocalServiceInventoryRegistry;
+    endpointEnricher?: LocalServiceEndpointEnricher;
+    signal?: AbortSignal;
     now?: () => number;
 }>): LocalServicePreviewRoutes {
     const now = input.now ?? (() => Date.now());
@@ -106,13 +101,15 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         return 'preview_registration_failed';
     }
 
-    async function publish(resource: LocalServicePreviewResourceV1) {
+    async function publish(resource: LocalServicePreviewResourceV1, signal?: AbortSignal) {
         try {
             if (!server) throw new Error('preview_server_unavailable');
-            const preview = await server.registerPreview(resource);
+            signal?.throwIfAborted();
+            const preview = await server.registerPreview(resource, signal);
             input.registry.previewsById.set(resource.previewId, preview);
             return { ok: true as const, preview };
         } catch (error) {
+            signal?.throwIfAborted();
             const reasonCode = server ? failureReason(error) : 'preview_server_unavailable';
             input.registry.previewsById.set(resource.previewId, {
                 previewId: resource.previewId,
@@ -166,7 +163,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             return buildSnapshot();
         },
 
-        async openOrCreate(request) {
+        async openOrCreate(request, signal) {
+            if (input.signal) signal = signal ? AbortSignal.any([input.signal, signal]) : input.signal;
+            signal?.throwIfAborted();
             if (request.machineId !== input.machineId) {
                 return { ok: false, reasonCode: 'wrong_machine' };
             }
@@ -180,7 +179,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 const existing = input.registry.previewsById.get(existingId)?.resource;
                 if (existing) {
                     if (existing.sessionId !== request.sessionId) return { ok: false, reasonCode: 'preview_session_mismatch' };
-                    const published = await publish({ ...existing, initialPath: request.initialPath ?? existing.initialPath });
+                    const published = await publish({ ...existing, initialPath: request.initialPath ?? existing.initialPath }, signal);
                     if (!published.ok) return published;
                     return {
                         ok: true,
@@ -202,11 +201,25 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (!input.inventoryRegistry) {
                 return { ok: false, reasonCode: 'inventory_unavailable' };
             }
-            const entry = input.inventoryRegistry.getSnapshot().entries.find((candidate) => (
+            let entry = input.inventoryRegistry.getSnapshot().entries.find((candidate) => (
                 candidate.id === request.inventoryEntryId && candidate.machineId === input.machineId
             ));
             if (!entry) {
                 return { ok: false, reasonCode: 'unknown_inventory_entry' };
+            }
+            if (!entry.endpoint || !buildLocalServiceEndpointUrl(entry.endpoint)) {
+                const endpoint = await input.endpointEnricher?.resolve(entry, signal);
+                signal?.throwIfAborted();
+                // Resolution may outlive a scan, label edit, or Forget. Merge into the current
+                // listener rather than republishing the snapshot captured before the network await.
+                const current = input.inventoryRegistry.getSnapshot();
+                const latest = current.entries.find((candidate) => candidate.id === entry?.id);
+                if (!latest || latest.state !== 'listening') return { ok: false, reasonCode: 'unknown_inventory_entry' };
+                const resolvedEntry = endpoint ? { ...latest, endpoint } : latest;
+                entry = resolvedEntry;
+                if (endpoint) {
+                    input.inventoryRegistry.replaceSnapshot({ ...current, entries: current.entries.map((candidate) => candidate.id === resolvedEntry.id ? resolvedEntry : candidate) });
+                }
             }
             if (
                 (entry.address.kind === 'loopback' || entry.address.kind === 'wildcard')
@@ -230,7 +243,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (!registration.ok) {
                 return { ok: false, reasonCode: registration.reasonCode };
             }
-            const published = await publish(registration.resource);
+            const published = await publish(registration.resource, signal);
             if (!published.ok) return published;
             return {
                 ok: true,

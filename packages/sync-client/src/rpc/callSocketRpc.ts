@@ -24,7 +24,10 @@ export async function emitWithAckCancellable<T>(params: Readonly<{
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     if (params.socket.connected === false) throw new Error('Socket not connected');
     const timeout = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : undefined;
-    const emission = timeout !== undefined && params.socket.timeout ? params.socket.timeout(timeout) : params.socket;
+    // Socket.IO's native timer overflows above this platform boundary; the
+    // existing acknowledgement race owns those longer authored deadlines.
+    const nativeTimeout = timeout !== undefined && timeout <= 2_147_483_647 ? timeout : undefined;
+    const emission = nativeTimeout !== undefined && params.socket.timeout ? params.socket.timeout(nativeTimeout) : params.socket;
     const emit = emission.emit;
     const emitWithAck = emission.emitWithAck;
     if (!emitWithAck && !emit) throw new Error('Socket acknowledgement scope cannot emit');
@@ -37,7 +40,7 @@ export async function emitWithAckCancellable<T>(params: Readonly<{
           ? emitWithAck.call(emission, params.event, params.payload)
           : new Promise<unknown>((resolve, reject) => {
               emit!.call(emission, params.event, params.payload, (...args: unknown[]) => {
-                if (timeout !== undefined && params.socket.timeout) {
+                if (nativeTimeout !== undefined && params.socket.timeout) {
                   if (args[0]) reject(args[0]); else resolve(args[1]);
                 } else resolve(args[0]);
               });

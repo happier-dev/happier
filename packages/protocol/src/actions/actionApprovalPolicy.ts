@@ -1,5 +1,5 @@
 import { ACTION_IDS } from './actionIds.js';
-import { isAgentApprovalRequestSurface, isAgentRequestablePresentUserActionId, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
+import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
 import type {
@@ -320,7 +320,9 @@ export function isApprovalRequiredByActionsSettings(
   contributedApprovalDefault?: boolean,
   input?: unknown,
 ): boolean {
-  if (isAgentApprovalRequestSurface(ctx?.surface) && isAgentRequestablePresentUserActionId(actionId)) return true;
+  const requestActionId = ActionIdSchema.safeParse(actionId);
+  if (isAutomationApprovalRequestSurface(ctx?.surface) && requestActionId.success
+    && canRequestPresentUserApprovalForActionInputV1(getActionSpec(requestActionId.data), input)) return true;
   if (requiresWorkflowTriggerAgentApproval(actionId, ctx)) return true;
   const surface = resolveApprovalSurface(ctx);
   const rawSurface = ctx?.surface;
@@ -361,9 +363,8 @@ function resolveUnwiredApprovalDefault(
 }
 
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
-  const presentUserRequest = isAgentApprovalRequestSurface(args.context?.surface)
-    && (isAgentRequestablePresentUserActionId(args.actionId)
-      || (args.actionId === 'session.open' && requiresPresentUserExecutionAuthorityForActionInputV1(args.spec, args.input)));
+  const presentUserRequest = isAutomationApprovalRequestSurface(args.context?.surface)
+    && canRequestPresentUserApprovalForActionInputV1(args.spec, args.input);
   const computerAction = args.actionId === 'computer.capture' || args.actionId === 'computer.query' || args.actionId === 'computer.input';
   const computerConsent = computerAction && args.computerConsentGranted === true
     && args.context?.authority !== 'present_user' && args.context?.bypassApprovals !== true;
@@ -411,7 +412,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
       )
     );
   const flow = required && (mustReturnApprovalCustody
-    || presentUserRequest)
+    || (presentUserRequest && args.spec.approvalInputCustody !== 'live_only'))
     ? 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
 

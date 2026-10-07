@@ -1,7 +1,9 @@
-import { useCallback, useId, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useId, useState, type ReactNode } from 'react';
 import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
 
 import {
+  resolveHappierUiPalette,
+  useOptionalHappierUiAccessibility,
   useOptionalHappierUiPalette,
   useOptionalHappierUiTheme,
   useOptionalHappierUiTypography,
@@ -19,6 +21,7 @@ import type {
 import { HappierSpinner } from '../feedback/Spinner.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1, happierPressTransitionStyle } from '../interaction/pressFeedback.js';
+import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { HappierDivider } from '../content/Foundation.js';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '../layout/pageMetrics.js';
 import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
@@ -35,8 +38,11 @@ import { useHappierItemGroupItemBehavior } from './ItemGroup.js';
 import {
   HAPPIER_COLLECTION_LIST_METRICS,
   HAPPIER_COLLECTION_LIST_TEXT,
+  HAPPIER_COLLECTION_SELECTED_EDGE_WIDTH,
+  HappierListRowOpenContext,
   resolveHappierCollectionListRowPadding,
   useHappierCollectionListRow,
+  useHappierCollectionTableRow,
 } from './CollectionList.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 
@@ -277,6 +283,16 @@ export function HappierList({
   );
 }
 
+const COLLECTION_ROW_FILL_TRANSITION = {
+  transitionProperty: 'background-color',
+  transitionDuration: `${HAPPIER_MOTION_V1.fastMs}ms`,
+  transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
+} as ViewStyle;
+
+function collectionPalette(theme: HappierUiTheme, palette: ReturnType<typeof useOptionalHappierUiPalette>) {
+  return palette ?? resolveHappierUiPalette(theme);
+}
+
 /** A labelled subset within a {@link HappierList}. */
 export function HappierListSection({
   children,
@@ -296,7 +312,8 @@ export function HappierListSection({
   const hostTypography = useOptionalHappierUiTypography();
   const titleStyle = theme
     ? titleRole === 'caption'
-      ? { ...textStyle(theme, hostTypography, 'caption', theme.colors.secondaryText), fontWeight: '600' as const }
+      // A dense collection's group band: the shared group-label step (lab `.grp`), one step under the rows.
+      ? { ...resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.groupTitle, hostTypography), color: theme.colors.secondaryText }
       : titleRole === 'section'
         ? { ...resolveHappierPageTextStyle('sectionTitle', hostTypography), color: theme.colors.text }
         : textStyle(theme, hostTypography, 'label', theme.colors.text)
@@ -304,7 +321,9 @@ export function HappierListSection({
   const quietStyle = theme
     ? titleRole === 'section'
       ? { ...resolveHappierPageTextStyle('sectionTitle', hostTypography), fontWeight: '400' as const, color: theme.colors.mutedText }
-      : textStyle(theme, hostTypography, titleRole, theme.colors.mutedText)
+      : titleRole === 'caption'
+        ? { ...resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.groupCount, hostTypography), color: theme.colors.mutedText }
+        : textStyle(theme, hostTypography, titleRole, theme.colors.mutedText)
     : undefined;
   // The visible heading: the title, its count and what its rows share. Only the title is the group's name.
   const hasAction = action !== undefined && action !== null && action !== false;
@@ -453,6 +472,13 @@ export function HappierListItem({
   // on the plane, inset by the shared gutter, the plane's selected chip and a heavier open title.
   const navigationRow = useHappierCollectionListRow() && pageSection === null;
   const navigationPalette = useOptionalHappierUiPalette(theme ?? environmentTheme);
+  // Inside a Collection's table or list a row takes the dense collection anatomy (full bleed, hairline,
+  // whole-row hover and open fills, the open row's leading edge); see `HappierCollectionTableRowContext`.
+  const collectionRow = useHappierCollectionTableRow() && pageSection === null && !navigationRow;
+  // The open row (its detail is showing) carries the edge; a row in the bulk set is filled without one.
+  const openRow = useContext(HappierListRowOpenContext);
+  const [collectionRowHovered, setCollectionRowHovered] = useState(false);
+  const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion === true;
   // A page row whose control is wide (`accessoryWraps`) measures itself, like
   // Happier core's adaptive page rows: too narrow for a label column and a
   // control column side by side, the control moves beneath the label.
@@ -703,6 +729,17 @@ export function HappierListItem({
           ? 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
         ...happierPressTransitionStyle(state.pressed, ['opacity']),
+      }) : collectionRow ? ({
+        width: '100%',
+        minWidth: 0,
+        minHeight: targetSize,
+        // The ring is keyboard focus only; the row's fills are the wrapper's, across the accessory too.
+        borderWidth: 1,
+        borderColor: state.focused ? resolvedTheme.colors.focus : 'transparent',
+        opacity: state.disabled && !state.busy
+          ? 0.5
+          : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
+        ...happierPressTransitionStyle(state.pressed, ['opacity']),
       }) : ({
         width: '100%',
         minWidth: 0,
@@ -808,14 +845,49 @@ export function HappierListItem({
         : {})}
       testID={isInteractive ? undefined : testID}
       onLayout={measuresPageRow ? handlePageRowLayout : undefined}
+      {...(collectionRow && isInteractive ? {
+        onPointerEnter: () => { setCollectionRowHovered(true); },
+        onPointerLeave: () => { setCollectionRowHovered(false); },
+      } : {})}
       style={[itemStyle, isGridRow ? {
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
         minWidth: 0,
+      } : undefined, collectionRow && resolvedTheme ? {
+        // The pointer's fill eases in at the fast step (web); selection lands at once.
+        ...(reducedMotion ? {} : COLLECTION_ROW_FILL_TRANSITION),
+        backgroundColor: selected === true || openRow
+          ? collectionPalette(resolvedTheme, navigationPalette).navigationSelected
+          : collectionRowHovered && isInteractive && disabled !== true
+            ? collectionPalette(resolvedTheme, navigationPalette).navigationHover
+            : 'transparent',
       } : undefined, style]}
     >
       {rowContent}
+      {collectionRow && resolvedTheme ? (
+        <>
+          {/* Overlays, never layout: the row keeps the exact height its Collection planned. */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              height: happierPageRowDividerWidth(),
+              backgroundColor: collectionPalette(resolvedTheme, navigationPalette).rowDivider,
+            }}
+          />
+          {openRow ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute', left: 0, top: 0, bottom: 0,
+                width: HAPPIER_COLLECTION_SELECTED_EDGE_WIDTH,
+                backgroundColor: resolvedTheme.colors.text,
+              }}
+            />
+          ) : null}
+        </>
+      ) : null}
       {rowDescriptionId ? (
         // Referenced only. `display: none` keeps it out of the row's visible
         // layout and out of its name computation, while the accessible-name

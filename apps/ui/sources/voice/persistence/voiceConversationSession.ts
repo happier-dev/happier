@@ -659,7 +659,7 @@ function resolveConversationRetentionLimit(state: any): number {
     const policy = agentCfg?.rootSessionPolicy === 'keep_warm' ? 'keep_warm' : 'single';
     if (policy === 'single') return 1;
     const raw = Number(agentCfg?.maxWarmRoots ?? 3);
-    return Number.isFinite(raw) ? Math.max(1, Math.min(10, Math.floor(raw))) : 3;
+    return Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 3;
 }
 
 async function retireVoiceConversationSession(sessionId: string): Promise<void> {

@@ -9,7 +9,7 @@ import {
     type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 
-import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { canExecuteConnectedServiceAction, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     compareAccountHealthSeverity,
     deriveAccountHealth,
@@ -83,8 +83,10 @@ export type ConnectedServicesIndexSheet = Readonly<{
     entry: ConnectedServiceRegistryEntry | null;
     legacyServiceId: ConnectedServiceId | null;
     label: string;
-    /** Whether the service page can be opened (it needs an executable or generated owner). */
+    /** Known identity keeps its read-only page reachable even while execution is unavailable. */
     canOpen: boolean;
+    /** Action admission from the executable projection or the released built-in legacy ingress. */
+    canAdd: boolean;
     /** Worst health first, then a stable id order. */
     accounts: readonly ConnectedServicesIndexAccount[];
     connectedCount: number;
@@ -232,17 +234,15 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
         const diagnostics = entry && published
             ? input.presentDiagnostics(entry)
             : { primary: null, supportDetails: null };
-        const canOpen = published
-            ? entry?.executable === true
-                || (input.transport === 'legacy' && Boolean(legacyServiceId) && !entry?.projectedDescriptor)
-            : entry !== null;
+        const canOpen = entry !== null;
+        const canAdd = entry !== null && canExecuteConnectedServiceAction(entry, input.transport);
 
         if (
             published
             && input.transport !== 'indeterminate'
             && accounts.length === 0
             && groupCount === 0
-            && canOpen
+            && canAdd
             && diagnostics.primary === null
         ) {
             return 'connectable';
@@ -294,6 +294,7 @@ export function buildConnectedServicesIndexModel(input: Readonly<{
             legacyServiceId,
             label: input.resolveLabel(entry),
             canOpen,
+            canAdd,
             accounts: sorted,
             connectedCount: connectedIds.length,
             groupCount,

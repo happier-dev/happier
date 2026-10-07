@@ -34,9 +34,6 @@ import {
   AccountEncryptionMaterialUnavailableError,
 } from '@/api/client/encryptionKey';
 import {
-  resolveConnectedServiceCredentialSource,
-} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import {
   ConnectedServiceStoredContentUnavailableError,
   isConnectedServiceStoredContentUnavailableError,
 } from '@/cloud/connectedServices/connectedServiceStoredContentUnavailable';
@@ -371,6 +368,7 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
     confidence: 'confirmed',
     state: meters.length > 0 ? 'loaded_data' : 'loaded_empty',
     accountLabel: input.profile.displayName ?? null,
+    ...(input.quota.planLabel === undefined ? {} : { planLabel: input.quota.planLabel }),
     ...(input.quota.subscription ? { subscription: input.quota.subscription } : {}),
     meters,
   });
@@ -1018,7 +1016,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly quotaFetchersByServiceId: Map<ConnectedServiceId, ConnectedServiceQuotaFetcher>;
   private readonly now: () => number;
   private readonly randomBytes: (length: number) => Uint8Array;
-  private readonly fetchTimeoutMs: number;
+  private readonly fetchTimeoutMs: number | null;
   private readonly failureBackoffMinMs: number;
   private readonly failureBackoffMaxMs: number;
   private readonly failureBackoffJitterPct: number;
@@ -1102,7 +1100,6 @@ export class ConnectedServiceQuotasCoordinator {
     readPersistedSessionAccountIdentity?: PersistedSessionAccountIdentityReader | null;
     sameAccountFanoutMinIntervalMs?: number;
     sameAccountFanoutResetBucketMs?: number;
-    runtimeAccountIdentityTtlMs?: number;
     groupSwitchCheckMinIntervalMs?: number;
     groupSwitchCheckJitterMs?: number;
     quotaWorkGate?: DaemonServerWorkGate | null;
@@ -1135,7 +1132,7 @@ export class ConnectedServiceQuotasCoordinator {
     this.fetchTimeoutMs =
       typeof params.fetchTimeoutMs === 'number' && Number.isFinite(params.fetchTimeoutMs)
         ? Math.max(1, Math.trunc(params.fetchTimeoutMs))
-        : 15_000;
+        : null;
     this.failureBackoffMinMs =
       typeof params.failureBackoffMinMs === 'number' && Number.isFinite(params.failureBackoffMinMs)
         ? Math.max(1, Math.trunc(params.failureBackoffMinMs))
@@ -1191,10 +1188,7 @@ export class ConnectedServiceQuotasCoordinator {
         : 60_000;
     this.quotaWorkGate = params.quotaWorkGate ?? null;
     this.recordDiagnostic = params.recordDiagnostic ?? null;
-    this.runtimeAccountIdentities = new RuntimeAccountIdentityIndex({
-      nowMs: this.now,
-      ...(typeof params.runtimeAccountIdentityTtlMs === 'number' ? { ttlMs: params.runtimeAccountIdentityTtlMs } : {}),
-    });
+    this.runtimeAccountIdentities = new RuntimeAccountIdentityIndex();
     this.quotaPersistenceServerScope = String(params.quotaPersistenceServerScope ?? 'active-server').trim() || 'active-server';
     this.quotaPersistenceAccountScope =
       params.quotaPersistenceAccountScope === undefined
@@ -1262,11 +1256,11 @@ export class ConnectedServiceQuotasCoordinator {
       maxPendingPayloadAgeMs:
         typeof params.quotaPersistenceMaxPendingPayloadAgeMs === 'number' && Number.isFinite(params.quotaPersistenceMaxPendingPayloadAgeMs)
           ? Math.max(1, Math.trunc(params.quotaPersistenceMaxPendingPayloadAgeMs))
-          : 5 * 60_000,
+          : undefined,
       maxConsecutiveFailures:
         typeof params.quotaPersistenceMaxConsecutiveFailures === 'number' && Number.isFinite(params.quotaPersistenceMaxConsecutiveFailures)
           ? Math.max(1, Math.trunc(params.quotaPersistenceMaxConsecutiveFailures))
-          : 5,
+          : undefined,
       now: this.now,
       backoff: this.inBandQuotaPersistenceBackoff,
       shouldRetry: isRetryableQuotaPersistenceError,
@@ -1994,27 +1988,7 @@ export class ConnectedServiceQuotasCoordinator {
     )) {
       return null;
     }
-    const resolved = await resolveConnectedServiceCredentialSource({
-      credentials: this.credentials,
-      api: this.api,
-      binding: {
-        serviceId: input.serviceId,
-        profileId: input.profileId,
-      },
-      accountMode: input.accountMode,
-      signal: input.signal,
-    });
-    if (!resolved || resolved.revisionSemantics !== 'revisioned') return null;
-    const credentialRevision =
-      ConnectedServiceCredentialRevisionV1Schema.parse(
-        resolved.credentialRevision,
-      );
-    return {
-      record: resolved.record,
-      credentialRevision,
-      credentialStorageMode: resolved.storageMode,
-      sourceProviderAccountId: readCredentialProviderAccountId(resolved.record),
-    };
+    return null;
   }
 
   private async isFetchedQuotaCredentialCurrent(input: Readonly<{
@@ -2110,6 +2084,7 @@ export class ConnectedServiceQuotasCoordinator {
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<{ type: 'timeout' }>((resolve) => {
+      if (timeoutMs === null) return;
       timeoutHandle = setTimeout(() => {
         try {
           controller.abort('quota-fetch-timeout');
@@ -2170,6 +2145,7 @@ export class ConnectedServiceQuotasCoordinator {
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<{ type: 'timeout' }>((resolve) => {
+      if (timeoutMs === null) return;
       timeoutHandle = setTimeout(() => {
         try {
           controller.abort('quota-recovery-credit-consume-timeout');
@@ -2271,6 +2247,7 @@ export class ConnectedServiceQuotasCoordinator {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pendingReceipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 | undefined;
     const timeout = new Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>((resolve) => {
+      if (this.fetchTimeoutMs === null) return;
       timer = setTimeout(() => {
         controller.abort('quota-recovery-credit-consume-timeout');
         resolve({ ...unavailable('timeout'), ...(pendingReceipt ? { receipt: pendingReceipt } : {}) });
@@ -4430,8 +4407,9 @@ export class ConnectedServiceQuotasCoordinator {
     if (profileIds.length === 0) return { status: 'complete', requestedProfileCount: 0, completedProfileCount: 0 };
     if (!groupId) return incomplete(0, 'probe_unavailable');
     const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort('quota-group-probe-deadline'), this.fetchTimeoutMs);
-    (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+    const timeoutHandle = this.fetchTimeoutMs === null ? undefined
+      : setTimeout(() => controller.abort('quota-group-probe-deadline'), this.fetchTimeoutMs);
+    timeoutHandle?.unref?.();
     const completedProfileIds = new Set<string>();
     try {
     const qualifiedPeerClass =
@@ -4875,11 +4853,11 @@ export class ConnectedServiceQuotasCoordinator {
     if (listGroupQuotaTargets) {
       for (const view of groupViewsByKey.values()) {
         const controller = new AbortController();
-        const timeoutHandle = setTimeout(
+        const timeoutHandle = this.fetchTimeoutMs === null ? undefined : setTimeout(
           () => controller.abort('qualified-quota-group-targets-deadline'),
           this.fetchTimeoutMs,
         );
-        (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+        timeoutHandle?.unref?.();
         try {
           const resolvedTargets = await listGroupQuotaTargets({
             service: view.service,

@@ -43,6 +43,7 @@ import { killProcessGroupOwnedByStack } from './utils/proc/ownership.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
+import { createTuiSummaryRefresh } from './utils/tui/summary_refresh.mjs';
 import {
   formatRuntimeExpoDevClientLines,
   formatRuntimePlacementSummaryLines,
@@ -1074,7 +1075,7 @@ async function main() {
   let tauriChild = null;
   void spawnTauriChild();
 
-  async function refreshSummary() {
+  const refreshSummary = createTuiSummaryRefresh(async () => {
     await refreshBorrowedExpoLogFollower();
     if (stackName) {
       const runtime = await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName)).catch(() => null);
@@ -1192,7 +1193,7 @@ async function main() {
       panes[qrIdx].lines = [];
     }
     scheduleRender();
-  }
+  });
 
   let summaryTimer = null;
   const startSummaryTimer = () => {

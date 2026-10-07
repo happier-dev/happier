@@ -25,7 +25,8 @@ import {
   type ResolvedPluginProjectionEditableSettingsGroup,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { useMachineCliDetectionTarget, useProfile } from '@/sync/store/hooks';
 import {
   captureActiveServerAccountScopeLifetime,
@@ -105,6 +106,13 @@ import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } fr
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 
 const registry = createDefaultVoiceProviderRegistry();
+
+const selectReadinessAccountSettings = (settings: Settings) => ({
+  voiceSettingsV1: settings.voiceSettingsV1,
+  secrets: settings.secrets,
+  connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+  connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+});
 
 type CheckedVoiceProviderReadinessResult =
   | Readonly<{
@@ -299,7 +307,7 @@ export function useVoiceConversationsReadinessModel(props: {
     registry.getRevision ?? (() => 0),
   );
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
-  const accountSettings = useSettings();
+  const accountSettings = useSettingsSelector(selectReadinessAccountSettings);
   const savedSecretCatalog = useSavedSecretCatalog();
   const accountProfile = useProfile();
   const activeAccountScopeLifetime = captureActiveServerAccountScopeLifetime();

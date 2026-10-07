@@ -1,13 +1,13 @@
 import type { WorkflowBlock, WorkflowStep } from '@happier-dev/protocol';
 
-export function findWorkflowStepById(
+/** Walk authored blocks in declaration order without limiting nesting. */
+export function* walkWorkflowBlocks(
   blocks: readonly WorkflowBlock[],
-  blockId: string,
-): WorkflowStep | undefined {
+): Generator<WorkflowBlock> {
   const pending: WorkflowBlock[] = [...blocks].reverse();
   while (pending.length > 0) {
     const block = pending.pop()!;
-    if (block.kind === 'step' && block.id === blockId) return block;
+    yield block;
     const nested = block.kind === 'parallel'
       ? block.branches.flatMap((branch) => branch.blocks)
       : block.kind === 'if'
@@ -18,6 +18,15 @@ export function findWorkflowStepById(
     for (let index = nested.length - 1; index >= 0; index -= 1) {
       pending.push(nested[index]!);
     }
+  }
+}
+
+export function findWorkflowStepById(
+  blocks: readonly WorkflowBlock[],
+  blockId: string,
+): WorkflowStep | undefined {
+  for (const block of walkWorkflowBlocks(blocks)) {
+    if (block.kind === 'step' && block.id === blockId) return block;
   }
   return undefined;
 }

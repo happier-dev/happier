@@ -594,13 +594,14 @@ export async function executeContributedAction(params: Readonly<{
           action,
         });
       } catch (error) {
-        return {
-          matched: true,
-          result: actionHandlerNotStartedFailure(
-            'plugin_activation_failed',
-            projectPluginFailureText(error),
-          ),
-        };
+        activationFailure = actionHandlerNotStartedFailure(
+          'plugin_activation_failed',
+          projectPluginFailureText(error),
+        );
+      }
+      const afterActivationCurrentness = await checkAdmittedCurrentness();
+      if (afterActivationCurrentness !== null) {
+        return { matched: true, result: afterActivationCurrentness };
       }
       if (activationFailure) {
         return { matched: true, result: activationFailure };

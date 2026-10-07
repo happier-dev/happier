@@ -22,7 +22,7 @@ import {
   publishRuntimeSnapshot,
   selectRuntimeSnapshot,
 } from './activate_runtime_snapshot.mjs';
-import { parseBuildSelection, parseRuntimeBuildTarget } from './build_targets.mjs';
+import { parseBuildSelection, resolveRuntimeBuildTargetGroups } from './build_targets.mjs';
 import {
   pruneComponentArtifacts,
   pruneRuntimeSnapshots,
@@ -38,7 +38,7 @@ import {
   collectRuntimeBuildToolchainInputs,
 } from './runtime_artifact_identity.mjs';
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
-import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
+import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import * as componentArtifacts from '@happier-dev/cli-common/componentArtifacts';
 import { createWorkspaceBuildWaitNotifier } from '../utils/proc/workspaceBuildWaitNotifier.mjs';
@@ -46,6 +46,7 @@ import { isPidAlive } from '../utils/proc/pids.mjs';
 import { readRuntimeManifest, RUNTIME_SNAPSHOT_COMPONENTS, validateRuntimeManifest, validateRuntimeTarget } from '../runtime/shared/runtime_manifest.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../utils/fs/json.mjs';
 import { WORKSPACE_BUILD_MODE_ENV } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { resolveHeavyweightPressureRetryMilliseconds } from '../utils/dev_targets/heavyweight_pressure_cadence.mjs';
 
 export { assertSelectedBuildPrerequisites, collectRuntimeBuildToolchainInputs } from './runtime_artifact_identity.mjs';
 
@@ -145,7 +146,8 @@ function normalizeRequestedRuntimeComponents(requestedComponents) {
   return RUNTIME_COMPONENTS.filter((component) => requested.has(component));
 }
 
-export function resolveRuntimePublicationRequiredComponents({ target, requestedComponents }) {
+export function resolveRuntimePublicationRequiredComponents({ target, requestedComponents, selection }) {
+  if (selection?.publicationRequiredComponents) return normalizeRequestedRuntimeComponents(selection.publicationRequiredComponents);
   return target.platform === process.platform && target.arch === process.arch
     ? RUNTIME_SNAPSHOT_COMPONENTS : normalizeRequestedRuntimeComponents(requestedComponents);
 }
@@ -220,16 +222,16 @@ export function captureRuntimePublicationStartedSeq({ authority }) {
   }
 }
 
-/** All producer publication and retention writers share this admission boundary. */
+/** Short producer-store publication, selection and demand-record transaction. */
 export async function withRuntimePublicationAdmission({
   authority, env = process.env, publish, withWorkspaceBundleLockImpl = withWorkspaceBundleLock,
 }) {
   const { runtimeDir } = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir });
   return await withWorkspaceBundleLockImpl(publish, {
     lockPath: join(runtimeDir, 'publication.lock'),
-    errorLabel: 'runtime publication flight lock',
+    errorLabel: 'runtime publication lock',
     timeoutMs: Number(env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
-    onWait: createWorkspaceBuildWaitNotifier({ env, label: 'runtime publication flight', kind: 'lock' }),
+    onWait: createWorkspaceBuildWaitNotifier({ env, label: 'runtime publication', kind: 'lock' }),
   });
 }
 
@@ -281,9 +283,9 @@ async function readSuccessfulRuntimePublicationArtifact({ authority, component, 
     ? { artifactDir, manifest } : null;
 }
 
-/** One producer admission covers preparation, identity resolution and publication.
- * The short snapshot commit lock remains separate for pointer writers/readers.
- * Only a successful flight started after the request can satisfy that demand.
+/** One flight per target covers preparation and compilation, with one trailing
+ * union of pending demand. Shared store transactions stay short so other targets
+ * can prepare concurrently. Only newer successful work satisfies a request.
  */
 export async function withRuntimePublicationFlight({
   authority,
@@ -293,15 +295,18 @@ export async function withRuntimePublicationFlight({
   env = process.env,
   publish,
   selectConsumer = false,
+  admitExecution = async ({ run }) => run({}),
 }) {
   const components = selectedRuntimeComponents(selection);
   const { runtimeDir } = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir });
   const resultPath = join(runtimeDir, 'publication-success.json');
   const targetKey = `${target.platform}/${target.arch}`;
+  const flightLockPath = join(runtimeDir, `publication.${target.platform}-${target.arch}.lock`);
   const demandDir = join(runtimeDir, 'publication-demands');
   const demandPath = join(demandDir, `${randomUUID()}.json`);
   const demand = { pid: process.pid, processInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid),
     target, components, observedStartedSeq,
+    ...(selection.publicationRequiredComponents ? { publicationRequiredComponents: selection.publicationRequiredComponents } : {}),
     activateRuntime: selection.activateRuntime === true, selectConsumer, forceRebuild: selection.forceRebuild === true };
   const statePath = join(authority.producerStackBaseDir, 'stack.runtime.json');
   const recordStatus = async (phase, error = null, statusComponents = components, artifacts = {}) => recordStackRuntimeUpdate(statePath, {
@@ -324,126 +329,180 @@ export async function withRuntimePublicationFlight({
   };
   await writeJsonAtomic(demandPath, demand);
   try {
-    return await withRuntimePublicationAdmission({ authority, env, publish: async ({ assertOwned }) => {
-      const previous = await readJsonIfExists(resultPath);
-      const currentStartedSeq = captureRuntimePublicationStartedSeq({ authority });
-      const successes = previous?.targets?.[targetKey]?.components ?? {};
-      const liveDemands = await readLiveRuntimePublicationDemands(demandDir);
-      const ownDemand = liveDemands.find(entry => entry.path === demandPath)?.demand ?? demand;
-      if (runtimePublicationDemandSatisfied({ demand: ownDemand, successes, currentStartedSeq })) {
-        const artifacts = {};
-        for (const component of components) {
-          const artifact = await readSuccessfulRuntimePublicationArtifact({ authority, component, success: successes[component], target });
-          if (artifact) artifacts[component] = artifact;
-        }
-        let snapshotId = null;
-        let paths = null;
-        let snapshot = null;
-        const orderedSuccesses = Object.values(successes).filter(value => isStartedSeq(value?.seq))
-          .sort((left, right) => right.seq - left.seq);
-        for (const success of orderedSuccesses) {
-          const candidateId = validateRuntimeSnapshotId(success.snapshotId, { allowEmpty: true });
-          if (!candidateId.ok || !candidateId.snapshotId) continue;
-          const candidatePaths = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir, snapshotId: candidateId.snapshotId });
-          const candidate = validateRuntimeManifest(await readRuntimeManifest({ manifestPath: candidatePaths.manifestPath }), {
-            requiredComponents: resolveRuntimePublicationRequiredComponents({ target, requestedComponents: components }),
-          });
-          if (candidate.ok && validateRuntimeTarget(candidate.manifest, target).ok && candidate.manifest.snapshotId === candidateId.snapshotId
-            && components.every(component => artifacts[component]
-              && candidate.manifest.components[component]?.artifactFingerprint === artifacts[component].manifest.artifactFingerprint)) {
-            snapshotId = candidateId.snapshotId;
-            paths = candidatePaths;
-            snapshot = candidate;
-            break;
+    const inspectDemand = async ({ start, assertFlightOwned = () => {} }) =>
+      withRuntimePublicationAdmission({ authority, env, publish: async ({ assertOwned }) => {
+        assertFlightOwned();
+        const previous = await readJsonIfExists(resultPath);
+        const currentStartedSeq = captureRuntimePublicationStartedSeq({ authority });
+        const successes = previous?.targets?.[targetKey]?.components ?? {};
+        const liveDemands = await readLiveRuntimePublicationDemands(demandDir);
+        const ownDemand = liveDemands.find(entry => entry.path === demandPath)?.demand ?? demand;
+        if (runtimePublicationDemandSatisfied({ demand: ownDemand, successes, currentStartedSeq })) {
+          const artifacts = {};
+          for (const component of components) {
+            const artifact = await readSuccessfulRuntimePublicationArtifact({ authority, component, success: successes[component], target });
+            if (artifact) artifacts[component] = artifact;
           }
-        }
-        if (components.every(component => artifacts[component])) {
-          // Reuse a retained snapshot that contains the exact successful vector.
-          // When separate completions have no shared snapshot, compose their valid
-          // artifacts through the canonical publisher without rebuilding them.
-          const promoting = !snapshot && (selection.activateRuntime || selectConsumer || orderedSuccesses.some(success => success.snapshotId));
-          if (promoting) {
-            for (const component of normalizeRequestedRuntimeComponents(Object.keys(successes))) {
-              if (artifacts[component]) continue;
-              const artifact = await readSuccessfulRuntimePublicationArtifact({ authority, component, success: successes[component], target });
-              if (artifact) artifacts[component] = artifact;
+          let snapshotId = null;
+          let paths = null;
+          let snapshot = null;
+          const orderedSuccesses = Object.values(successes).filter(value => isStartedSeq(value?.seq))
+            .sort((left, right) => right.seq - left.seq);
+          for (const success of orderedSuccesses) {
+            const candidateId = validateRuntimeSnapshotId(success.snapshotId, { allowEmpty: true });
+            if (!candidateId.ok || !candidateId.snapshotId) continue;
+            const candidatePaths = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir, snapshotId: candidateId.snapshotId });
+            const candidate = validateRuntimeManifest(await readRuntimeManifest({ manifestPath: candidatePaths.manifestPath }), {
+              requiredComponents: resolveRuntimePublicationRequiredComponents({ target, requestedComponents: components, selection }),
+            });
+            if (candidate.ok && validateRuntimeTarget(candidate.manifest, target).ok && candidate.manifest.snapshotId === candidateId.snapshotId
+              && components.every(component => artifacts[component]
+                && candidate.manifest.components[component]?.artifactFingerprint === artifacts[component].manifest.artifactFingerprint)) {
+              snapshotId = candidateId.snapshotId;
+              paths = candidatePaths;
+              snapshot = candidate;
+              break;
             }
           }
-          const coveredComponents = normalizeRequestedRuntimeComponents(Object.keys(artifacts));
-          const sourceMetadata = snapshot?.manifest?.source ?? artifacts[components[0]].manifest.source ?? null;
-          let publication = {};
-          if (promoting) {
-            await recordStatus('publishing', null, coveredComponents);
-            try {
-              publication = await publishBuiltRepositoryRuntimeSnapshot({
-                authority, selection, target, requestedComponents: components, sourceMetadata, artifacts, env,
-                retentionPolicy: resolveRuntimeRetentionPolicy({ env }),
-              });
-              await recordStatus('current', null, coveredComponents, artifacts);
-              assertOwned();
-              await writeJsonAtomic(resultPath, { ...previous, targets: { ...previous.targets,
-                [targetKey]: { components: Object.fromEntries(Object.entries(successes).map(([component, success]) => [
-                  component, artifacts[component] ? { ...success, snapshotId: publication.snapshotId } : success,
-                ])) },
-              } });
-            } catch (error) {
-              await recordStatus('failed', error instanceof Error ? error.message : String(error), coveredComponents);
-              throw error;
+          if (components.every(component => artifacts[component])) {
+            // Reuse a retained snapshot that contains the exact successful vector.
+            // When separate completions have no shared snapshot, compose their valid
+            // artifacts through the canonical publisher without rebuilding them.
+            const promoting = !snapshot && (selection.activateRuntime || selectConsumer || orderedSuccesses.some(success => success.snapshotId));
+            if (promoting) {
+              for (const component of normalizeRequestedRuntimeComponents(Object.keys(successes))) {
+                if (artifacts[component]) continue;
+                const artifact = await readSuccessfulRuntimePublicationArtifact({ authority, component, success: successes[component], target });
+                if (artifact) artifacts[component] = artifact;
+              }
             }
+            const coveredComponents = normalizeRequestedRuntimeComponents(Object.keys(artifacts));
+            const sourceMetadata = snapshot?.manifest?.source ?? artifacts[components[0]].manifest.source ?? null;
+            let publication = {};
+            if (promoting) {
+              await recordStatus('publishing', null, coveredComponents);
+              try {
+                publication = await publishBuiltRepositoryRuntimeSnapshot({
+                  authority, selection, target, requestedComponents: components, sourceMetadata, artifacts, env,
+                  retentionPolicy: resolveRuntimeRetentionPolicy({ env }),
+                });
+                await recordStatus('current', null, coveredComponents, artifacts);
+                assertOwned();
+                await writeJsonAtomic(resultPath, { ...previous, targets: { ...previous.targets,
+                  [targetKey]: { components: Object.fromEntries(Object.entries(successes).map(([component, success]) => [
+                    component, artifacts[component] ? { ...success, snapshotId: publication.snapshotId } : success,
+                  ])) },
+                } });
+              } catch (error) {
+                await recordStatus('failed', error instanceof Error ? error.message : String(error), coveredComponents);
+                throw error;
+              }
+            }
+            return await finish({
+              ok: true,
+              requestedComponents: components,
+              components,
+              producerStackName: authority.producerStackName,
+              producerStackBaseDir: authority.producerStackBaseDir,
+              artifacts: Object.fromEntries(components.map(component => [component, artifacts[component]])),
+              source: sourceMetadata,
+              snapshotId,
+              snapshotPath: paths?.snapshotDir || null,
+              changed: false,
+              ...publication,
+              reused: true,
+              selected: false,
+              runtime: null,
+              publicationFlight: 'joined',
+            });
           }
-          return await finish({
-            ok: true,
-            requestedComponents: components,
-            components,
-            producerStackName: authority.producerStackName,
-            producerStackBaseDir: authority.producerStackBaseDir,
-            artifacts: Object.fromEntries(components.map(component => [component, artifacts[component]])),
-            source: sourceMetadata,
-            snapshotId,
-            snapshotPath: paths?.snapshotDir || null,
-            changed: false,
-            ...publication,
-            reused: true,
-            selected: false,
-            runtime: null,
-            publicationFlight: 'joined',
-          });
         }
+
+        const pendingDemands = liveDemands.filter(({ demand: waiting }) =>
+          waiting.target?.platform === target.platform && waiting.target?.arch === target.arch
+          && !runtimePublicationDemandSatisfied({ demand: waiting, successes, currentStartedSeq }));
+        const mergedComponents = normalizeRequestedRuntimeComponents([
+          ...components, ...pendingDemands.flatMap(({ demand: waiting }) => waiting.components ?? []),
+        ]);
+        const mergedSelection = { ...selection,
+          components: { ...selection.components, ...Object.fromEntries(mergedComponents.map(component => [component, true])) },
+          activateRuntime: selection.activateRuntime === true || pendingDemands.some(({ demand: waiting }) => waiting.activateRuntime),
+          forceRebuild: selection.forceRebuild === true || pendingDemands.some(({ demand: waiting }) => waiting.forceRebuild),
+          ...(selection.publicationRequiredComponents && pendingDemands.every(({ demand: waiting }) => waiting.publicationRequiredComponents)
+            ? { publicationRequiredComponents: normalizeRequestedRuntimeComponents([
+              ...selection.publicationRequiredComponents,
+              ...pendingDemands.flatMap(({ demand: waiting }) => waiting.publicationRequiredComponents),
+            ]) } : { publicationRequiredComponents: undefined }),
+        };
+
+        if (!start) {
+          const leader = liveDemands.find(entry => entry.path !== demandPath
+            && entry.demand.placementOwner === true
+            && entry.demand.target?.platform === target.platform && entry.demand.target?.arch === target.arch);
+          // A still-loaded pre-change publisher has no placement marker. Its
+          // existing canonical lease remains execution authority until it exits.
+          if (leader || isWorkspaceBundleLockActive(flightLockPath)) return { waiting: true };
+          assertOwned();
+          await writeJsonAtomic(demandPath, { ...ownDemand, placementOwner: true });
+          return { mergedSelection };
+        }
+
+        // Failed flights still advance admission order, but never replace success.
+        const seq = Math.max(currentStartedSeq ?? 0, isStartedSeq(previous?.seq) ? previous.seq : 0) + 1;
+        if (!isStartedSeq(seq)) throw new Error('[build] runtime publication sequence is not representable.');
+        assertOwned();
+        await writeJsonAtomic(join(runtimeDir, 'publication-started.json'), { startedSeq: seq });
+        await recordStatus('publishing', null, mergedComponents);
+        process.stderr.write(`[build] ${authority.producerStackName}: preparing ${mergedComponents.join(', ')} runtime artifacts.\n`);
+        return { seq, mergedComponents, mergedSelection, pendingDemands };
+      } });
+    let prepared;
+    const waitingSince = Date.now();
+    const noticeFlight = createWorkspaceBuildWaitNotifier({ env, label: 'runtime target build flight', kind: 'lock' });
+    const noticePlacement = createWorkspaceBuildWaitNotifier({ env, label: 'merged runtime build worker demand' });
+    do {
+      prepared = await inspectDemand({ start: false });
+      if (prepared.publicationFlight === 'joined') return prepared;
+      if (prepared.waiting) {
+        const owner = await readJsonIfExists(flightLockPath);
+        const waitedMs = Date.now() - waitingSince;
+        if (owner) noticeFlight({ lockPath: flightLockPath, owner, waitedMs });
+        else noticePlacement({ waitedMs });
+        await new Promise(resolve => setTimeout(resolve, resolveHeavyweightPressureRetryMilliseconds()));
       }
-
-      const pendingDemands = liveDemands.filter(({ demand: waiting }) =>
-        waiting.target?.platform === target.platform && waiting.target?.arch === target.arch
-        && !runtimePublicationDemandSatisfied({ demand: waiting, successes, currentStartedSeq }));
-      const mergedComponents = normalizeRequestedRuntimeComponents([
-        ...components, ...pendingDemands.flatMap(({ demand: waiting }) => waiting.components ?? []),
-      ]);
-      const mergedSelection = { ...selection,
-        components: { ...selection.components, ...Object.fromEntries(mergedComponents.map(component => [component, true])) },
-        activateRuntime: selection.activateRuntime === true || pendingDemands.some(({ demand: waiting }) => waiting.activateRuntime),
-        forceRebuild: selection.forceRebuild === true || pendingDemands.some(({ demand: waiting }) => waiting.forceRebuild),
-      };
-
-      // Failed flights still advance admission order, but never replace success.
-      const seq = Math.max(currentStartedSeq ?? 0, isStartedSeq(previous?.seq) ? previous.seq : 0) + 1;
-      if (!isStartedSeq(seq)) throw new Error('[build] runtime publication sequence is not representable.');
-      assertOwned();
-      await writeJsonAtomic(join(runtimeDir, 'publication-started.json'), { startedSeq: seq });
-      await recordStatus('publishing', null, mergedComponents);
-      process.stderr.write(`[build] ${authority.producerStackName}: preparing ${mergedComponents.join(', ')} runtime artifacts.\n`);
+    } while (prepared.waiting);
+    return await admitExecution({ selection: prepared.mergedSelection, run: execution => withWorkspaceBundleLock(async ({ assertOwned: assertFlightOwned }) => {
+      const admission = await inspectDemand({ start: true, assertFlightOwned });
+      if (admission.publicationFlight === 'joined') return admission;
+      const { seq, mergedComponents, mergedSelection, pendingDemands } = admission;
       let result;
       try {
-        result = await publish({ selection: mergedSelection,
-          selectConsumer: selectConsumer || pendingDemands.some(({ demand: waiting }) => waiting.selectConsumer) });
+        result = await publish({ selection: mergedSelection, execution,
+          selectConsumer: selectConsumer || pendingDemands.some(({ demand: waiting }) => waiting.selectConsumer),
+          withPublication: publish => withRuntimePublicationAdmission({ authority, env, publish: context => {
+            assertFlightOwned();
+            return publish(context);
+          } }),
+        });
         for (const component of mergedComponents) {
           if (!result?.artifacts?.[component]?.manifest?.artifactFingerprint) {
             throw new Error(`[build] requested ${component} build returned no artifact identity.`);
           }
         }
+      } catch (error) {
+        await recordStatus('failed', error instanceof Error ? error.message : String(error), mergedComponents);
+        throw error;
+      }
+      return await withRuntimePublicationAdmission({ authority, env, publish: async ({ assertOwned }) => {
+        assertFlightOwned();
         await recordStatus(result.snapshotId ? 'current' : 'stale', null, mergedComponents, result.artifacts);
+        // Another target can finish while this one compiles. Merge against the
+        // current record, never the pre-compilation observation.
+        const previous = await readJsonIfExists(resultPath);
+        const successes = previous?.targets?.[targetKey]?.components ?? {};
         assertOwned();
-        // Readers also hold this flight lock; no second record transaction is needed.
         await writeJsonAtomic(resultPath, {
-          seq,
+          seq: Math.max(seq, previous?.seq ?? 0),
           targets: { ...previous?.targets, [targetKey]: { components: { ...successes,
             ...Object.fromEntries(mergedComponents.map(component => [component, {
               seq, artifactFingerprint: result.artifacts[component].manifest.artifactFingerprint,
@@ -454,14 +513,15 @@ export async function withRuntimePublicationFlight({
         for (const { path, demand: waiting } of pendingDemands) {
           if (!isStartedSeq(waiting.observedStartedSeq)) await writeJsonAtomic(path, { ...waiting, fulfilledSeq: seq });
         }
-      } catch (error) {
-        await recordStatus('failed', error instanceof Error ? error.message : String(error), mergedComponents);
-        throw error;
-      }
-      // Selection installs the consumer's retention reference before admission
-      // releases any publisher/pruner. A selection error does not fail publication.
-      return await finish({ ...result, publicationFlight: 'built' });
-    } });
+        // Consumer references are installed before another publisher can prune.
+        return await finish({ ...result, publicationFlight: 'built' });
+      } });
+    }, {
+      lockPath: flightLockPath,
+      errorLabel: 'runtime target build flight lock',
+      timeoutMs: Number(env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
+      onWait: createWorkspaceBuildWaitNotifier({ env, label: 'runtime target build flight', kind: 'lock' }),
+    }) });
   } finally {
     await unlink(demandPath).catch(error => { if (error.code !== 'ENOENT') throw error; });
   }
@@ -487,7 +547,7 @@ async function selectRuntimePublicationForConsumer({ result, authority, selectio
     producerStackName: authority.producerStackName,
     snapshotId: result.snapshotId,
     target,
-    requiredComponents: resolveRuntimePublicationRequiredComponents({ target, requestedComponents: selectedRuntimeComponents(selection) }),
+    requiredComponents: resolveRuntimePublicationRequiredComponents({ target, requestedComponents: selectedRuntimeComponents(selection), selection }),
   }), runtimeBuildLockOptions({ runtimePaths: resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir }), env }));
   const { envPath } = resolveStackEnvPath(assertNamedStack(env), env);
   await ensureStackRuntimeModePrefer({ envPath });
@@ -533,7 +593,6 @@ export async function buildRuntimeArtifactComponents({
   buildSelectedStackArtifactsImpl = buildSelectedStackArtifacts,
   readCliBinaryArtifactWorkspacePublicationImpl = componentArtifacts.readCliBinaryArtifactWorkspacePublication,
   prepareBundledPluginPublicationInputsImpl = prepareBundledPluginPublicationInputs,
-  pruneComponentArtifactsImpl = pruneComponentArtifacts,
 }) {
   env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
   assertSelectedBuildPrerequisitesImpl({ selection, env });
@@ -605,7 +664,6 @@ export async function buildRuntimeArtifactComponents({
       ...builderOptions,
       ...(component === 'daemon' && preparedWorkspacePublication ? { preparedWorkspacePublication } : {}),
     });
-    await retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts: { [component]: artifact }, env, retentionPolicy, pruneComponentArtifactsImpl });
     return artifact;
   };
 
@@ -615,7 +673,16 @@ export async function buildRuntimeArtifactComponents({
 
 // Imported and locally constructed payloads use the same producer retention
 // graph, including references held by other named consumer stacks.
-export async function retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts, env, retentionPolicy, pruneComponentArtifactsImpl = pruneComponentArtifacts }) {
+export async function retainBuiltRuntimeArtifacts({ stackBaseDir, artifacts, target, env, retentionPolicy, pruneComponentArtifactsImpl = pruneComponentArtifacts }) {
+  // Another target can have unpublished staging or completed support bytes in
+  // this store. Its existing live demand protects that work until publication.
+  // Defer pruning rather than interpreting its staging tree as corrupt output.
+  const demandDir = join(resolveStackRuntimePaths({ stackBaseDir }).runtimeDir, 'publication-demands');
+  const liveDemands = await readLiveRuntimePublicationDemands(demandDir).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  if (target && liveDemands.some(({ demand }) => demand.target?.platform !== target.platform || demand.target?.arch !== target.arch)) return;
   for (const [component, artifact] of Object.entries(artifacts)) {
     const support = readComponentArtifactSupportReference(artifact?.manifest);
     for (const retainedComponent of [component, ...(support ? [support.supportComponent] : [])]) {
@@ -674,7 +741,7 @@ export async function publishBuiltRepositoryRuntimeSnapshot({
 }) {
   const stackBaseDir = authority.producerStackBaseDir;
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
-  const requiredComponents = resolveRuntimePublicationRequiredComponents({ target, requestedComponents });
+  const requiredComponents = resolveRuntimePublicationRequiredComponents({ target, requestedComponents, selection });
   const publication = await withWorkspaceBundleLockImpl(async () => {
     const currentInspection = await inspectActiveRuntimeSnapshotImpl({ stackBaseDir, target,
       requiredComponents: requiredComponents.filter(component => !artifacts[component]) });
@@ -691,7 +758,8 @@ export async function publishBuiltRepositoryRuntimeSnapshot({
       externalReferenceStorageRoot: getStacksStorageRoot(env),
       pruneAfterPublish: false,
     });
-    if (target.platform === process.platform && target.arch === process.arch) await selectRuntimeSnapshotImpl({
+    if (selection?.activateRuntime === true && target.platform === process.platform && target.arch === process.arch
+      && RUNTIME_COMPONENTS.every(component => componentFingerprints[component])) await selectRuntimeSnapshotImpl({
       consumerStackBaseDir: stackBaseDir,
       producerStackBaseDir: stackBaseDir,
       producerStackName: authority.producerStackName,
@@ -737,7 +805,7 @@ export async function publishRepositoryRuntimeSnapshot({
   target = { platform: process.platform, arch: process.arch },
   env = process.env,
   observedStartedSeq = captureRuntimePublicationStartedSeq({ authority }),
-  buildRuntimeArtifactComponentsImpl = buildRuntimeArtifactComponents,
+  runtimeBuildTransport,
   inspectActiveRuntimeSnapshotImpl = inspectLatestPublishedRuntimeSnapshot,
   publishBuiltRepositoryRuntimeSnapshotImpl = publishBuiltRepositoryRuntimeSnapshot,
 }) {
@@ -755,19 +823,20 @@ export async function publishRepositoryRuntimeSnapshot({
   }
 
   const selection = createRuntimePublicationSelection(components);
+  const { withAdmittedRuntimeBuildPlacement } = await import('./remote_runtime_build.mjs');
   return await withRuntimePublicationFlight({
     authority, selection, target, observedStartedSeq, env,
-    publish: ({ selection }) => buildRuntimePublication({
+    admitExecution: request => withAdmittedRuntimeBuildPlacement({ rootDir, stackBaseDir: authority.producerStackBaseDir, target, env, transport: runtimeBuildTransport, ...request }),
+    publish: ({ selection, withPublication, execution }) => buildRuntimePublication({
       rootDir, authority, selection, target, env,
-      buildRuntimeArtifactComponentsImpl,
+      withPublication, execution,
       publishBuiltRepositoryRuntimeSnapshotImpl,
     }),
   });
 }
 
-export async function buildStackArtifacts({ rootDir, argv = [], env = process.env, authority = null, observedStartedSeq }) {
+export async function buildStackArtifacts({ rootDir, argv = [], env = process.env, authority = null, observedStartedSeq, runtimeBuildTransport }) {
   const selection = parseBuildSelection({ argv });
-  const target = parseRuntimeBuildTarget({ argv });
   const resolvedAuthority = authority ?? resolveRuntimeBuildAuthority({
     rootDir, consumerStackName: assertNamedStack(env), env,
   });
@@ -777,34 +846,59 @@ export async function buildStackArtifacts({ rootDir, argv = [], env = process.en
   if (flags.has('--tauri')) {
     throw new Error('[build] tauri artifact builds are not supported in named-stack runtime snapshots.');
   }
-  return await withRuntimePublicationFlight({
-    authority: resolvedAuthority, selection, target, observedStartedSeq: observation, env, selectConsumer: true,
-    publish: ({ selection }) => buildRuntimePublication({ rootDir, selection, target, env, authority: resolvedAuthority }),
+  const { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } = await import('../utils/dev_targets/config.mjs');
+  const { resolveDevTargetServicePlans } = await import('../utils/dev_targets/service_placement.mjs');
+  const { config } = await loadDevTargetsConfig({ path: join(resolvedAuthority.consumerStackBaseDir, 'dev-targets.json'), env,
+    ...(resolvedAuthority.consumerStackBaseDir !== resolvedAuthority.producerStackBaseDir
+      ? { buildPlacementOwnerPath: join(resolvedAuthority.producerStackBaseDir, 'dev-targets.json') } : {}),
   });
+  const servicePlans = resolveDevTargetServicePlans({ targets: config.targets,
+    policy: resolveDevTargetExecutionPolicy(config),
+    requested: { server: selection.components.server, daemon: selection.components.daemon, expo: false },
+  });
+  const placedTargets = servicePlans.targets.filter(plan => plan.services.server || plan.services.daemon).map(plan => plan.target);
+  const observedTargets = placedTargets.length
+    ? (await (await import('../utils/dev_targets/doctor.mjs')).runDevTargetsDoctor({ targets: placedTargets, env })).targets
+    : [];
+  const { groups, componentTargets } = resolveRuntimeBuildTargetGroups({ argv, selection, config, observedTargets });
+  const { withAdmittedRuntimeBuildPlacement } = await import('./remote_runtime_build.mjs');
+  const targetResults = await Promise.all(groups.map(async ({ target, selection: groupSelection }) => ({ target,
+    ...await withRuntimePublicationFlight({
+      authority: resolvedAuthority, selection: groupSelection, target, observedStartedSeq: observation, env, selectConsumer: true,
+      admitExecution: request => withAdmittedRuntimeBuildPlacement({ rootDir, stackBaseDir: resolvedAuthority.producerStackBaseDir, target, env, transport: runtimeBuildTransport, ...request }),
+      publish: ({ selection, withPublication, execution }) => buildRuntimePublication({ rootDir, selection, target, env, authority: resolvedAuthority, withPublication, execution }),
+    }),
+  })));
+  if (targetResults.length === 1) {
+    const { target, ...result } = targetResults[0];
+    return { ...result, componentTargets };
+  }
+  const primary = targetResults.find(result => result.target.platform === process.platform && result.target.arch === process.arch) ?? targetResults[0];
+  return { ...primary,
+    components: selectedRuntimeComponents(selection), requestedComponents: selectedRuntimeComponents(selection),
+    artifacts: Object.assign({}, ...targetResults.filter(result => result !== primary).map(result => result.artifacts), primary.artifacts),
+    publicationFlight: targetResults.some(result => result.publicationFlight === 'built') ? 'built' : 'joined',
+    componentTargets, targetResults,
+  };
 }
 
 async function buildRuntimePublication({
   rootDir, selection, target, env, authority,
-  buildRuntimeArtifactComponentsImpl = buildRuntimeArtifactComponents,
+  withPublication, execution,
   publishBuiltRepositoryRuntimeSnapshotImpl = publishBuiltRepositoryRuntimeSnapshot,
 }) {
   const retentionPolicy = resolveRuntimeRetentionPolicy({ env });
-  const { buildRuntimeArtifactComponentsAtPlacement } = await import('./remote_runtime_build.mjs');
-  const { artifacts, sourceMetadata, buildPlacement } = await buildRuntimeArtifactComponentsAtPlacement({
+  const { artifacts, sourceMetadata, buildPlacement } = await execution.buildComponents({
     rootDir,
     stackBaseDir: authority.producerStackBaseDir,
     selection,
     target,
     env,
     retentionPolicy,
-    buildLocal: buildRuntimeArtifactComponentsImpl,
   });
-  if (buildPlacement?.mode === 'target') {
-    await retainBuiltRuntimeArtifacts({ stackBaseDir: authority.producerStackBaseDir, artifacts, env, retentionPolicy });
-  }
   // Publication advances the producer for every successful component build.
   // activateRuntime controls only whether this consumer adopts the result.
-  const publication = await publishBuiltRepositoryRuntimeSnapshotImpl({
+  const publication = await withPublication(() => publishBuiltRepositoryRuntimeSnapshotImpl({
     authority,
     selection,
     requestedComponents: selectedRuntimeComponents(selection),
@@ -813,7 +907,10 @@ async function buildRuntimePublication({
     target,
     env,
     retentionPolicy,
-  });
+  }));
+  await withPublication(() => retainBuiltRuntimeArtifacts({
+    stackBaseDir: authority.producerStackBaseDir, artifacts, target, env, retentionPolicy,
+  }));
   return {
     ok: true,
     ...publication,

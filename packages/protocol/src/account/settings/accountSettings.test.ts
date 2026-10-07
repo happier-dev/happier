@@ -1,9 +1,11 @@
 import { LegacyRecentMachinePathsSchema } from './legacyAuthoringMemorySettingsV1.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import {
   ACCOUNT_SETTING_DEFINITIONS,
+  AccountSettingsSchema,
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   accountCatalogDefinition,
   accountSettingsParse,
@@ -444,12 +446,14 @@ describe('accountSettings', () => {
   });
 
   it('accepts a custom resume prompt mode with trimmed custom text', () => {
+    const customResumePrompt = 'Resume the exact task using the previous context. '.repeat(100).trim();
+    expect(customResumePrompt.length).toBeGreaterThan(2000);
     const parsed = accountSettingsParse({
       usageLimitRecoverySettingsV1: {
         v: 1,
         mode: 'auto_wait',
         resumePromptMode: 'custom',
-        customResumePrompt: '  Pick up the task again.  ',
+        customResumePrompt: `  ${customResumePrompt}  `,
       },
     });
 
@@ -458,7 +462,7 @@ describe('accountSettings', () => {
       mode: 'auto_wait',
       promptMode: 'standard',
       resumePromptMode: 'custom',
-      customResumePrompt: 'Pick up the task again.',
+      customResumePrompt,
     });
   });
 
@@ -1827,4 +1831,30 @@ describe('isExpoPushNotificationChannelEnabled', () => {
   });
 
 
+});
+
+it('keeps Classic validation errors at root and generated definition boundaries', () => {
+ const definition=accountCatalogDefinition(z.string().trim().min(1),' default ',{semanticDomain:'test preference',classification:'preference',maximumSerializedValueBytes:1024,recoverMalformed:false});
+ expect(definition.default).toBe('default');
+ expect(definition.schema.parse(undefined)).toBe('default');
+ for(const result of [definition.schema.safeParse(42),SessionHandoffDefaultsV1Schema.safeParse({ignoredIncludeGlobs:['../escape']})]) {
+  expect(result.success).toBe(false);
+  if(!result.success)expect(result.error).toBeInstanceOf(z.ZodError);
+ }
+ expect(()=>accountSettingsParse({workspaceRefsV1:[{}]})).toThrow(z.ZodError);
+});
+it('keeps preference bounds distinct from size-tolerant legacy reads', () => {
+ const read=createStoredReadSchema(AccountSettingsSchema);
+ const atLimit=Array.from({length:256},(_,index)=>'model-'+index);
+ const overLimit=atLimit.concat('model-overflow');
+ expect(read.parse({favoriteModelSelectionsV1:atLimit}).favoriteModelSelectionsV1).toEqual(atLimit);
+ const parsed=read.parse({favoriteModelSelectionsV1:overLimit,profiles:overLimit});
+ expect(parsed.favoriteModelSelectionsV1).toEqual([]);
+ expect(parsed.profiles).toEqual(overLimit);
+ expect(ACCOUNT_SETTING_DEFINITIONS.profiles.schema.parse(overLimit)).toEqual(overLimit);
+ expect(ACCOUNT_SETTING_DEFINITIONS.favoriteModelSelectionsV1.schema.parse([undefined])).toEqual([]);
+ expect(()=>read.parse({profiles:[undefined]})).toThrow(z.ZodError);
+ for(const target of ['draft-7','draft-2020-12'] as const)for(const io of ['input','output'] as const) {
+  expect(z.toJSONSchema(read,{target,io,unrepresentable:'any'})).toHaveProperty(['properties','favoriteModelSelectionsV1','anyOf',1,'maxItems'],256);
+ }
 });

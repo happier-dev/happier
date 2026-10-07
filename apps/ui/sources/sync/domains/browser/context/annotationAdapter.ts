@@ -7,6 +7,8 @@ import {
     startActiveBrowserAnnotationMode,
     attachActiveBrowserAnnotation,
     attachActiveBrowserAnnotationFromCaptureProvider,
+    createActiveBrowserAnnotationCaptureAdmission,
+    resolveProviderCaptureBindingUnavailable,
 } from './activeViewAttachment';
 import {
     attachBrowserContextToComposer,
@@ -29,6 +31,7 @@ import type {
     BrowserAnnotationCaptureProvider,
     BrowserAnnotationDraftInput,
     BrowserContextState,
+    BrowserContextUnavailableReason,
 } from './types';
 import type {
     BrowserAnnotationAdapterRequest,
@@ -263,23 +266,27 @@ export function createBrowserContextAnnotationAdapter(input: Readonly<{
             };
         }
         const capturedAtMs = binding.nowMs?.() ?? Date.now();
-        const media = await resolveDraftMedia(binding, capturedAtMs);
-        if (!media) {
-            return {
-                status: 'unavailable',
-                reason: 'browser_context_annotation_capture_unavailable',
-            };
-        }
+        const draft = readBrowserAnnotationDraft(binding.state, binding.view.viewId);
+        if (!draft) return { status: 'unavailable', reason: 'browser_context_annotation_inactive' };
+        const resolveAdmission = createActiveBrowserAnnotationCaptureAdmission({ binding, resolveBinding: input.resolveBinding, draft });
+        const initialDenial = resolveAdmission();
+        if (initialDenial) return { status: 'unavailable', reason: initialDenial };
+        const captured = await resolveDraftMedia(binding, capturedAtMs, resolveAdmission);
+        const resultDenial = resolveAdmission();
+        if (resultDenial) return { status: 'unavailable', reason: resultDenial };
+        if (captured.status !== 'captured') return captured;
+        const current = input.resolveBinding();
+        if (!current.view) return viewUnavailable();
         const committed = commitBrowserAnnotationDraft({
-            state: binding.state,
-            browserSessionId: binding.view.browserSessionId,
-            viewId: binding.view.viewId,
-            navigationGeneration: binding.view.navigationGeneration,
-            adapterKind: binding.view.adapterKind,
-            media,
+            state: current.state,
+            browserSessionId: current.view.browserSessionId,
+            viewId: current.view.viewId,
+            navigationGeneration: current.view.navigationGeneration,
+            adapterKind: current.view.adapterKind,
+            media: captured.media,
             capturedAtMs,
-            pageUrl: binding.view.currentUrl,
-            pageTitle: binding.view.title,
+            pageUrl: current.view.currentUrl,
+            pageTitle: current.view.title,
         });
         if (committed.status !== 'committed') {
             return { status: 'unavailable', reason: committed.reason };
@@ -303,6 +310,7 @@ export function createBrowserContextAnnotationAdapter(input: Readonly<{
     async function resolveDraftMedia(
         binding: BrowserAnnotationAdapterBinding,
         capturedAtMs: number,
+        resolveAdmission: () => BrowserContextUnavailableReason | null,
     ) {
         if (binding.captureProvider?.available && binding.view) {
             // ANNO-3: resolve the union-of-targets crop from the live draft so the captured media is
@@ -323,13 +331,20 @@ export function createBrowserContextAnnotationAdapter(input: Readonly<{
                 currentUrl: binding.view.currentUrl,
                 title: binding.view.title,
                 securityOrigin: binding.view.securityOrigin,
+                resolveAdmission,
                 ...(cropClip ? { cropClip } : {}),
             });
-            if (result.status === 'captured') return result.media;
-            return null;
+            if (result.status === 'captured') {
+                const stale = resolveProviderCaptureBindingUnavailable({ result, view: binding.view });
+                if (stale) return { status: 'unavailable' as const, reason: stale };
+                return { status: 'captured' as const, media: result.media };
+            }
+            return { status: 'unavailable' as const, reason: result.reason ?? 'browser_context_annotation_capture_unavailable' as const };
         }
         // No live capture provider: fall back to a host-supplied draft media reference if present.
-        return binding.annotationDraft?.media ?? null;
+        return binding.annotationDraft?.media
+            ? { status: 'captured' as const, media: binding.annotationDraft.media }
+            : { status: 'unavailable' as const, reason: 'browser_context_annotation_capture_unavailable' as const };
     }
 
     async function captureRegionOrElement(
@@ -364,6 +379,7 @@ export function createBrowserContextAnnotationAdapter(input: Readonly<{
                     },
                 },
                 capturedAtMs,
+                resolveBinding: input.resolveBinding,
             });
             return providerCaptured;
         }

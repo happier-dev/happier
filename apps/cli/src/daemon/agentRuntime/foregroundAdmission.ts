@@ -641,20 +641,6 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
     isSessionCurrent(sessionId: string): boolean {
       return readCurrentDaemonServiceAdmission(sessionId) !== null;
     },
-    /** Secret-free projection of the exact already-claimed foreground Agent authority. */
-    readCurrentSessionAgentAuthority(sessionId: string): Readonly<{
-      retainedAgent: AgentSessionRunnerBindingV1;
-      isCurrent(): boolean;
-    }> | null {
-      const captured = readCurrentDaemonServiceAdmission(sessionId);
-      if (!captured) return null;
-      return Object.freeze({ retainedAgent: captured.authority.retainedAgent,
-        isCurrent: () => {
-          const current = readCurrentDaemonServiceAdmission(sessionId);
-          return current?.admission === captured.admission && current.authority === captured.authority;
-        },
-      });
-    },
     async release(attemptId: string, sessionId: string): Promise<void> {
       const pending = pendingByAttemptId.get(attemptId);
       if (pending?.request.sessionId === sessionId) {

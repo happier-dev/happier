@@ -4,6 +4,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { GEMINI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/catalogs.js';
 import { geminiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/descriptor.js';
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connectedServices/runtimeAuthAdapter.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
@@ -136,6 +137,7 @@ export const GEMINI_PLUGIN = definePlugin({
         }),
       },
       factory: createGeminiAgentRuntime,
+      preflightSessionControls: GEMINI_PREFLIGHT_SESSION_CONTROLS,
       connectedAccountLaunch: {
         switchContinuity: {
           continuityMode: 'restart_same_home',

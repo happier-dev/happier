@@ -215,6 +215,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
     invocation =
       await input.establishedRuntimeOwner.invokeWithReceipt({
         account: input.account,
+        expectedCredentialRevision: expectedCredential.credentialRevision,
         operation: Object.freeze({
           kind: 'refresh' as const,
           operationId,

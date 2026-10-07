@@ -1,3 +1,4 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AGENTS } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { readStoredCredentials } from '@/persistence';
@@ -11,13 +12,14 @@ import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metada
 
 export async function resolveProbeBackendContext(
   params?: Record<string, unknown>,
-  options: Readonly<{ requireCredentials?: boolean; catalogEntry?: AgentCatalogEntry | null }> = {},
+  options: Readonly<{ requireCredentials?: boolean; catalogEntry?: AgentCatalogEntry | null; signal?: AbortSignal }> = {},
 ): Promise<{
   backendTarget: BackendTargetRefV1 | undefined;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   runtimeKindOverride?: string;
   credentials: Awaited<ReturnType<typeof readStoredCredentials>> | null;
   accountSettings: Record<string, unknown> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
 }> {
   const parsedBackendTarget = BackendTargetRefSchema.safeParse(normalizeBackendTargetRefV2InputToV1(params?.backendTarget));
   const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
@@ -37,6 +39,10 @@ export async function resolveProbeBackendContext(
   const catalogEntry = options.catalogEntry === undefined
     ? (agentId ? AGENTS[agentId] : undefined)
     : options.catalogEntry;
+  options.signal?.throwIfAborted();
+  const pluginSettings = await catalogEntry?.resolveProbePluginSettings?.({ signal: options.signal });
+  options.signal?.throwIfAborted();
+  Object.assign(runtimeContext, pluginSettings == null ? {} : { pluginSettings });
   const needsAccountSettingsForProbes =
     agentId && (
       catalogEntry?.needsAccountSettingsForProbes === true

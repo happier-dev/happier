@@ -4,6 +4,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { KIRO_ACP_RUNTIME_DEFINITION } from './agent/acp/runtimeDefinition.js';
 import { detectKiroCliAuthStatus } from './agent/auth/status.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { KIRO_ACP_COMMAND } from './agent/acp/preflight.js';
 import { KIRO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const {
@@ -22,7 +23,7 @@ export const KIRO_PLUGIN = definePlugin({
       id: 'kiro-process',
       capability: 'process',
       reason: 'Run the declared Kiro CLI executable.',
-      scope: { executables: [{ kind: 'systemTool', id: 'kiro-cli' }] },
+      scope: { executables: [{ kind: 'systemTool', id: KIRO_ACP_COMMAND.toolId }] },
     }],
     optional: [],
   },
@@ -35,7 +36,7 @@ export const KIRO_PLUGIN = definePlugin({
           transport: {
             kind: 'stdio',
             executable: { kind: 'systemTool', id: 'kiro-cli' },
-            args: ['acp'],
+            args: [...KIRO_ACP_COMMAND.args],
           },
           definition: KIRO_ACP_RUNTIME_DEFINITION,
         },

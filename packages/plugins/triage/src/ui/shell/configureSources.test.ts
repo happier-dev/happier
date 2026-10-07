@@ -81,7 +81,26 @@ describe('the way out of an unconfigured PRs & Issues', () => {
     expect(offers).toEqual([{
       destination: { pluginId: 'happier.scm-github', localId: 'triage-sources' },
       displayName: 'GitHub',
+      kindNames: ['Pull request'],
     }]);
+  });
+
+  it('says what a source brings in its own plural words, falling back to the singular it declared', () => {
+    const github = descriptor({ displayName: 'GitHub', settingsPageId: 'triage-sources' });
+    const [offer] = planTriageConfigureSourceOffersV1(snapshot([
+      contribution({
+        pluginId: 'happier.scm-github',
+        contributionId: 'github',
+        descriptor: {
+          ...github,
+          kinds: [
+            { id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request', pluralDisplayName: 'Pull requests' },
+            { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' },
+          ],
+        },
+      }),
+    ]));
+    expect(offer?.kindNames).toEqual(['Pull requests', 'Issue']);
   });
 
   it('offers nothing for a source that named no page', () => {

@@ -22,6 +22,7 @@ import {
 
 import {
   createGithubListedAccountApiClient,
+  createGithubNativeApiClient,
   type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
@@ -160,7 +161,9 @@ async function openClient(
   try {
     return Object.freeze({
       ok: true as const,
-      client: await createGithubListedAccountApiClient(context, instance.binding.account),
+      client: 'account' in instance.binding
+        ? await createGithubListedAccountApiClient(context, instance.binding.account)
+        : await createGithubNativeApiClient(context, instance.binding.service),
     });
   } catch (error) {
     return Object.freeze({

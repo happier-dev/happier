@@ -2,7 +2,6 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutab
 
 import { hasBlockingPluginReloadDiagnostic } from './controller';
 import {
-  DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS,
   remainingPluginInitializationTimeoutMs,
   runWithOptionalTimeout,
 } from '../lifecycle/utils';
@@ -60,16 +59,12 @@ export async function bootstrapPrimaryAgentRuntimesForReadiness(params: Readonly
   if (pluginIds.size === 0) return;
   const registrations = [...params.registry.agentRuntimesByAgentId.values()]
     .sort((left, right) => left.agentId.localeCompare(right.agentId));
-  const deadline = Date.now()
-    + remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
   const timeoutError = (pluginId: string) => new Error(
-    params.startupDeadlineAtMs === undefined
-      ? `Plugin '${pluginId}' primary Agent runtime readiness timed out after ${DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS}ms`
-      : `Plugin '${pluginId}' primary Agent runtime readiness timed out within the daemon startup budget`,
+    `Plugin '${pluginId}' primary Agent runtime readiness timed out within the daemon startup budget`,
   );
   for (const registration of registrations) {
     if (!pluginIds.has(registration.pluginId) || !registration.hasPrimaryRuntime) continue;
-    const remainingMs = Math.max(0, deadline - Date.now());
+    const remainingMs = remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
     if (remainingMs === 0) {
       throw timeoutError(registration.pluginId);
     }

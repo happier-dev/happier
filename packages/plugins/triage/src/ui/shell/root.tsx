@@ -14,7 +14,6 @@ import {
   IconButton,
   Item,
   ItemGroup,
-  LoadingState,
   Menu,
   Row,
   Screen,
@@ -56,6 +55,8 @@ import type {
 } from '../../settings/savedViews.js';
 import { projectTriageCurrentUiContextV1 } from '../currentContext.js';
 import { bindTriageMountedUiActions } from '../mountedActions.js';
+import { useTriageSourcePanelActionsV1 } from '../useSourcePanelActions.js';
+import { triageSourcePanelActionIdV1 } from '@happier-dev/triage-sources/ui';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
 import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
@@ -114,6 +115,7 @@ import {
   type TriageRouteWriteQueueV1,
 } from '../navigation/location.js';
 import { TriageActionsEditor } from '../actions/ActionsEditor.js';
+import { TriageFirstRun } from './firstRun.js';
 import { useTriageActions } from '../actions/useTriageActions.js';
 import { useTriageConfiguredSources } from '../configuration/useTriageConfiguredSources.js';
 import { useTriageViewsControl } from '../views/control.js';
@@ -334,12 +336,6 @@ const TRIAGE_LIST_STYLE_V1 = Object.freeze({ flex: 1, minHeight: 0 });
 /** The lens pickers take the toolbar's free width and wrap inside it. */
 const TRIAGE_TOOLBAR_LEAD_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0 });
 /**
- * Placeholder rows for the first paint: enough to fill a phone viewport with
- * the list's own row shape, so the first real rows replace their own geometry.
- */
-const TRIAGE_FIRST_PAINT_SKELETON_ROWS_V1 = 8;
-
-/**
  * The reader's own type size applied to the host's four measured text roles.
  *
  * The scaling itself belongs to `plugin-ui`'s canonical text-scale owner, the
@@ -441,13 +437,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     () => resolveTriageListShellState(window.snapshot, { durableStateReachable }),
     [durableStateReachable, window.snapshot],
   );
+  // The row-bearing facts of the state, by identity. The state wrapper is rebuilt whenever any snapshot member
+  // moves (pending, freshness, pacing); the rows only when the window does, so row work keys on these.
+  const listedWindow = state.kind === 'window' ? state.window : null;
+  const listedStale = state.kind === 'window' && state.stale;
+  const listsItems = state.kind === 'window' || state.kind === 'sourcesUnreachable' || state.kind === 'configureSources';
   const listedEntryRefs = React.useMemo(
-    () => state.kind === 'window' ? state.window.rows.map((row) => row.entryRef) : [],
-    [state],
+    () => listedWindow === null ? [] : listedWindow.rows.map((row) => row.entryRef),
+    [listedWindow],
   );
   const sessionActivity = useTriageListSessionActivityV1({
     entryRefs: listedEntryRefs,
-    acquisition: window.snapshot.window,
+    // One link read per pass that read, and only then: a paced-away demand and an unchanged window read nothing.
+    acquisition: window.snapshot.passes,
     active: surfaceActivity.active,
   });
   const [surface, dispatch] = React.useReducer(
@@ -464,10 +466,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi), [hostApi]);
   React.useEffect(() => () => { routeQueue.dispose(); }, [routeQueue]);
   const [listFocusRequest, setListFocusRequest] = React.useState<Readonly<{ key: string }> | undefined>();
-  const refresh = React.useCallback(() => {
-    sessionActivity.retry();
-    return window.refresh('manual');
-  }, [sessionActivity.retry, window]);
+  // A manual read is one pass, and the list's linked-Session join follows each pass once (`passes`); the Session
+  // states themselves are watched live. Asking the join to re-read here as well scanned the links twice per press.
+  const refresh = React.useCallback(() => window.refresh('manual'), [window]);
   /**
    * `core/CORPUS.md` §4.2. The coordinator may already be refusing to read, and
    * a Refresh press that silently does nothing is exactly the failure it wants
@@ -533,23 +534,21 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * they are Collection state, so a machine nobody can reach does not make them disappear.
    */
   const items = React.useMemo(
-    () => (state.kind === 'window'
-      || state.kind === 'sourcesUnreachable'
-      || state.kind === 'configureSources'
+    () => (listsItems
       ? planTriageListItemsV1({
-          rows: state.kind === 'window' ? state.window.rows : [],
+          rows: listedWindow === null ? [] : listedWindow.rows,
           pins: marks.pins,
           workflowSubjectOf: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
             surfaceContext.targetedContributions,
             entryRef,
           ),
-          agentActive: (key) => sessionActivity.activeEntries.has(key),
+          agentStatesOf: (key) => sessionActivity.agentStates.get(key) ?? [],
           // One freshness owner, stated per row. `text` is the reader's own catalog for the words this plugin
           // authors; the window's `stale` claim is the same one the page's freshness line reads.
-          display: { text, stale: state.kind === 'window' && state.stale },
+          display: { text, stale: listedStale },
         })
       : NO_LIST_ITEMS),
-    [marks.pins, sessionActivity.activeEntries, state, surfaceContext.targetedContributions, text],
+    [listedStale, listedWindow, listsItems, marks.pins, sessionActivity.agentStates, surfaceContext.targetedContributions, text],
   );
   const groupAxis = React.useMemo(() => ({
     axis: [
@@ -775,8 +774,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * qualify carries no instance — selecting it would open somebody else's
    * connection, so it is refused rather than approximated.
    */
+  // Read at press time through the ref: a callback rebuilt with every window/session update made the row
+  // environment every row reads a new value each time, re-rendering every row for nothing.
   const readRowActivation = React.useCallback((key: string) => {
-    const hit = rowsByKey.get(key);
+    const hit = rowsByKeyRef.current.get(key);
     if (hit === undefined || hit.row.sourceInstanceId === null) return null;
     return {
       kind: 'rowActivated' as const,
@@ -784,7 +785,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       entryRef: hit.row.entryRef,
       sourceInstanceId: hit.row.sourceInstanceId,
     };
-  }, [rowsByKey]);
+  }, []);
   const activateRow = React.useCallback((key: string) => {
     const action = readRowActivation(key);
     if (action !== null) applyLensEdit(action, 'selection');
@@ -1358,11 +1359,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [selectedKey]);
   const sharedScope = usePluginUiEphemeralSharedScope();
   const mountId = React.useId();
+  const sourcePanel = useTriageSourcePanelActionsV1(sharedScope, mountId, selectedKey, surfaceActivity.active, hostApi);
   const runMountedOperation = React.useCallback(async (
     operation: TriageMountedUiOperationV1, signal: AbortSignal,
   ): Promise<TriageMountedUiResultV1> => {
     if (signal.aborted) return { status: 'unavailable' };
     switch (operation.kind) {
+      case 'selectSourceOccurrence':
+      case 'setSourceOrdering':
+      case 'revealSourceUser': return { status: 'unavailable' }; // Dispatched to the bound source before this callback.
       case 'focusRow':
       case 'peekRow': {
         const key = triageEntryRowKey(operation.entryRef);
@@ -1451,6 +1456,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
     });
     return [
+      ...sourcePanel.commands.map(({ title, operation }): CurrentUiCommandDeclarationV1 => ({
+        title, command: { kind: 'executeAction', action: triageSourcePanelActionIdV1(operation), input: { mountId, operation } },
+      })),
       command(text('plugins.triage.currentContext.board', 'Switch to Board'), { kind: 'switchView', view: 'board' }),
       command(text('plugins.triage.currentContext.list', 'Switch to List'), { kind: 'switchView', view: 'list' }),
       ...(selectedKey === null ? [] : [command(text('plugins.triage.currentContext.closeDetail', 'Close detail'), { kind: 'closeDetail' })]),
@@ -1465,7 +1473,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       ...(bulkSessions.retryable ? [command(text('plugins.triage.surface.bulk.retry', 'Try again'), { kind: 'retryRun' })] : []),
       ...(isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [command(text('plugins.triage.surface.bulk.cancel', 'Stop'), { kind: 'cancelRun' })] : []),
     ];
-  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, text]);
+  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, sourcePanel.commands, text]);
   const currentUiContext = React.useMemo(() => projectTriageCurrentUiContextV1({
     surface, visibleRows: currentUiContextRows, mountedCommands,
     mountedAction: { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 }, mountId },
@@ -1611,7 +1619,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     )),
     [configureOffers, surfaceContext.locale],
   );
-  const renderConfigureSourceOffers = (weight: 'primary' | 'secondary'): React.ReactElement | null => {
+  // The first run offers every source as its own tile (`./firstRun.tsx`); the ordinary chrome's
+  // Manage sources keeps this compact control beside the sources already configured.
+  const renderConfigureSourceOffers = (): React.ReactElement | null => {
     if (addSourceOffers.length === 0) return null;
     // One source is one action, named after it. More than one is a choice, so
     // the one action opens it: a menu of the sources, never a wall of equal
@@ -1619,27 +1629,27 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (addSourceOffers.length === 1) {
       const offer = addSourceOffers[0]!;
       return (
-        <Row {...(weight === 'primary' ? { justify: 'center' as const } : {})}>
+        <Row>
           <Button
             title={text(
               'plugins.triage.surface.noSources.configure',
               'Configure {name}',
               { name: offer.displayName },
             )}
-            variant={weight}
+            variant="secondary"
             onPress={() => openConfigureSource(offer)}
           />
         </Row>
       );
     }
     return (
-      <Row {...(weight === 'primary' ? { justify: 'center' as const } : {})}>
+      <Row>
         <Menu
           open={addSourceOpen}
           onOpenChange={setAddSourceOpen}
           trigger={addSourceLabel}
           triggerAccessibilityLabel={addSourceLabel}
-          triggerAppearance={weight === 'primary' ? 'primary' : 'control'}
+          triggerAppearance="control"
           items={addSourceOffers.map((offer) => ({
             id: `${offer.destination.pluginId}/${offer.destination.localId}`,
             label: offer.displayName,
@@ -1754,18 +1764,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     <Row gap="small" wrap align="center" justify="space-between">
       <Row gap="small" wrap align="center" style={TRIAGE_TOOLBAR_LEAD_STYLE_V1}>
         {views.control}
-        <Select
-          label={text('plugins.triage.surface.view.label', 'View')}
-          presentation="segmented"
-          value={collectionView}
-          options={[
-            { value: 'list', label: text('plugins.triage.surface.view.list', 'List') },
-            { value: 'board', label: text('plugins.triage.surface.view.board', 'Board') },
-          ]}
-          onChange={(value) => {
-            if (value === 'list' || value === 'board') chooseCollectionView(value);
-          }}
-        />
         <TriageFilterRail
           facets={facets}
           compact={compact}
@@ -1806,7 +1804,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         <Menu
           open={moreOpen}
           onOpenChange={setMoreOpen}
-          trigger="•••"
+          trigger={moreLabel}
+          triggerIcon="more"
           triggerAccessibilityLabel={moreLabel}
           items={[
             ...(!organizing ? [{ id: 'organize-list', label: text('plugins.triage.surface.organizeList', 'Organize list') }] : []),
@@ -1819,27 +1818,22 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             else if (id === 'manage-sources') setEditingSources(true);
           }}
         />
+        {/* List | Board ends the row, after the page's own controls (the lab's placement). */}
+        <Select
+          label={text('plugins.triage.surface.view.label', 'View')}
+          presentation="segmented"
+          value={collectionView}
+          options={[
+            { value: 'list', label: text('plugins.triage.surface.view.list', 'List') },
+            { value: 'board', label: text('plugins.triage.surface.view.board', 'Board') },
+          ]}
+          onChange={(value) => {
+            if (value === 'list' || value === 'board') chooseCollectionView(value);
+          }}
+        />
       </Row>
     </Row>
   );
-
-  if (state.kind === 'initial') {
-    // The first pass has not answered yet. The page keeps its toolbar — so
-    // Refresh and the lens are reachable — and stands in stable row geometry
-    // for the rows that are coming, never a whole-page spinner.
-    return (
-      <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
-        <Stack gap="medium" style={TRIAGE_FILL_STYLE_V1}>
-          {renderListToolbar(false)}
-          <LoadingState
-            titleKey="plugins.triage.surface.readingList"
-            title={`Reading ${TRIAGE_DISPLAY_NAME}`}
-            rows={TRIAGE_FIRST_PAINT_SKELETON_ROWS_V1}
-          />
-        </Stack>
-      </Screen>
-    );
-  }
 
   if (state.kind === 'unavailable') {
     // Nothing about the reader could be read. The page stays the page — its
@@ -1919,6 +1913,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const detailContent = (headerHosted: boolean): React.ReactNode => surface.selection === null ? null : (
     selectedRow !== null ? (
       <TriageDetailRegion
+        sourcePanelActions={sourcePanel.actions}
         tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
         headerHosted={headerHosted}
         row={selectedRow}
@@ -2074,6 +2069,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           listTestID={TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}
           detailTestID={TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}
           windowStatement={windowStatement}
+          // The first read has not answered: the list's own region holds its geometry in skeleton rows, and the
+          // toolbar above it stays reachable, so the page does not swap a stand-in tree for the list.
+          loading={state.kind === 'initial'}
           header={(
             <Stack gap="small">
               {listedEntryRefs.length === 0 || !sessionActivity.incomplete ? null : (
@@ -2106,16 +2104,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           {views.details}
           {accountNotice}
 
-          {state.kind !== 'configureSources' ? null : (
+          {state.kind !== 'configureSources' ? null : addSourceOffers.length > 0 ? (
+            <TriageFirstRun offers={addSourceOffers} onConnect={(offer) => { void openConfigureSource(offer); }} />
+          ) : (
             <Stack gap="small">
               <EmptyState
                 titleKey="plugins.triage.surface.noSources.title"
                 title="No sources are configured"
                 descriptionKey="plugins.triage.surface.noSources.description"
                 description="Connect a source in Settings to see its pull requests, issues and error groups here."
-                {...(configureOffers.length === 0
-                  ? {}
-                  : { action: renderConfigureSourceOffers('primary') })}
               />
             </Stack>
           )}
@@ -2250,7 +2247,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 one, and they are the SAME destinations the unconfigured screen
                 offers — one builder above, so the two cannot drift.
               */}
-              {renderConfigureSourceOffers('secondary')}
+              {renderConfigureSourceOffers()}
             </Stack>
           ) : null}
 

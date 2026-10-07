@@ -1,6 +1,7 @@
 import {
     AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS,
     AuthTokenAuthenticationEvidenceSnapshotV1Schema,
+    StoredAuthTokenAuthenticationEvidenceSnapshotV1Schema,
     authTokenAuthenticationEvidenceIdentityV1,
     type AuthTokenAuthenticationEvidenceSnapshotV1,
     type AuthTokenAuthenticationEvidenceV1,
@@ -39,7 +40,7 @@ export class AuthenticationEvidenceLimitError extends Error {
 }
 
 export function parseAuthenticationEvidenceSnapshot(value: unknown): AuthTokenAuthenticationEvidenceSnapshotV1 | null {
-    const parsed = AuthTokenAuthenticationEvidenceSnapshotV1Schema.safeParse(value);
+    const parsed = StoredAuthTokenAuthenticationEvidenceSnapshotV1Schema.safeParse(value);
     return parsed.success ? parsed.data : null;
 }
 

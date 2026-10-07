@@ -95,9 +95,10 @@ describe('plugin UI domain client transport adapter', () => {
         await expect(api.updateEntityDragDrop({ kind: 'mountSource', mountId: 'row', sourceId: 'issue', reference: { id: 'x' }, scope: { accountId: 'other' } } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
     });
 
-    it('reads an exact stored-image reference and refuses path-bearing input or malformed disclosure', async () => {
+    it('reads a native stored-image reference and refuses unknown input or malformed disclosure', async () => {
         let receive: ((message: unknown) => void) | undefined;
         let reads = 0;
+        const requests: unknown[] = [];
         const image = { bytesBase64: 'cG5n', mimeType: 'image/png', width: 100, height: 60 };
         const api = await createPluginUiHostApiClientFromTransport({
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, identity,
@@ -110,17 +111,21 @@ describe('plugin UI domain client transport adapter', () => {
                         apiVersion: '1.0.0', methods: ['readStoredImage'], surface });
                     else if (message.kind === 'request' && message.method === 'readStoredImage') {
                         reads += 1;
+                        requests.push(message.payload);
                         receive?.({ wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
                             method: message.method, result: reads === 1 ? image : { ...image, mimeType: 'image/jpeg' } });
                     }
                 },
             },
         });
-        const ref = { sessionId: 'session-1', mediaId: 'media-1' };
+        const ref = { mediaId: 'media-1', mediaKind: 'image' as const, width: 100, height: 60, sizeBytes: 24,
+            file: { sessionId: 'session-1', storage: 'daemon' as const,
+                path: '.happier/uploads/artifacts/session-1/image.png', sha256: 'a'.repeat(64), mimeType: 'image/png' as const } };
         await expect(api.readStoredImage({ ...ref, path: '/private/image.png' } as never))
             .rejects.toMatchObject({ code: 'invalid_payload' });
         expect(reads).toBe(0);
         await expect(api.readStoredImage(ref)).resolves.toEqual(image);
+        expect(requests).toEqual([{ image: ref }]);
         await expect(api.readStoredImage(ref)).rejects.toMatchObject({ code: 'invalid_payload' });
     });
 

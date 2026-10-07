@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+
 import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 
 describe('mergeSessionMetadataForStartup', () => {
+    it.each([
+        { intent: 'personal rename', summary: { text: 'My investigation', updatedAt: 7 } },
+        { intent: 'empty personal title', summary: { text: '', updatedAt: 8 } },
+        { intent: 'cleared or absent title', summary: undefined },
+    ])('preserves $intent when attaching with a birth title', ({ summary }) => {
+        const current = createTestMetadata({ path: '/repo', host: 'original', ...(summary ? { summary } : {}) });
+        const next = createTestMetadata({
+            path: '/runtime', host: 'runtime', summary: { text: '3 · Implement', updatedAt: 100 },
+        });
+        const merged = mergeSessionMetadataForStartup({
+            current, next, nowMs: 100, mode: 'attach',
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        });
+
+        expect(merged.summary).toBe(current.summary);
+        if (!summary) expect(merged).not.toHaveProperty('summary');
+        expect(merged.host).toBe('runtime');
+        expect(next.summary?.text).toBe('3 · Implement');
+    });
+
+    it('keeps the birth title when starting a fresh session', () => {
+        const current = createTestMetadata({ path: '/repo', host: 'host' });
+        const next = createTestMetadata({ ...current, summary: { text: '3 · Implement', updatedAt: 100 } });
+        const merged = mergeSessionMetadataForStartup({ current, next, nowMs: 100, mode: 'start' });
+
+        expect(merged.summary).toBe(next.summary);
+    });
+
     it('does not seed legacy messageQueueV1 metadata', () => {
         const nowMs = 123;
         const merged = mergeSessionMetadataForStartup({

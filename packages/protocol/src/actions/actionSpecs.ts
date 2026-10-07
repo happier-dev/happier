@@ -34,7 +34,7 @@ import { ComputerAccessV1Schema, ComputerTargetV1Schema } from '../computer/v1.j
 import { WORK_BOARD_ACTION_IDS_V1, type WorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1, WorkBoardActionOutputSchemasV1 } from '../boards/actionsV1.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
-import { DECISION_ACTION_IDS, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS, isAgentRequestablePresentUserActionId } from './decisionAuthority.js';
+import { DECISION_ACTION_IDS, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { SessionMessageV1Schema } from '../sessions/messages/sessionMessagesPageV1.js';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '../sessions/messages/sessionStoredMessageContent.js';
@@ -2236,7 +2236,7 @@ const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.object({
   actionId: z.string().min(1).nullable(),
   fieldPath: z.string().min(1).nullable(),
   optionsSourceId: z.string().min(1).nullable(),
-  options: z.array(ActionInputOptionSchema).max(256).readonly(),
+  options: z.array(ActionInputOptionSchema).readonly(),
   modelCatalog: z.object({
     nativeModels: z.array(z.object({
       value: z.string().min(1),
@@ -5356,8 +5356,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       mcp: false,
       // Trusted interactive CLI hosts are application-owned surfaces that prove
       // present_user, collect secrets locally, and use the canonical direct
-      // confirmation host. This is not the public plugin SDK: agent/MCP/API/
-      // plugin surfaces remain closed for human-secret operations.
+      // confirmation host. Automated raw-input requests need an authenticated
+      // decision continuation; an approval Artifact cannot confer that authority.
       cli: true,
       rpc: false,
     },
@@ -5605,6 +5605,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     cli: WAIT_CLI_PROJECTION,
     inputSchema: WaitActionInputV1Schema,
     outputSchema: WaitActionResultV1Schema,
+    inputHints: { fields: [
+      { path: 'target', title: 'Home-qualified work handle', widget: 'json', required: true },
+      { path: 'condition', title: 'Observation condition', widget: 'json', required: true },
+      { path: 'timeout.durationMs', title: 'Observation timeout in milliseconds', widget: 'text' },
+    ] },
   },
   {
     id: 'notifications.notify_me',
@@ -7676,6 +7681,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'machines_agents_sign_in_cancel' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: MachinesAgentsSignInCancelInputSchema, outputSchema: MachinesAgentsSignInCancelOutputSchema,
+    inputHints: { fields: [
+      { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+      { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+      { path: 'terminalId', title: 'Native sign-in terminal id', widget: 'text', required: true },
+    ] },
   },
   {
     id: 'machines.agents.signIn.restart',
@@ -7683,6 +7693,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'machines_agents_sign_in_restart' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: MachinesAgentsSignInCancelInputSchema, outputSchema: MachinesAgentsSignInStartOutputSchema,
+    inputHints: { fields: [
+      { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+      { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+      { path: 'terminalId', title: 'Native sign-in terminal id', widget: 'text', required: true },
+    ] },
   },
   {
     id: 'machines.agents.install',
@@ -11836,6 +11851,9 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
   const executionPlacement = resolveActionExecutionPlacement(spec);
   const requiredAuthority = resolveActionRequiredAuthority(spec);
+  const presentUserRequestable = !isInternal && canRequestPresentUserApprovalForActionInputV1({
+    id: spec.id, requiredAuthority, approvalInputCustody: spec.approvalInputCustody,
+  });
   return {
     ...spec,
     requiredAuthority,
@@ -11846,9 +11864,9 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
       // Standalone CLI has no bound answering app. Daemon-hosted Agent/MCP
       // invocations can use the admitted client's existing reverse-RPC channel.
       cli: executionPlacement !== 'client' && spec.surfaces.cli,
-      mcp: spec.surfaces.mcp || isAgentRequestablePresentUserActionId(spec.id)
+      mcp: spec.surfaces.mcp || presentUserRequestable
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
-      agent: spec.surfaces.agent || isAgentRequestablePresentUserActionId(spec.id)
+      agent: spec.surfaces.agent || presentUserRequestable
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
       api: !isInternal
         && !isPluginProvenanceOnly

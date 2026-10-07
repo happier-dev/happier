@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 const EMPTY_SESSIONS: readonly Session[] = Object.freeze([]);
 
@@ -16,9 +17,12 @@ function normalizeId(value: string | null | undefined): string | null {
 export function selectSessionReportSubtree(
     sessions: Readonly<Record<string, Session>>,
     leadSessionId: string,
+    serverId: string | null,
 ): readonly Session[] {
+    if (!serverId?.trim()) return EMPTY_SESSIONS;
     let childrenByLead: Map<string, Session[]> | null = null;
     for (const session of Object.values(sessions)) {
+        if (!session.serverId || !areServerProfileIdentifiersEquivalent(session.serverId, serverId)) continue;
         const lead = normalizeId(session.reportsTo?.sessionId);
         if (!lead) continue;
         childrenByLead ??= new Map();

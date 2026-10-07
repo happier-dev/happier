@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -13,9 +14,18 @@ import { buildWalkthroughReading, EMPTY_WALKTHROUGH_READING, type WalkthroughRea
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const nativeScrollRequests = vi.hoisted(() => [] as Array<{ y: number; animated: boolean }>);
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    // Native scroll commands are the platform boundary; reading/layout decisions stay real.
+    const ScrollView = React.forwardRef<{ scrollTo: (request: { y: number; animated: boolean }) => void }, { children?: React.ReactNode }>(
+        function ScrollView(props, ref) {
+            React.useImperativeHandle(ref, () => ({ scrollTo: (request) => nativeScrollRequests.push(request) }), []);
+            return React.createElement('ScrollView', props);
+        },
+    );
+    return createReactNativeWebMock({ ScrollView });
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -51,6 +61,27 @@ it('keeps model provenance and yields the extra scope detail in a narrow drawer'
         typeof child === 'string' && child.includes('A long model name'))).length).toBeGreaterThan(0);
 });
 
+it('does not claim complete line totals when a captured file has unavailable evidence', async () => {
+    const complete = buildWalkthroughReading(COMPLETE);
+    const known = await renderScreen(<WalkthroughView reading={complete} scopeLabel="This session" layout="wide" />);
+    const sourceStrings = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findHostByTestId('walkthrough-source-fact')!
+        .findAll((node) => typeof node.type === 'string')
+        .flatMap((node) => node.children.filter((child): child is string => typeof child === 'string'));
+    expect(sourceStrings(known)).toContain(`+${complete.source.added.toLocaleString()}`);
+    const comparison = { ...SPECIMEN_COMPARISON, inventory: { ...SPECIMEN_COMPARISON.inventory,
+        files: SPECIMEN_COMPARISON.inventory.files.map((file, index) => index === 0
+            ? { ...file, evidence: { state: 'unavailable' as const, reason: 'binary' as const } } : file),
+    } };
+    const reading = buildWalkthroughReading({ comparison, walkthrough: { state: 'complete', value: SPECIMEN_WALKTHROUGH },
+        analysis: SPECIMEN_ANALYSIS_COMPLETE, reviewed: null });
+    expect(reading.source.added).toBeGreaterThan(0);
+    const screen = await renderScreen(<WalkthroughView reading={reading} scopeLabel="This session" layout="wide" />);
+    const strings = sourceStrings(screen);
+    expect(strings).not.toContain(`+${reading.source.added.toLocaleString()}`);
+    expect(strings).not.toContain(`−${reading.source.removed.toLocaleString()}`);
+    expect(strings.some((text) => text.startsWith('scmComparison.fileCount'))).toBe(true);
+});
+
 function view(input: WalkthroughReadingInput, props: Partial<React.ComponentProps<typeof WalkthroughView>> = {}) {
     return (
         <WalkthroughView
@@ -61,6 +92,23 @@ function view(input: WalkthroughReadingInput, props: Partial<React.ComponentProp
         />
     );
 }
+
+it.each(['wide', 'phone'] as const)('navigates to the measured findings tail in the %s reading scroll', async (layout) => {
+    const screen = await renderScreen(view(COMPLETE, { layout, review: {
+        renderStopFindings: (stop, nav) => ({ refs: <View testID={`findings-nav-${stop.id}`} onTouchEnd={nav.scrollToFindings} /> }),
+        afterStops: <View testID="findings-content" />,
+    } }));
+    const anchor = screen.findHostByTestId('walkthrough-findings-tail-anchor')!;
+    let stream = anchor.parent;
+    while (stream && typeof stream.props.onLayout !== 'function') stream = stream.parent;
+    expect(stream).not.toBeNull();
+    await act(async () => {
+        stream!.props.onLayout({ nativeEvent: { layout: { y: 100 } } });
+        anchor.props.onLayout({ nativeEvent: { layout: { y: 300 } } });
+        screen.findByTestId(`findings-nav-${SPECIMEN_WALKTHROUGH.stops[0]!.id}`)!.props.onTouchEnd();
+    });
+    expect(nativeScrollRequests.at(-1)).toEqual({ y: layout === 'phone' ? 348 : 400, animated: false });
+});
 
 /** Host elements whose testID starts with a prefix, in render order. */
 function hostIds(screen: Awaited<ReturnType<typeof renderScreen>>, prefix: string): string[] {

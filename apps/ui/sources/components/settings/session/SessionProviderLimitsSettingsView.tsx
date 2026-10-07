@@ -41,7 +41,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
         resumePromptMode: 'standard' | 'off' | 'custom';
         customResumePrompt: string;
     }>) => {
-        const customResumePrompt = next.customResumePrompt.trim().slice(0, 2000);
+        const customResumePrompt = next.customResumePrompt.trim();
         setUsageLimitRecoverySettings({
             v: 1,
             mode: next.mode,
@@ -107,7 +107,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                                     onSubmitEditing={() => commitCustomResumePromptDraft(customResumePromptDraftRef.current)}
                                     placeholder={t('settingsSession.usageLimitRecovery.customResumePromptPlaceholder')}
                                     autoCapitalize="sentences"
-                                    maxLength={2000}
                                     multiline
                                     minLines={2}
                                 />

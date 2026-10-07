@@ -1,43 +1,24 @@
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { setActiveServer, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { useRecoveryKeyReminder } from './useRecoveryKeyReminder';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Device storage for the reminder's dismissed flag (the persistence boundary).
-const storage = vi.hoisted(() => ({
-    dismissed: false,
-    getRecoveryKeyReminderDismissed: vi.fn(async () => storage.dismissed),
-    setRecoveryKeyReminderDismissed: vi.fn(async (value: boolean) => {
-        storage.dismissed = value;
-        return true;
-    }),
-    getCachedRecoveryKeyReminderDismissed: vi.fn(() => null as boolean | null),
-}));
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getRecoveryKeyReminderDismissed: storage.getRecoveryKeyReminderDismissed,
-            setRecoveryKeyReminderDismissed: storage.setRecoveryKeyReminderDismissed,
-            getCachedRecoveryKeyReminderDismissed: storage.getCachedRecoveryKeyReminderDismissed,
-        },
-        isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
-
-// The server's feature answer (HTTP) turns the reminder on.
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => ({ features: { auth: { ui: { recoveryKeyReminder: { enabled: true } } } } }),
-    getCachedReadyServerFeatures: () => null,
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -45,53 +26,48 @@ vi.mock('@/modal', async () => {
 });
 
 afterEach(() => {
-    storage.dismissed = false;
-    vi.resetModules();
+    standardCleanup();
+    resetRuntimeFetch();
 });
 
 describe('useRecoveryKeyReminder', () => {
-    it('is needed until the key is saved or the reminder dismissed, for every surface at once', async () => {
-        const { useRecoveryKeyReminder } = await import('./useRecoveryKeyReminder');
-        const hub = await renderHook(() => useRecoveryKeyReminder());
-        const banner = await renderHook(() => useRecoveryKeyReminder());
+    it('offers only a real legacy sign-in key, shares completion, and lets a hub carry the reminder', async () => {
+        setRuntimeFetch(async (url) => new URL(String(url)).pathname === '/v1/features'
+            ? Response.json(createRootLayoutFeaturesResponse())
+            : Response.json({ error: 'not_found' }, { status: 404 }));
+        const home = await upsertServerProfileOnly({ serverUrl: 'https://recovery-reminder.test', name: 'Test Home' });
+        await setActiveServer({ serverId: home.id });
+        // Real device-local persistence and credential classification run below the injected host.
+        await TokenStorage.setRecoveryKeyReminderDismissed(false);
+        const legacyCredentials = { token: 'test-token', secret: Buffer.alloc(32, 7).toString('base64') } satisfies AuthCredentials;
+        let credentials: AuthCredentials = { token: legacyCredentials.token };
+        function AccountShell({ children }: React.PropsWithChildren) {
+            return <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>;
+        }
+        const banner = await renderHook(() => useRecoveryKeyReminder({ surface: 'banner' }), { wrapper: AccountShell });
         await flushHookEffects({ cycles: 3 });
-        expect(hub.getCurrent().needed).toBe(true);
-        expect(banner.getCurrent().needed).toBe(true);
+        expect(banner.getCurrent()).toMatchObject({ needed: false, step: null, secret: null });
 
-        // Dismissing from one surface is done everywhere, and remembered on the device.
-        await act(async () => { await hub.getCurrent().dismiss(); });
-        await flushHookEffects({ cycles: 2 });
-        expect(hub.getCurrent().needed).toBe(false);
-        expect(banner.getCurrent().needed).toBe(false);
-        expect(storage.dismissed).toBe(true);
-    });
+        credentials = legacyCredentials;
+        await banner.rerender();
+        expect(banner.getCurrent()).toMatchObject({ needed: true, step: 'pending', secret: legacyCredentials.secret });
 
-    it('is done once the key is saved', async () => {
-        const { useRecoveryKeyReminder } = await import('./useRecoveryKeyReminder');
-        const hook = await renderHook(() => useRecoveryKeyReminder());
-        await flushHookEffects({ cycles: 3 });
-        expect(hook.getCurrent().needed).toBe(true);
-
-        await act(async () => { await hook.getCurrent().markSaved(); });
-        await flushHookEffects({ cycles: 2 });
-        expect(hook.getCurrent().needed).toBe(false);
-    });
-
-    it('says it once: the banner steps aside while a hub setup tile carries the step', async () => {
-        const { useRecoveryKeyReminder } = await import('./useRecoveryKeyReminder');
-        const banner = await renderHook(() => useRecoveryKeyReminder({ surface: 'banner' }));
-        await flushHookEffects({ cycles: 3 });
-        expect(banner.getCurrent().needed).toBe(true);
-
-        const tile = await renderHook(() => useRecoveryKeyReminder({ surface: 'hubTile' }));
-        await flushHookEffects({ cycles: 2 });
+        const tile = await renderHook(() => useRecoveryKeyReminder({ surface: 'hubTile' }), { wrapper: AccountShell });
         expect(tile.getCurrent().needed).toBe(true);
         expect(banner.getCurrent().needed).toBe(false);
 
-        // No hub on screen (phone, narrow list, a session open): the banner carries it again.
         await tile.unmount();
-        await flushHookEffects({ cycles: 2 });
         expect(banner.getCurrent().needed).toBe(true);
+
+        const status = await renderHook(() => useRecoveryKeyReminder(), { wrapper: AccountShell });
+        await act(async () => { await status.getCurrent().markSaved(); });
+        expect(banner.getCurrent()).toMatchObject({ needed: false, step: 'done', secret: null });
+        expect(status.getCurrent()).toMatchObject({ needed: false, step: 'done', secret: null });
+        expect(await TokenStorage.getRecoveryKeyReminderDismissed()).toBe(true);
+
+        // Dismissing an already handled key preserves the same shared completion and persistence.
+        await act(async () => { await banner.getCurrent().dismiss(); });
+        expect(status.getCurrent().step).toBe('done');
+        expect(await TokenStorage.getRecoveryKeyReminderDismissed()).toBe(true);
     });
 });
-

@@ -554,9 +554,6 @@ export type AccountEncryptionMigrateSessionsDirective = z.infer<
   typeof AccountEncryptionMigrateSessionsDirectiveSchema
 >;
 
-export const ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENTS_MAX_ITEMS = 200;
-export const ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS = 2_000;
-
 const AccountEncryptionMigrateReviewCommentEventItemSchema = lazyZodSchema(() => z
   .object({
     eventId: z.string().min(1).max(256),
@@ -575,9 +572,7 @@ const AccountEncryptionMigrateReviewCommentItemSchema = lazyZodSchema(() => z
     expectedSensitiveSource:
       ReviewCommentSensitiveMigrationSourceV1Schema,
     targetSensitiveEnvelope: StoredJsonContentEnvelopeSchema,
-    events: z
-      .array(AccountEncryptionMigrateReviewCommentEventItemSchema)
-      .max(ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS),
+    events: z.array(AccountEncryptionMigrateReviewCommentEventItemSchema),
   })
   .strict());
 
@@ -587,32 +582,11 @@ export const AccountEncryptionMigrateReviewCommentsDirectiveSchema =
     z
       .object({
         action: z.literal('migrate'),
-        items: z
-          .array(AccountEncryptionMigrateReviewCommentItemSchema)
-          .max(ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENTS_MAX_ITEMS),
+        // The complete Account transition shares its aggregate request-byte
+        // boundary; comment/event counts impose no additional transport bound.
+        items: z.array(AccountEncryptionMigrateReviewCommentItemSchema),
       })
-      .strict()
-      .superRefine((directive, context) => {
-        const eventCount = directive.items.reduce(
-          (count, item) => count + item.events.length,
-          0,
-        );
-        if (
-          eventCount
-          > ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS
-        ) {
-          context.addIssue({
-            code: 'too_big',
-            maximum:
-              ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS,
-            origin: 'array',
-            inclusive: true,
-            path: ['items'],
-            message:
-              'Review Comment migration event inventory exceeds the supported bound',
-          });
-        }
-      }),
+      .strict(),
   ]));
 export type AccountEncryptionMigrateReviewCommentsDirective = z.infer<
   typeof AccountEncryptionMigrateReviewCommentsDirectiveSchema

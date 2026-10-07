@@ -4,6 +4,7 @@ import type { MachineLiveStreamCapsV1, MachineLiveStreamControlSidebandV1 } from
 import type { BrowserStreamedSurfaceRuntime } from '@/components/browser/adapters/BrowserStreamedTarget';
 import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';
 import { useMachineLiveStreamRelaySocket } from '@/components/stream/useMachineLiveStreamRelaySocket';
+import { publishComputerStatusFrame } from '@/sync/domains/computer/computerControlClient';
 
 /** The live-stream family and codec W7's native computer source registers (`_CONTRACTS.md`, W7 U3 supplement). */
 const SCREEN_STREAM_FAMILY = 'screen';
@@ -18,6 +19,7 @@ const NO_VIEWER_CAPS: MachineLiveStreamCapsV1 = {};
  * the daemon turns the person's tap or key into a takeover and drains the agent first (W7).
  */
 export function useComputerScreenStream(input: Readonly<{
+    sessionId: string;
     machineId: string | null;
     serverId: string | null;
     sourceId: string | null;
@@ -52,6 +54,9 @@ export function useComputerScreenStream(input: Readonly<{
         ...(sourceId ? { sourceId } : {}),
         caps: NO_VIEWER_CAPS,
         sourceCodecs: SCREEN_CODECS,
+        onMetadataFrame: frame => {
+            if (sourceId && machineId) publishComputerStatusFrame({ sessionId: input.sessionId, machineId, serverId: input.serverId ?? null }, sourceId, frame);
+        },
     });
     const sendControl = React.useMemo(() => {
         if (!socket || !streamId || !sourceId) return null;

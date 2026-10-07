@@ -25,5 +25,6 @@
     "branch": "main",
     "repo_name": "example/storefront"
   },
-  "impact": { "occurrences": 1842, "users": 311, "sessions": 402 }
+  "impact": { "occurrences": 1842, "users": 311, "sessions": 402 },
+  "sparkline": [0, 0, 0, 0, 1, 2, 4, 6, 9, 11, 13, 12]
 }

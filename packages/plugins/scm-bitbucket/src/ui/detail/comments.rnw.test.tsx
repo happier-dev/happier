@@ -37,7 +37,7 @@ it('expands only returned replies locally while the independent collection pager
     });
   });
   if (!detail) throw new Error('not mounted');
-  await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+  await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
   await expect(detail.getByText('Body first')).resolves.toBeDefined();
   await expect(detail.queryByText('Body second')).resolves.toBeUndefined();
   await expect(detail.queryByText('Body nested')).resolves.toBeUndefined();
@@ -50,8 +50,9 @@ it('expands only returned replies locally while the independent collection pager
   await detail.press(await detail.getByRole('button', { name: 'Show 30 more comments' }));
   await expect(detail.getByText('Body third')).resolves.toBeDefined();
   await expect(detail.getByText('Body orphan-two')).resolves.toBeDefined();
-  const rows = await detail.getAllByRole('listitem');
-  expect(rows.map((item) => item.name?.match(/Body ([a-z-]+)/u)?.[1]).filter(Boolean))
+  // Undated remarks keep the provider's order in the one Activity stream.
+  const bodies = [...(document.body.textContent ?? '').matchAll(/Body ([a-z]+(?:-two)?)/gu)].map((match) => match[1]);
+  expect(bodies.filter((body, index) => bodies.indexOf(body) === index))
     .toEqual(['root', 'first', 'other', 'second', 'nested', 'orphan', 'orphan-two', 'third', 'missing']);
   expect(reads).toBe(2);
   expect(readInputs[1]).toMatchObject({ continuation: 'opaque-provider-next' });

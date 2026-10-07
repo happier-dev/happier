@@ -114,7 +114,7 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
       return store.mutateApplication(scope, (result) => ({ ...result.application!, status: 'failed', reason: 'source_changed' }));
     }
     const candidate = materialized.steps.find((entry) => entry.groupId === step.groupId)!;
-    const previousTreeOid = expectedParent ? await git(scope.cwd, ['rev-parse', `${expectedParent}^{tree}`]) : materialized.baseTreeOid;
+    const previousTreeOid = expectedParent ? await git(scope.cwd, ['--no-replace-objects', 'rev-parse', `${expectedParent}^{tree}`]) : materialized.baseTreeOid;
     if (previousTreeOid === candidate.targetTreeOid) throw new Error('The accepted group has no remaining exact changes; reselect it before accepting.');
     const writing = await store.mutateApplication(scope, (result) => {
       if (result.application!.status !== 'applying' || result.application!.stopAfterCurrent) return result.application!;
@@ -137,21 +137,15 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
     const published = publication?.state === 'published' && Boolean(response.commitSha ?? publication.candidateOid);
     const unknown = !publication || publication.state === 'unknown';
     const landedSha = published ? response.commitSha ?? publication?.candidateOid : undefined;
-    // Verify the exact object/tree/parent returned by the owner; a later HEAD is not attribution evidence.
-    let verified = false;
-    if (landedSha) {
-      const object = await git(scope.cwd, ['rev-list', '--parents', '-n', '1', landedSha]);
-      const actualTree = await git(scope.cwd, ['rev-parse', `${landedSha}^{tree}`]);
-      verified = object === [landedSha, ...(expectedParent ? [expectedParent] : [])].join(' ')
-        && actualTree === (step.acceptedHookTreeOid ?? candidate.targetTreeOid);
-    }
+    // The trusted canonical writer owns candidate validation and publication.
+    // Later display-oriented Git reads cannot revoke its known landed outcome.
     const recorded = await store.mutateApplication(scope, (result) => ({ ...result.application!,
-      status: published && verified && response.success ? 'applying' : response.hookContentChanges ? 'paused'
-        : unknown || (published && !verified) ? 'unknown' : 'failed',
-      reason: published && verified && response.success ? result.application!.stopAfterCurrent ? result.application!.reason : undefined : reasonFor(response),
-      nextGroupIndex: published && verified ? index + 1 : index,
+      status: published && response.success ? 'applying' : response.hookContentChanges ? 'paused'
+        : unknown ? 'unknown' : 'failed',
+      reason: published && response.success ? result.application!.stopAfterCurrent ? result.application!.reason : undefined : reasonFor(response),
+      nextGroupIndex: published ? index + 1 : index,
       steps: result.application!.steps.map((entry, position) => position === index ? { ...entry,
-        state: published && verified ? 'published' : unknown || (published && !verified) ? 'unknown' : 'not_published',
+        state: published ? 'published' : unknown ? 'unknown' : 'not_published',
         ...(landedSha ? { commitSha: landedSha } : {}), ...(publication ? { publication } : {}),
         ...(publication?.actualMessage !== undefined ? { actualMessage: publication.actualMessage } : {}),
         ...(response.hookContentChanges ? { hookContentChanges: response.hookContentChanges } : {}),

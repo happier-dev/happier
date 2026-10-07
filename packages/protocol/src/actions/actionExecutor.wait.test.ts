@@ -14,7 +14,7 @@ function executor(allowed = true) {
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
         retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'failed',
       } } }),
-      waitForTerminal: async () => { throw new Error('Terminal work must not wait'); },
+      waitForTerminal: async () => {},
     }),
   } as unknown as ActionExecutorDeps);
 }
@@ -29,4 +29,21 @@ it('refuses a target outside the captured Home before touching the transport', a
 });
 it('does not bypass a disabled domain Action', async () => {
   expect(await executor(false).execute('wait', input, { surface: 'cli', serverId: 'home' })).toMatchObject({ ok: true, result: { disposition: 'permission_denied' } });
+});
+
+it.each(['needs_attention', 'terminal_or_needs_attention'] as const)('routes generic %s to the native execution condition', async (condition) => {
+  const owner = createActionExecutor({
+    executionRunWait: async (_sessionId, request, options) => waitForExecutionRunTerminal({
+      runId: request.runId, condition: request.condition, timeoutMs: null, signal: options?.signal,
+      readRun: async () => ({ ok: true, data: { run: {
+        runId: request.runId, callId: 'call', sidechainId: 'call', intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
+        attention: { kind: 'permission_required', requestIds: ['request'] },
+      } } }),
+      waitForTerminal: async () => { throw new Error('attention selector was lost'); },
+    }),
+  } satisfies Pick<ActionExecutorDeps, 'executionRunWait'> as unknown as ActionExecutorDeps);
+  expect(await owner.execute('wait', { ...input, condition: { kind: condition } }, { surface: 'cli', serverId: 'home' }))
+    .toMatchObject({ ok: true, result: { disposition: 'matched', snapshot: { disposition: 'needs_attention' } } });
 });

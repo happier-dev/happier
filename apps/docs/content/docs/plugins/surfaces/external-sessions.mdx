@@ -132,8 +132,9 @@ watermark or validation drift restarts the bounded crawl.
 
 ## Callback invocation services
 
-Each of the six callbacks receives the host's bounded invocation controls
-(`signal`, `deadlineAtMs`, and `maxSerializedBytes`) plus two host-provided
+Each of the six callbacks receives caller-owned invocation controls: required
+`signal`, optional `deadlineAtMs`, and `maxSerializedBytes` (required for paged
+candidate/transcript reads, optional for source and identity resolution), plus two host-provided
 services: `managedEndpointRead` and the required existing `exec`
 (`ExecService`). `exec` remains governed by the Agent manifest's declared
 process/tool host access and the current plugin occurrence. Reuse its existing
@@ -303,23 +304,18 @@ most 200 non-negative integers. Positions are bounded source-local numeric
 positions such as line numbers or byte offsets. Source content, file paths, and
 identifiers are never diagnostics.
 
-### Per-call ceilings
+### Caller budgets (0.3 development)
 
-The host clamps every request to its own ceiling before calling, and rejects an
-over-budget settled result instead of truncating it:
+The host preserves the containing operation's deadline and explicit item/byte
+budgets. It does not add an ordinary 15-second deadline or a shorter host ceiling.
+Without a deadline, cancellation and occurrence retirement still stop admission.
+Honor `request.signal` and any supplied `request.deadlineAtMs`; cancelled, retired,
+or late results are discarded. Paged reads must fit their requested byte/item
+budget. Source and identity resolution have no implicit serialized-result budget.
 
-| Method | Items | Settled result |
-| --- | --- | --- |
-| `resolveSource` | — | 262,144 bytes |
-| `listCandidates` | 50 | 1,048,576 bytes |
-| `resolveLinkIdentity` | — | 262,144 bytes |
-| `resolveLinkedIdentity` | — | 262,144 bytes |
-| `pageTranscript` | 200 | 524,288 bytes |
-| `readAfterTranscript` | 200 | 524,288 bytes |
-
-Every call also carries a 15-second ordinary deadline. Cancellation is
-cooperative: honor `request.signal` and `request.deadlineAtMs`, because a late
-result is discarded rather than admitted.
+This is an unreleased 0.3 source-contract change. Update and rebuild callbacks
+that previously assumed every request included a deadline and byte budget.
+The wire and persisted-data schemas retain their declared limits.
 
 `raw` is the Agent-direction producer facet. A consuming plugin reading
 `SessionsService.external.readTranscript` receives
@@ -331,11 +327,12 @@ host-private facts. Reading `.raw` off a consumer item yields `undefined`.
 
 The contribution above is the Agent-to-host direction. It is distinct from
 the host service available to an authorized plugin invocation at
-`context.services.sessions.external`. That service exposes exactly six
+`context.services.sessions.external`. That service exposes seven
 operations:
 
 - `capabilities`
 - `list`
+- `closeList`
 - `attach`
 - `readTranscript`
 - `followTranscript`
@@ -359,6 +356,8 @@ export async function inspectExternalSessions(
     { limit: 20 },
     { signal: context.signal },
   );
+  // This example inspects only page one, so release its remaining inventory.
+  if (page.nextCursor) await external.closeList(page.nextCursor);
   const candidate = page.items[0];
   if (!candidate) return;
 
@@ -383,6 +382,16 @@ export async function inspectExternalSessions(
   return transcript;
 }
 ```
+
+In 0.3 development, each inventory query owns its retained pages. Pass
+`nextCursor` to `list` to consume a continuation once. When you stop early, call
+`closeList` in your cleanup path with any cursor the query returned, even one
+already consumed; it closes the whole query and cancels a pending continuation.
+Repeated close is harmless. Exhaustion, caller cancellation and source retirement
+release the query automatically. Other live queries do not invalidate its cursors.
+Both pages and close requests remain serializable across the runner/daemon seam.
+This unreleased SDK source-contract change requires authors to rebuild consumers
+and close abandoned pagination; it supplies no timer or guessed inventory cap.
 
 `list`, `attach`, transcript reads, public follow, and `takeover` resolve the
 current configured Agent/source authority for each new call. A cursor or
@@ -708,8 +717,8 @@ The callback receives:
 
 Persisted session metadata alone is never launch authority. The wrapper binds
 the call to the current Agent occurrence, combines caller cancellation with
-occurrence retirement, enforces a 15-second deadline and a 262,144-byte
-settled-result limit, and rejects malformed, oversized, cancelled, retired, or
+occurrence retirement, preserves the caller deadline and the takeover callback's
+declared result budget, and rejects malformed, oversized, cancelled, retired, or
 late results instead of truncating or admitting them. Cancellation is
 cooperative, so callbacks must honor `request.signal` and
 `request.deadlineAtMs`. `remoteSessionId` is limited to 2,000 code units, and

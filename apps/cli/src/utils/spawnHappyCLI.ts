@@ -351,12 +351,16 @@ function buildCurrentProcessBundledBunFallbackInvocation(
   return null;
 }
 
-function resolveSubprocessRuntimeExecutable(runtime: Exclude<HappyCliSubprocessRuntime, 'binary'>): string {
+function resolveSubprocessRuntimeExecutable(
+  runtime: Exclude<HappyCliSubprocessRuntime, 'binary'>,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
   // Prefer the currently-running runtime binary when possible. This avoids PATH
   // issues on Windows (and GUI-launched shells) where `node`/`bun` may not resolve.
   if (runtime === 'node') {
     const javaScriptRuntime = resolveJavaScriptRuntimeExecutable({
       isBunRuntime: isBun(),
+      processEnv: environment,
     });
     if (!javaScriptRuntime) {
       throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Happier CLI subprocess'));
@@ -1249,7 +1253,7 @@ export function buildHappyCliSubprocessLaunchSpec(
   }
   return {
     runtime: invocation.runtime,
-    filePath: resolveSubprocessRuntimeExecutable(invocation.runtime),
+    filePath: resolveSubprocessRuntimeExecutable(invocation.runtime, options?.environment),
     args: invocation.argv,
     env: invocation.env,
   };

@@ -1419,6 +1419,7 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.capture',
+    examples: { voice: { argsExample: '{"cwd":"/repo","source":{"kind":"workingTree"}}' } },
     title: 'Capture source-control comparison',
     description: 'Read comparison inventory and evidence without starting model analysis.',
     safety: 'safe', placements: [],
@@ -1436,6 +1437,7 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.generate',
+    examples: { voice: { argsExample: '{"cwd":"/repo","source":{"kind":"workingTree"},"outputs":["summary"]}' } },
     title: 'Generate source-control diff summary',
     description: 'Capture comparison evidence and start retained summary, walkthrough, or commit-plan analysis.',
     safety: 'safe',
@@ -1592,6 +1594,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.reviewed.mark', title: 'Mark changes reviewed',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","changeRefs":["change-main"]}' } },
     description: 'Explicitly mark exact changes reviewed in the authenticated personal Account.',
     safety: 'safe', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK, sdkMethod: 'scm.diffSummary.reviewed.mark', mcpToolName: 'scm_diff_summary_reviewed_mark', voiceClientToolName: 'markScmChangesReviewed' },
@@ -1606,6 +1609,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.reviewed.unmark', title: 'Unmark reviewed changes',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","changeRefs":["change-main"]}' } },
     description: 'Explicitly remove personal reviewed marks for exact comparison changes.',
     safety: 'safe', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK, sdkMethod: 'scm.diffSummary.reviewed.unmark', mcpToolName: 'scm_diff_summary_reviewed_unmark', voiceClientToolName: 'unmarkScmChangesReviewed' },
@@ -1620,6 +1624,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.read', title: 'Read saved change explanation',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main"}' } },
     description: 'Read the current saved result and revision from its owning machine.',
     safety: 'safe', placements: [], sideEffectClass: 'read',
     bindings: { rpcMethod: 'scm.diffSummary.result.read', sdkMethod: 'scm.diffSummary.result.read', mcpToolName: 'scm_diff_summary_result_read', voiceClientToolName: 'readScmDiffSummaryResult' },
@@ -1633,6 +1638,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.edit', title: 'Edit saved change explanation',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1,"edit":{"kind":"renameWalkthrough","title":"Changes"}}' } },
     description: 'Apply a structured edit to the expected result revision.',
     safety: 'safe', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: 'scm.diffSummary.result.edit', sdkMethod: 'scm.diffSummary.result.edit', mcpToolName: 'scm_diff_summary_result_edit', voiceClientToolName: 'editScmDiffSummaryResult' },
@@ -1648,6 +1654,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.undo', title: 'Undo change explanation edit',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1}' } },
     description: 'Restore the immediate previous output at the expected result revision.',
     safety: 'safe', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: 'scm.diffSummary.result.undo', sdkMethod: 'scm.diffSummary.result.undo', mcpToolName: 'scm_diff_summary_result_undo', voiceClientToolName: 'undoScmDiffSummaryResult' },
@@ -1662,6 +1669,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.result.delete', title: 'Delete saved change explanation',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1}' } },
     description: 'Delete a saved result and its manual edits at the expected revision.',
     safety: 'danger', placements: [], sideEffectClass: 'write',
     bindings: { rpcMethod: 'scm.diffSummary.result.delete', sdkMethod: 'scm.diffSummary.result.delete', mcpToolName: 'scm_diff_summary_result_delete', voiceClientToolName: 'deleteScmDiffSummaryResult' },
@@ -1676,6 +1684,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.refine', title: 'Refine change explanation',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1,"output":"summary","instructions":"Explain the user-visible changes."}' } },
     description: 'Request targeted structured refinement without overwriting newer edits.',
     safety: 'safe', placements: [], sideEffectClass: 'external',
     bindings: { rpcMethod: 'scm.diffSummary.refine', sdkMethod: 'scm.diffSummary.refine', mcpToolName: 'scm_diff_summary_refine', voiceClientToolName: 'refineScmDiffSummary' },
@@ -1693,6 +1702,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.addOutputs', title: 'Add change explanation outputs',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1,"outputs":["walkthrough"]}' } },
     description: 'Continue the saved comparison analysis with additional requested outputs.',
     safety: 'safe', placements: [], sideEffectClass: 'external',
     bindings: { rpcMethod: 'scm.diffSummary.addOutputs', sdkMethod: 'scm.diffSummary.addOutputs', mcpToolName: 'scm_diff_summary_add_outputs', voiceClientToolName: 'addScmDiffSummaryOutputs' },
@@ -1708,6 +1718,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.discuss', title: 'Discuss change explanation',
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"result-main","expectedRevision":1,"message":"What should I review first?"}' } },
     description: 'Send a follow-up to the actual retained generator or explicitly start a seeded conversation.',
     safety: 'safe', placements: [], sideEffectClass: 'external',
     bindings: { rpcMethod: 'scm.diffSummary.discuss', sdkMethod: 'scm.diffSummary.discuss', mcpToolName: 'scm_diff_summary_discuss', voiceClientToolName: 'discussScmDiffSummary' },

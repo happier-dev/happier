@@ -86,10 +86,10 @@ import { isAgentRuntimeGenerationCurrent } from './agentGenerationCurrentness';
 import type { ActivationTarget } from '../activation/targets';
 import { runWithOptionalTimeout } from '../utils';
 import {
+    armExternalSessionsDeadline,
     bindAgentExternalSessionsManagedEndpointRead,
     createBoundedAgentExternalSessionsContribution,
     createUnavailableAgentExternalSessionsManagedEndpointRead,
-    EXTERNAL_SESSIONS_INVOCATION_POLICY,
 } from '../../../../session/external/agentExternalSessionsInvocation';
 import type { AgentExternalSessionsManagedEndpointReadHost } from '../../../../session/external/agentExternalSessionsInvocation';
 import type { BoundedAgentExternalSessionsContribution } from '../../../../session/external/agentExternalSessionsInvocation';
@@ -99,12 +99,6 @@ import {
 import { createPluginInvocationPresentation } from '../../invocation/services/interactions';
 import { createUnavailablePluginServices } from '../../invocation/services/unavailable';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
-
-const EXTERNAL_SESSION_OBSERVATION_POLICY = Object.freeze({
-    // This bounds host responsiveness and result admission. It does not contain
-    // or preempt non-cooperative plugin work after the host stops awaiting it.
-    deadlineMs: 15_000,
-});
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -558,19 +552,17 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
     const composeSignal = (callerSignal: AbortSignal): Readonly<{
         signal: AbortSignal;
         terminalPromise: Promise<void>;
-        abort(reason?: 'cancelled' | 'retired' | 'timed-out' | 'disposed'): void;
-        clearDeadline(): void;
-        timedOut(): boolean;
+        abort(reason?: 'cancelled' | 'retired' | 'disposed'): void;
         cleanup(): void;
     }> => {
         const controller = new AbortController();
-        let terminalReason: 'cancelled' | 'retired' | 'timed-out' | 'disposed' | null = null;
+        let terminalReason: 'cancelled' | 'retired' | 'disposed' | null = null;
         let resolveTerminal!: () => void;
         const terminalPromise = new Promise<void>((resolve) => {
             resolveTerminal = resolve;
         });
         const abort = (
-            reason: 'cancelled' | 'retired' | 'timed-out' | 'disposed' = 'disposed',
+            reason: 'cancelled' | 'retired' | 'disposed' = 'disposed',
         ) => {
             if (terminalReason !== null) return;
             terminalReason = reason;
@@ -587,35 +579,20 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
             callerSignal.addEventListener('abort', cancel, { once: true });
             params.retirementSignal.addEventListener('abort', retire, { once: true });
         }
-        let deadline: ReturnType<typeof setTimeout> | null = setTimeout(
-            () => abort('timed-out'),
-            EXTERNAL_SESSION_OBSERVATION_POLICY.deadlineMs,
-        );
-        deadline.unref?.();
-        const clearDeadline = (): void => {
-            if (!deadline) return;
-            clearTimeout(deadline);
-            deadline = null;
-        };
         return Object.freeze({
             signal: controller.signal,
             terminalPromise,
             abort,
-            clearDeadline,
-            timedOut: () => terminalReason === 'timed-out',
             cleanup() {
                 abort('disposed');
-                clearDeadline();
                 callerSignal.removeEventListener('abort', cancel);
                 params.retirementSignal.removeEventListener('abort', retire);
             },
         });
     };
 
-    // The host-owned terminal outcomes keep the External Sessions contract's
-    // typed codes (retired → retryable `unavailable`, caller `cancelled`,
-    // deadline → retryable `timeout`) so a caller such as attach answers them
-    // truthfully instead of as an opaque internal error.
+    // Retirement and caller cancellation remain typed External Sessions
+    // outcomes rather than opaque internal errors.
     const retiredError = (cause?: unknown) => new ExternalSessionProviderFailureError({
         code: 'unavailable',
         message: 'Agent External Session observation belongs to a retired generation',
@@ -651,15 +628,6 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
         }
         if (callerSignal.aborted) {
             return cancelledError(cause);
-        }
-        if (composed.timedOut()) {
-            return new ExternalSessionProviderFailureError({
-                code: 'timeout',
-                message: `Agent External Session observation timed out after ${EXTERNAL_SESSION_OBSERVATION_POLICY.deadlineMs}ms`,
-                operation: 'externalSessionObservation',
-                retryable: true,
-                cause,
-            });
         }
         return cause instanceof Error
             ? cause
@@ -707,20 +675,16 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
                 ReturnType<AgentExternalSessionObservationContribution['observeResource']>
             > | undefined;
             let disposalPromise: Promise<void> | undefined;
-            let boundedDisposalPromise: Promise<void> | undefined;
-            let disposalStarted = false;
-            let cleanupTimedOut = false;
             const disposeOnce = (): Promise<void> => {
                 if (disposalPromise) return disposalPromise;
                 if (!acquired) return Promise.resolve();
-                if (disposalStarted) return Promise.resolve();
-                disposalStarted = true;
-                let attempt: Promise<void>;
-                try {
-                    attempt = Promise.resolve(acquired.dispose());
-                } catch (error) {
-                    attempt = Promise.reject(error);
-                }
+                const observer = acquired;
+                let resolveAttempt!: () => void;
+                let rejectAttempt!: (reason: unknown) => void;
+                const attempt = new Promise<void>((resolve, reject) => {
+                    resolveAttempt = resolve;
+                    rejectAttempt = reject;
+                });
                 disposalPromise = attempt;
                 // A rejected physical disposal is retryable at its owner: the
                 // observation reconciler keeps an observer whose disposal failed and
@@ -731,65 +695,26 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
                 void attempt.catch(() => {
                     if (disposalPromise !== attempt) return;
                     disposalPromise = undefined;
-                    disposalStarted = false;
                 });
+                // Publish custody before entering a callback that can re-enter
+                // disposal, while retaining synchronous physical cleanup start.
+                try {
+                    void Promise.resolve(observer.dispose()).then(resolveAttempt, rejectAttempt);
+                } catch (error) {
+                    rejectAttempt(error);
+                }
                 return attempt;
             };
-            const disposeWithinObservationDeadline = (): Promise<void> => {
-                if (!acquired) return Promise.resolve();
-                if (cleanupTimedOut) return Promise.resolve();
-                if (boundedDisposalPromise) return boundedDisposalPromise;
-
-                const timeoutError = new Error(
-                    `Agent External Session observation cleanup timed out after ${EXTERNAL_SESSION_OBSERVATION_POLICY.deadlineMs}ms`,
-                );
-                // Publish the promise before starting the plugin callback so
-                // re-entrant cancellation still shares one physical disposal
-                // and one deadline/reporting path.
-                let resolveBoundedDisposal!: () => void;
-                let rejectBoundedDisposal!: (reason: unknown) => void;
-                const boundedAttempt = new Promise<void>((resolve, reject) => {
-                    resolveBoundedDisposal = resolve;
-                    rejectBoundedDisposal = reject;
-                });
-                boundedDisposalPromise = boundedAttempt;
-                void runWithOptionalTimeout(
-                    EXTERNAL_SESSION_OBSERVATION_POLICY.deadlineMs,
-                    disposeOnce,
-                    () => timeoutError,
-                )
-                    .then(
-                        () => resolveBoundedDisposal(),
-                        (error: unknown) => {
-                            logExternalSessionsInternalError(
-                                'external_session.observation_physical_dispose',
-                                error,
-                            );
-                            // A callback rejection is retryable and disposeOnce has
-                            // already released its failed physical attempt. A timeout
-                            // is the host's terminal bounded wait over the one still
-                            // in-flight physical callback. Remember that disposition
-                            // so a later lifecycle owner does not start an endless
-                            // sequence of fresh deadlines over the same
-                            // non-cooperative call; the original promise closure still
-                            // retains the physical callback until it settles.
-                            if (error === timeoutError) {
-                                cleanupTimedOut = true;
-                            }
-                            if (boundedDisposalPromise === boundedAttempt) {
-                                boundedDisposalPromise = undefined;
-                            }
-                            rejectBoundedDisposal(
-                                error === timeoutError
-                                    ? timeoutError
-                                    : new Error('Agent External Session observation cleanup failed'),
-                            );
-                        },
-                    );
-                return boundedAttempt;
+            const disposeObserver = async (): Promise<void> => {
+                try {
+                    await disposeOnce();
+                } catch (error) {
+                    logExternalSessionsInternalError('external_session.observation_physical_dispose', error);
+                    throw new Error('Agent External Session observation cleanup failed');
+                }
             };
             const disposeOnAbort = () => {
-                void disposeWithinObservationDeadline().catch(() => undefined);
+                void disposeObserver().catch(() => undefined);
             };
             composed.signal.addEventListener('abort', disposeOnAbort, { once: true });
             let rawAcquisition: ReturnType<
@@ -858,7 +783,7 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
                 if (composed.signal.aborted
                     || params.retirementSignal.aborted
                     || !params.isOccurrenceCurrent()) {
-                    await disposeWithinObservationDeadline().catch(() => undefined);
+                    await disposeObserver().catch(() => undefined);
                     throw terminalError(request.signal, composed);
                 }
                 return acquired;
@@ -870,12 +795,11 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
                         throw terminalError(request.signal, composed);
                     }),
                 ]);
-                composed.clearDeadline();
                 return Object.freeze({
                     async dispose() {
                         composed.abort('disposed');
                         try {
-                            await disposeWithinObservationDeadline();
+                            await disposeObserver();
                         } finally {
                             composed.signal.removeEventListener('abort', disposeOnAbort);
                             composed.cleanup();
@@ -917,8 +841,6 @@ function createOccurrenceBoundExternalSessionObservation(params: Readonly<{
                     bindManagedEndpointRead(
                         links[0]?.linkedSource.source,
                         composed.signal,
-                        EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity
-                            .maxSerializedBytes,
                     ),
                     composed.terminalPromise.then(() => {
                         throw terminalError(request.signal, composed);
@@ -1026,13 +948,7 @@ function createOccurrenceBoundExternalSessionHooks(params: Readonly<{
         const request = input.validateRequest(input.request);
         assertAdmissible(request.signal);
         const policy = AGENT_EXTERNAL_SESSION_HOOK_LIMITS.callbacks[input.callbackName];
-        const deadlineAtMs = input.callbackName === 'resolveInstallation'
-            ? Math.min(
-                request.deadlineAtMs,
-                Date.now()
-                    + AGENT_EXTERNAL_SESSION_HOOK_LIMITS.callbacks.resolveInstallation.deadlineMs,
-            )
-            : request.deadlineAtMs;
+        const deadlineAtMs = request.deadlineAtMs;
         const maxSerializedBytes = Math.min(
             request.maxSerializedBytes,
             policy.maxEnvelopeUtf8Bytes,
@@ -1069,7 +985,7 @@ function createOccurrenceBoundExternalSessionHooks(params: Readonly<{
         request.signal.addEventListener('abort', cancel, { once: true });
         params.retirementSignal.addEventListener('abort', retire, { once: true });
         const remainingMs = deadlineAtMs - Date.now();
-        let timeout: ReturnType<typeof setTimeout> | null = null;
+        let cancelDeadline: (() => void) | undefined;
         if (params.retirementSignal.aborted || !params.isOccurrenceCurrent()) {
             retire();
         } else if (request.signal.aborted) {
@@ -1077,8 +993,7 @@ function createOccurrenceBoundExternalSessionHooks(params: Readonly<{
         } else if (remainingMs <= 0) {
             terminate('timed-out');
         } else {
-            timeout = setTimeout(() => terminate('timed-out'), remainingMs);
-            timeout.unref?.();
+            cancelDeadline = armExternalSessionsDeadline(deadlineAtMs, () => terminate('timed-out'), { unref: true });
         }
 
         try {
@@ -1108,7 +1023,7 @@ function createOccurrenceBoundExternalSessionHooks(params: Readonly<{
             assertAdmissible(request.signal);
             return result;
         } finally {
-            if (timeout) clearTimeout(timeout);
+            cancelDeadline?.();
             request.signal.removeEventListener('abort', cancel);
             params.retirementSignal.removeEventListener('abort', retire);
         }
@@ -1184,10 +1099,7 @@ function createOccurrenceBoundExternalSessionTakeover(params: Readonly<{
                     input,
                 );
             assertAdmissible(request.signal);
-            const deadlineAtMs = Math.min(
-                request.deadlineAtMs,
-                Date.now() + policy.deadlineMs,
-            );
+            const deadlineAtMs = request.deadlineAtMs;
             const maxSerializedBytes = Math.min(
                 request.maxSerializedBytes,
                 policy.maxEnvelopeUtf8Bytes,
@@ -1235,7 +1147,7 @@ function createOccurrenceBoundExternalSessionTakeover(params: Readonly<{
                 { once: true },
             );
             const remainingMs = deadlineAtMs - Date.now();
-            let timeout: ReturnType<typeof setTimeout> | null = null;
+            let cancelDeadline: (() => void) | undefined;
             if (params.retirementSignal.aborted
                 || !params.isOccurrenceCurrent()) {
                 retire();
@@ -1244,11 +1156,11 @@ function createOccurrenceBoundExternalSessionTakeover(params: Readonly<{
             } else if (remainingMs <= 0) {
                 terminate('timed-out');
             } else {
-                timeout = setTimeout(
+                cancelDeadline = armExternalSessionsDeadline(
+                    deadlineAtMs,
                     () => terminate('timed-out'),
-                    remainingMs,
+                    { unref: true },
                 );
-                timeout.unref?.();
             }
 
             try {
@@ -1285,7 +1197,7 @@ function createOccurrenceBoundExternalSessionTakeover(params: Readonly<{
                 assertAdmissible(request.signal);
                 return result;
             } finally {
-                if (timeout) clearTimeout(timeout);
+                cancelDeadline?.();
                 request.signal.removeEventListener('abort', cancel);
                 params.retirementSignal.removeEventListener('abort', retire);
             }
@@ -1491,9 +1403,6 @@ function createLease(params: Readonly<{
                             remoteSessionId: request.remoteSessionId,
                             exec,
                             signal: controller.signal,
-                            deadlineAtMs: Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-                            maxSerializedBytes:
-                                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes,
                         });
                     } finally {
                         request.signal?.removeEventListener('abort', abort);

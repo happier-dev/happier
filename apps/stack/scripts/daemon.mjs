@@ -473,7 +473,7 @@ export async function checkDaemonStatePingAware(cliHomeDir, options = {}) {
     serverUrl,
     env,
     stackName: options?.stackName ?? null,
-    timeoutMs: options.pingTimeoutMs ?? 1500,
+    ...(options.pingTimeoutMs != null ? { timeoutMs: options.pingTimeoutMs } : {}),
   });
   if (ping.ok === true) {
     return {
@@ -739,16 +739,21 @@ function looksLikeFilesystemCommandPath(command) {
 }
 
 function resolveExplicitRuntimeLaunchValidation({ cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
-  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
-  if (explicitNodeEntrypoint && existsSync(explicitNodeEntrypoint)) {
-    return { ok: true, source: 'node-entrypoint', path: explicitNodeEntrypoint };
-  }
-
   const explicitCommand = String(cliCommand ?? '').trim();
   if (explicitCommand) {
     if (!looksLikeFilesystemCommandPath(explicitCommand) || existsSync(explicitCommand)) {
       return { ok: true, source: 'command', path: explicitCommand };
     }
+    return {
+      ok: false,
+      source: 'command',
+      path: explicitCommand,
+      reason: `missing_runtime_launch_path:${explicitCommand}`,
+    };
+  }
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && existsSync(explicitNodeEntrypoint)) {
+    return { ok: true, source: 'node-entrypoint', path: explicitNodeEntrypoint };
   }
 
   const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
@@ -758,7 +763,6 @@ function resolveExplicitRuntimeLaunchValidation({ cliEntrypoint = '', cliNodeEnt
 
   const missingPath =
     explicitNodeEntrypoint
-    || (looksLikeFilesystemCommandPath(explicitCommand) ? explicitCommand : '')
     || explicitEntrypoint
     || '';
 
@@ -771,9 +775,7 @@ function resolveExplicitRuntimeLaunchValidation({ cliEntrypoint = '', cliNodeEnt
     source:
       explicitNodeEntrypoint
         ? 'node-entrypoint'
-        : looksLikeFilesystemCommandPath(explicitCommand)
-          ? 'command'
-          : 'entrypoint',
+        : 'entrypoint',
     path: missingPath,
     reason: `missing_runtime_launch_path:${missingPath}`,
   };
@@ -789,14 +791,8 @@ function resolveDaemonCommandSpec({
   activeCliDir = resolveActiveCliDirForDaemonLaunch(env),
 }) {
   const javaScriptRuntime = resolveJavaScriptRuntimeForStackDaemon({ env });
-  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
-  if (explicitNodeEntrypoint && javaScriptRuntime && existsSync(explicitNodeEntrypoint)) {
-    return {
-      command: javaScriptRuntime,
-      argsPrefix: ['--no-warnings', '--no-deprecation', explicitNodeEntrypoint],
-      mode: 'node',
-    };
-  }
+  // The admitted command owns execution. A runtime snapshot's separate Node
+  // entrypoint supplies dist-closure inspection, not a replacement launcher.
   const explicitCommand = String(cliCommand ?? '').trim();
   if (explicitCommand) {
     if (isJavaScriptEntrypoint(explicitCommand) && javaScriptRuntime) {
@@ -810,6 +806,14 @@ function resolveDaemonCommandSpec({
       command: explicitCommand,
       argsPrefix: Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : [],
       mode: 'binary',
+    };
+  }
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && javaScriptRuntime && existsSync(explicitNodeEntrypoint)) {
+    return {
+      command: javaScriptRuntime,
+      argsPrefix: ['--no-warnings', '--no-deprecation', explicitNodeEntrypoint],
+      mode: 'node',
     };
   }
   const explicitEntrypoint = String(cliEntrypoint ?? '').trim();

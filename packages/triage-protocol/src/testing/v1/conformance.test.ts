@@ -3,6 +3,7 @@ import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { TriageSourcesContributionProtocolV1 } from '../../v1/contribution.js';
+import { TriageSourceConnectedAccountInputsV1 } from '../../v1/index.js';
 import {
     assertTriageSourceContributionV1,
     checkTriageSourceContributionV1,
@@ -115,6 +116,31 @@ function mutableManifest(): MutableSourceManifest {
 describe('Triage sources V1 contribution conformance', () => {
     it('accepts a public, external-style source with arbitrary local Action ids', () => {
         expect(() => assertTriageSourceContributionV1(createExternalSourceManifest())).not.toThrow();
+    });
+
+    it('accepts the canonical account-only specialization without widening a source to native credentials', () => {
+        const manifest = mutableManifest();
+        const contribution = manifest.contributes.targetedPluginContributions[0]!;
+        for (const role of Object.keys(sourceOperations) as Array<keyof typeof sourceOperations>) {
+            const declaration = sourceOperations[role].declaration;
+            const id = contribution.operations[role] ?? `author/${role.toLowerCase()}`;
+            let action = manifest.contributes.actions.find((candidate) => candidate.id === id);
+            if (!action) {
+                action = {
+                    ...manifest.contributes.actions[0]!,
+                    id,
+                    dangerLevel: declaration.dangerLevel,
+                    surfaces: [...declaration.surfaces],
+                    resultSchema: declaration.resultSchema.jsonSchema,
+                };
+                manifest.contributes.actions.push(action);
+                contribution.operations[role] = id;
+            }
+            action.inputSchema = TriageSourceConnectedAccountInputsV1[role].jsonSchema;
+        }
+
+        const result = checkTriageSourceContributionV1(manifest);
+        expect(result.ok, result.ok ? undefined : result.errors.join('\n')).toBe(true);
     });
 
     it('accepts a source that omits every optional operation role', () => {

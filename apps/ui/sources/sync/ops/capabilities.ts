@@ -64,21 +64,17 @@ export async function machineCapabilitiesDetect(
         return { supported: false, reason: 'not-supported' };
     }
     try {
-        const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 2500;
-        const result = await Promise.race([
-            machineRpcWithServerScope<unknown, CapabilitiesDetectRequest>({
-                machineId,
-                method: RPC_METHODS.CAPABILITIES_DETECT,
-                payload: request,
-                serverId: options?.serverId,
-                accountId: options?.accountId,
-                timeoutMs,
-                ...(options?.signal ? { signal: options.signal } : {}),
-            }),
-            new Promise<{ error: string }>((resolve) => {
-                setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);
-            }),
-        ]);
+        const result = await machineRpcWithServerScope<unknown, CapabilitiesDetectRequest>({
+            machineId,
+            method: RPC_METHODS.CAPABILITIES_DETECT,
+            payload: request,
+            serverId: options?.serverId,
+            accountId: options?.accountId,
+            ...(typeof options?.timeoutMs === 'number'
+                ? { timeoutMs: options.timeoutMs }
+                : { operationTimeoutMs: null }),
+            ...(options?.signal ? { signal: options.signal } : {}),
+        });
 
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
         if (isPlainObject(result) && typeof result.error === 'string') {
@@ -103,23 +99,19 @@ export type MachineCapabilitiesInvokeResult =
 export async function machineCapabilitiesInvoke(
     machineId: string,
     request: CapabilitiesInvokeRequest,
-    options?: { timeoutMs?: number; serverId?: string | null; accountId?: string | null },
+    options?: { timeoutMs?: number | null; serverId?: string | null; accountId?: string | null },
 ): Promise<MachineCapabilitiesInvokeResult> {
     try {
-        const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 30_000;
-        const result = await Promise.race([
-            machineRpcWithServerScope<unknown, CapabilitiesInvokeRequest>({
-                machineId,
-                method: RPC_METHODS.CAPABILITIES_INVOKE,
-                payload: request,
-                serverId: options?.serverId,
-                accountId: options?.accountId,
-                timeoutMs,
-            }),
-            new Promise<{ error: string }>((resolve) => {
-                setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);
-            }),
-        ]);
+        const result = await machineRpcWithServerScope<unknown, CapabilitiesInvokeRequest>({
+            machineId,
+            method: RPC_METHODS.CAPABILITIES_INVOKE,
+            payload: request,
+            serverId: options?.serverId,
+            accountId: options?.accountId,
+            ...(typeof options?.timeoutMs === 'number'
+                ? { timeoutMs: options.timeoutMs }
+                : { operationTimeoutMs: null }),
+        });
 
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
         if (isPlainObject(result) && typeof result.error === 'string') return { supported: false, reason: 'error' };

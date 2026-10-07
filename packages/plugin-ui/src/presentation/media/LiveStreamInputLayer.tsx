@@ -5,7 +5,8 @@ import type { HappierStyleProp } from '../portableTypes.js';
 
 type KeyboardEventLike = Readonly<{
     key?: string;
-    nativeEvent?: Readonly<{ key?: string }>;
+    shiftKey?: boolean;
+    nativeEvent?: Readonly<{ key?: string; shiftKey?: boolean }>;
     preventDefault?: () => void;
     stopPropagation?: () => void;
 }>;
@@ -257,6 +258,8 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
         if (!focusedRef.current || !inputAccepted) return;
         const key = event.key ?? event.nativeEvent?.key;
         if (!key) return;
+        // Keep the browser's reverse traversal available to leave the viewer; plain Tab stays guest input.
+        if (key === 'Tab' && (event.shiftKey ?? event.nativeEvent?.shiftKey)) return;
         if (key.length === 1 && supports('keyboard_text')) {
             sendAction({ eventId: `keyboard_text:${Date.now()}`, action: { kind: 'keyboard_text', text: key } });
             event.preventDefault?.();

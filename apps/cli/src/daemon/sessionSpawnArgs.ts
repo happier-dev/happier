@@ -1,4 +1,4 @@
-import { serializeSessionCreationCorrespondenceV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { serializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
@@ -53,14 +53,14 @@ export function buildHappySessionControlArgs(opts: Readonly<{
     args.push('--session-creation-tag-v1', sessionCreationTag);
   }
   if (opts.sessionCreationCorrespondence !== undefined) {
-    const correspondence = opts.sessionCreationCorrespondence;
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse(opts.sessionCreationCorrespondence);
     const sessionCreationTag = SessionCreationTagV1Schema.parse(opts.sessionCreationTag);
     if (correspondence.sessionCreationTag !== sessionCreationTag) {
       throw new Error('Session creation correspondence tag does not match the admitted tag');
     }
     args.push(
       '--session-creation-correspondence-v1',
-      serializeSessionCreationCorrespondenceV1(correspondence),
+      JSON.stringify(correspondence),
     );
   }
   if (opts.placementOrigin !== undefined) {

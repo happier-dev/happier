@@ -388,7 +388,6 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const runtimeOpts = {
                 cwd: opts.cwd,
                 scope: opts.scope,
-                ...(connectedServicesEnv ? { connectedServiceRuntimeAuthRefresh: connectedServicesEnv.refreshRuntimeAuth } : {}),
                 ...(opts.machineId ? { machineId: opts.machineId } : {}),
                 runId: opts.runId,
                 ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
@@ -437,6 +436,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
                 ...(opts.sessionInteractionHost ? { sessionInteractionHost: opts.sessionInteractionHost } : {}),
                 ...(opts.sessionOwnedRunScope ? { sessionOwnedRunScope: opts.sessionOwnedRunScope } : {}),
+                ...(connectedServicesEnv ? { connectedServiceRuntimeAuthRefresh: connectedServicesEnv.refreshRuntimeAuth } : {}),
                 ...(Object.keys(isolationEnv).length > 0
                     || (providerLaunch?.unsetEnvKeys.length ?? 0) > 0
                     ? {

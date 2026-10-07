@@ -552,7 +552,7 @@ describe('createClaudeNativeRuntime', () => {
     const sessionContext = {
       signal: new AbortController().signal,
       services: {
-        settings: { forScope: vi.fn(() => ({ get: settingsGet })) },
+        settings: { forScope: vi.fn(() => ({ get: settingsGet, snapshot: async () => ({ values: {} }) })) },
         storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         exec: {},
@@ -611,7 +611,7 @@ describe('createClaudeNativeRuntime', () => {
     const settingsGet = vi.fn(async () => true);
     const settingsForScope = vi.fn((scope: Readonly<{ kind: string }>) => {
       if (scope.kind !== 'account') throw new Error(`unexpected settings scope: ${scope.kind}`);
-      return { get: settingsGet };
+      return { get: settingsGet, snapshot: async () => ({ values: {} }) };
     });
     const sessionContext = {
       services: {
@@ -665,7 +665,7 @@ describe('createClaudeNativeRuntime', () => {
       const sessionContext = {
         services: {
           ...context.services,
-          settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => false) })) },
+          settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => false), snapshot: async () => ({ values: {} }) })) },
         },
         session: {
           services: {
@@ -746,7 +746,7 @@ describe('createClaudeNativeRuntime', () => {
     let unifiedTerminalEnabled = false;
     const settingsGet = vi.fn(async () => unifiedTerminalEnabled);
     const sessionContext = {
-      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: settingsGet })) } },
+      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: settingsGet, snapshot: async () => ({ values: {} }) })) } },
       session: {
         services: {
           features: { isEnabled: vi.fn(() => true) },
@@ -798,7 +798,7 @@ describe('createClaudeNativeRuntime', () => {
       return setting;
     });
     const sessionContext = {
-      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: settingsGet })) } },
+      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: settingsGet, snapshot: async () => ({ values: {} }) })) } },
       session: {
         services: {
           features: { isEnabled: vi.fn(() => featureEnabled) },
@@ -838,7 +838,7 @@ describe('createClaudeNativeRuntime', () => {
       throw new Error('terminal host unavailable');
     });
     const sessionContext = {
-      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => true) })) } },
+      services: { ...context.services, settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => true), snapshot: async () => ({ values: {} }) })) } },
       session: {
         services: {
           features: { isEnabled: vi.fn(() => true) },

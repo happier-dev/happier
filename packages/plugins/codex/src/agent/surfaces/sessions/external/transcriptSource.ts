@@ -123,6 +123,7 @@ async function readCodexExternalTranscriptProjection(params: Readonly<{
       const page = await readJsonlFileForwardLines({ filePath: stream.filePath, offsetBytes, maxBytes, maxItems: maxBytes, fileSystem });
       partial ||= page.truncated || Boolean(page.diagnostics?.length);
       for (const line of page.items) {
+        throwIfCodexExternalSessionInvocationStopped(params);
         const count = readCodexExternalRollbackCount(line.value);
         if (count !== undefined) {
           // Codex protocol ThreadRolledBackEvent.num_turns names removed user
@@ -182,6 +183,9 @@ export async function searchCodexExternalTranscript(params: Readonly<{
       paths: streams.map((stream) => stream.filePath),
       signal: params.signal,
     });
+    // rg is a separate, cancellation-aware process phase, not a sample of
+    // JSONL chunk cost. Start measuring the real decode work at this boundary.
+    params.onProgress?.(true);
     throwIfCodexExternalSessionInvocationStopped(params);
     if (!prefilter.stdoutTruncated && prefilter.exitCode !== 0 && prefilter.exitCode !== 1) throw new Error('Codex conversation prefilter failed.');
     if (!prefilter.stdoutTruncated && !prefilter.stdout.split('\0').some(Boolean)) return { partial: false, unsearchable: false };
@@ -782,6 +786,7 @@ async function resolveBestHomeWithFiles(params: Readonly<{
     env: params.env,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
+    onProgress: params.onProgress,
   });
   throwIfCodexExternalSessionInvocationStopped(params);
   let best: BestCodexHomeWithFiles | null = null;
@@ -793,6 +798,7 @@ async function resolveBestHomeWithFiles(params: Readonly<{
       remoteSessionIds: [params.remoteSessionId],
       signal: params.signal ?? new AbortController().signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     });
     throwIfCodexExternalSessionInvocationStopped(params);
     const files = inventory.requested[0]?.files ?? [];
@@ -823,6 +829,7 @@ async function resolveCodexExternalSessionAppServerMetadata(params: Readonly<{
     limit: 50,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
+    onProgress: params.onProgress,
   });
   throwIfCodexExternalSessionInvocationStopped(params);
   let best: CodexExternalSessionAppServerMetadata | null = null;
@@ -865,6 +872,7 @@ async function resolveTranscriptStreams(params: Readonly<{
       files: streams,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
+      onProgress: params.onProgress,
     }),
   };
 }

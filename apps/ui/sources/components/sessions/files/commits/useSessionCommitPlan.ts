@@ -66,6 +66,12 @@ export function useSessionCommitPlan(params: Readonly<{
         : planOutput && (planOutput.state === 'pending' || planOutput.state === 'writing') ? 'writing' : 'none';
     const [busy, setBusy] = React.useState(false);
     const key = viewModel?.requestKey ?? null;
+    // Progress timers belong to the foreground reader, not the machine Action's lifetime.
+    const progressTimers = React.useRef(new Set<ReturnType<typeof setInterval>>());
+    React.useEffect(() => () => {
+        for (const timer of progressTimers.current) clearInterval(timer);
+        progressTimers.current.clear();
+    }, [params.enabled, params.sessionId, binding]);
 
     const current = React.useCallback(() => binding?.isCurrent() === true, [binding]);
     const apply = React.useCallback((result: ScmDiffSummaryResult) => {
@@ -118,12 +124,19 @@ export function useSessionCommitPlan(params: Readonly<{
         if (!operations || !cwd || !saved) return;
         setBusy(true); setError(null);
         let settled = false;
-        const progress = setInterval(() => { if (!settled) void reread(); }, APPLY_PROGRESS_READ_MS);
+        let reading = false;
+        const progress = setInterval(() => {
+            if (settled || reading || !current()) return;
+            reading = true;
+            void reread().finally(() => { reading = false; });
+        }, APPLY_PROGRESS_READ_MS);
+        progressTimers.current.add(progress);
         try {
             await report(await call());
         } finally {
             settled = true;
             clearInterval(progress);
+            progressTimers.current.delete(progress);
             if (current()) setBusy(false);
         }
     }, [current, cwd, operations, reread, report, saved, setError]);

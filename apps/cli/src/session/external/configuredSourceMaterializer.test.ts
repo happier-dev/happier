@@ -9,6 +9,7 @@ import {
   resolveExternalSessionsSourceKeyForDeclaration,
   ingestPluginManifestV2,
   MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
+  MAX_AGENT_ROUTING_ID_BYTES,
   type PluginAgentContributionV2,
 } from '@happier-dev/protocol';
 import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
@@ -510,11 +511,7 @@ describe('configured external-session source materializer', () => {
         for (let continuation = 0; continuation < 3 && page.items.length === 0; continuation += 1) {
           expect(page.diagnostics).toBeUndefined();
           expect(page.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-          page = await composition.authorService.list({
-            limit: 10,
-            sourceId: connectedSource.sourceId,
-            cursor: page.nextCursor!,
-          });
+          page = await composition.authorService.list({ sourceId: connectedSource.sourceId, limit: 10, cursor: page.nextCursor! });
         }
 
         expect(page.items.map((item) => item.ref.remoteSessionId)).toContain(remoteSessionId);
@@ -527,9 +524,19 @@ describe('configured external-session source materializer', () => {
     }
   }, 60_000);
 
-  it('fails closed on malformed account profile identifiers', () => {
-    expect(() => materializeConfiguredExternalSessionSourceCandidates({
-      agents: [agent()],
+  it('refuses a malformed Account profile while keeping both Agents available', async () => {
+    const basis = { accountSettingsRevision: 'malformed-profile' };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      basis,
+      readCurrentBasis: () => basis,
+      isCurrent: () => true,
+      resolveProviderOps: async (agentId) => ({
+        validateSource: ({ source }) => ({ ok: true, source }),
+        listCandidates: async () => ({ candidates: [{ remoteSessionId: `${agentId}-session`, updatedAtMs: 1 }], nextCursor: null }),
+        pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+      } satisfies ExternalSessionProviderOps),
+      agents: [agent(), agent(readManifestAgentContribution(PI_PLUGIN_MANIFEST, 'pi'))],
       account: {
         connectedServicesV2: [{
           serviceId: 'openai-codex',
@@ -540,7 +547,16 @@ describe('configured external-session source materializer', () => {
           groups: [],
         }],
       },
-    })).toThrow(/profile identifier/i);
+    });
+    try {
+      expect((await composition.authorService.list()).items.map((item) => item.ref.agentId).sort())
+        .toEqual(['codex', 'pi']);
+      expect(composition.sourceRefusals).toEqual([{
+        agentId: 'codex', code: 'malformed_profile_id', message: expect.stringMatching(/profile identifier/i),
+      }]);
+    } finally {
+      composition.dispose();
+    }
   });
 
   it('fails closed before connected-profile expansion exceeds the canonical source ceiling', () => {
@@ -1044,6 +1060,44 @@ describe('configured external-session source materializer', () => {
     expect(resolveProviderOps).toHaveBeenCalledOnce();
   });
 
+  it('preserves portable list cursors, successful single use, cancellation and retirement', async () => {
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async ({ cursor }) => ({
+        candidates: [cursor
+          ? { remoteSessionId: 'oldest', updatedAtMs: 1 }
+          : { remoteSessionId: 'newest', updatedAtMs: 2 }],
+        nextCursor: cursor ? null : 'native:2',
+      }),
+      pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    let current = true;
+    const adapter = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()], account: { connectedServicesV2: [] },
+      basis: { accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ accountSettingsRevision: 'account:1' }),
+      isCurrent: () => current, resolveProviderOps: async () => ops,
+    });
+    const pages = [];
+    for (let index = 0; index < 3; index += 1) {
+      pages.push(await adapter.authorService.list({ agentId: 'codex', limit: 1, maxBytes: 4096 }));
+    }
+    const first = pages[0]!;
+    expect(first.items.map((item) => item.ref.remoteSessionId)).toEqual(['newest']);
+    expect(first.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+    const tail = await adapter.authorService.list({ agentId: 'codex', cursor: first.nextCursor!, limit: 1, maxBytes: 4096 });
+    expect(tail.items.map((item) => item.ref.remoteSessionId)).toEqual(['oldest']);
+    expect(tail.nextCursor).toBeNull();
+    await expect(adapter.authorService.list({ agentId: 'codex', cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'plugin_external_cursor_invalid' });
+    const abort = new AbortController();
+    abort.abort();
+    await expect(adapter.authorService.list({ agentId: 'codex', cursor: pages[1]!.nextCursor! }, { signal: abort.signal })).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
+    await expect(adapter.authorService.list({ agentId: 'codex', cursor: pages[1]!.nextCursor! })).resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'oldest' } }] });
+    current = false;
+    await expect(adapter.authorService.list({ agentId: 'codex', cursor: pages[2]!.nextCursor! })).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+  });
+
   it('composes opaque configured sources into the native adapter and retires on account drift', async () => {
     let currentBasis = {
       accountSettingsRevision: 'account:1',
@@ -1419,18 +1473,10 @@ describe('configured external-session source materializer', () => {
       followTranscript,
     });
 
-    expect(Reflect.ownKeys(composition).sort()).toEqual([
-      'authorService',
-      'bindAuthorService',
-      'candidateIndexIdentities',
-      'compositionPort',
-      'dispose',
-      'resolveAuthorSource',
-      'sourceRefusals',
-    ]);
     expect(Reflect.ownKeys(composition.authorService).sort()).toEqual([
       'attach',
       'capabilities',
+      'closeList',
       'followTranscript',
       'list',
       'readTranscript',
@@ -1637,7 +1683,7 @@ describe('configured external-session source materializer', () => {
     const beta = composition.bindAuthorService({ takeover: betaTakeover });
 
     expect(Reflect.ownKeys(alpha).sort()).toEqual([
-      'attach', 'capabilities', 'followTranscript', 'list', 'readTranscript', 'takeover',
+      'attach', 'capabilities', 'closeList', 'followTranscript', 'list', 'readTranscript', 'takeover',
     ]);
     const [alphaList, betaList] = await Promise.all([alpha.list(), beta.list()]);
     expect(alphaList.items[0]?.ref).toEqual(betaList.items[0]?.ref);
@@ -1932,7 +1978,7 @@ describe('configured external-session source materializer', () => {
     };
     resetEffects();
 
-    for (const agentId of ['', ' codex ', 'a'.repeat(129)]) {
+    for (const agentId of ['', ' codex ', 'a'.repeat(MAX_AGENT_ROUTING_ID_BYTES + 1)]) {
       await expect(composition.authorService.list({ agentId })).rejects.toMatchObject({
         code: 'plugin_external_list_query_invalid',
       });
@@ -3239,16 +3285,10 @@ describe('configured external-session source materializer', () => {
         const firstPreparation = await firstLifecycle.authorService.list({ sourceId });
         expect(firstPreparation.items).toEqual([]);
         expect(firstPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-        const secondPreparation = await firstLifecycle.authorService.list({
-          sourceId,
-          cursor: firstPreparation.nextCursor!,
-        });
+        const secondPreparation = await firstLifecycle.authorService.list({ sourceId, cursor: firstPreparation.nextCursor! });
         expect(secondPreparation.items).toEqual([]);
         expect(secondPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
-        return await firstLifecycle.authorService.list({
-          sourceId,
-          cursor: secondPreparation.nextCursor!,
-        });
+        return await firstLifecycle.authorService.list({ sourceId, cursor: secondPreparation.nextCursor! });
       };
       let retainedSourceIndexes: string[] = [];
       try {

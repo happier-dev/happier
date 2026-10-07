@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierArtifactRevisionList, type HappierArtifactRevisionListProps } from './ArtifactRevisionList.js';
 import { HappierPublicLinkCard, type HappierPublicLinkCardProps } from './PublicLinkCard.js';
+import { HappierArtifactPreviewCard, type HappierArtifactPreview } from './ArtifactPreviewCard.js';
 
 function publicLink(overrides: Partial<HappierPublicLinkCardProps> = {}) {
   return <HappierPublicLinkCard testID="link" published loaded configuring={false} shareUrl={null}
@@ -32,6 +33,29 @@ function RevisionGroup(props: Readonly<{ title: string; children?: ReactNode }>)
 }
 
 describe('shared artifact presentation', () => {
+  it('keeps decorative grid previews outside the web accessibility tree', async () => {
+    const previews: readonly HappierArtifactPreview[] = [
+      { kind: 'markdown', text: '# Preview heading\nPreview body' },
+      { kind: 'code', text: 'const preview = true;', language: 'typescript' },
+      { kind: 'workflow', steps: [{ title: 'Build' }] },
+      { kind: 'board', layout: { mode: 'canvas', source: { sections: [], hasFilter: false, pickedCount: 0 }, widgets: [] } },
+      { kind: 'file', name: 'report.pdf', mime: 'application/pdf', sizeBytes: 32 },
+    ];
+    const render = (preview: HappierArtifactPreview) => <HappierArtifactPreviewCard preview={preview} testID="preview"
+      htmlLabel="HTML" colors={{ primary: 'black', secondary: 'gray', tertiary: 'gray', paper: 'white', paperBorder: 'gray' }}
+      host={{ renderText: ({ text }) => <Text>{text}</Text>, renderIcon: () => <Text>File</Text> }} />;
+    const view = mountThroughReactNativeWeb(render(previews[0]!));
+    try {
+      for (const preview of previews) {
+        await view.render(render(preview));
+        expect(byId(view.container, 'preview')?.getAttribute('aria-hidden')).toBe('true');
+      }
+      expect(view.container.textContent).toContain('report.pdf');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('keeps an issued publication visible without inventing a bearer URL, and withdraws unknown off state', async () => {
     const view = mountThroughReactNativeWeb(publicLink());
     expect(byId(view.container, 'session-public-link-hidden')?.textContent).toBe('Created elsewhere');

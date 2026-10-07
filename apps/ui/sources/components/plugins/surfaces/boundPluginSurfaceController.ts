@@ -1130,7 +1130,6 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ...(selectActionInput ? { selectActionInput } : {}),
         ...(createOpenNewSession ? { createOpenNewSession } : {}),
         mountedHostApiHandlers: { ...hostApiMountedHandlers, ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}), ...(widgetArea ? { widgetArea } : {}) },
-        ...(storedImages ? { onActionResult: storedImages.retainActionResult } : {}),
         ...(disposeHostApiMountedHandlers
             ? { disposeMountedHostApiHandlers: disposeHostApiMountedHandlers }
             : {}),

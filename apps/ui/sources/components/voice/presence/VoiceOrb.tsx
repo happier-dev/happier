@@ -111,7 +111,7 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                 testID={`${testID}-body`}
                 accessibilityRole="button"
                 accessibilityLabel={voice.live
-                    ? t('voicePresence.containerA11y', { status: voice.micStateLabel })
+                    ? t('voicePresence.containerA11y', { status: voice.statusLabel })
                     : voice.primaryActionLabel ?? t('voicePresence.talkWithVoice')}
                 accessibilityHint={voice.primaryActionHint ?? undefined}
                 aria-expanded={props.sectionOpen}

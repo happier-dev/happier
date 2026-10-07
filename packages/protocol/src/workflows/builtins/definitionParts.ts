@@ -12,10 +12,10 @@ export const result = (blockId: string, path: (string | number)[] = [],
 });
 export const document = (text: string): WorkflowStep['document'] => ({ text, references: [], attachments: [] });
 
-export function agent(id: string, role: BuiltInRoleIdV1, text: string,
+export function agent(id: string, name: string, role: BuiltInRoleIdV1, text: string,
   values: WorkflowValueReference[] = [], readOnly = false): WorkflowStep {
   return {
-    kind: 'step', id, document: document(text), input: values, result: { kind: 'text' },
+    kind: 'step', id, name, document: document(text), input: values, result: { kind: 'text' },
     execution: { engine: { role }, ...(readOnly ? { permissionMode: 'read-only' as const } : {}) },
   };
 }

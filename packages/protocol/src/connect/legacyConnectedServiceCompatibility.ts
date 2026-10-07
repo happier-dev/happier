@@ -24,6 +24,7 @@ import {
     type QualifiedConnectedAccountCredentialPayloadV1,
 } from './qualifiedConnectedAccountContentEnvelope.js';
 import type { QualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
+import { normalizeConnectedServiceOauthCredentialRawMetadata } from './buildConnectedServiceCredentialRecord.js';
 
 export const BUILT_IN_LEGACY_CONNECTED_SERVICE_COMPATIBILITY_ERROR_CODES = [
     'connected_service_credential_invalid',
@@ -265,7 +266,9 @@ export function projectBuiltInLegacyConnectedServiceCredentialRecordV1(
     );
 }
 
-const QualifiedCredentialPayloadInLegacyRecordV1Schema = z.strictObject({
+// The historical raw bag may contain nonsecret provider metadata beside this
+// envelope. Drop those siblings for this read; the embedded authority stays closed.
+const QualifiedCredentialPayloadInLegacyRecordV1Schema = z.object({
     happierQualifiedConnectedAccountCredentialV1: z.strictObject({
         v: z.literal(1),
         authenticationModeId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
@@ -428,6 +431,12 @@ export function projectQualifiedConnectedAccountCredentialPlaintextV1(params: Re
                 ? params.metadata.scopes.join(' ')
                 : null
         );
+    const oauthMetadata = normalizeConnectedServiceOauthCredentialRawMetadata({
+        claudeAiOauth: {
+            subscriptionType: payload.values.subscriptionType,
+            rateLimitTier: payload.values.rateLimitTier,
+        },
+    });
     return ConnectedServiceCredentialRecordV1Schema.parse({
         v: 1,
         serviceId: legacy.serviceId,
@@ -444,7 +453,7 @@ export function projectQualifiedConnectedAccountCredentialPlaintextV1(params: Re
             scope,
             providerAccountId,
             providerEmail,
-            raw,
+            raw: { ...raw, ...oauthMetadata },
         },
         token: null,
     });
@@ -548,9 +557,11 @@ function normalizeHistoricalLegacyCredentialPayload(
         });
     }
 
+    const oauthMetadata = normalizeConnectedServiceOauthCredentialRawMetadata(record.oauth.raw);
     return QualifiedConnectedAccountCredentialPayloadV1Schema.parse({
         v: 1,
         values: {
+            ...oauthMetadata?.claudeAiOauth,
             accessToken: record.oauth.accessToken,
             refreshToken: record.oauth.refreshToken,
             ...(record.oauth.idToken

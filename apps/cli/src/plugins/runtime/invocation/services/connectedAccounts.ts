@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
     ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -66,6 +67,7 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
     ): Promise<PluginConnectedAccountBindingSummary>;
     materialize(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            nativeService?: PluginContributionRef;
             exactPurposeBindingSubjectId?: string;
             sessionId?: string;
             expectedAccount?: PluginConnectedAccountRef;
@@ -342,6 +344,7 @@ function snapshotMaterializationOptions(
 ): Readonly<{
     signal?: AbortSignal;
     expectedAccount?: PluginConnectedAccountRef;
+    nativeService?: PluginContributionRef;
 }> {
     if (
         !isUnknownRecord(options)
@@ -353,6 +356,11 @@ function snapshotMaterializationOptions(
     const expectedAccount = hasExpectedAccount
         ? snapshotAccount(options.expectedAccount, 'expected account')
         : undefined;
+    const hasNativeService = Object.prototype.hasOwnProperty.call(options, 'nativeService');
+    const nativeService = hasNativeService
+        ? PluginContributionIdentityV1Schema.safeParse(options.nativeService)
+        : undefined;
+    if (nativeService && (!nativeService.success || expectedAccount)) throw materializationOutOfScope();
     const signal = options.signal;
     if (signal !== undefined && !isAbortSignalLike(signal)) {
         throw materializationOutOfScope();
@@ -360,6 +368,7 @@ function snapshotMaterializationOptions(
     return Object.freeze({
         ...(signal ? { signal } : {}),
         ...(expectedAccount ? { expectedAccount } : {}),
+        ...(nativeService?.success ? { nativeService: Object.freeze({ ...nativeService.data }) } : {}),
     });
 }
 
@@ -691,6 +700,10 @@ export function createStablePluginConnectedAccountsHost(
                     const optionSnapshot = snapshotMaterializationOptions(options);
                     assertCurrent(seed);
                     const scope = resolveScope(scopes, purpose, 'use');
+                    if (optionSnapshot.nativeService && !scope.serviceRefs.some((service) => (
+                        service.pluginId === optionSnapshot.nativeService?.pluginId
+                        && service.localId === optionSnapshot.nativeService?.localId
+                    ))) throw materializationOutOfScope();
                     if (scope.materializationKinds?.includes(requestSnapshot.kind) !== true) {
                         throw materializationKindDenied(purpose, requestSnapshot.kind);
                     }
@@ -705,6 +718,9 @@ export function createStablePluginConnectedAccountsHost(
                             ...(seed.session ? { sessionId: seed.session.id } : {}),
                             ...(optionSnapshot.expectedAccount
                                 ? { expectedAccount: optionSnapshot.expectedAccount }
+                                : {}),
+                            ...(optionSnapshot.nativeService
+                                ? { nativeService: optionSnapshot.nativeService }
                                 : {}),
                             request: requestSnapshot,
                             signal: signals.signal,

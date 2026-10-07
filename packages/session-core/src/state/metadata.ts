@@ -17,7 +17,7 @@ import { SessionActiveModelSelectionV1Schema, SessionAppliedModelV1Schema, Sessi
 import { SessionMcpSelectionV1Schema, SessionMcpSelectionRestartRequiredV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionDiscussionSelectionSourceV1Schema } from '@happier-dev/protocol/sessions/discussions/content';
-import { SessionDirectoryV1Schema } from '@happier-dev/protocol/sessions/metadata/directory';
+import { SessionDirectoryV1ReadSchema } from '@happier-dev/protocol/sessions/metadata/directory';
 
 /**
  * Persisted session option catalogs. The model and config catalogs are published under four
@@ -66,7 +66,7 @@ const MetadataObjectSchema = z.object({
     machineId: z.string().optional(),
     placementOrigin: MachinePoolSelectionOriginV1Schema.optional(),
     sessionWorkspaceLocationV1: SessionWorkspaceLocationV1Schema.optional(),
-    sessionDirectoryV1: SessionDirectoryV1Schema.optional().catch(undefined),
+    sessionDirectoryV1: SessionDirectoryV1ReadSchema.optional().catch(undefined),
     handoffV1: z.object({
         v: z.literal(1),
         sourceMachineId: z.string(),

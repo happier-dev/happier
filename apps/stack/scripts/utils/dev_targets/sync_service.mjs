@@ -69,7 +69,7 @@ async function defaultResumeSync({ target, env }) {
 }
 
 function assertUsableStatus(target, status) {
-  if (status.state === 'ready' || status.state === 'synchronizing') return;
+  if (status.state === 'ready' || status.state === 'synchronizing' || status.state === 'needs-flush') return;
   const detail = status.lastError || status.error;
   throw new Error(
     `[dev-targets] ${target.name} synchronization is ${status.state}`
@@ -182,10 +182,7 @@ async function inspectAndRepairSync({
   let status = await inspectSync({ target, stackBaseDir, env });
   // With both endpoints unwatched, Mutagen waits for a flush even for the
   // first scan. Seed it here so normal command admission can require a scan.
-  if (status.state === 'synchronizing'
-    && status.session?.alpha?.watch?.mode === 'no-watch'
-    && status.session?.beta?.watch?.mode === 'no-watch'
-    && !(status.session.successfulCycles > 0)) {
+  if (status.state === 'needs-flush') {
     await flushDevTargetSync({ target, env });
     status = await inspectSync({ target, stackBaseDir, env });
   }
@@ -320,6 +317,40 @@ export async function startDevTargetSyncService(
   return { project, statuses, monitor };
 }
 
+// Sibling checkouts are command replicas only. Provision through the existing
+// project owner without a monitor or spontaneous source propagation. Seed new
+// sessions once; every later command crosses the launcher's selected barrier.
+export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets, env = process.env }) {
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+  const desired = await readFile(runtime.projectFile, 'utf8').catch(() => null);
+  const config = JSON.parse(await readFile(join(stackBaseDir, 'dev-targets.json'), 'utf8'));
+  const { renderMutagenProject, isEquivalentMutagenProject } = await import('./mutagen_project.mjs');
+  const state = await defaultReadPreparationState({ stackBaseDir, env });
+  const unchanged = desired && isEquivalentMutagenProject(desired, renderMutagenProject({ sourceDir, targets, config }));
+  if (unchanged && targets.every(target => state?.targets?.[target.name]?.state === 'ready')) return;
+  // Unreachable replicas remain unavailable to ordinary AUTO selection; they
+  // must not prevent a healthy sibling worker from becoming usable.
+  await defaultEnsureReplicaRoots({ targets, stackBaseDir, env }).catch(error => {
+    process.stderr.write(`[dev-targets] command replica directory preflight: ${errorMessage(error)}\n`);
+  });
+  const project = await ensureDevTargetSyncProject({
+    stackBaseDir, sourceDir, targets, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+    allowIndependentBorrow: false, env,
+  });
+  const pending = targets.filter(target => !unchanged || state?.targets?.[target.name]?.state !== 'ready');
+  const results = await Promise.allSettled(pending.map(async target => {
+    await defaultResumeSync({ target, env: project.env });
+    await flushDevTargetSync({ target, env: project.env });
+  }));
+  const prepared = { ...(unchanged ? state?.targets : {}) };
+  results.forEach((result, index) => {
+    prepared[pending[index].name] = result.status === 'fulfilled' ? { state: 'ready' } : { state: 'failed', error: errorMessage(result.reason) };
+  });
+  await defaultWritePreparationState({ stackBaseDir, env, state: {
+    version: 1, state: results.every(result => result.status === 'fulfilled') ? 'ready' : 'failed', targets: prepared,
+  } });
+}
+
 export async function waitForDevTargetSyncMonitor(
   monitor,
   {
@@ -381,7 +412,7 @@ export async function inspectDevTargetSyncService(
   return {
     independent,
     state: independent && statuses.length > 0
-      && statuses.every(({ status }) => status.state === 'ready' || status.state === 'synchronizing')
+      && statuses.every(({ status }) => status.state === 'ready' || status.state === 'synchronizing' || status.state === 'needs-flush')
       ? 'ready' : 'failed',
     preparation,
     statuses,

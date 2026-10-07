@@ -287,6 +287,8 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     // and French uses "Style" for the picker title.
     'settingsAppearance.loadingIndicatorOptions.radar': new Set(['pl', 'es', 'fr', 'it', 'pt', 'ca', 'de']),
     'settingsAppearance.loadingIndicatorOptions.aurora': new Set(['es', 'it', 'pt', 'ca']),
+    'settingsAppearance.loadingIndicatorOptions.hRadar': new Set(['pl', 'es', 'fr', 'it', 'pt', 'ca', 'de']),
+    'settingsAppearance.loadingIndicatorOptions.hAurora': new Set(['es', 'it', 'pt', 'ca']),
     'settingsAppearance.loadingIndicatorStyle': new Set(['fr']),
     // "Normal" and "Pause" are the same words in these locales.
     'settingsAppearance.loadingIndicatorSpeedOptions.normal': new Set(['de', 'es', 'pt', 'ca']),

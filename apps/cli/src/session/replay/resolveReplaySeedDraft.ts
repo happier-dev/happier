@@ -304,9 +304,9 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     windowTruncated: readHydratedReachedSourceStart(hydrated) === false,
   }).trim();
 
-  // Retrieval succeeded; the rows simply carry nothing replayable. Nothing
-  // failed, so this is an empty source rather than an unavailable one.
-  if (!seedDraft) return { status: 'no_source_dialog' };
+  // The source had dialog, but its frame and dispatch reservation could not
+  // fit the selected total. That is unavailable context, not an empty source.
+  if (!seedDraft) return { status: 'unavailable' };
 
   return {
     status: 'seeded',

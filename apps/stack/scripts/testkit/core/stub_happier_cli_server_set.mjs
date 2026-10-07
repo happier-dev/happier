@@ -16,10 +16,11 @@
 export function buildStubHappierServerSetSource({ ignoreServerSet = false, callLogFileName = null } = {}) {
   return `
 if (args[0] === 'server' && args[1] === 'set') {
-  const { appendFileSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
   if (!home) process.exit(2);
+  mkdirSync(home, { recursive: true });
   ${callLogFileName ? `appendFileSync(join(home, ${JSON.stringify(callLogFileName)}), JSON.stringify(args) + '\\n');` : ''}
   ${ignoreServerSet ? 'process.exit(0);' : ''}
   const value = (name) => {
@@ -30,7 +31,7 @@ if (args[0] === 'server' && args[1] === 'set') {
   const serverUrl = value('--server-url');
   const localServerUrl = value('--local-server-url');
   const settingsPath = join(home, 'settings.json');
-  const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
   const { localServerUrl: previousLocalServerUrl, ...current } = settings.servers?.[serverId] ?? {};
   settings.schemaVersion = Math.max(Number(settings.schemaVersion || 0), 6);
   settings.activeServerId = serverId;

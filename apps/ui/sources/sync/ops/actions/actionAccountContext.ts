@@ -21,15 +21,10 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifactWithBodyFromApi, updateArtifactWithHeaderViaApi,
     fetchArtifactBodyRevisionsFromApi, fetchArtifactHtmlPreviewFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
-import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifacts as fetchArtifactsApi, fetchArtifactStorageUsage } from '@/sync/api/artifacts/apiArtifacts';
-import { encodeBase64 } from '@/encryption/base64';
+import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifacts as fetchArtifactsApi, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
 import type { ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
-
-function encodeArtifactListCursor(row: Readonly<{ artifactId: string; updatedAt: number }>): string {
-    return encodeBase64(new TextEncoder().encode(JSON.stringify({ updatedAt: row.updatedAt, id: row.artifactId })), 'base64url');
-}
 
 function artifactContentUnavailable(): Error & Readonly<{ code: 'content_unavailable' }> {
     return Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' as const });

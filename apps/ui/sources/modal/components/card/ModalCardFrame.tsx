@@ -64,7 +64,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
     },
-    footer: {},
+    // Card chrome owns the edge inset; consumers arrange actions, not the card's padding.
+    footer: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
     bodyScrollView: {
         flexGrow: 1,
         flexShrink: 1,

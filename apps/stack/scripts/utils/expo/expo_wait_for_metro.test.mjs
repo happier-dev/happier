@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 
 import { looksLikeExpoMetro, waitForExpoMetroRunning } from './expo.mjs';
+
+test('Metro status permits a loaded response beyond the private 800ms probe cutoff', async () => {
+  const server = createServer((_req, res) => {
+    setTimeout(() => res.end('packager-status:running'), 950);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    assert.equal(await looksLikeExpoMetro({ port: server.address().port }), true);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
 test('waitForExpoMetroRunning waits until Metro reports running', async () => {
   let probes = 0;

@@ -6,7 +6,7 @@ import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin
 import type { JsonValue } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import type { WorkflowAuthoredResultReference, WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -51,6 +51,40 @@ function literalText(value: JsonValue): string {
 
 function parseLiteral(value: string): JsonValue {
     try { return JSON.parse(value) as JsonValue; } catch { return value; }
+}
+
+/** One field-path parser for result bindings, including the workflow's final result. */
+function parseWorkflowResultFieldPath(value: string): (string | number)[] {
+    return value.trim().length === 0 ? []
+        : value.split('.').filter(Boolean).map(part => /^(0|[1-9][0-9]*)$/u.test(part) ? Number(part) : part);
+}
+
+/** A result's field path keeps its raw edit ("summary.") while the draft echoes parsed segments. */
+export function WorkflowResultFieldPathInput(props: Readonly<{
+    reference: WorkflowAuthoredResultReference;
+    onChange: (reference: WorkflowAuthoredResultReference) => void;
+    testID: string;
+    style?: React.ComponentProps<typeof TextInput>['style'];
+}>): React.ReactElement {
+    const source = JSON.stringify([props.reference.producer, props.reference.path]);
+    const pathText = props.reference.path.join('.');
+    const [buffer, setBuffer] = React.useState({ source, value: pathText });
+    React.useEffect(() => {
+        setBuffer(current => current.source === source ? current : { source, value: pathText });
+    }, [source, pathText]);
+    return <TextInput
+        testID={props.testID}
+        style={props.style ?? workflowEditorStyles.inlineValue}
+        value={buffer.value}
+        autoCapitalize="none" autoCorrect={false}
+        accessibilityLabel={t('workflows.finalOutput.fieldPath')}
+        placeholder={t('workflows.finalOutput.fieldPath')}
+        onChangeText={(value) => {
+            const path = parseWorkflowResultFieldPath(value);
+            setBuffer({ source: JSON.stringify([props.reference.producer, path]), value });
+            props.onChange({ ...props.reference, path });
+        }}
+    />;
 }
 
 function scopeKey(scope: WorkflowReferenceScope): string {
@@ -365,20 +399,11 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 />
             )}
             {resultReference === undefined ? null : (
-                <TextInput
+                <WorkflowResultFieldPathInput
                     testID={`${rowId}-path`}
                     style={[workflowEditorStyles.inlineValue, workflowEditorStyles.pathValue]}
-                    value={resultReference.path.join('.')}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    accessibilityLabel={t('workflows.finalOutput.fieldPath')}
-                    placeholder={t('workflows.finalOutput.fieldPath')}
-                    onChangeText={(value) => props.onChange({
-                        ...resultReference,
-                        path: value.trim().length === 0
-                            ? []
-                            : value.split('.').filter(Boolean).map((part) => (/^(0|[1-9][0-9]*)$/u.test(part) ? Number(part) : part)),
-                    })}
+                    reference={resultReference}
+                    onChange={props.onChange}
                 />
             )}
             {workspaceReference === undefined ? null : (
@@ -465,6 +490,8 @@ export function WorkflowStepDataEditor(props: Readonly<{
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
     /** Opens Step options, where named results are added; absent when read-only. */
     onAddNamedResults?: () => void;
+    /** A reader's fact that ends the footer line (05's "Open conversation"). */
+    footerAccessory?: React.ReactNode;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -521,6 +548,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
                         <Text style={workflowEditorStyles.footAction}>{t('workflows.inputs.addInput')}</Text>
                     </HappierPressable>
                 ) : null}
+                {props.footerAccessory ?? null}
             </View>
         </View>
     );

@@ -90,6 +90,15 @@ function isBrowserActionId(actionId: string): actionId is string {
     return BROWSER_ACTION_ID_SET.has(actionId);
 }
 
+/** Identity only: discovery does not need labels, locators, screenshots or result traversal. */
+export function readTranscriptBrowserActionIdentity(input: Readonly<{ toolName: string; input: unknown }>):
+    Readonly<{ actionId: string; generic: boolean }> | null {
+    const directActionId = readHappierActionId(input.toolName, BROWSER_ACTION_ID_BY_TOOL_NAME);
+    if (directActionId) return { actionId: directActionId, generic: false };
+    const actionId = readHappierActionExecuteActionId(input.toolName, input.input, isBrowserActionId);
+    return actionId ? { actionId, generic: true } : null;
+}
+
 const AUTOMATION_VERBS: Readonly<Record<string, TranscriptBrowserActionVerb>> = {
     navigate: 'open',
     reload: 'reload',
@@ -229,15 +238,12 @@ export function resolveTranscriptBrowserActionReference(input: Readonly<{
     input: unknown;
     result: unknown;
 }>): TranscriptBrowserActionReference | null {
-    const directActionId = readHappierActionId(input.toolName, BROWSER_ACTION_ID_BY_TOOL_NAME);
-    const executeActionId = directActionId
-        ? null
-        : readHappierActionExecuteActionId(input.toolName, input.input, isBrowserActionId);
-    const actionId = directActionId ?? executeActionId;
-    if (!actionId) return null;
+    const identity = readTranscriptBrowserActionIdentity(input);
+    if (!identity) return null;
+    const { actionId } = identity;
 
     const toolInput = maybeParseJson(input.input);
-    const actionInputValue = executeActionId && isRecord(toolInput) ? maybeParseJson(toolInput.input) : toolInput;
+    const actionInputValue = identity.generic && isRecord(toolInput) ? maybeParseJson(toolInput.input) : toolInput;
     const actionInput = isRecord(actionInputValue) ? actionInputValue : null;
     const payload = isRecord(actionInput?.payload) ? actionInput.payload : null;
     const verb = resolveVerb(actionId);

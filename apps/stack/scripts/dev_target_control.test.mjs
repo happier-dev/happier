@@ -33,6 +33,80 @@ async function waitForExit(child) {
   });
 }
 
+test('dispatch recovery rescans transient scan problems and rejects persistent or unsafe problems', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-rescan-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const binDir = join(root, 'bin');
+  const flushed = join(root, 'flushed');
+  await mkdir(binDir);
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    `marker=${JSON.stringify(flushed)}`,
+    'case "$2" in',
+    '  flush) printf cycle >> "$marker"; exit 0 ;;',
+    '  list)',
+    '    scan=1/0; transition=0/0; conflicts=0',
+    '    if [ -e "$marker" ] && [ "$PROBLEM_MODE" = transient ]; then scan=0/0; fi',
+    '    if [ "$PROBLEM_MODE" = transition ]; then transition=1/0; fi',
+    '    if [ "$PROBLEM_MODE" = conflict ]; then conflicts=1; fi',
+    '    printf "%s|Watching|false|true|1|%s|%s|true|1|0/0|0/0|active|2|ok|%s|0\\n" "$3" "$scan" "$transition" "$conflicts" ;;',
+    'esac',
+  ].join('\n'));
+  const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), DBUS_SESSION_BUS_ADDRESS: '' };
+  const recover = (mode) => spawnSync(controlExecutable, ['--sync-check', 'happier-linux'], {
+    env: { ...env, PROBLEM_MODE: mode }, encoding: 'utf8',
+  });
+  for (const mode of ['transition', 'conflict']) {
+    assert.notEqual(recover(mode).status, 0);
+    await assert.rejects(readFile(flushed), { code: 'ENOENT' });
+  }
+  const transient = recover('transient');
+  assert.equal(transient.status, 0, transient.stderr);
+  assert.equal(await readFile(flushed, 'utf8'), 'cycle');
+  await rm(flushed);
+  const persistent = recover('persistent');
+  assert.equal(persistent.status, 1, persistent.stderr);
+  assert.equal(await readFile(flushed, 'utf8'), 'cycle');
+  await rm(flushed);
+  assert.equal(recover('transient').status, 0);
+  assert.equal(await readFile(flushed, 'utf8'), 'cycle');
+});
+
+test('no-watch first dispatch is eligible but its barrier still requires a completed clean cycle', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-no-watch-dispatch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const binDir = join(root, 'bin');
+  const marker = join(root, 'flushed');
+  await mkdir(binDir);
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'case "$2" in',
+    '  flush) [ "$FLUSH_MODE" != failure ] || exit 7; : > "$FLUSH_MARKER" ;;',
+    '  list)',
+    '    scanned=0; cycles=0',
+    '    if [ -e "$FLUSH_MARKER" ] && [ "$FLUSH_MODE" != incomplete ]; then scanned=1; cycles=1; fi',
+    '    printf "%s|Watching|false|true|%s|0/0|0/0|true|%s|0/0|0/0|active|%s|ok|0|0|WatchModeNoWatch|WatchModeNoWatch\\n" "$3" "$scanned" "$scanned" "$cycles" ;;',
+    'esac',
+  ].join('\n'));
+  const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), DBUS_SESSION_BUS_ADDRESS: '', FLUSH_MARKER: marker };
+  const check = spawnSync(controlExecutable, ['--sync-check', 'happier-linux'], { env, encoding: 'utf8' });
+  assert.equal(check.status, 0, check.stderr);
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  const flushArgs = ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'];
+  for (const mode of ['failure', 'incomplete']) {
+    const result = spawnSync(controlExecutable, flushArgs, { env: { ...env, FLUSH_MODE: mode }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0, `unsafe ${mode} flush must not admit a payload`);
+  }
+  const success = spawnSync(controlExecutable, flushArgs, { env, encoding: 'utf8' });
+  assert.equal(success.status, 0, success.stderr);
+});
+
 test('queued demands share a later-started flush while a demand during that flush requires another cycle', {
   skip: process.platform !== 'linux',
 }, async (t) => {
@@ -291,12 +365,12 @@ test('native sync admission rejects every problem-bearing public-model fact and 
   const rejected = [
     ['happier-linux|Disconnected|true|false|X|X|X|false|X|X|X|paused|0|ok|0|0', /paused/u],
     ['happier-linux|Disconnected|false|false|X|X|X|false|X|X|X|active|2|ok|0|0', /status is not clean/u],
-    ['happier-linux|Watching|false|true|0|0\/0|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /not scanned/u],
-    ['happier-linux|Watching|false|true|1|1\/0|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /alpha scan problems/u],
-    ['happier-linux|Watching|false|true|1|0\/2|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /alpha scan problems/u],
+    ['happier-linux|Watching|false|true|0|0\/0|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /synchronizing/u],
+    ['happier-linux|Watching|false|true|1|1\/0|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /scan problems/u],
+    ['happier-linux|Watching|false|true|1|0\/2|0\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /scan problems/u],
     ['happier-linux|Watching|false|true|1|0\/0|1\/0|true|1|0\/0|0\/0|active|2|ok|0|0', /alpha transition problems/u],
     ['happier-linux|Watching|false|true|1|0\/0|0\/3|true|1|0\/0|0\/0|active|2|ok|0|0', /alpha transition problems/u],
-    ['happier-linux|Watching|false|true|1|0\/0|0\/0|true|1|1\/0|0\/0|active|2|ok|0|0', /beta scan problems/u],
+    ['happier-linux|Watching|false|true|1|0\/0|0\/0|true|1|1\/0|0\/0|active|2|ok|0|0', /scan problems/u],
     ['happier-linux|Watching|false|true|1|0\/0|0\/0|true|1|0\/0|0\/4|active|2|ok|0|0', /beta transition problems/u],
     ['happier-linux|Watching|false|true|1|0\/0|0\/0|true|1|0\/0|0\/0|active|2|error|0|0', /recorded error/u],
     ['happier-linux|Watching|false|true|1|0\/0|0\/0|true|1|0\/0|0\/0|active|2|ok|1|0', /unresolved conflicts/u],

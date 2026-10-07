@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { Animated, View } from 'react-native';
+import { Animated, Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { MultiPaneHost, type MultiPaneHostProps } from './MultiPaneHost';
+import type { ResolvedBottomPanePresentation } from './resolveBottomPaneLayout';
 import { ResizableDockedPaneVertical } from './resizable/ResizableDockedPaneVertical';
 import { PaneAnimatedScrimPressable } from './motion/PaneAnimatedScrimPressable';
 import {
@@ -14,7 +15,7 @@ import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
 
-export type BottomPanePresentation = 'docked' | 'overlay';
+export type BottomPanePresentation = ResolvedBottomPanePresentation;
 
 export type MultiPaneHostWithBottomProps = MultiPaneHostProps & Readonly<{
     bottomPane: React.ReactNode | null;
@@ -60,7 +61,7 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
         onRequestClose: bottomPresence.requestClose,
         focusReturnRef: bottomOverlayFocusReturnRef,
         discardPendingFocusReturn: bottomPane != null && bottomPresentation !== 'overlay',
-        escapeEnabled: shouldRenderBottomPane,
+        escapeEnabled: shouldRenderBottomPane && bottomPresentation !== 'hidden',
         escapePriority: isBottomOverlayPresented
             ? ESCAPE_LAYER_PRIORITIES.overlay
             : ESCAPE_LAYER_PRIORITIES.pane,
@@ -90,8 +91,17 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                     ref={isBottomOverlayPresented ? bottomModalBoundary.setOverlayFocusRef : undefined}
                     testID={isBottomOverlayPresented ? 'multi-pane-bottom-overlay' : undefined}
                     {...(isBottomOverlayPresented ? bottomModalOverlayProps : {})}
+                    {...(bottomPresentation === 'hidden' ? {
+                        testID: 'multi-pane-bottom-parked',
+                        pointerEvents: 'none' as const,
+                        ...(Platform.OS === 'web'
+                            ? { inert: true, 'aria-hidden': true as const }
+                            : { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const }),
+                    } : {})}
                     style={
-                        bottomPresentation === 'overlay'
+                        bottomPresentation === 'hidden'
+                            ? { position: 'absolute', bottom: 0, height: 0, opacity: 0, zIndex: -1, overflow: 'hidden' }
+                            : bottomPresentation === 'overlay'
                             ? {
                                 position: 'absolute',
                                 left: 0,
@@ -150,12 +160,13 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                         onDragHeightPx={onDragBottomDockHeightPx}
                         >
                             <ModalPaneBoundaryView
+                                suppressDescendantPaneBoundaries={bottomPresentation === 'hidden'}
                                 nativeAccessibilityFocusAnchor={bottomNativeAccessibilityFocusAnchor}
                                 nativeBackLayer={bottomNativeBackLayer}
                                 style={{ flex: 1, minHeight: 0, minWidth: 0 }}
                             >
                                 <PluginSurfaceFocusEligibilityProvider
-                                    active={bottomPresentation !== 'overlay' || !bottomPresence.closing}
+                                    active={bottomPresentation !== 'hidden' && (bottomPresentation !== 'overlay' || !bottomPresence.closing)}
                                 >
                                     {renderedBottomPane}
                                 </PluginSurfaceFocusEligibilityProvider>

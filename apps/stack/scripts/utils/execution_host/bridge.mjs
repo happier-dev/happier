@@ -40,11 +40,17 @@ export async function runNativeExecutionHostBridge({
   const guestRoot = profile.version === 2
     ? resolveHostWorkspaceMapping(profile, repoRoot).workspace.guestDir
     : mapHostCwdToGuest(profile, repoRoot);
+  const guestArgv = [...argv];
+  if (String(guestArgv[0] ?? '').startsWith('--repo=')) {
+    guestArgv[0] = `--repo=${mapHostCwdToGuest(profile, guestArgv[0].slice('--repo='.length))}`;
+  } else if (guestArgv[0] === '--repo') {
+    guestArgv[1] = mapHostCwdToGuest(profile, guestArgv[1]);
+  }
   return await runDelegatedHstackCommand({
     profile, argv: [], cwd, env, prepare, boundary,
     guestInvocation: {
       command: '/bin/sh',
-      args: [posix.join(guestRoot, 'apps/stack/bin/hstack-exec'), ...argv],
+      args: [posix.join(guestRoot, 'apps/stack/bin/hstack-exec'), ...guestArgv],
     },
   });
 }

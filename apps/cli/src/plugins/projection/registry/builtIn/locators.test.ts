@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
@@ -55,6 +55,30 @@ function locator(overrides: Partial<BundledPluginLocator> = {}): BundledPluginLo
 }
 
 describe('bundled plugin locators', () => {
+    it('retains the process-admitted bundled catalog when publication files change', async () => {
+        // This test admits its own process catalog; do not change the admission state
+        // used by the existing publication-failure owner tests in this module.
+        vi.resetModules();
+        const { loadCurrentBundledPluginLocatorResult } = await import('./locators');
+        const root = mkdtempSync(join(tmpdir(), 'happier-admitted-bundled-catalog-'));
+        const execPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+        try {
+            Object.defineProperty(process, 'execPath', { ...execPathDescriptor, value: join(root, 'happier') });
+            writeFileSync(join(root, 'package.json'), '{}');
+            const failurePath = join(root, '.project', 'tmp', 'bundled-plugin-publication', 'failures.json');
+            mkdirSync(dirname(failurePath), { recursive: true });
+            writeFileSync(failurePath, '[]');
+            const admitted = loadCurrentBundledPluginLocatorResult();
+            expect(admitted.loadedPlugins.some((plugin) => plugin.pluginId === 'happier.agent.codex')).toBe(true);
+            writeFileSync(join(root, 'package.json'), JSON.stringify({ happier: { managedRuntimePublication: { v: 2 } } }));
+            // A running binary's imported declarations and publication are one admitted graph;
+            // a later file write cannot replace its reference catalog during installed discovery.
+            expect(loadCurrentBundledPluginLocatorResult().loadedPlugins).toEqual(admitted.loadedPlugins);
+        } finally {
+            Object.defineProperty(process, 'execPath', execPathDescriptor);
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
     it.each([
         ['cliproxyapi', 'happier.provider.cliproxyapi'],
     ])('projects an isolated %s publication failure as load_error while keeping a healthy sibling', (packageId, pluginId) => {

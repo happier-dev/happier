@@ -40,10 +40,12 @@ export function registerPublicShareViewerRoutes(app: Fastify): void {
             reply.header("X-Content-Type-Options", "nosniff");
             reply.header("Cross-Origin-Resource-Policy", "same-origin");
             if (request.headers.authorization || request.headers.cookie) return reply.code(404).send({ error: 'public_share_unavailable' });
-            const share = await resolveStoredContentPublicShareShell(request.params.lookupId, request.hostname, process.env, request.ip);
-            if (!share) return reply.code(404).send({ error: "public_share_unavailable" });
-            if ("error" in share) return reply.code(429).send({ error: "rate_limited" });
+            // This static client contains no subject bytes. It must remain loadable
+            // after revocation so the same viewer can render its unavailable state.
             if (asset) return reply.type("application/javascript; charset=utf-8").send(PUBLIC_SHARE_VIEWER_SCRIPT);
+            const share = await resolveStoredContentPublicShareShell(request.params.lookupId, request.hostname, process.env, request.ip);
+            if (!share) reply.code(404);
+            else if ("error" in share) reply.code(429);
             reply.header("Content-Security-Policy", csp);
             reply.header("Cross-Origin-Opener-Policy", "same-origin");
             reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");

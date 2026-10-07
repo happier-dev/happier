@@ -22,7 +22,6 @@ import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from '
 import type { WorkspaceState } from './workspaceState';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
-import { retainsWorkspaceDestinationOnMobileWeb } from './workspaceRoutes';
 
 function runNavigation(navigate: () => void): void {
     const result = runGuardedNavigation(navigate);
@@ -33,8 +32,8 @@ function runNavigation(navigate: () => void): void {
 export function WorkspaceProvider(props: Readonly<{
     enabled: boolean;
     /**
-     * A phone keeps its own stack transport over the same tab and Action owner.
-     * Only explicit opens become synced tabs.
+     * Native phones keep their stack transport over the same tab and Action owner.
+     * Web destinations retain their workspace host when only the viewport changes.
      */
     phone?: boolean;
     catalog: readonly CompactAppDestination[];
@@ -56,10 +55,9 @@ export function WorkspaceProvider(props: Readonly<{
         return `${pathname}${query.size ? `?${query}` : ''}`;
     }, [params, pathname]);
     const phone = props.phone === true && !props.enabled;
-    // Registered mobile-web destinations retain the desktop tree; native phones use Expo's stack.
+    // Width changes presentation, never the owner or lifetime of an admitted web destination.
     const routeDestination = resolveDestinationRefFromHref(props.catalog, routeHref);
-    const hostsMobileWeb = phone && Platform.OS === 'web' && routeDestination !== null
-        && retainsWorkspaceDestinationOnMobileWeb(routeDestination.kind);
+    const hostsMobileWeb = phone && Platform.OS === 'web' && routeDestination !== null;
     const hostsRoute = props.enabled || hostsMobileWeb;
     const phoneTransport = phone && !hostsMobileWeb;
     const phoneTabHref = phone ? resolvePhoneWorkspaceTabHref(props.catalog, routeHref) : null;
@@ -105,7 +103,7 @@ export function WorkspaceProvider(props: Readonly<{
             if (phoneTransport && latest.current.phoneTabHref === null && projected !== '/') latest.current.router.push(projected as never);
             else latest.current.router.replace(projected as never);
         };
-        // Registered hosted web destinations keep their transport across width changes.
+        // Hosted web destinations keep their transport across width changes.
         const browser = !phoneTransport && Platform.OS === 'web' && typeof window !== 'undefined'
             ? createWorkspaceBrowserTransport({
                 history: window.history,

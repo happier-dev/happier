@@ -9,7 +9,7 @@ import type {
     SessionCompanionItemRefV1,
 } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { SessionBoardSnapshot } from '@/sync/domains/session/board';
 import { t } from '@/text';
@@ -92,7 +92,7 @@ export function buildBoardWidgetAddContent(input: Readonly<{
         return [{
             id: `plugin-${candidate.key}`,
             title: candidate.title,
-            subtitle: candidate.sharedPluginName && candidate.surface ? `${candidate.pluginName} (${candidate.surface.pluginId})` : candidate.pluginName,
+            subtitle: describeWidgetCandidatePurpose(candidate),
             icon: candidate.icon,
             ...(configurable
                 ? (copies > 0 ? { count: t('widgetAdd.countOnBoard', { count: copies }) } : {})
@@ -224,7 +224,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
             return {
                 id: `plugin-${row.key}`,
                 title: candidate.title,
-                subtitle: candidate.pluginName,
+                subtitle: describeWidgetCandidatePurpose(candidate),
                 icon: candidate.icon,
                 ...(native && renderGlancePreview ? { renderPreview: () => renderGlancePreview(native.definition.id) } : {}),
                 ...(configurable

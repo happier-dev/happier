@@ -4,6 +4,7 @@
  * own module so the collection's copy moves as one unit.
  */
 const en = {
+    accountLabel: ({ service }: { service: string }) => `${service} account`,
     meterResetsIn: ({ time }: { time: string }) => `in ${time}`,
     meterNextResetIn: ({ time }: { time: string }) => `next in ${time}`,
     meterResetsAt: ({ countdown, time }: { countdown: string; time: string }) => `${countdown} · ${time}`,
@@ -70,6 +71,7 @@ const en = {
 type ConnectedServicesCollectionCopy = typeof en;
 
 const ca: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Compte de ${service}`,
     meterResetsIn: ({ time }) => `d'aquí a ${time}`,
     meterNextResetIn: ({ time }) => `el proper d'aquí a ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -134,6 +136,7 @@ const ca: ConnectedServicesCollectionCopy = {
 };
 
 const de: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `${service}-Konto`,
     meterResetsIn: ({ time }) => `in ${time}`,
     meterNextResetIn: ({ time }) => `nächster in ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -198,6 +201,7 @@ const de: ConnectedServicesCollectionCopy = {
 };
 
 const es: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Cuenta de ${service}`,
     meterResetsIn: ({ time }) => `en ${time}`,
     meterNextResetIn: ({ time }) => `el próximo en ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -262,6 +266,7 @@ const es: ConnectedServicesCollectionCopy = {
 };
 
 const fr: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Compte ${service}`,
     meterResetsIn: ({ time }) => `dans ${time}`,
     meterNextResetIn: ({ time }) => `prochain dans ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -326,6 +331,7 @@ const fr: ConnectedServicesCollectionCopy = {
 };
 
 const it: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Account ${service}`,
     meterResetsIn: ({ time }) => `tra ${time}`,
     meterNextResetIn: ({ time }) => `il prossimo tra ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -390,6 +396,7 @@ const it: ConnectedServicesCollectionCopy = {
 };
 
 const ja: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `${service} アカウント`,
     meterResetsIn: ({ time }) => `${time}後`,
     meterNextResetIn: ({ time }) => `次は${time}後`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -454,6 +461,7 @@ const ja: ConnectedServicesCollectionCopy = {
 };
 
 const pl: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Konto ${service}`,
     meterResetsIn: ({ time }) => `za ${time}`,
     meterNextResetIn: ({ time }) => `następny za ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -518,6 +526,7 @@ const pl: ConnectedServicesCollectionCopy = {
 };
 
 const pt: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Conta ${service}`,
     meterResetsIn: ({ time }) => `em ${time}`,
     meterNextResetIn: ({ time }) => `o próximo em ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -582,6 +591,7 @@ const pt: ConnectedServicesCollectionCopy = {
 };
 
 const ru: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `Аккаунт ${service}`,
     meterResetsIn: ({ time }) => `через ${time}`,
     meterNextResetIn: ({ time }) => `следующий через ${time}`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -646,6 +656,7 @@ const ru: ConnectedServicesCollectionCopy = {
 };
 
 const zhHans: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `${service} 账户`,
     meterResetsIn: ({ time }) => `${time}后`,
     meterNextResetIn: ({ time }) => `下次在${time}后`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,
@@ -710,6 +721,7 @@ const zhHans: ConnectedServicesCollectionCopy = {
 };
 
 const zhHant: ConnectedServicesCollectionCopy = {
+    accountLabel: ({ service }) => `${service} 帳戶`,
     meterResetsIn: ({ time }) => `${time}後`,
     meterNextResetIn: ({ time }) => `下次在${time}後`,
     meterResetsAt: ({ countdown, time }) => `${countdown} · ${time}`,

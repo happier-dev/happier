@@ -72,8 +72,8 @@ export function WalkthroughSavedSettings(props: Readonly<{
             subtitle={clearFailed ? t('walkthroughSettings.clearFailed') : available
                 ? t('walkthroughSettings.savedCount', { count: available.count, bytes: formatByteSize(available.bytes) })
                 : t('walkthroughSettings.unavailableData')}
-            rightElement={<RoundButton title={t('walkthroughSettings.clear')} size="small" display="destructive"
-                testID="settings.sourceControl.savedWalkthroughs.clear" disabled={!available || available.count === 0 || clearing}
+            rightElement={available?.count === 0 ? null : <RoundButton title={t('walkthroughSettings.clear')} size="small" display="destructive"
+                testID="settings.sourceControl.savedWalkthroughs.clear" disabled={!available || clearing}
                 loading={clearing} onPress={() => { void clear(); }} />} />
     </>;
 }

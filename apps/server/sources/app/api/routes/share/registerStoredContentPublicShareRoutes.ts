@@ -8,7 +8,6 @@ import { writeSessionPublicShare, writeArtifactPublicShare, deleteSessionPublicS
 import { resolveStoredContentPublicShareSubjectOrigin } from "@/app/share/storedContentPublicShareOrigin";
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
-import { readAccountStoredContentCompatibilityForHttpRequest, enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createSessionMetadataPrivacyUpgradeRequiredResponse, projectSessionMetadataForRecipient, readSessionMetadataOwnerAccountMode, isSessionMetadataPrivacyUpgradeRequiredError } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import { artifactVisibleWhere } from "@/app/artifacts/artifactClassification";
 import { openArtifactStoredContentPair } from "@/app/artifacts/artifactStoredContent";
@@ -40,10 +39,9 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
         const { subject, ...material } = request.body;
         const input = { ...material, encryptedDataKey: material.encryptedDataKey ?? undefined, userId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request) };
         const result = subject.kind === "session"
-            ? await writeSessionPublicShare({ ...input, sessionId: subject.id, supportsCurrentProtocol: readAccountStoredContentCompatibilityForHttpRequest(request).supportsCurrentProtocol })
+            ? await writeSessionPublicShare({ ...input, sessionId: subject.id })
             : await writeArtifactPublicShare({ ...input, artifactId: subject.id });
         if (result.type === "forbidden") return reply.code(403).send({ error: "public_share_forbidden" });
-        if (result.type === "client-upgrade-required") { await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(request, reply); return; }
         if (result.type === "privacy-error") return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
         if (result.type === "publication-error") return reply.code(409).send({ error: result.error, code: result.code });
         if (result.type === "external-sharing-error") return reply.code(result.error === "session_access_authentication_unavailable" ? 503 : 403).send({ error: result.error });

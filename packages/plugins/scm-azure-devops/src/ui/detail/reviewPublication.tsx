@@ -19,6 +19,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import {
   describeTriageSourceFailureV1 as failureDescription,
+  isTriageSourceConnectedAccountInstanceV1,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
@@ -53,6 +54,7 @@ function publicationTargetOf(
   input: TriageDetailSurfaceInputV1,
   subtarget: Readonly<{ kindId: 'review-thread'; targetId: string }> | null = null,
 ) {
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)) return null;
   return {
     providerId: 'azure-devops',
     configuredAccountId: input.instance.binding.account.accountId,

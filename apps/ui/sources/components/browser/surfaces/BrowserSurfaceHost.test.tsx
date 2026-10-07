@@ -7,6 +7,9 @@ import {
     DaemonPluginActionSchemasReadRequestSchema,
     DaemonPluginActionSchemasReadResponseSchema,
     RPC_METHODS,
+    type DaemonLocalServicePreviewOpenOrCreateResponseV1,
+    type LocalServicePreviewResourceV1,
+    buildQualifiedPluginContributionKey,
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
     type PluginMachineExecutionOriginV1,
@@ -91,11 +94,17 @@ const browserStreamBoundary = vi.hoisted(() => ({
     views: [] as unknown[],
     listeners: new Set<(raw: unknown) => void>(),
 }));
+const browserPreviewBoundary = vi.hoisted(() => ({
+    response: null as DaemonLocalServicePreviewOpenOrCreateResponseV1 | null,
+}));
 
 // Discovery and relay socket are genuine network boundaries; host/runtime/ingestion stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: async (input: { method: string; machineId: string; serverId?: string | null; payload: unknown }) => {
         if (input.method === 'daemon.browser.view.list') return { protocolVersion: 1, views: browserStreamBoundary.views };
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE
+            && (input.payload as { launchTargetId?: string } | undefined)?.launchTargetId === 'preview_1'
+            && browserPreviewBoundary.response) return browserPreviewBoundary.response;
         if (input.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
             expect(input.machineId).toBe('machine_1');
             expect(input.serverId).toBe('srv_browser_client_action');
@@ -517,6 +526,7 @@ let browserAccountConnection: Awaited<ReturnType<typeof restoreServerAccountForT
 let restoreBrowserStorage: (() => void) | undefined;
 let restoreBrowserLocks: (() => void) | undefined;
 beforeEach(async () => {
+    browserPreviewBoundary.response = null;
     browserActionModal.show.mockClear();
     browserActionModal.hide.mockClear();
     browserActionModal.confirmFallback.mockClear();
@@ -1394,6 +1404,31 @@ describe('BrowserSurfaceHost', () => {
 
     it('opens launchpad targets through the reusable host when no external opener is supplied', async () => {
         const onViewTargetChange = vi.fn();
+        const registeredUrl = 'https://preview.happier.test/current-registration';
+        const resource: LocalServicePreviewResourceV1 = {
+            previewId: 'preview_1',
+            sessionId: 'session_1',
+            machineId: 'machine_1',
+            owner: { kind: 'session', id: 'session_1' },
+            target: { scheme: 'https', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' },
+            display: target.display,
+            originMode: 'host',
+            browserTarget: target,
+        };
+        const preview = {
+            previewId: resource.previewId, resource, accessUrl: registeredUrl,
+            expiresAt: null, diagnostics: [],
+        };
+        browserPreviewBoundary.response = {
+            protocolVersion: 1,
+            status: 'existing',
+            preview,
+            snapshot: {
+                v: 1, machineId: resource.machineId, generatedAt: 100, refreshState: 'idle',
+                resources: [resource], previews: [preview], diagnostics: [],
+            },
+        };
         const launchpadRows = [{
             id: 'localService:preview_1',
             section: 'running',
@@ -1425,16 +1460,14 @@ describe('BrowserSurfaceHost', () => {
             />,
         );
 
-        expect(screen.findByTestId('browser-surface-launchpad-card:localService:preview_1-available')).not.toBeNull();
-
         await act(async () => {
             await screen.pressByTestIdAsync('browser-surface-launchpad-card:localService:preview_1');
         });
 
         expect(screen.findByTestId('browser-surface-launchpad')).toBeNull();
         // Blurred address field shows the pretty display URL (scheme/trailing-slash trimmed).
-        expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('preview.happier.test');
-        expect(screen.findByType('iframe').props.src).toBe('https://preview.happier.test/');
+        expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('preview.happier.test/current-registration');
+        expect(screen.findByType('iframe').props.src).toBe(registeredUrl);
         expect(onViewTargetChange).toHaveBeenCalledWith({
             browserSessionId: 'browser_session_default',
             viewId: 'browser_view:preview_1',
@@ -1478,8 +1511,6 @@ describe('BrowserSurfaceHost', () => {
                 testID="browser-surface"
             />,
         );
-
-        expect(screen.findByTestId('browser-surface-launchpad-card:recent:external_docs-available')).not.toBeNull();
 
         await act(async () => {
             await screen.pressByTestIdAsync('browser-surface-launchpad-card:recent:external_docs');

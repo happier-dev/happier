@@ -209,7 +209,7 @@ describe('buildLocalServiceLauncherSnapshot', () => {
         expect(snapshot.targets[0]?.actions).toEqual(['register_preview']);
     });
 
-    it('keeps unknown-scheme loopback entries visible but disables open with a reason', () => {
+    it('keeps unknown-scheme loopback entries resolvable through preview registration', () => {
         const snapshot = buildLocalServiceLauncherSnapshot({
             machineId: 'machine-a',
             sessionId: 'session-a',
@@ -232,9 +232,9 @@ describe('buildLocalServiceLauncherSnapshot', () => {
         expect(snapshot.targets[0]).toMatchObject({
             source: 'inventory_entry',
             state: 'available',
-            unavailableReason: 'endpoint_scheme_unknown',
-            actions: [],
+            actions: ['register_preview'],
         });
+        expect(snapshot.targets[0]).not.toHaveProperty('unavailableReason');
         expect(snapshot.targets[0]).not.toHaveProperty('browserTarget');
     });
 

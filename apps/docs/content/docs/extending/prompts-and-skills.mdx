@@ -191,6 +191,16 @@ When you type a saved token in the composer:
 
 Happier blocks collisions with built-in action commands, so a template token cannot silently override a core slash action.
 
+### Native composer suggestions (development source)
+
+This workflow is **development-only and unreleased**. Before creating a session, typing `/` or `$` can discover native commands or skills from the selected agent on the selected machine. Discovery uses the project folder, profile, and selected authentication context, so changing those selections can change the suggestions.
+
+Discovery starts when you open the relevant suggestions. Local commands remain available while native results load. Selecting a native skill preserves any agent-supplied identifier and its source reference for submission; skills without a native identifier resolve using their name and source path. Selection does not import the skill into your Happier library.
+
+Managed prerequisites must already be ready on the selected machine. Discovering suggestions does not install or update them; session launch keeps its configured installation policy.
+
+Native support depends on the agent's transport: a slash command does not automatically become a typed skill. Older daemons that lack this discovery method show no native pre-session rows and keep local suggestions available. OpenCode V2 pre-session discovery is currently unavailable; native commands and skills in an existing OpenCode V2 session use a separate runtime path.
+
 ## System prompt additions
 
 This is the user-facing name for what the implementation internally stores as ordered prompt stacks.

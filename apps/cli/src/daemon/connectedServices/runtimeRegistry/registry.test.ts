@@ -95,6 +95,30 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     ]);
   });
 
+  it('identifies current projected Run targets without borrowing their runner Session identity', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const shared = { pid: 123, agentId: 'codex', sessionId: 'parent-session',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget({ ...shared, materializationKey: 'session-materialization' });
+    registry.registerRunTarget({ ...shared, runKey: 'run-1', materializationKey: 'run-1' });
+    const firstRun = registry.listRefreshTargets().find((target) => target.materializationKey === 'run-1')!;
+    const session = registry.listRefreshTargets().find((target) => target.materializationKey === 'session-materialization')!;
+    expect(registry.isRunTarget(firstRun)).toBe(true);
+    expect(registry.isRunTarget(session)).toBe(false);
+    expect(registry.isSessionTarget(session)).toBe(true);
+    expect(registry.isSessionTarget(firstRun)).toBe(false);
+    registry.registerRunTarget({ ...shared, runKey: 'run-1', materializationKey: 'run-1', sessionDirectory: '/replacement' });
+    expect(registry.isRunTarget(firstRun)).toBe(false);
+    expect(registry.isSessionTarget(firstRun)).toBe(false);
+    const currentRun = registry.listRefreshTargets().find((target) => target.materializationKey === 'run-1')!;
+    expect(registry.isRunTarget(currentRun)).toBe(true);
+    registry.unregisterRunKey('run-1');
+    expect(registry.isRunTarget(currentRun)).toBe(false);
+    expect(registry.isSessionTarget(currentRun)).toBe(false);
+    expect(registry.isRunTarget(session)).toBe(false);
+    expect(registry.isSessionTarget(session)).toBe(true);
+  });
+
   it('changes the runtime identity when the same profile receives a new credential revision', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     const firstRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';

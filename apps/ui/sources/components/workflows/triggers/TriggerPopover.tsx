@@ -298,7 +298,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlignVertical: 'start' }}
         >
             {({ maxHeight }) => (
-                <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
+                // An opaque theme surface: the form must not show the document through it (lab T1).
+                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme">
                     <ListPresentationProvider value="page">
                     <View testID={props.testID} style={styles.surface}>
                         {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}

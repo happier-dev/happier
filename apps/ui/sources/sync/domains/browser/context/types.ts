@@ -249,6 +249,8 @@ export type BrowserAnnotationDraftInput = Readonly<{
 }>;
 
 export type BrowserAnnotationCaptureRequest = Readonly<{
+    /** Live host admission, re-read before pixels, media registration, and result publication. */
+    resolveAdmission?: () => BrowserContextUnavailableReason | null;
     browserSessionId: string;
     viewId: string;
     navigationGeneration: number;

@@ -6,6 +6,7 @@ import { observeSessionSynopses } from '@/sync/ops/sessionSynopsis';
 import { storage } from '@/sync/domains/state/storageStore';
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import { resolveSessionRecap, type SessionRecap } from './sessionRecap';
 
@@ -20,6 +21,8 @@ export function useSessionRecap(address: SessionAddress | null): SessionRecap | 
     const [synopses, setSynopses] = React.useState<readonly SessionSynopsisV1[]>(NO_SYNOPSES);
     const serverId = address?.serverId ?? null;
     const sessionId = address?.sessionId ?? null;
+    const activeScope = useActiveServerAccountScope(serverId);
+    const accountId = activeScope?.accountId ?? null;
     const session = storage((state) => sessionId ? state.sessions[sessionId] : undefined);
     const transcript = storage((state) => sessionId ? state.sessionMessages[sessionId] : undefined);
     const latestWorkerUpdate = React.useMemo(() => {
@@ -44,7 +47,7 @@ export function useSessionRecap(address: SessionAddress | null): SessionRecap | 
             session: { serverId, sessionId },
             onChange: (next) => setSynopses(next.length === 0 ? NO_SYNOPSES : next),
         });
-    }, [serverId, sessionId]);
+    }, [serverId, sessionId, accountId]);
     return React.useMemo(
         () => resolveSessionRecap({ synopses, latestWorkerUpdate }),
         [synopses, latestWorkerUpdate],

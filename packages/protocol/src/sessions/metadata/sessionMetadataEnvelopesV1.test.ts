@@ -115,6 +115,27 @@ describe('native mode catalog compatibility', () => {
 });
 
 describe('session role owner metadata', () => {
+  it.each(['plain', 'e2ee'] as const)('opens stored %s owner role metadata with additive fields without weakening mode or write admission', (accountMode) => {
+    const sessionRolesV1 = { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: 'Keep stored role notes',
+      memoryDocRef: { kind: 'doc', artifactId: 'memory' } };
+    const ownerMetadata = { v: 1, work: { sessionRolesV1: { ...sessionRolesV1, future: true,
+      memoryDocRef: { ...sessionRolesV1.memoryDocRef, future: true } } } };
+    const envelope = accountMode === 'plain' ? { t: 'plain', v: ownerMetadata } : {
+      t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'session_owner_metadata', material: material(7),
+        payload: ownerMetadata, randomBytes: deterministicRandomBytes(3) }),
+    };
+    if (accountMode === 'plain') expect(parseSessionOwnerMetadataEnvelopeV1(JSON.stringify(envelope)))
+      .toEqual({ t: 'plain', v: { v: 1, work: { sessionRolesV1 } } });
+    const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode, envelope,
+      ...(accountMode === 'e2ee' ? { material: material(7) } : {}) });
+    expect(opened).toEqual({ ok: true, ownerMetadata: { v: 1, work: { sessionRolesV1 } } });
+    expect(openSessionOwnerMetadataEnvelopeV1({ accountMode: accountMode === 'plain' ? 'e2ee' : 'plain', envelope,
+      material: material(7) }).ok).toBe(false);
+    expect(SessionOwnerMetadataV1Schema.safeParse(ownerMetadata).success).toBe(false);
+    expect(openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: {
+      t: 'plain', v: { v: 1, work: { sessionRolesV1: { ...sessionRolesV1, notes: 42, future: true } } },
+    } }).ok).toBe(false);
+  });
   it('keeps the reviewer override private and publishes only a strict request-only decision', () => {
     const created = createSessionOwnerMetadataV1({ metadata: { approvalReviewerEnabled: true } });
     expect(created.ownerMetadata.runtime?.approvalReviewerEnabled).toBe(true);
@@ -618,6 +639,42 @@ describe('session metadata privacy envelopes v1', () => {
     }
   });
 
+  it.each(['plain', 'e2ee'] as const)('round-trips a Replay seed above the old field clamp through an admitted %s envelope', (accountMode) => {
+    const seedText = 'S'.repeat(1_000_001);
+    const createReplayOwner = (text: string) => createSessionOwnerMetadataV1({
+      metadata: {
+        replaySeedV1: {
+          v: 1,
+          seedText: text,
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 7,
+          createdAtMs: 1,
+        },
+      },
+    });
+    expect(createReplayOwner('valid control seed').ok).toBe(true);
+    const created = createReplayOwner(seedText);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const envelope = accountMode === 'plain'
+      ? createPlainSessionOwnerMetadataEnvelopeV1(created.ownerMetadata)
+      : sealSessionOwnerMetadataEnvelopeV1({
+          material: material(6),
+          ownerMetadata: created.ownerMetadata,
+          randomBytes: deterministicRandomBytes(1),
+        });
+    expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse(envelope).success).toBe(true);
+    const opened = openSessionOwnerMetadataEnvelopeV1({
+      accountMode,
+      envelope,
+      ...(accountMode === 'e2ee' ? { material: material(6) } : {}),
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    expect(opened.ownerMetadata.history?.replaySeedV1?.seedText.length).toBe(seedText.length);
+    expect(opened.ownerMetadata.history?.replaySeedV1?.seedText).toBe(seedText);
+  });
+
   it('opens only the explicit Session owner-envelope branch', () => {
     const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
       v: 1,
@@ -648,7 +705,7 @@ describe('session metadata privacy envelopes v1', () => {
     )).toBeNull();
     expect(parseSessionOwnerMetadataEnvelopeV1(
       JSON.stringify({ ...plain, privateBag: {} }),
-    )).toBeNull();
+    )).toEqual(plain);
     expect(parseSessionOwnerMetadataEnvelopeV1(JSON.stringify({
       ciphertext: encrypted.c,
     }))).toBeNull();
@@ -820,7 +877,7 @@ describe('session metadata privacy envelopes v1', () => {
     expect(openSessionOwnerMetadataEnvelopeV1({
       accountMode: 'plain',
       envelope: { t: 'plain', v: { ...ownerMetadata, privateBag: {} } },
-    })).toEqual({ ok: false, reason: 'invalid_envelope' });
+    })).toEqual({ ok: true, ownerMetadata });
     expect(openSessionOwnerMetadataEnvelopeV1({
       accountMode: 'plain',
       envelope: encrypted,

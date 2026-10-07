@@ -54,7 +54,9 @@ export function resolveHappierCollectionComposition(input: Readonly<{
     return input.open && input.detail !== 'none' && input.pane !== true ? 'detail' : 'cards';
   }
   if ((input.pane === true || input.paneHost === true) && input.detail !== 'none') {
-    if (input.open && input.pane !== true) return 'detail';
+    // The host pane takes the detail: beside it the narrowed page reads as the two-line list (the lab's Desk
+    // list beside its detail), never a squeezed table; without the pane beside the page the detail pushes.
+    if (input.open) return input.pane === true ? 'list' : 'detail';
     return input.tableFits === true && input.presentation === 'table' ? 'table' : 'list';
   }
   const resting: HappierCollectionComposition = input.splitFits === true && input.presentation === 'table' ? 'table' : 'list';

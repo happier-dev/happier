@@ -1,9 +1,17 @@
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { selectGrokAuthenticationFromFacts } from '../acp/auth.js';
+
+export const GROK_ACP_COMMAND = Object.freeze({ toolId: 'grok-cli', args: Object.freeze(['--no-auto-update', 'agent', 'stdio']) });
+
 type GrokPreflightModel = Readonly<{
   id: string;
   name: string;
 }>;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 const GROK_MODELS_COMMAND_ARGS = ['models'] as const;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,255}$/u;
@@ -43,6 +51,18 @@ export function parseGrokModelsOutput(outputRaw: string): readonly GrokPreflight
 }
 
 export const GROK_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  catalogs: Object.freeze({
+    kind: 'acp' as const,
+    command: GROK_ACP_COMMAND,
+    selectAuthentication({ initializeResult, probe }) {
+      const initialized = isRecord(initializeResult) ? initializeResult : {};
+      const methods = Array.isArray(initialized.authMethods) ? initialized.authMethods : [];
+      return selectGrokAuthenticationFromFacts({
+        advertisedMethodIds: methods.flatMap((method) => isRecord(method) && typeof method.id === 'string' ? [method.id] : []),
+        initializeMetadata: isRecord(initialized._meta) ? initialized._meta : null,
+      }, { hasApiKey: probe.nonblankEnvironment?.XAI_API_KEY === true });
+    },
+  }),
   models: Object.freeze({
     command: Object.freeze({
       toolId: 'grok-cli',

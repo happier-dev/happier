@@ -15,12 +15,12 @@ describe('buildSummaryMeters', () => {
   });
 
   it('presents raw stored window ids consistently while retaining provider display labels', () => {
-    const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window'];
+    const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window', 'base_model_inference:primary'];
     const meters = ids.map((meterId) => ({
       meterId, label: meterId, used: null, limit: null, unit: 'unknown',
       utilizationPct: 10, resetsAt: null, status: 'ok', details: {},
     } satisfies ConnectedServiceQuotaMeterV1));
-    const labels = ['5-hour', 'Weekly', 'Weekly (all models)', 'Weekly (Fable)', 'Spend', 'Future API Window'];
+    const labels = ['5-hour', 'Weekly', 'Weekly (all models)', 'Weekly (Fable)', 'Spend', 'Future API Window', 'Base Model Inference Primary'];
     expect(buildSummaryMeters(meters, [], 'primary').map((meter) => meter.label)).toEqual(labels);
     expect(computeConnectedServiceQuotaSummaryBadges({ snapshot: { meters }, pinnedMeterIds: ids }).map((badge) => badge.text))
       .toEqual(labels.map((label) => `${label} 90%`));

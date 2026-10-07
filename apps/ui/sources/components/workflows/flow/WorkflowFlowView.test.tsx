@@ -156,8 +156,8 @@ describe('WorkflowFlowView run map anatomy (lab run-A)', () => {
             projection: projectWorkflowFlow(definition), selectedNodeId: null, testIDPrefix: 'flow',
             runStates: new Map([['approve', [{ nodeId: 'approve', invocationId: 'approve-1', lifecycle: 'completed' as const }]]]),
         }));
-        expect(screen.findByTestId('flow-node-gather-ordinal')?.findAll((node) => node.props.children === 1).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('flow-node-approve-ordinal')?.findAll((node) => node.props.children === 2).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('flow-node-gather-ordinal')?.findAll((node) => String(node.props.children) === '1').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('flow-node-approve-ordinal')?.findAll((node) => String(node.props.children) === '2').length).toBeGreaterThan(0);
         const approve = screen.findByTestId('flow-node-approve');
         expect(approve?.findAll((node) => node.props.children === 'workflows.page.blocks.returnsFields:{"fields":"approval"}').length).toBeGreaterThan(0);
         // The state is the marker's spoken name, not a visible word beside it.

@@ -23,7 +23,6 @@ import {
   createLocalPathPluginDistributionIdentity,
   createPluginTrustRecord,
   isPluginTrustRecordAuthorized,
-  pluginDistributionIdentitiesEqual,
 } from '@/plugins/store/install/trustIdentity';
 import { join, relative } from 'node:path';
 import type { PluginStateRecord } from '@/plugins/store/state';
@@ -116,17 +115,9 @@ type ResolvedDaemonLocalPathSource = ResolvedLocalPathPluginSourceSuccess & Read
   manifestRelativePath: string;
 }>;
 
-const PROJECT_TRUST_APPROVED = Symbol('pluginDevelopmentProjectTrustApproved');
-type InternalPluginChangeRequest = PluginChangeRequest & Readonly<{
-  [PROJECT_TRUST_APPROVED]?: Readonly<{
-    distribution: Awaited<ReturnType<typeof createLocalPathPluginDistributionIdentity>>;
-  }>;
-}>;
-
 export function createDaemonPathPluginChangePreparer(params: Readonly<{
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
-  isRegisteredDevelopmentRoot?: (canonicalRootPath: string) => boolean;
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   runManagedPluginPnpm?: RunManagedPluginPnpmBoundary;
   runPluginUiArtifactBuild?: RunPluginUiArtifactBuildBoundary;
@@ -148,13 +139,11 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
   });
 
   const prepare = async (
-    request: InternalPluginChangeRequest,
+    request: PluginChangeRequest,
     context?: DaemonPathPluginChangePreparationContext,
   ): Promise<PreparedDaemonPluginChange> => {
     let trustedDevelopmentPluginId: string | null = null;
-    let registeredDevelopmentRoot = false;
     let developmentAuthoringSource: Awaited<ReturnType<typeof resolvePluginAuthoringSource>> | null = null;
-    const approvedProjectTrust = request[PROJECT_TRUST_APPROVED];
     const developmentSourceRootPath = request.kind === 'development'
       ? request.sourceRootPath
       : null;
@@ -171,9 +160,6 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         if (distribution.kind !== 'localPath') {
           throw new Error('Plugin development source did not resolve to a local path identity');
         }
-        registeredDevelopmentRoot = params.isRegisteredDevelopmentRoot?.(
-          distribution.canonicalPath,
-        ) === true;
         const trustedMatches = Object.entries(developmentCatalog!.plugins).filter(
           ([pluginId, record]) => (
             record.source.kind === 'path'
@@ -190,50 +176,6 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           );
         }
         trustedDevelopmentPluginId = trustedMatches[0]?.[0] ?? null;
-        if (
-          approvedProjectTrust
-          && !pluginDistributionIdentitiesEqual(
-            approvedProjectTrust.distribution,
-            distribution,
-          )
-        ) {
-          throw new Error('Approved plugin development source root was substituted before evaluation');
-        }
-        if (!trustedDevelopmentPluginId && !approvedProjectTrust && !registeredDevelopmentRoot) {
-          return Object.freeze({
-            kind: 'projectTrustApprovalRequired' as const,
-            pendingKey: distribution.canonicalPath,
-            review: Object.freeze({
-              source: Object.freeze({
-                kind: 'path' as const,
-                locator: distribution.canonicalPath,
-              }),
-            }),
-            continueAfterProjectTrustApproval: async () => {
-              const approvedSource = await resolvePluginAuthoringSource(developmentSourceRootPath);
-              if (!approvedSource.ok || approvedSource.kind !== 'code') {
-                throw new Error('Approved plugin development source identity changed before evaluation');
-              }
-              const currentDistribution = await createLocalPathPluginDistributionIdentity(
-                approvedSource.entry.locator,
-              );
-              if (!pluginDistributionIdentitiesEqual(distribution, currentDistribution)) {
-                throw new Error('Approved plugin development source root was substituted before evaluation');
-              }
-              const continued = await prepare(Object.assign(
-                { ...request },
-                {
-                  [PROJECT_TRUST_APPROVED]: Object.freeze({ distribution }),
-                },
-              ), context);
-              if ('kind' in continued && continued.kind === 'projectTrustApprovalRequired') {
-                throw new Error('Approved plugin development source unexpectedly requested project-trust review again');
-              }
-              return continued;
-            },
-            cleanup: async () => undefined,
-          });
-        }
       }
     }
     if (developmentSourceRootPath && developmentAuthoringSource?.ok) {
@@ -358,12 +300,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             })
           : null;
         const authorityExpansion = incumbentAuthorityEvaluation?.authorityExpansion
-          ?? (approvedProjectTrust || registeredDevelopmentRoot
-            ? listInitialPluginAuthorityExpansions(projected.manifest)
-            : []);
-        const requiresReview = approvedProjectTrust || registeredDevelopmentRoot
-          ? authorityExpansion.length > 0
-          : !alreadyTrusted
+          ?? listInitialPluginAuthorityExpansions(projected.manifest);
+        const requiresReview = !alreadyTrusted
             || !incumbentAuthorityManifest
             || incumbentAuthorityEvaluation?.requiresReview === true;
         const review = projectPluginInstallationReview({
@@ -426,9 +364,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           preparedActivationGraph: evaluated.graph,
           registryRevision: registrySnapshot.revision,
           priorOptionalAccess: existing?.install.optionalAccess ?? [],
-          preservedOptionalAccess: approvedProjectTrust || registeredDevelopmentRoot
-            ? Object.freeze([])
-            : incumbentAuthorityEvaluation?.preservedOptionalAccess ?? null,
+          preservedOptionalAccess: incumbentAuthorityEvaluation?.preservedOptionalAccess ?? null,
           installReviewPrincipal,
           ...(priorPrincipalDigest && priorPrincipalPresentation
             ? { priorInstallReviewPrincipal: { digest: priorPrincipalDigest, presentation: priorPrincipalPresentation } }
@@ -436,7 +372,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           catalogRecord,
           trust,
           updatePolicy: existing?.install.updatePolicy ?? 'allowed',
-          reviewReason: approvedProjectTrust || registeredDevelopmentRoot || existing
+          reviewReason: existing
             ? 'authorityExpansion'
             : 'firstInstall',
           ...(existing ? { currentVersion: existing.install.manifestVersion } : {}),

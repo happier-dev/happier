@@ -1,4 +1,5 @@
 import React from 'react';
+import { readTranscriptBrowserActionIdentity } from '@/components/sessions/transcript/references/transcriptBrowserActionReference';
 import { useAiLaunchProfiles } from './useAiLaunchProfiles';
 import type { AuthoringMemory } from './domains/authoringMemory';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
@@ -118,6 +119,11 @@ import {
   resolveSessionListRuntimePriorityRowNextFreshnessAtMs,
 } from '../domains/session/listing/sessionListRuntimePriorityRows';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '../domains/scope/activeServerAccountScope';
+import {
+  subscribeAppliedActiveServer,
+  subscribeAppliedActiveServerRuntimeAvailability,
+} from '../runtime/orchestration/connectionManager';
 import {
   areServerProfileIdentifiersEquivalent,
   resolveServerProfileScopeIdForIdentifier,
@@ -188,23 +194,25 @@ export function useSessions() {
 }
 
 export function useSession(id: string, serverId?: string | null): Session | null {
+  return useSessionSelector(id, serverId ?? undefined, useShallow((session: Session | null) => session));
+}
+
+/** One Home-qualified live carrier owner; projections retain their own subscription granularity. */
+export function useSessionSelector<T>(id: string, serverId: string | null | undefined, select: (session: Session | null) => T): T {
   const normalizedSessionId = normalizeSessionId(id);
   const normalizedServerId = normalizeTrimmedString(serverId);
   const activeServerId = useActiveServerSnapshot(Boolean(normalizedServerId)).serverId;
-  return getStorage()(useShallow((state) => {
+  return getStorage()((state) => {
+    if (serverId !== undefined && !normalizedServerId) return select(null);
     const session = state.sessions[normalizedSessionId] ?? null;
-    if (!normalizedServerId) return session;
-    if (!session) return null;
+    if (!normalizedServerId || !session) return select(session);
     if (normalizeTrimmedString(session.serverId)) {
-      return areServerProfileIdentifiersEquivalent(session.serverId, normalizedServerId) ? session : null;
+      return select(areServerProfileIdentifiersEquivalent(session.serverId, normalizedServerId) ? session : null);
     }
-    // Older live carriers omitted serverId. They belong to the applied active
-    // Home only; selection can change before Sync retires the previous carrier.
-    return areServerProfileIdentifiersEquivalent(activeServerId, normalizedServerId)
-      && areServerProfileIdentifiersEquivalent(state.sessionLocalStateScope?.serverId, normalizedServerId)
-      ? session
-      : null;
-  }));
+    // Older live carriers omitted serverId and belong only to the applied Home.
+    return select(areServerProfileIdentifiersEquivalent(activeServerId, normalizedServerId)
+      && areServerProfileIdentifiersEquivalent(state.sessionLocalStateScope?.serverId, normalizedServerId) ? session : null);
+  });
 }
 
 /**
@@ -441,8 +449,8 @@ export function useSessionChatFooterState(sessionId: string | null): SessionChat
   );
 }
 
-export function useSessionMetadata(sessionId: string): Session['metadata'] | null {
-  return getStorage()((state) => state.sessions[sessionId]?.metadata ?? null);
+export function useSessionMetadata(sessionId: string, serverId?: string | null): Session['metadata'] | null {
+  return useSessionSelector(sessionId, serverId, (session) => session?.metadata ?? null);
 }
 
 /**
@@ -1515,6 +1523,24 @@ export function useSessionMessages(
     : emptyArray as Message[], [enabled, ids, isLoaded, messagesById, normalizedSessionId, version]);
 
   return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
+}
+
+/** Completion identity consumed by browser discovery, not transcript presentation. */
+export function useSessionCompletedBrowserActionKey(sessionId: string, options?: UseSessionMessagesOptions): string {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  const enabled = options?.enabled !== false;
+  return getStorage()((state) => {
+    if (!enabled) return '';
+    const transcript = state.sessionMessages[normalizedSessionId];
+    const messages = readSessionMessagesSnapshot(normalizedSessionId,
+      transcript?.messageIdsOldestFirst ?? emptyArray as string[],
+      transcript?.messagesById ?? emptyRecord,
+      transcript?.messagesVersion ?? 0, transcript?.isLoaded ?? false);
+    return messages.filter(message => message.kind === 'tool-call'
+      && message.tool.state === 'completed' && readTranscriptBrowserActionIdentity({
+        toolName: message.tool.name, input: message.tool.input,
+      }) !== null).map(message => message.id).join('\n');
+  });
 }
 
 /** Whether the Session's transcript has been read at least once; a boolean subscription, no ids. */
@@ -3019,13 +3045,10 @@ export function usePersistProjectLastMobileSurface(): (
 
 // Artifact hooks
 export function useArtifacts(): DecryptedArtifact[] {
-  return getStorage()(
-    useShallow((state) => {
-      if (!state.isDataReady) return emptyArray as DecryptedArtifact[];
-      // Filter out draft artifacts from the main list
-      return sortValuesByUpdatedAtDescending(state.artifacts).filter((artifact) => !artifact.draft);
-    })
-  );
+  const artifacts = getStorage()((state) => state.isDataReady ? state.artifacts : null);
+  return React.useMemo(() => artifacts
+    ? sortValuesByUpdatedAtDescending(artifacts).filter((artifact) => !artifact.draft)
+    : emptyArray as DecryptedArtifact[], [artifacts]);
 }
 
 export function useArtifactsLoaded(): boolean {
@@ -3355,8 +3378,27 @@ export function useProfile() {
   return getStorage()(useShallow((state) => state.profile));
 }
 
-export function useActiveServerAccountScope() {
-  return getStorage()(useShallow((state) => state.profileScope ?? null));
+/** Explicit Home readers follow the applied runtime; unscoped Settings retain their Profile scope. */
+export function useActiveServerAccountScope(serverId?: string | null) {
+  const live = serverId !== undefined;
+  const subscribe = React.useCallback((listener: () => void) => {
+    const unsubscribeProfile = getStorage().subscribe((state, previous) => {
+      if (state.profileScope !== previous.profileScope) listener();
+    });
+    if (!live) return unsubscribeProfile;
+    const unsubscribeApplied = subscribeAppliedActiveServer(listener);
+    const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
+    return () => {
+      unsubscribeProfile();
+      unsubscribeApplied();
+      unsubscribeAvailability();
+    };
+  }, [live]);
+  const selectScope = useShallow(React.useCallback(() => serverId === undefined
+    ? getStorage().getState().profileScope ?? null
+    : selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), serverId), [serverId]));
+  const read = React.useCallback(() => selectScope(undefined), [selectScope]);
+  return React.useSyncExternalStore(subscribe, read, read);
 }
 
 export function useFriends() {

@@ -26,7 +26,6 @@ export type SplitCanvasState<TLeafPayload = unknown> = Readonly<{
     root: SplitCanvasNode<TLeafPayload> | null;
     focusedLeafId: string | null;
     maximizedLeafId: string | null;
-    maxLeaves: number;
 }>;
 
 export type SplitCanvasAction<TLeafPayload = unknown> =
@@ -107,7 +106,6 @@ export type SplitCanvasPersistenceSnapshot<TLeafPayload = unknown> = Readonly<{
     root: SplitCanvasNode<TLeafPayload> | null;
     focusedLeafId: string | null;
     maximizedLeafId: string | null;
-    maxLeaves: number;
 }>;
 
 export type SplitCanvasDropTarget = Readonly<{

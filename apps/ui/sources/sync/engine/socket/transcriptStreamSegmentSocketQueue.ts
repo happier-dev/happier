@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { createTranscriptStreamSegmentAssembler, type TranscriptStreamSegmentAssembler } from '@happier-dev/session-core/live';
 import type {
     AnyTranscriptStreamSegmentEphemeralUpdate,
@@ -9,7 +10,7 @@ import type { SessionMessageApplyCoalescerConfig } from '@/sync/engine/sessions/
 import type { NormalizedMessage, RawMessageNormalizationSequenceState } from "@happier-dev/session-core/raw";
 
 type TranscriptStreamSegmentHandler = typeof handleTranscriptStreamSegmentEphemeralUpdate;
-type TimerHandle = ReturnType<typeof setTimeout>;
+type TimerHandle = () => void;
 
 type DeferredTranscriptStreamSegmentQueueState = {
     queued: TranscriptStreamSegmentSocketQueueEntry[];
@@ -63,7 +64,7 @@ export function createTranscriptStreamSegmentSocketQueueController(params: Reado
 
     function clearTimer(state: DeferredTranscriptStreamSegmentQueueState): void {
         if (!state.timer) return;
-        clearTimeout(state.timer);
+        state.timer();
         state.timer = null;
     }
 
@@ -117,14 +118,14 @@ export function createTranscriptStreamSegmentSocketQueueController(params: Reado
 
     function scheduleFlush(sessionId: string, state: DeferredTranscriptStreamSegmentQueueState, windowMs: number): void {
         if (state.timer) return;
-        state.timer = setTimeout(() => {
+        state.timer = armDeadlineTimer(Date.now() + windowMs, () => {
             state.timer = null;
             if (!hasLiveQueuedEntry(sessionId, state)) {
                 drop(sessionId);
                 return;
             }
             void flush(sessionId);
-        }, windowMs);
+        });
     }
 
     function enqueue(entry: TranscriptStreamSegmentSocketQueueEntry, config: SessionMessageApplyCoalescerConfig): void {

@@ -54,6 +54,53 @@ test('server handoff persists an inherited target registry only after the real d
 const execFileAsync = promisify(execFile);
 const script = join(import.meta.dirname, 'dev_targets.mjs');
 
+test('dev-targets status exposes read-only admission holder progress and observation failures', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-admission-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'repo-test'), { recursive: true });
+  await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1,
+    targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' }] }));
+  const { binDir } = writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nprintf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'\n' });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\n[ "${OBSERVATION_FAIL-}" != 1 ] || exit 255\nprintf \'{"state":"observed","sampledAtMs":9000,"owners":[{"pid":42,"token":"11","className":"validation","ageSeconds":14400,"cpuSeconds":3,"recentCpuPercent":0}]}\\n\'\n' });
+  const env = { PATH: `${binDir}:${process.env.PATH}` };
+  const status = await run(['status', 'linux', '--stack=repo-test'], root, env);
+  assert.equal(status.admission?.state, 'observed');
+  assert.equal(status.admission.owners[0].ageSeconds, 14400);
+  assert.equal(status.admission.owners[0].recentCpuPercent, 0);
+  const text = await runRaw(['status', 'linux', '--stack=repo-test'], root, env);
+  assert.match(text.stdout, /validation owner pid 42.*14400s.*~0.0%/);
+  const failed = await run(['status', 'linux', '--stack=repo-test'], root, { ...env, OBSERVATION_FAIL: '1' });
+  assert.equal(failed.admission.state, 'unavailable');
+  assert.equal(failed.status.state, 'ready', 'failed observation does not fabricate empty holders or alter sync health');
+});
+
+test('status and doctor report an idle no-watch first cycle as needs-flush without seeding it', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-no-watch-status-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = { name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state' };
+  await mkdir(join(root, 'repo-test'), { recursive: true });
+  await writeFile(join(root, 'repo-test', 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
+  const { binDir } = writeFakeBin({ root, name: 'mutagen', content: [
+    '#!/bin/sh',
+    'if [ "${STATE_UNSAFE-}" = 1 ]; then printf \'[{"name":"happier-linux","paused":true,"status":"watching"}]\\n\'; exit 0; fi',
+    'case "$2" in',
+    '  list) printf \'[{"name":"happier-linux","paused":false,"status":"watching","alpha":{"connected":true,"scanned":false,"watch":{"mode":"no-watch"}},"beta":{"connected":true,"scanned":false,"watch":{"mode":"no-watch"}}}]\\n\' ;;',
+    '  flush) echo unexpected-flush >&2; exit 9 ;;',
+    'esac',
+  ].join('\n') });
+  writeFakeBin({ root, name: 'ssh', content: '#!/bin/sh\nexit 0\n' });
+  const env = { PATH: `${binDir}:${process.env.PATH}` };
+  assert.equal((await run(['status', 'linux', '--stack=repo-test'], root, env)).status.state, 'needs-flush');
+  const doctor = await run(['doctor', 'linux', '--stack=repo-test'], root, env);
+  assert.equal(doctor.targets[0].synchronization.state, 'needs-flush');
+  assert.equal(doctor.targets[0].ok, true);
+  const paused = await runRaw(['doctor', 'linux', '--stack=repo-test', '--json'], root, { ...env, STATE_UNSAFE: '1' });
+  assert.equal(paused.code, 1);
+  const rejected = JSON.parse(paused.stdout);
+  assert.equal(rejected.targets[0].synchronization.state, 'paused');
+  assert.equal(rejected.targets[0].ok, false);
+});
+
 test('QA placement setter keeps build placement independent and supports auto, ordered, and local', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-qa-placement-'));
   try {
@@ -136,7 +183,9 @@ test('dev-targets command adds, shows, diagnoses, lists, and removes stack-scope
     await mkdir(binDir, { recursive: true });
     for (const executable of ['mutagen', 'ssh']) {
       const path = join(binDir, executable);
-      await writeFile(path, '#!/bin/sh\nexit 0\n');
+      await writeFile(path, executable === 'mutagen'
+        ? '#!/bin/sh\nif [ "$1 $2" = "sync list" ]; then printf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\'; fi\nexit 0\n'
+        : '#!/bin/sh\nexit 0\n');
       await chmod(path, 0o700);
     }
 
@@ -333,7 +382,7 @@ test('dev-targets status, sync, and exec share the moving mirror with a pre-laun
         '#!/bin/sh',
         'printf "ssh|%s\\n" "$*" >> "$DEV_TARGET_COMMAND_LOG"',
         'case "$*" in',
-        '  *getconf*) printf "8 1 0.8 22000000 20 0 0 0 0 0 0 0 0 0 0 darwin\\n"; exit 0 ;;',
+        '  *getconf*) printf "8 1 0.066667 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 darwin\\n"; exit 0 ;;',
         '  *command\\ -v*|*-MNf*|*-O\\ exit*) exit 0 ;;',
         'esac',
         'exit "${DEV_TARGET_SSH_EXIT:-0}"',

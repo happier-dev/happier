@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { deriveSessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 import {
-  deserializeSessionCreationCorrespondenceV1,
   normalizeSessionCreationOrganizationPlacementV1,
   SessionCreationCorrespondenceV1Schema,
-  serializeSessionCreationCorrespondenceV1,
   sessionCreationCorrespondenceMatchesV1,
 } from './sessionCreationCorrespondenceV1.js';
 
@@ -74,14 +72,23 @@ describe('SessionCreationCorrespondenceV1', () => {
     })).toBe(false);
   });
 
-  it('round-trips through the bounded daemon-to-runner carrier', () => {
-    const encoded = serializeSessionCreationCorrespondenceV1(correspondence);
-
-    expect(encoded).toMatch(/^scv1:[A-Za-z0-9_-]+$/u);
-    expect(deserializeSessionCreationCorrespondenceV1(encoded)).toEqual(correspondence);
-    expect(() => deserializeSessionCreationCorrespondenceV1(`${encoded}=`)).toThrow(
-      'Invalid Session creation correspondence transport',
-    );
+  it('compares known retained correspondence fields without admitting unknown request fields', () => {
+    const retained = {
+      ...correspondence,
+      futureField: true,
+      recipe: { ...correspondence.recipe, execution: {
+        ...correspondence.recipe.execution,
+        directory: { ...correspondence.recipe.execution.directory, futureField: true },
+      } },
+    };
+    expect(SessionCreationCorrespondenceV1Schema.safeParse(retained).success).toBe(false);
+    expect(sessionCreationCorrespondenceMatchesV1(retained, correspondence)).toBe(true);
+    expect(sessionCreationCorrespondenceMatchesV1(retained, {
+      ...correspondence,
+      recipe: { ...correspondence.recipe, execution: {
+        ...correspondence.recipe.execution, directory: { kind: 'managed' },
+      } },
+    })).toBe(false);
   });
 
   it('ignores only model ordering time while retaining semantic model, provider and configuration differences', () => {
@@ -102,10 +109,6 @@ describe('SessionCreationCorrespondenceV1', () => {
     };
     expect(SessionCreationCorrespondenceV1Schema.safeParse(selected).success).toBe(true);
     expect(sessionCreationCorrespondenceMatchesV1(selected, retried)).toBe(true);
-    expect(sessionCreationCorrespondenceMatchesV1(
-      deserializeSessionCreationCorrespondenceV1(serializeSessionCreationCorrespondenceV1(SessionCreationCorrespondenceV1Schema.parse(selected))),
-      retried,
-    )).toBe(true);
     for (const ref of [
       { ...selected.recipe.modelSelection.ref, modelId: 'model-b' },
       { ...selected.recipe.modelSelection.ref, providerConnectionId: 'pc_other' },

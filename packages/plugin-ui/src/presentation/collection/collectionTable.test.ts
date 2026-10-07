@@ -77,9 +77,10 @@ describe('detail auto composition', () => {
     for (const presentation of ['board', 'grid'] as const) {
       expect(resolveHappierCollectionComposition({ ...pane, presentation, splitFits: true, tableFits: true, open: true })).toBe('cards');
     }
-    // The table narrows beside the pane and drops columns; it stays a table while the list minimum fits,
-    // even where the list and the detail minima together would not.
-    expect(resolveHappierCollectionComposition({ ...pane, presentation: 'table', splitFits: false, tableFits: true, open: true })).toBe('table');
+    // Beside the open pane the narrowed page reads as the two-line list (the lab's Desk list), never a
+    // squeezed table; at rest the table stands wherever its list minimum fits.
+    expect(resolveHappierCollectionComposition({ ...pane, presentation: 'table', splitFits: true, tableFits: true, open: true })).toBe('list');
+    expect(resolveHappierCollectionComposition({ ...pane, presentation: 'table', splitFits: false, tableFits: true, open: true })).toBe('list');
     expect(resolveHappierCollectionComposition({ ...pane, presentation: 'table', splitFits: false, tableFits: true, open: false })).toBe('table');
     expect(resolveHappierCollectionComposition({ ...pane, presentation: 'table', splitFits: false, tableFits: false, open: true })).toBe('list');
     expect(resolveHappierCollectionComposition({ ...pane, presentation: 'list', splitFits: true, tableFits: true, open: true })).toBe('list');

@@ -68,7 +68,7 @@ test('packed authoring uses the canonical TypeScript owner in the clean consumer
 
   assert.equal(invocation.command, canonicalInvocation.command);
   assert.deepEqual(invocation.argsPrefix, canonicalInvocation.argsPrefix);
-  assert.match(invocation.argsPrefix[0], /\/node_modules\/@typescript\/native\//u);
+  assert.match(invocation.compilerPath, /\/node_modules\/@typescript\/native\//u);
 });
 
 test('packed runtime smoke rejects an archive manifest that drifts from source projection', () => {

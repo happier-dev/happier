@@ -8,27 +8,6 @@ import { isGeneratedPluginArtifactPath } from '../utils/fs/workspaceBuildInputs.
 const WORKER_ENTRY = 'apps/stack/scripts/build/remote_runtime_build.mjs';
 const BUILD_ENV_KEYS = ['HAPPIER_CLI_BUN_EXTERNALS', 'HAPPIER_SERVER_BUN_EXTERNALS', 'HAPPIER_BUILD_DB_PROVIDERS', 'HAPPY_BUILD_DB_PROVIDERS', 'HAPPIER_SERVER_REQUIRE_IROH_NATIVE', 'HAPPIER_STACK_EXPO_CLEAR_CACHE'];
 
-export function resolveRuntimeBuildPlacement({ config, hostTarget, observedTarget, targetName, selection = { components: { daemon: true } } }) {
-  const placement = config?.runtimePlacement?.build;
-  if (placement?.mode !== 'prefer-target') return { target: null, reason: null };
-  const target = config.targets.find(candidate => candidate.name === (targetName ?? placement.targets[0]));
-  if (!target || target.platform !== 'posix') return { target: null, reason: 'build worker requires a POSIX target (WSL is supported)' };
-  if (!observedTarget?.ok) return { target: null, reason: 'build worker is unavailable' };
-  if (!observedTarget.runtimeTarget?.platform || !observedTarget.runtimeTarget?.arch) {
-    return { target: null, reason: 'build worker execution target is unavailable' };
-  }
-  const reason = getComponentArtifactBuildTargetUnavailableReason({
-    components: selection.components,
-    target: { os: hostTarget.platform, arch: hostTarget.arch },
-    platform: observedTarget.runtimeTarget.platform, arch: observedTarget.runtimeTarget.arch,
-    commandProbe: () => observedTarget.supportTargetAdmitted === true,
-  });
-  if (reason) return { target: null, reason };
-  if (observedTarget.admissionReady === false) return { target: null,
-    reason: observedTarget.admissionReason || 'runtime-build admission capacity is unavailable now' };
-  return { target, reason: null };
-}
-
 function sourceFilePath(path) {
   const normalized = String(path).replaceAll('\\', '/');
   if (!normalized || normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || normalized.split('/').some(part => part === '..' || part === '.git') || normalized.includes('\0')) {
@@ -39,14 +18,14 @@ function sourceFilePath(path) {
 
 async function captureBuildSource({ rootDir, selection, env, directory }) {
   const { collectBuildSourceMetadata } = await import('./collect_build_source_metadata.mjs');
-  const { collectRuntimeComponentSourceFingerprints, resolveRuntimeComponentSourcePaths } = await import('./runtime_artifact_identity.mjs');
+  const { collectRuntimeComponentSourceFingerprints, createRuntimeComponentSourceIgnorePath, resolveRuntimeComponentSourcePaths } = await import('./runtime_artifact_identity.mjs');
   const { runCapture } = await import('../utils/proc/proc.mjs');
   const { runRuntimeArchiveCommand } = await import('../utils/dev_targets/runtime_artifact_transfer.mjs');
-  const { withSingleTrailingBuildPass, BuildInputDriftError } = await import('../../../../scripts/workspaces/buildInputConvergence.mjs');
-  return await withSingleTrailingBuildPass({ run: async () => {
-    const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
-    const expectedInputEntries = {};
-    const expectedInputs = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true, inputEntries: expectedInputEntries });
+  const { captureBuildInputFiles } = await import('../../../../scripts/workspaces/buildInputConvergence.mjs');
+  const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
+  const ignoreComponentInputs = Object.fromEntries(['web', 'server', 'daemon'].filter(component => selection.components[component])
+    .map(component => [component, createRuntimeComponentSourceIgnorePath({ component, sourceMetadata, excludeGeneratedPluginArtifacts: true })]));
+  const readPaths = async () => {
     const listed = await runCapture('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: sourceMetadata.repoDir });
     const sourcePaths = new Set();
     for (const raw of new Set(listed.split('\0').filter(Boolean))) {
@@ -57,169 +36,177 @@ async function captureBuildSource({ rootDir, selection, env, directory }) {
     }
     // Git excludes some generated compiler inputs. Capture the canonical
     // component input closure too, including empty-directory membership.
-    const visitInput = async absolute => {
+    const visitInput = async (absolute, ignorePath) => {
+      if (ignorePath?.(absolute)) return;
       const info = await lstat(absolute).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (!info) return;
       sourcePaths.add(sourceFilePath(relative(sourceMetadata.repoDir, absolute)));
-      if (info.isDirectory()) for (const name of await readdir(absolute)) await visitInput(join(absolute, name));
+      if (info.isDirectory()) for (const name of await readdir(absolute)) await visitInput(join(absolute, name), ignorePath);
     };
     for (const component of ['web', 'server', 'daemon']) if (selection.components[component]) {
-      for (const path of resolveRuntimeComponentSourcePaths({ component, sourceMetadata, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true })) await visitInput(path);
+      for (const path of resolveRuntimeComponentSourcePaths({ component, sourceMetadata, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true })) await visitInput(path, ignoreComponentInputs[component]);
     }
-    const files = [...sourcePaths].sort();
-    const listPath = join(directory, 'source-files');
-    await writeFile(listPath, files.join('\0') + '\0');
-    const archivePath = join(directory, 'source.tar');
-    await runRuntimeArchiveCommand(['-cf', archivePath, '--no-recursion', '--null', '-T', listPath], { cwd: sourceMetadata.repoDir, env });
-    const after = await collectRuntimeComponentSourceFingerprints({ selection, sourceMetadata, includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true });
-    if (JSON.stringify(after) !== JSON.stringify(expectedInputs)) throw new BuildInputDriftError('[build] consumed inputs changed during source transfer capture.');
-    return { sourceMetadata, expectedInputs, expectedInputEntries, files, archivePath };
-  } });
+    return [...sourcePaths].sort();
+  };
+  const captureDir = join(directory, 'source');
+  const { files, rereadPaths } = await captureBuildInputFiles({ sourceDir: sourceMetadata.repoDir, captureDir, readPaths });
+  const expectedInputEntries = {};
+  const expectedInputs = await collectRuntimeComponentSourceFingerprints({ selection,
+    sourceMetadata: { ...sourceMetadata, repoDir: captureDir }, identityRepoDir: sourceMetadata.repoDir,
+    includeRuntimeSupportInputs: true, excludeGeneratedPluginArtifacts: true, inputEntries: expectedInputEntries });
+  process.stderr.write(`[build] captured ${files.length} source members; trailing reads=${rereadPaths.length}.\n`);
+  const listPath = join(directory, 'source-files');
+  await writeFile(listPath, files.join('\0') + '\0');
+  const archivePath = join(directory, 'source.tar');
+  await runRuntimeArchiveCommand(['-cf', archivePath, '--no-recursion', '--null', '-T', listPath], { cwd: captureDir, env });
+  return { sourceMetadata, expectedInputs, expectedInputEntries, files, archivePath, captureDir };
 }
 
-export async function buildRuntimeArtifactComponentsAtPlacement({ rootDir, stackBaseDir, selection, target: requestedTarget = { platform: process.platform, arch: process.arch }, env, retentionPolicy, buildLocal, transport = {} }) {
+/** Native AUTO owns worker health, capability, pressure and waiting demand. */
+export async function withAdmittedRuntimeBuildPlacement({
+  rootDir, stackBaseDir, selection, target = { platform: process.platform, arch: process.arch },
+  env = process.env, run, transport = {},
+}) {
   const { loadDevTargetsConfig } = await import('../utils/dev_targets/config.mjs');
   const { config } = await loadDevTargetsConfig({ path: join(stackBaseDir, 'dev-targets.json'), env });
-  const configured = config.runtimePlacement?.build;
-  if (configured?.mode !== 'prefer-target') return await buildLocal({ rootDir, stackBaseDir, selection, target: requestedTarget, env, retentionPolicy });
-  const { runDevTargetsDoctor } = await import('../utils/dev_targets/doctor.mjs');
-  const { runDevTargetCommand, syncDevTarget } = await import('../utils/dev_targets/executor.mjs');
-  const { transferRuntimeFile, runRuntimeArchiveCommand, importRuntimeArtifactClosure, removeRemoteRuntimeTransferArchives } = await import('../utils/dev_targets/runtime_artifact_transfer.mjs');
-  const runCommand = transport.runCommand ?? runDevTargetCommand;
-  const transfer = transport.transfer ?? transferRuntimeFile;
-  const attempts = [];
-  const fallback = async reason => {
-    process.stderr.write('[build] no configured worker can admit this runtime build now; trying the configured local fallback (local admission may wait).\n');
-    process.stderr.write(`[build] ${configured.targets.join(' → ')}: local runtime build fallback: ${reason}.\n`);
-    const result = await buildLocal({ rootDir, stackBaseDir, selection, target: requestedTarget, env, retentionPolicy });
-    return { ...result, buildPlacement: { mode: 'local', fallbackFrom: configured.targets.join(','), attempts, reason } };
-  };
-  const directory = await mkdtemp(join(tmpdir(), 'happier-runtime-build-'));
-  let cleanupRemoteArchives;
-  try {
-    const { WORKSPACE_BUILD_MODE_ENV } = await import('../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs');
-    let captured;
-    let target;
-    let workspaceDir;
-    let command;
-    let request;
-    for (const targetName of configured.targets) {
-      const candidate = config.targets.find(target => target.name === targetName);
-      let reason;
-      try {
-        const doctor = await runDevTargetsDoctor({ targets: candidate ? [candidate] : [], env }, transport.doctorDependencies);
-        const observedTarget = doctor.targets[0];
-        if (selection.components.daemon && observedTarget?.ok
-          && observedTarget.runtimeTarget?.platform === requestedTarget.platform
-          && observedTarget.runtimeTarget?.arch !== requestedTarget.arch) {
-          await syncDevTarget({ target: candidate, stackBaseDir, env }, transport.syncDependencies);
-          const probe = await runCommand({ target: candidate, stackBaseDir, syncAlreadyVerified: true,
-            dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip', env,
-            commandArgs: ['node', '--input-type=module', '-e',
-              'import { getCliBinaryArtifactSupportTargetUnavailableReason as reason } from "./packages/cli-common/componentArtifactTarget.mjs"; const result = reason({target:JSON.parse(process.argv[1])}); if(result) console.error(result); process.exit(result ? 1 : 0);',
-              JSON.stringify({ os: requestedTarget.platform, arch: requestedTarget.arch })],
-          });
-          observedTarget.supportTargetAdmitted = probe.code === 0;
-        }
-        const resolved = resolveRuntimeBuildPlacement({ config, targetName, selection, hostTarget: requestedTarget, observedTarget });
-        reason = resolved.reason;
-        if (resolved.target) {
-          await syncDevTarget({ target: candidate, stackBaseDir, env }, transport.syncDependencies);
-          // Query the actual target-side admission owner, without starting an
-          // outer validation job that could itself queue behind publication.
-          const admission = await runCommand({ target: candidate, stackBaseDir, syncAlreadyVerified: true,
-            dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip', env,
-            commandArgs: ['node', '-e', 'const r=require("node:child_process").spawnSync(process.argv[1],process.argv.slice(2),{stdio:"inherit"}); if(r.error) throw r.error; process.exit(r.status ?? 1);',
-              `${candidate.repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission-check', '--class=runtime-build', `--machine=${candidate.name}`],
-          });
-          observedTarget.admissionReady = admission.code === 0;
-          observedTarget.admissionReason = String(admission.err || admission.stderr || 'runtime-build admission capacity is unavailable now').trim();
-          reason = resolveRuntimeBuildPlacement({ config, targetName, selection, hostTarget: requestedTarget, observedTarget }).reason;
-        }
-      } catch (error) { reason = error instanceof Error ? error.message : String(error); }
-      if (reason) {
-        attempts.push({ target: targetName, reason });
-        process.stderr.write(`[build] ${targetName}: runtime build preflight skipped: ${reason}.\n`);
-        continue;
-      }
-      captured ??= await captureBuildSource({ rootDir, selection, env, directory });
-      // This workspace is outside the continuously synchronized source replica.
-      workspaceDir = posix.join(candidate.cliHomeDir.replaceAll('\\', '/'), 'runtime-build', String(stackBaseDir).replaceAll('\\', '/').split('/').at(-1));
-      command = async (commandArgs, admissionMode = 'wait') => await runCommand({ target: candidate, stackBaseDir, commandArgs, admissionMode, syncAlreadyVerified: true, dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip', env });
-      const requestPath = join(directory, 'request.json');
-      request = { ...captured, archivePath: undefined, selection, workspaceDir,
-        target: requestedTarget,
-        // Apply the component owner's existing runtime policy to bootstrap too,
-        // rather than introducing a strict preparation phase before QA admission.
-        env: { ...Object.fromEntries(BUILD_ENV_KEYS.filter(key => env[key] != null).map(key => [key, env[key]])), [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' },
-      };
-      await writeFile(requestPath, JSON.stringify(request));
-      let preparationError = null;
-      try {
-        const prepared = await command(['node', '-e', 'require("node:fs").mkdirSync(process.argv[1],{recursive:true})', workspaceDir]);
-        if (prepared.code !== 0) throw new Error(`workspace preflight exited ${prepared.code}`);
-        const cleanupCommand = command;
-        const archivePaths = ['source.tar', 'artifacts.tar'].map(name => posix.join(workspaceDir, name));
-        cleanupRemoteArchives = async () => {
-          try {
-            await removeRemoteRuntimeTransferArchives({ archivePaths, runCommand: cleanupCommand });
-          } catch (error) {
-            process.stderr.write(`[build] ${candidate.name}: transfer archive cleanup failed: ${error instanceof Error ? error.message : String(error)}.\n`);
-          }
-        };
-        await transfer({ target: candidate, direction: 'upload', localPath: captured.archivePath, remotePath: posix.join(workspaceDir, 'source.tar') });
-        await transfer({ target: candidate, direction: 'upload', localPath: requestPath, remotePath: posix.join(workspaceDir, 'request.json') });
-      } catch (error) {
-        preparationError = error instanceof Error ? error.message : String(error);
-      }
-      if (preparationError) {
-        await cleanupRemoteArchives?.();
-        cleanupRemoteArchives = undefined;
-        attempts.push({ target: targetName, reason: preparationError });
-        process.stderr.write(`[build] ${targetName}: runtime build preparation skipped: ${preparationError}.\n`);
-        continue;
-      }
-      // The preflight is only an observation: another admitted job can consume
-      // its headroom while source is captured/transferred. Attempt the same
-      // owner without queuing, and retry placement only on its typed denial.
-      await rm(captured.archivePath, { force: true });
-      process.stderr.write(`[build] runtime preparation and compilation on ${candidate.name}: ${workspaceDir}/repo (${request.target.platform}/${request.target.arch}).\n`);
-      const built = await command(['node', WORKER_ENTRY, `--worker-request=${posix.join(workspaceDir, 'request.json')}`], 'try');
-      if (built.admissionUnavailable === true) {
-        await cleanupRemoteArchives?.();
-        cleanupRemoteArchives = undefined;
-        captured = undefined;
-        const reason = 'runtime-build admission capacity changed before dispatch';
-        attempts.push({ target: targetName, reason });
-        process.stderr.write(`[build] ${targetName}: runtime build preflight skipped: ${reason}.\n`);
-        continue;
-      }
-      // A started command's failure is authoritative, including exit 75
-      // without admission denial. Never replay compilation or a lost result.
-      if (built.code !== 0) throw new Error(`[build] ${candidate.name} runtime build failed (exit ${built.code}); no local replay.`);
-      target = candidate;
-      break;
+  const forceLocal = config.runtimePlacement?.build?.mode !== 'prefer-target';
+  const { getRepoDir } = await import('../utils/paths/paths.mjs');
+  const repoDir = getRepoDir(rootDir, env);
+  const spawnController = transport.spawnController ?? (await import('node:child_process')).spawn;
+  const child = spawnController(join(repoDir, 'apps/stack/bin/hstack-exec'), [
+    '--runtime-build-target=' + target.platform + '-' + target.arch,
+    '--runtime-build-components=' + Object.keys(selection.components).filter(key => selection.components[key] === true).join(','),
+    '--control-stdin', ...(forceLocal ? ['--local'] : []), '--', 'node', WORKER_ENTRY, '--worker-request=stdin',
+    '--artifact-target=' + target.platform + '-' + target.arch,
+  ], { cwd: repoDir, env: { ...env, HAPPIER_EXEC_CONFIG_PATH: join(stackBaseDir, 'dev-targets.json'),
+    // This controller owns a new producer placement decision. An inherited
+    // dispatcher marker is not that decision; admission ancestry stays intact.
+    HAPPIER_DEV_TARGET_EXECUTION: '', HAPPIER_RUNTIME_BUILD_WORKER_NAME: forceLocal ? 'local' : '',
+  }, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {}); // A terminal/canceled controller may close before ACK.
+  let ready;
+  let rejectReady;
+  const readiness = new Promise((resolveReady, reject) => {
+    rejectReady = reject;
+    ready = resolveReady;
+  });
+  const completion = new Promise((resolveCompletion, reject) => {
+    child.once('error', error => { rejectReady(error); reject(error); });
+    child.once('close', (code, signal) => {
+      rejectReady(new Error('[build] runtime worker exited before admission (exit ' + code + ', signal ' + signal + ').'));
+      resolveCompletion({ code, signal });
+    });
+  });
+  // Both waits are observed immediately; readiness may fail before compilation.
+  completion.catch(() => {});
+  const { createInterface } = await import('node:readline');
+  const stdout = createInterface({ input: child.stdout });
+  stdout.on('line', line => {
+    if (!line.startsWith('HAPPIER_RUNTIME_BUILD_READY=')) {
+      process.stdout.write(line + '\n');
+      return;
     }
-    // No remaining target needs this capture. Do not hold a second source tree
-    // on the producer while the worker compiles or local fallback runs.
-    if (captured) await rm(captured.archivePath, { force: true });
-    if (!target) return await fallback(attempts.map(attempt => `${attempt.target}: ${attempt.reason}`).join('; '));
-    const artifactArchive = join(directory, 'artifacts.tar');
-    await transfer({ target, direction: 'download', localPath: artifactArchive, remotePath: posix.join(workspaceDir, 'artifacts.tar') });
-    const importedStore = join(directory, 'store');
-    await mkdir(importedStore);
-    await runRuntimeArchiveCommand(['-xf', artifactArchive, '-C', importedStore], { env });
-    await rm(artifactArchive, { force: true });
-    const result = JSON.parse(await readFile(join(importedStore, 'result.json'), 'utf8'));
-    const artifacts = await importRuntimeArtifactClosure({ sourceStackBaseDir: importedStore, stackBaseDir, artifacts: result.artifacts, target: request.target });
-    return { ...result, artifacts, buildPlacement: { mode: 'target', target: target.name, workspaceDir, attempts } };
-  } finally {
     try {
-      await rm(directory, { recursive: true, force: true });
-    } finally {
-      await cleanupRemoteArchives?.();
-    }
+      const value = JSON.parse(line.slice('HAPPIER_RUNTIME_BUILD_READY='.length));
+      if (typeof value.worker !== 'string' || !value.runtimeTarget?.platform || !value.runtimeTarget?.arch) {
+        throw new Error('[build] invalid admitted runtime worker.');
+      }
+      ready(value);
+    } catch (error) { rejectReady(error); }
+  });
+  child.stderr.pipe(process.stderr, { end: false });
+  let dispatched = false;
+  try {
+    const admitted = await readiness;
+    const local = admitted.worker === 'local';
+    const worker = local ? null : config.targets.find(candidate => candidate.name === admitted.worker);
+    if (!local && !worker) throw new Error('[build] admitted runtime worker is not in the configured pool.');
+    return await run({ buildComponents: async options => {
+      if (dispatched) throw new Error('[build] admitted runtime compilation cannot be replayed.');
+      const reason = getComponentArtifactBuildTargetUnavailableReason({
+        components: options.selection.components,
+        target: { os: target.platform, arch: target.arch },
+        platform: admitted.runtimeTarget.platform, arch: admitted.runtimeTarget.arch,
+        commandProbe: () => admitted.supportTargetAdmitted === true,
+      });
+      if (reason) throw new Error(reason);
+      const directory = await mkdtemp(join(tmpdir(), 'happier-runtime-build-'));
+      let cleanup;
+      try {
+        const { WORKSPACE_BUILD_MODE_ENV } = await import('../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs');
+        const buildEnv = { ...Object.fromEntries(BUILD_ENV_KEYS.filter(key => env[key] != null).map(key => [key, env[key]])),
+          [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
+        if (local) {
+          const captured = await captureBuildSource({ rootDir, selection: options.selection, env, directory });
+          const requestPath = join(directory, 'request.json');
+          const resultPath = join(directory, 'result.json');
+          await writeFile(requestPath, JSON.stringify({ ...captured, archivePath: undefined,
+            selection: options.selection, target, workspaceDir: directory, env: buildEnv, localBuild: {
+            rootDir: join(captured.captureDir, 'apps/stack'), stackBaseDir, selection: options.selection, target,
+            retentionPolicy: options.retentionPolicy,
+          }, resultPath }));
+          dispatched = true;
+          child.stdin.write(JSON.stringify({ requestPath }) + '\n');
+          const built = await completion;
+          if (built.code !== 0) throw new Error('[build] local runtime build failed (exit ' + built.code + '); no local replay.');
+          const result = JSON.parse(await readFile(resultPath, 'utf8'));
+          return { ...result, buildPlacement: { mode: 'local' } };
+        }
+        const { runDevTargetCommand } = await import('../utils/dev_targets/executor.mjs');
+        const { transferRuntimeFile, runRuntimeArchiveCommand, importRuntimeArtifactClosure, removeRemoteRuntimeTransferArchives } =
+          await import('../utils/dev_targets/runtime_artifact_transfer.mjs');
+        const workspaceDir = posix.join(worker.cliHomeDir.replaceAll('\\', '/'), 'runtime-build',
+          String(stackBaseDir).replaceAll('\\', '/').split('/').at(-1), target.platform + '-' + target.arch);
+        const command = commandArgs => (transport.runCommand ?? runDevTargetCommand)({
+          target: worker, stackBaseDir, commandArgs, syncAlreadyVerified: true,
+          dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip', env,
+        });
+        const transfer = async ({ direction, localPath, remotePath }) =>
+          await (transport.transfer ?? transferRuntimeFile)({ target: worker, direction, localPath, remotePath });
+        const prepared = await command(['node', '-e', 'require("node:fs").mkdirSync(process.argv[1],{recursive:true})', workspaceDir]);
+        if (prepared.code !== 0) throw new Error('[build] worker workspace preparation failed (exit ' + prepared.code + ').');
+        const archivePaths = ['source.tar', 'artifacts.tar'].map(name => posix.join(workspaceDir, name));
+        cleanup = async () => {
+          await removeRemoteRuntimeTransferArchives({ archivePaths, runCommand: command });
+        };
+        const captured = await captureBuildSource({ rootDir, selection: options.selection, env, directory });
+        const request = { ...captured, archivePath: undefined, captureDir: undefined, selection: options.selection, workspaceDir, target,
+          env: buildEnv,
+        };
+        const requestPath = join(directory, 'request.json');
+        await writeFile(requestPath, JSON.stringify(request));
+        await transfer({ direction: 'upload', localPath: captured.archivePath, remotePath: posix.join(workspaceDir, 'source.tar') });
+        await transfer({ direction: 'upload', localPath: requestPath, remotePath: posix.join(workspaceDir, 'request.json') });
+        await rm(captured.archivePath, { force: true });
+        process.stderr.write('[build] runtime preparation and compilation on ' + admitted.worker + ': ' + workspaceDir + '/repo (' + target.platform + '/' + target.arch + ').\n');
+        dispatched = true;
+        child.stdin.write(JSON.stringify({ requestPath: posix.join(workspaceDir, 'request.json') }) + '\n');
+        const built = await completion;
+        if (built.code !== 0) throw new Error('[build] ' + admitted.worker + ' runtime build failed (exit ' + built.code + '); no local replay.');
+        const artifactArchive = join(directory, 'artifacts.tar');
+        await transfer({ direction: 'download', localPath: artifactArchive, remotePath: posix.join(workspaceDir, 'artifacts.tar') });
+        const importedStore = join(directory, 'store');
+        await mkdir(importedStore);
+        await runRuntimeArchiveCommand(['-xf', artifactArchive, '-C', importedStore], { env });
+        const result = JSON.parse(await readFile(join(importedStore, 'result.json'), 'utf8'));
+        const artifacts = await importRuntimeArtifactClosure({ sourceStackBaseDir: importedStore, stackBaseDir, artifacts: result.artifacts, target });
+        return { ...result, artifacts, buildPlacement: { mode: 'target', target: worker.name, workspaceDir } };
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+        await cleanup?.().catch(error => process.stderr.write('[build] transfer archive cleanup failed: ' + error.message + '.\n'));
+      }
+    } });
+  } finally {
+    child.stdin.end();
+    await completion;
+    stdout.close();
   }
+}
+
+export async function buildRuntimeArtifactComponentsAtPlacement(options) {
+  return await withAdmittedRuntimeBuildPlacement({ ...options,
+    run: execution => execution.buildComponents(options),
+  });
 }
 
 export async function extractCapturedBuildSource({ workspaceDir, files: rawFiles }) {
@@ -286,7 +273,8 @@ async function executeWorkerRequest(requestPath) {
   });
   if (reason) throw new Error(reason);
   const workspaceDir = resolve(request.workspaceDir);
-  const repoDir = await extractCapturedBuildSource({ workspaceDir, files: request.files });
+  const repoDir = request.localBuild ? request.captureDir
+    : await extractCapturedBuildSource({ workspaceDir, files: request.files });
   // Check transfer inputs before install/prebuild generators legitimately
   // update derived inputs. This is the existing source identity owner; only the
   // subsequent build process loads and executes the captured checkout graph.
@@ -332,14 +320,19 @@ async function buildCapturedRequest(requestPath) {
   await bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack' });
   const sourceMetadata = { ...request.sourceMetadata, repoDir };
   const { buildRuntimeArtifactComponents } = await import('./build_stack_artifacts.mjs');
-  const store = join(request.workspaceDir, 'store');
+  const store = request.localBuild?.stackBaseDir ?? join(request.workspaceDir, 'store');
   const result = await buildRuntimeArtifactComponents({ rootDir: join(repoDir, 'apps/stack'), stackBaseDir: store,
     selection: request.selection, env: process.env, target: request.target,
     collectBuildSourceMetadataImpl: async () => sourceMetadata,
+    ...(request.localBuild ? { retentionPolicy: request.localBuild.retentionPolicy } : {}),
   });
   // Keep immutable provenance from the producer; directories are execution
   // placement, not a second source authority.
   result.sourceMetadata = request.sourceMetadata;
+  if (request.localBuild) {
+    await writeFile(request.resultPath, JSON.stringify(result));
+    return;
+  }
   await mkdir(store, { recursive: true });
   await writeFile(join(store, 'result.json'), JSON.stringify(result));
   const { packRuntimeArtifactClosure } = await import('../utils/dev_targets/runtime_artifact_transfer.mjs');
@@ -349,7 +342,31 @@ async function buildCapturedRequest(requestPath) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const worker = process.argv.slice(2).find(arg => arg.startsWith('--worker-request='));
   const captured = process.argv.slice(2).find(arg => arg.startsWith('--build-captured='));
-  if (worker) await executeWorkerRequest(worker.slice('--worker-request='.length));
+  if (worker === '--worker-request=stdin') {
+    const { createInterface } = await import('node:readline');
+    const targetArg = process.argv.slice(2).find(arg => arg.startsWith('--artifact-target='));
+    const [platform, arch] = String(targetArg?.slice('--artifact-target='.length) ?? '').split('-');
+    if (!platform || !arch) throw new Error('[build] runtime control requires an artifact target.');
+    const input = createInterface({ input: process.stdin });
+    const request = new Promise((resolveRequest, reject) => {
+      input.once('line', line => {
+        try { resolveRequest(JSON.parse(line)); } catch (error) { reject(error); }
+      });
+      input.once('close', () => resolveRequest(null));
+    });
+    process.stdout.write('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({
+      worker: process.env.HAPPIER_RUNTIME_BUILD_WORKER_NAME,
+      runtimeTarget: { platform: process.platform, arch: process.arch },
+      supportTargetAdmitted: !getCliBinaryArtifactSupportTargetUnavailableReason({ target: { os: platform, arch } }),
+    }) + '\n');
+    const admitted = await request;
+    input.close();
+    if (admitted) {
+      if (typeof admitted.requestPath !== 'string' || !admitted.requestPath) throw new Error('[build] invalid runtime control request.');
+      await executeWorkerRequest(admitted.requestPath);
+    }
+  }
+  else if (worker) await executeWorkerRequest(worker.slice('--worker-request='.length));
   else if (captured) await buildCapturedRequest(captured.slice('--build-captured='.length));
   else throw new Error('[build] runtime build worker requires an admitted request.');
 }

@@ -19,7 +19,6 @@ describe('useSplitCanvasPersistence', () => {
         const initialState = createSplitCanvasState({
             root: createLeaf('leaf-a'),
             focusedLeafId: 'leaf-a',
-            maxLeaves: 4,
         });
 
         const hook = await renderHook(() => useSplitCanvasPersistence({

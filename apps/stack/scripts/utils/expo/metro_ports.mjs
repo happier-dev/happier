@@ -1,8 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { isTcpPortListening, listListenPids, listListenPidsWithStatus, pickNextFreeTcpPort, probeTcpPortBinding } from '../net/ports.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
-const DEFAULT_METRO_LISTENER_OBSERVATION_TIMEOUT_MS = 5_000;
-const DEFAULT_METRO_BINDING_OBSERVATION_TIMEOUT_MS = 1_000;
 const DEFAULT_STABLE_METRO_PORT_ADMISSION_TIMEOUT_MS = 30_000;
 const DEFAULT_STABLE_METRO_PORT_RETRY_DELAY_MS = 250;
 
@@ -62,20 +61,23 @@ export async function observeMetroPortAvailability(
     host = '127.0.0.1',
     allowBindOnly = false,
     env = process.env,
-    listenerTimeoutMs = DEFAULT_METRO_LISTENER_OBSERVATION_TIMEOUT_MS,
-    bindingTimeoutMs = DEFAULT_METRO_BINDING_OBSERVATION_TIMEOUT_MS,
+    listenerTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
+    bindingTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   } = {},
   {
     listListenPidsWithStatusImpl = listListenPidsWithStatus,
     probeTcpPortBindingImpl = probeTcpPortBinding,
   } = {},
 ) {
+  const deadline = Date.now() + listenerTimeoutMs;
   const listeners = await listListenPidsWithStatusImpl(port, { timeoutMs: listenerTimeoutMs, env });
   if (listeners.status !== 'ok' && !(allowBindOnly && listeners.status === 'unsupported')) {
     return { status: 'inconclusive', reason: listeners.reason ?? listeners.status };
   }
   if (listeners.pids.length) return { status: 'occupied', reason: 'listener-present', pids: [...listeners.pids] };
-  const binding = await probeTcpPortBindingImpl(port, { host, timeoutMs: bindingTimeoutMs });
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return { status: 'inconclusive', reason: 'listener-discovery-timeout' };
+  const binding = await probeTcpPortBindingImpl(port, { host, timeoutMs: Math.min(bindingTimeoutMs, remainingMs) });
   if (binding.status === 'free') return { status: 'free' };
   if (binding.status === 'in_use') return { status: 'occupied', reason: binding.reason };
   return { status: 'inconclusive', reason: binding.reason ?? binding.status };
@@ -107,8 +109,8 @@ async function observeStableMetroPortUntilConclusive({
       host,
       allowBindOnly: false,
       env,
-      listenerTimeoutMs: Math.min(DEFAULT_METRO_LISTENER_OBSERVATION_TIMEOUT_MS, remainingMs),
-      bindingTimeoutMs: Math.min(DEFAULT_METRO_BINDING_OBSERVATION_TIMEOUT_MS, remainingMs),
+      listenerTimeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, remainingMs),
+      bindingTimeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, remainingMs),
     });
     if (observation.status !== 'inconclusive') return observation;
     if (!isRetryableMetroPortObservation(observation)) return observation;

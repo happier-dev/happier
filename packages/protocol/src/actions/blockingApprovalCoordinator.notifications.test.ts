@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ApprovalRequestV1 } from '@happier-dev/protocol';
+import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
 
-import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 
 function createRequest(overrides: Partial<ApprovalRequestV1> = {}): ApprovalRequestV1 {
   return {

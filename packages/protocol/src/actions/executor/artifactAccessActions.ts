@@ -27,7 +27,10 @@ export function createArtifactAccessActionsV1(params: Readonly<{
     const resource = await params.read(input.artifactId, args.signal ? { signal: args.signal } : undefined);
     args.signal?.throwIfAborted();
     if (!resource) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
-    if (!getArtifactUseTargetV1(resource).canShare) throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
+    // Kind admission prevents new grants, not inspection or revocation of retained access.
+    if (args.actionId === 'artifact.access.grants.set' && !getArtifactUseTargetV1(resource).canShare) {
+      throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
+    }
     if (!resource.access) throw Object.assign(new Error('artifact_access_unavailable'), { code: 'artifact_access_unavailable' });
     if (args.actionId !== 'artifact.access.grants.list' && resource.access !== 'owner' && resource.access !== 'admin') {
       throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });

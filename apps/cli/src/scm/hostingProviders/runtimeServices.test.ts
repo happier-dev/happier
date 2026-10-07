@@ -238,6 +238,55 @@ function createAuthenticationBindingOwner(
 }
 
 describe('createHostScmHostingProviderRuntimeServices', () => {
+  it('uses a declared machine-native credential for an unbound GitHub Enterprise purpose without storing it', async () => {
+    const service = { pluginId: GITHUB_PLUGIN_MANIFEST.id, localId: 'github-account' };
+    let bindings: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: {
+        read: async () => bindings,
+        update: async (mutate) => { bindings = mutate(bindings); return bindings; },
+        subscribe: () => ({ dispose() {} }),
+      },
+      selectTarget: async () => { throw new Error('A source read must not select an account'); },
+      resolveTarget: async () => null,
+      materializeAccount: async () => { throw new Error('No account was selected'); },
+      // The native materializer is the OS credential boundary; the purpose owner and SCM host are real.
+      materializeNative: async (input) => {
+        expect(input.service).toEqual(service);
+        expect(input.request).toMatchObject({ kind: 'httpHeaders', origin: 'https://github.example.test' });
+        return { kind: 'httpHeaders', headers: { Authorization: 'Bearer ephemeral-enterprise-token' } };
+      },
+      projectTargetAccounts: async () => { throw new Error('Native login is not an account inventory'); },
+      assertTargetAccountMaterializable: async () => undefined,
+    });
+    const runtimeInput = createRuntimeInput();
+    const descriptors = runtimeInput.contributes.connectedAccountDescriptors ?? [];
+    const descriptor = descriptors[0];
+    if (!descriptor) throw new Error('GitHub descriptor fixture is missing');
+    const services = createHostScmHostingProviderRuntimeServices({
+      ...runtimeInput,
+      contributes: {
+        ...runtimeInput.contributes,
+        connectedAccountDescriptors: [{
+          ...descriptor,
+          definition: {
+            ...descriptor.definition,
+            authentication: { ...descriptor.definition.authentication, native: { systemTool: 'gh' } },
+          },
+        }],
+      },
+      resolveConnectedAccountPurposeBindingOwner: () => owner,
+    });
+    await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github', () => (
+      services.resolveScmHostingTokenMaterialization?.({
+        kind: 'scm_hosting_token', providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+        host: 'github.example.test', provider: { ...githubProvider, baseUrl: 'https://github.example.test' },
+      })
+    ))).resolves.toEqual({ kind: 'available', token: 'ephemeral-enterprise-token' });
+    expect(bindings).toEqual({ v: 1, bindings: [] });
+    expect(JSON.stringify(bindings)).not.toContain('ephemeral-enterprise-token');
+  });
+
   it.each([
     { selected: 'other-deployment', rotate: false, expected: 'missing' },
     { selected: 'exact-deployment', rotate: false, expected: 'available' },

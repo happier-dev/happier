@@ -1020,6 +1020,49 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
+    it('keeps the same window, and tells nobody, when a pass or a lens adds nothing new', async () => {
+        // Every subscriber re-plans the whole list from a new window: a paced-away view refresh and a re-applied
+        // identical lens read nothing new, so they must not hand subscribers a new window to recompute from.
+        const harness = createHarness();
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+        await store.refresh('view');
+        const settled = store.getSnapshot().window;
+        expect(settled).toBeDefined();
+
+        harness.clock.nowMs += 1;
+        await store.refresh('view');
+        expect(store.getSnapshot().window).toBe(settled);
+
+        let notified = 0;
+        const unsubscribe = store.subscribe(() => { notified += 1; });
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1 });
+        expect(notified).toBe(0);
+        expect(store.getSnapshot().window).toBe(settled);
+        unsubscribe();
+        store.dispose();
+    });
+
+    it('counts the passes that read, so readers keyed on a pass follow reads and not pacing', async () => {
+        const harness = createHarness();
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+        expect(store.getSnapshot().passes).toBe(0);
+        await store.refresh('view');
+        expect(store.getSnapshot().passes).toBe(1);
+        // Inside the minimum interval a view demand reads nothing: no pass.
+        await store.refresh('view');
+        expect(store.getSnapshot().passes).toBe(1);
+        // A manual press reads, even when what it read is unchanged.
+        await store.refresh('manual');
+        expect(store.getSnapshot().passes).toBe(2);
+        store.dispose();
+    });
+
     it('derives fresh-to-stale on read without scheduling a clock-driven wake', async () => {
         const realSetTimeout = globalThis.setTimeout;
         let freshnessWake: (() => void) | null = null;

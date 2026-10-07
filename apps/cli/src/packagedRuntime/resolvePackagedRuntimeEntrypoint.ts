@@ -331,7 +331,7 @@ export type AuthoritativePackagedRuntimeCustody = Readonly<{
 
 /**
  * Resolve first-party packaged custody to either the exact executing runner
- * snapshot or an immutable managed version root. Source modules intentionally
+ * snapshot, Stack daemon artifact, or immutable managed version root. Source modules intentionally
  * return null. Snapshot custody is selected before managed-layout validation;
  * snapshots are already immutable runtime roots, not version-layout aliases.
  */
@@ -355,6 +355,42 @@ export function resolveAuthoritativePackagedRuntimeCustody(
     || authority.provenance === 'source-module'
     || authority.provenance === 'source-snapshot'
   ) return null;
+
+  // Stack snapshots link `cli` to the producer's immutable daemon artifact.
+  // Resolve that link before identifying custody so native and Node launches,
+  // and snapshots sharing an artifact, retain the same bundled-plugin identity.
+  // The producer manifest binds the exact payload and artifact id; a directory
+  // name alone cannot establish custody. Managed installs retain marker checks.
+  try {
+    const root = realpathSync(authority.runtimeRoot);
+    const artifactDir = dirname(root);
+    if (
+      basename(root) === 'payload'
+      && basename(dirname(artifactDir)) === 'daemon'
+      && basename(dirname(dirname(artifactDir))) === 'artifacts'
+    ) {
+      const manifest: unknown = JSON.parse(readFileSync(join(artifactDir, 'manifest.json'), 'utf8'));
+      if (
+        manifest && typeof manifest === 'object' && !Array.isArray(manifest)
+        && 'version' in manifest && manifest.version === 1
+        && 'component' in manifest && manifest.component === 'daemon'
+        && 'payloadDir' in manifest && manifest.payloadDir === 'payload'
+        && 'artifactFingerprint' in manifest && manifest.artifactFingerprint === basename(artifactDir)
+      ) {
+        return Object.freeze({
+          root,
+          packagedRuntime: Object.freeze({
+            kind: 'pinned_runner_snapshot',
+            snapshotId: manifest.artifactFingerprint,
+          }),
+          provenance: authority.provenance,
+        });
+      }
+    }
+  } catch {
+    // Unavailable or unbound artifacts still fail through the typed identity
+    // owner below; never substitute another installed channel's runtime.
+  }
 
   const processEnv = params.processEnv ?? process.env;
   let outsideLayoutError: FirstPartyVersionRootIdentityError | null = null;

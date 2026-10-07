@@ -11,6 +11,7 @@ type FlushReason = 'tool-call-boundary' | 'turn-end' | 'abort';
 type KeyedStreamArgs = Readonly<{
   streamKey: string;
   sidechainId: string | null;
+  messageId?: string;
 }>;
 
 export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArgs>(params: Readonly<{
@@ -32,9 +33,11 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     const durableCommitsRequireExplicitEnable = typeof params.durableCommitsRequireExplicitEnable === 'function'
       ? params.durableCommitsRequireExplicitEnable(args)
       : params.durableCommitsRequireExplicitEnable;
+    const messageId = args.messageId;
     const writer = createStreamedTranscriptWriter({
       provider: params.provider,
       session: params.createSessionForStream(args),
+      ...(messageId ? { makeLocalId: () => messageId } : {}),
       initialCheckpointDelayMs: params.initialCheckpointDelayMs,
       checkpointIntervalMs: params.checkpointIntervalMs,
       checkpointMinChars: params.checkpointMinChars,

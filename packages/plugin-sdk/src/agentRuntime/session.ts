@@ -289,6 +289,8 @@ export type AgentSessionRuntimeEvent =
       turnId: string;
       agentTurnId?: string;
       kind: 'message-delta';
+      /** Stable transcript identity, shared with the committed message when the Agent supplies it. */
+      messageId?: string;
       channel: 'assistant' | 'reasoning';
       text: string;
       sidechainId?: string;

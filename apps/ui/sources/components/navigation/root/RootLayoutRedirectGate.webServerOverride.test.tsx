@@ -57,12 +57,25 @@ describe('supplied Home admission before shell mount', () => {
         vi.unstubAllGlobals();
     });
 
-    async function mountFor(address: string, onMount: (serverUrl: string) => void, withNavigation = false) {
-        const replaceRelativeUrl = vi.fn();
+    async function mountFor(address: string, onMount: (serverUrl: string) => void, withNavigation = false, historyState: unknown = null) {
+        // Match the app entry: the real Sync runtime must be registered before
+        // Router admission can switch a Home. resetModules retires that runtime.
+        await import('@/sync/syncEngine');
+        const location = { href: `https://app.example.test${navigation.pathname}?server=${encodeURIComponent(address)}&tab=work` };
+        // Browser history is the external boundary. Apply writes so assertions
+        // observe the retained URL/state rather than only an incidental call.
+        const history = {
+            state: historyState,
+            replaceState: vi.fn((state: unknown, _title: string, relativeUrl: string) => {
+                history.state = state;
+                location.href = new URL(relativeUrl, location.href).href;
+            }),
+        };
+        const replaceRelativeUrl = history.replaceState;
         vi.stubGlobal('window', {
             localStorage: globalThis.localStorage,
-            location: { href: `https://app.example.test${navigation.pathname}?server=${encodeURIComponent(address)}&tab=work` },
-            history: { replaceState: replaceRelativeUrl },
+            location,
+            history,
         });
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         const profiles = await import('@/sync/domains/server/serverProfiles');
@@ -75,7 +88,7 @@ describe('supplied Home admission before shell mount', () => {
         }
         const shell = withNavigation ? <RootLayoutRedirectGate><ShellProbe /></RootLayoutRedirectGate> : <ShellProbe />;
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WebServerOverrideGate>{shell}</WebServerOverrideGate></InjectedAuthProvider>);
-        return { screen, replaceRelativeUrl, profiles };
+        return { screen, replaceRelativeUrl, profiles, location, history };
     }
 
     it('verifies and selects the supplied Home before the unauthenticated shell mounts', async () => {
@@ -96,6 +109,9 @@ describe('supplied Home admission before shell mount', () => {
             await vi.waitFor(() => expect(runtimeFetch).toHaveBeenCalledWith(`${address}/health`, expect.any(Object)));
             expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === address)).toBe(false);
             await act(async () => { releaseHealth(); });
+            const { Modal } = await import('@/modal');
+            await vi.waitFor(() => expect(mountedHomes).toHaveLength(1));
+            expect(Modal.confirm).not.toHaveBeenCalled();
             await vi.waitFor(() => expect(mountedHomes).toEqual([address]));
         } finally {
             releaseHealth();
@@ -169,6 +185,63 @@ describe('supplied Home admission before shell mount', () => {
             await vi.waitFor(() => expect(navigation.pathname).toBe('/settings/server/add'));
             expect(navigation.replace).toHaveBeenCalledWith('/settings/server/add?address=https%3A%2F%2Ffailed-session-home.example.test&source=url');
         } finally {
+            dismiss();
+            await screen.unmount();
+        }
+    });
+
+    it('preserves newer navigation and its history entry after a same-Home auth refresh succeeds', async () => {
+        const address = 'https://retained.example.test';
+        navigation.pathname = '/settings/actions/session.spawn_new';
+        const retainedEntry = { key: 'expo-entry', workspace: { position: 4 } };
+        // Same-Home refresh leaves the shell live. Queue genuine browser
+        // navigation while the real injected auth provider completes its await.
+        const { screen, location, history } = await mountFor(address, () => {
+            queueMicrotask(() => {
+                window.location.href = `https://app.example.test/settings/sub-agent?server=${encodeURIComponent(address)}&panel=delegation#report-back`;
+            });
+        }, false, retainedEntry);
+        try {
+            await vi.waitFor(() => expect(history.replaceState).toHaveBeenCalled(), { timeout: 300000 });
+            const current = new URL(location.href);
+            expect({ pathname: current.pathname, search: current.search, hash: current.hash, state: history.state }).toEqual({
+                pathname: '/settings/sub-agent', search: '?panel=delegation', hash: '#report-back', state: retainedEntry,
+            });
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('preserves newer navigation and its history entry when the supplied Home is dismissed', async () => {
+        const address = 'https://navigation-dismissed.example.test';
+        navigation.pathname = '/settings/actions/session.spawn_new';
+        let completeHealth!: () => void;
+        const healthPending = new Promise<void>((resolve) => { completeHealth = resolve; });
+        let dismiss!: () => void;
+        const choice = new Promise<boolean>((resolve) => { dismiss = () => resolve(false); });
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue(choice);
+        runtimeFetch.mockImplementation(async (rawUrl) => {
+            const url = String(rawUrl);
+            if (url.endsWith('/health')) await healthPending;
+            return new Response('', { status: 503 });
+        });
+        const retainedEntry = { key: 'expo-entry', workspace: { position: 4 } };
+        const { screen, location, history } = await mountFor(address, () => {}, false, retainedEntry);
+        try {
+            await vi.waitFor(() => expect(runtimeFetch).toHaveBeenCalledWith(`${address}/health`, expect.any(Object)));
+            location.href = `https://app.example.test/settings/sub-agent?server=${encodeURIComponent(address)}&panel=delegation#report-back`;
+            await act(async () => { completeHealth(); });
+            await vi.waitFor(() => expect(confirm).toHaveBeenCalled(), { timeout: 300000 });
+            await act(async () => { dismiss(); });
+            await vi.waitFor(() => expect(history.replaceState).toHaveBeenCalled(), { timeout: 300000 });
+
+            const current = new URL(location.href);
+            expect({ pathname: current.pathname, search: current.search, hash: current.hash, state: history.state }).toEqual({
+                pathname: '/settings/sub-agent', search: '?panel=delegation', hash: '#report-back', state: retainedEntry,
+            });
+        } finally {
+            completeHealth();
             dismiss();
             await screen.unmount();
         }

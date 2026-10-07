@@ -88,7 +88,7 @@ describe('live-stream player state', () => {
         });
     });
 
-    it('falls back to MJPEG on H.264 startup timeout when the source supports the baseline', async () => {
+    it('falls back to MJPEG on an actual H.264 decoder error when the source supports the baseline', async () => {
         const mod = await import('./player').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('reduceLiveStreamPlayerState');
@@ -102,8 +102,8 @@ describe('live-stream player state', () => {
             capabilities: webAvccCapabilities,
         });
         const timedOut = mod.reduceLiveStreamPlayerState(opened, {
-            type: 'startup_timeout',
-            reasonCode: 'decoder_startup_timeout',
+            type: 'decoder_error',
+            reasonCode: 'webcodecs_decode_failed',
         });
 
         expect(opened).toMatchObject({
@@ -115,11 +115,11 @@ describe('live-stream player state', () => {
             phase: 'degraded',
             selectedCodec: 'image.mjpeg',
             activeRenderer: 'mjpeg',
-            diagnostic: { reasonCode: 'decoder_startup_timeout' },
+            diagnostic: { reasonCode: 'webcodecs_decode_failed' },
         });
     });
 
-    it('clears stale H.264 frame data when startup fallback switches to an image codec', async () => {
+    it('clears stale H.264 frame data when decoder failure switches to an image codec', async () => {
         const mod = await import('./player').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('reduceLiveStreamPlayerState');
@@ -141,8 +141,8 @@ describe('live-stream player state', () => {
             droppedFrames: 1,
         });
         const timedOut = mod.reduceLiveStreamPlayerState(h264Frame, {
-            type: 'startup_timeout',
-            reasonCode: 'decoder_startup_timeout',
+            type: 'decoder_error',
+            reasonCode: 'webcodecs_decode_failed',
         });
 
         expect(timedOut).toMatchObject({
@@ -152,13 +152,13 @@ describe('live-stream player state', () => {
             decodedFrames: 0,
             droppedFrames: 0,
             bufferedBytes: 0,
-            diagnostic: { reasonCode: 'decoder_startup_timeout' },
+            diagnostic: { reasonCode: 'webcodecs_decode_failed' },
         });
         expect(timedOut.lastFrameUrl).toBeUndefined();
         expect(timedOut.lastFrameAtMs).toBeUndefined();
     });
 
-    it('falls back to single image frames on H.264 startup timeout when MJPEG is unavailable', async () => {
+    it('falls back to single image frames on H.264 decoder failure when MJPEG is unavailable', async () => {
         const mod = await import('./player').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('reduceLiveStreamPlayerState');
@@ -177,15 +177,15 @@ describe('live-stream player state', () => {
             },
         });
         const timedOut = mod.reduceLiveStreamPlayerState(opened, {
-            type: 'startup_timeout',
-            reasonCode: 'decoder_startup_timeout',
+            type: 'decoder_error',
+            reasonCode: 'webcodecs_decode_failed',
         });
 
         expect(timedOut).toMatchObject({
             phase: 'degraded',
             selectedCodec: 'image.frame.v1',
             activeRenderer: 'mjpeg',
-            diagnostic: { reasonCode: 'decoder_startup_timeout' },
+            diagnostic: { reasonCode: 'webcodecs_decode_failed' },
         });
     });
 
@@ -241,8 +241,8 @@ describe('live-stream player state', () => {
             capabilities: webAvccCapabilities,
         });
         const timedOut = mod.reduceLiveStreamPlayerState(opened, {
-            type: 'startup_timeout',
-            reasonCode: 'decoder_startup_timeout',
+            type: 'decoder_error',
+            reasonCode: 'webcodecs_decode_failed',
         });
         const lateH264 = mod.reduceLiveStreamPlayerState(timedOut, {
             type: 'frame',

@@ -30,6 +30,22 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       rawSession: { machineId: 'local-machine', path: join(root, 'workspace'),
         metadata: JSON.stringify({ machineId: 'local-machine', path: join(root, 'workspace') }) } });
   }
+  it.each(['widget-area-layout.v1', 'home-hub-layout.v1'])('refuses approved agent public publication of %s before transport', async kind => {
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/v1/account/encryption')
+      ? { mode: 'plain', updatedAt: 1 } : { id: artifactId, header: encodePlainArtifactStoredContent({ kind }),
+        body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }));
+    const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: artifactId }, expiresAt: null, maxUses: null,
+      useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+    http.post.mockResolvedValue({ status: 200, data: { publicShare, isolatedOrigin: 'https://public.example.test' } });
+    const executor = createActionExecutor(deps());
+    expect(await executor.execute('artifact.public_link.create', { artifactId }, { surface: 'cli',
+      // The host resumes an approved invocation with this canonical execution context.
+      bypassApprovals: true, authority: 'present_user',
+      actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'session',
+      presentUserConfirmation: { actionId: 'artifact.public_link.create' } })).toMatchObject({ ok: false, errorCode: 'artifact_kind_not_shareable' });
+    expect(http.post).not.toHaveBeenCalled();
+  });
   it('keeps native widgets available without a daemon and edits independent Home copies through the Account Artifact owner', async () => {
     const accountId = 'native-widget-account';
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;

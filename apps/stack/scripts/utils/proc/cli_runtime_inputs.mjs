@@ -6,7 +6,12 @@ import { join, resolve, relative } from 'node:path';
 import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
 import { isDevRuntimeReloadIgnoredPath } from '../dev/watchSignature.mjs';
 import { forgetCachedFileDigest, readCachedFileDigest } from '../fs/cached_file_digest.mjs';
-import { resolveWorkspaceBuildInputWatchPaths } from '../fs/workspaceBuildInputs.mjs';
+import { createWorkspaceBuildInputIgnorePath, resolveWorkspaceBuildInputWatchPaths } from '../fs/workspaceBuildInputs.mjs';
+
+export function createHappyCliRuntimeInputIgnorePath({ cliDir, includeShippedFiles = false, excludeGeneratedPluginArtifacts = false }) {
+  return createWorkspaceBuildInputIgnorePath(collectHappyCliRuntimePackageDirs({ cliDir }).map(({ dir }) => dir),
+    { repoDir: resolve(cliDir, '..', '..'), hostDir: cliDir, includeShippedFiles, excludeGeneratedPluginArtifacts });
+}
 
 export function collectHappyCliRuntimePackageDirs({
   cliDir,
@@ -85,10 +90,13 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
   inputEntries,
 } = {}) {
   const repoRoot = resolve(cliDir, '..', '..');
+  const ignorePath = includeShippedFiles
+    ? createHappyCliRuntimeInputIgnorePath({ cliDir, includeShippedFiles, excludeGeneratedPluginArtifacts })
+    : isDevRuntimeReloadIgnoredPath;
   let newestMtimeNs = null;
   const fingerprint = createHash('sha256');
   const visit = async (path) => {
-    if (!includeShippedFiles && isDevRuntimeReloadIgnoredPath(path)) return;
+    if (ignorePath(path)) return;
     let fileStat;
     try {
       fileStat = await lstat(path, { bigint: true });

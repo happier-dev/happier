@@ -10,6 +10,7 @@ import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/d
 import { storage } from '@/sync/domains/state/storageStore';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useWorkflowRunWindow } from './workflowLibraryReads';
 
 const executeMock = vi.hoisted(() => vi.fn());
@@ -24,14 +25,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
     createFrontDoorActionExecute: () => executeMock,
 }));
 
-// Applied network identity is the transport boundary. The Account lifetime below it remains real.
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 let serverId: string;
+let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 
 function definition(definitionId: string) {
     return { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${definitionId}` }, contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null };
@@ -47,10 +44,13 @@ function Probe(props: Readonly<{ name: string; useLibrary: typeof import('./work
 let previousStorageState = storage.getState();
 beforeEach(async () => {
     previousStorageState = storage.getState();
+    previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+    previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     appliedSnapshot = runtime.getActiveServerSnapshot;
     const profile = await runtime.upsertAndActivateServer({ serverUrl: 'http://workflow-window.test', name: 'Workflow Home' });
     serverId = profile.id;
+    publishAppliedActiveServerSnapshot(appliedSnapshot());
     storage.setState({ profileScope: { serverId, accountId: account.id } });
 });
 
@@ -64,9 +64,48 @@ afterEach(async () => {
     probes = {};
     account.id = 'account-a';
     storage.setState(previousStorageState);
+    publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable);
 });
 
 describe('useWorkflowDefinitionLibrary', () => {
+    it('refreshes the demanded pages on a later consumer mount, retaining rows until authoritative replacement', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')], nextCursor: 'next' } })
+            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-2')], nextCursor: 'tail' } });
+        const first = await renderHook(() => useWorkflowDefinitionLibrary());
+        await act(async () => { first.getCurrent().loadMore(); });
+        const before = first.getCurrent().definitions;
+        const refreshTail = createDeferred<unknown>();
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')], nextCursor: 'new-next' } })
+            .mockReturnValueOnce(refreshTail.promise);
+        const second = await renderHook(() => useWorkflowDefinitionLibrary());
+        expect(first.getCurrent().definitions).toBe(before);
+        await act(async () => { refreshTail.resolve({ ok: true, result: { definitions: [definition('wf-2')], nextCursor: 'new-tail' } }); await refreshTail.promise; });
+        expect(first.getCurrent().definitions).toBe(before);
+        expect(second.getCurrent().definitions).toBe(before);
+        expect(executeMock.mock.calls.map(([, input]) => input)).toEqual([{}, { cursor: 'next' }, {}, { cursor: 'new-next' }]);
+        executeMock.mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')] } });
+        await act(async () => { first.getCurrent().retry(); });
+        expect(first.getCurrent().definitions.map((row) => row.definitionId)).toEqual(['wf-1']);
+        expect(first.getCurrent().hasMore).toBe(false);
+    });
+    it('keeps rows and subscribers stable when a refresh returns the same definitions and plugin sources', async () => {
+        const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
+        const { BUILTIN_WORKFLOW_CATALOG_V1 } = await import('@happier-dev/protocol');
+        const page = { definitions: [definition('wf-1')], pluginWorkflows: [{ workflow: 'plugin:example.recipe/check',
+            pluginId: 'example.recipe', version: '1.2.3', title: 'Check changes', definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition }] };
+        executeMock.mockImplementation(async () => ({ ok: true, result: structuredClone(page) }));
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useWorkflowDefinitionLibrary(); });
+        const before = hook.getCurrent();
+        expect(before.definitions.map((row) => row.definitionId)).toEqual(['wf-1']);
+        expect(before.pluginWorkflows).toHaveLength(1);
+        const settledRenders = renders;
+        await act(async () => { hook.getCurrent().retry(); });
+        expect(hook.getCurrent().definitions).toBe(before.definitions);
+        expect(hook.getCurrent().pluginWorkflows).toBe(before.pluginWorkflows);
+        expect(renders).toBe(settledRenders);
+    });
     it('reads nothing without visible demand, then serves the current Account on enable', async () => {
         const { useWorkflowDefinitionLibrary } = await import('./workflowLibraryReads');
         executeMock.mockResolvedValue({ ok: true, result: { definitions: [definition('wf-demand')] } });
@@ -162,7 +201,21 @@ describe('useWorkflowDefinitionLibrary', () => {
     });
 });
 
+
 describe('useWorkflowRunWindow demand', () => {
+    it('does not rerender one window when another window loads or completes its read', async () => {
+        executeMock.mockResolvedValueOnce({ ok: true, result: { runs: [], metadataByRunId: {} } });
+        let renders = 0;
+        const all = await renderHook(() => { renders += 1; return useWorkflowRunWindow('all'); });
+        expect(all.getCurrent().status).toBe('loaded');
+        const settledRenders = renders;
+        const next = createDeferred<unknown>();
+        executeMock.mockReturnValueOnce(next.promise);
+        await renderHook(() => useWorkflowRunWindow('active'));
+        expect(renders).toBe(settledRenders);
+        await act(async () => { next.resolve({ ok: true, result: { runs: [], metadataByRunId: {} } }); await next.promise; });
+        expect(renders).toBe(settledRenders);
+    });
     it('rechecks attention when its Account wake arrives during the first request', async () => {
         const pending = createDeferred<Response>();
         const failed = createAutomationRunFixture({ id: 'cleared-during-read', state: 'failed' });

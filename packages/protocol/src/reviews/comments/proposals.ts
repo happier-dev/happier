@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-export const REVIEW_COMMENT_PROPOSALS_MAX_ENCODED_BYTES_V1 = 1_048_576;
-
 const WorkspaceRelativeReviewPathV1Schema = z.string().trim().min(1).max(4096).refine((value) => {
   const normalized = value.replaceAll('\\', '/');
   if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return false;
@@ -38,13 +36,5 @@ export const ReviewCommentProposalV1Schema = z.object({
 }).strict();
 export type ReviewCommentProposalV1 = z.infer<typeof ReviewCommentProposalV1Schema>;
 
-export const ReviewCommentProposalsV1Schema = z.array(ReviewCommentProposalV1Schema).max(200).superRefine((value, ctx) => {
-  const encodedBytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
-  if (encodedBytes > REVIEW_COMMENT_PROPOSALS_MAX_ENCODED_BYTES_V1) {
-    ctx.addIssue({
-      code: 'custom',
-      message: `Proposed review comments exceed ${REVIEW_COMMENT_PROPOSALS_MAX_ENCODED_BYTES_V1} encoded bytes`,
-    });
-  }
-});
+export const ReviewCommentProposalsV1Schema = z.array(ReviewCommentProposalV1Schema);
 export type ReviewCommentProposalsV1 = z.infer<typeof ReviewCommentProposalsV1Schema>;

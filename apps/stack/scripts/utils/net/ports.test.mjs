@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,6 +61,50 @@ test('listener discovery preserves timeout instead of manufacturing an empty lis
     pids: [],
     reason: 'listener-discovery-timeout',
   });
+});
+
+test('Linux listener discovery reads the exact socket from ss without a process-wide lsof scan', async () => {
+  // OS command discovery and execution are the boundary. This is ss's observed
+  // numeric TCP listener format, including shared sockets and IPv6 addresses.
+  const observe = (candidatePids) => listListenPidsWithStatus(34567, {
+    platform: 'linux',
+    candidatePids,
+    resolveCommandPathImpl: async (command) => `/usr/bin/${command}`,
+    runCaptureImpl: async (command, args) => {
+      if (command !== '/usr/bin/ss') throw Object.assign(new Error('lsof scan timed out'), { code: 'ETIMEDOUT' });
+      assert.deepEqual(args, ['-H', '-ltnp', 'sport = :34567']);
+      return [
+        'LISTEN 0 128 127.0.0.1:34567 0.0.0.0:* users:(("pid=999",pid=701,fd=4),("ssh",pid=702,fd=5))',
+        'LISTEN 0 128 [::]:34567 [::]:* users:(("ssh",pid=701,fd=6))',
+        'LISTEN 0 128 127.0.0.1:345670 0.0.0.0:* users:(("other",pid=703,fd=4))',
+      ].join('\n');
+    },
+  });
+  assert.deepEqual(await observe(), { status: 'ok', supported: true, pids: [701, 702] });
+  assert.deepEqual(await observe([702]), { status: 'ok', supported: true, pids: [702] });
+});
+
+test('Linux socket-table listeners without a process identity remain inconclusive', async () => {
+  const result = await listListenPidsWithStatus(34567, {
+    platform: 'linux',
+    resolveCommandPathImpl: async () => '/usr/bin/ss',
+    runCaptureImpl: async () => 'LISTEN 0 128 127.0.0.1:34567 0.0.0.0:*',
+  });
+  assert.deepEqual(result, { status: 'error', supported: true, pids: [], reason: 'listener-process-identity-unavailable' });
+});
+
+test('Linux listener discovery retains lsof when ss is unavailable or a process group is requested', async () => {
+  for (const processGroupId of [undefined, 801]) {
+    const result = await listListenPidsWithStatus(34567, {
+      platform: 'linux', processGroupId,
+      resolveCommandPathImpl: async (command) => command === 'lsof' || processGroupId ? `/usr/bin/${command}` : '',
+      runCaptureImpl: async (command) => {
+        if (command !== '/usr/bin/lsof') throw new Error('ss cannot prove process-group membership');
+        return '701\n';
+      },
+    });
+    assert.deepEqual(result, { status: 'ok', supported: true, pids: [701] });
+  }
 });
 
 test('listener discovery returns a typed timeout when lsof cannot close after its deadline', { timeout: 3_000 }, async (t) => {
@@ -227,7 +272,7 @@ test('isTcpPortFree delegates its decision to typed availability evidence', asyn
   });
 
   assert.equal(free, false);
-  assert.deepEqual(observed, { port: 34567, host: '127.0.0.1', timeoutMs: 250 });
+  assert.deepEqual(observed, { port: 34567, host: '127.0.0.1', timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS });
 });
 
 test('waitForTcpPortFree preserves typed final evidence under one absolute deadline', async () => {
@@ -282,6 +327,37 @@ test('pickNextFreeTcpPort does not accept late free evidence beyond its absolute
     }),
     (error) => error?.code === 'EPORTALLOCATIONTIMEOUT',
   );
+});
+
+test('port allocation and binding share the Stack observation budget under controller load', async () => {
+  let now = 0;
+  const budgets = [];
+  const port = await pickNextFreeTcpPort(43100, {
+    nowImpl: () => now,
+    networkInterfacesImpl: () => completeNetworkInterfaceInventory({
+      lo0: [{ address: '127.0.0.1', family: 'IPv4', internal: true }],
+    }),
+    probeTcpPortBindingImpl: async (_port, { timeoutMs }) => {
+      budgets.push(timeoutMs);
+      now += 1_100;
+      return { status: 'free' };
+    },
+  });
+  assert.equal(port, 43100);
+  assert.equal(budgets[0], STACK_LISTENER_OBSERVATION_TIMEOUT_MS);
+  assert.ok(budgets.at(-1) > 750);
+});
+
+test('listener discovery permits a valid OS observation beyond its old one-second cutoff', async () => {
+  const result = await listListenPidsWithStatus(34567, {
+    platform: 'linux',
+    resolveCommandPathImpl: async () => '/usr/bin/ss',
+    runCaptureImpl: async (_command, _args, { timeoutMs }) => {
+      if (timeoutMs < 1_500) throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+      return 'LISTEN 0 128 127.0.0.1:34567 0.0.0.0:* users:(("server",pid=701,fd=4))';
+    },
+  });
+  assert.deepEqual(result, { status: 'ok', supported: true, pids: [701] });
 });
 
 test('typed availability checks non-loopback interfaces and occupied evidence dominates probe errors', async () => {

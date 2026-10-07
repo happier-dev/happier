@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import {
     SessionAuthoringControls,
-    useSessionAuthoringFieldSummary,
+    useSessionAuthoringEngineSummary,
 } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import {
     readSessionAuthoringAgentTargetValue,
@@ -143,8 +143,9 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
         machineHomeDir,
     }) ?? t('workflows.page.inspector.whereMissing');
 
-    const agentSummary = useSessionAuthoringFieldSummary({
-        fields: WORKFLOW_AGENT_FIELDS,
+    const agentSummary = useSessionAuthoringEngineSummary({
+        engine: draft.defaults.engine,
+        workflowRoles: draft.roles,
         values: defaultAuthoringValues,
         ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
     });
@@ -219,7 +220,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 {...groupProps}
                 groupId="agent"
                 title={t('workflows.page.sections.agentTitle')}
-                summary={agentSummary.join(' · ')}
+                summary={agentSummary}
                 description={t('workflows.page.sections.agentDescription')}
                 attention={issuesUnder(issues, WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.map((field) => `/defaults/${field}`))}
                 valueSet={agentValueSet}

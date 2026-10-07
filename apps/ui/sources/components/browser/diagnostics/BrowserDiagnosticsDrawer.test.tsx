@@ -1,11 +1,16 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type {
     BrowserPreviewProxyDiagnosticsProjection,
     BrowserViewDiagnosticsProjection,
+    BrowserDiagnosticsUiStore,
 } from '@/sync/domains/browser/diagnostics';
+import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics/store';
+import { browserViewKey } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsInteractionControls } from './BrowserDiagnosticsInteractionPanel';
 
@@ -41,6 +46,7 @@ type BrowserDiagnosticsDrawerModule = Readonly<{
     BrowserDiagnosticsDrawer?: React.ComponentType<{
         diagnostics: unknown;
         interaction?: BrowserDiagnosticsInteractionControls;
+        eventSource?: Pick<StoreApi<BrowserDiagnosticsUiStore>, 'getState' | 'subscribe'>;
         testID?: string;
     }>;
 }>;
@@ -100,6 +106,41 @@ function hostDiagnosticsFor(viewId: string): BrowserViewDiagnosticsProjection {
 }
 
 describe('BrowserDiagnosticsDrawer', () => {
+    it('reads current collected events when open and performs no detail projection while closed', async () => {
+        const mod = await loadDrawer();
+        expect(mod?.BrowserDiagnosticsDrawer).toBeTypeOf('function');
+        if (!mod?.BrowserDiagnosticsDrawer) return;
+        const view = { browserSessionId: 'browser_session_1', viewId: 'view_subscription_scope' };
+        const key = browserViewKey(view);
+        let detailReads = 0;
+        const stateFor = (eventId: string) => {
+            const state = applyBrowserDiagnosticEvents(createBrowserDiagnosticsUiStore(), { events: [{
+                v: 1, eventId, ...view, navigationGeneration: 2, capturedAtMs: 2000,
+                family: 'console', kind: 'console.entry', fidelity: 'cdp', trusted: true,
+                data: { level: 'log', text: eventId }, redaction: { level: 'metadataOnly' },
+            }] });
+            const accepted = state.viewsByKey[key]!;
+            return { viewsByKey: { ...state.viewsByKey, [key]: { ...accepted, events: accepted.events.map(event => new Proxy(event, {
+                get(target, property, receiver) {
+                    if (property === 'data') detailReads += 1;
+                    return Reflect.get(target, property, receiver);
+                },
+            })) } } };
+        };
+        const source = createStore<BrowserDiagnosticsUiStore>(() => stateFor('first'));
+        const screen = await renderScreen(<mod.BrowserDiagnosticsDrawer
+            diagnostics={selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), view)}
+            eventSource={source} testID="scoped-diagnostics"
+        />);
+        expect(screen.findByTestId('scoped-diagnostics-body-console-row-first')).toBeTruthy();
+        await screen.pressByTestIdAsync('scoped-diagnostics-close');
+        const closedReads = detailReads;
+        await act(async () => { source.setState(stateFor('second'), true); });
+        expect(detailReads).toBe(closedReads);
+        await screen.pressByTestIdAsync('scoped-diagnostics-open');
+        expect(screen.findByTestId('scoped-diagnostics-body-console-row-second')).toBeTruthy();
+        expect(detailReads).toBeGreaterThan(closedReads);
+    });
     it('toggles between expanded and collapsed drawer states and can close to a peek', async () => {
         const mod = await loadDrawer();
         expect(mod?.BrowserDiagnosticsDrawer).toBeTypeOf('function');

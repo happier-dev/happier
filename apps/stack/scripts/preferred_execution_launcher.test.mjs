@@ -52,6 +52,283 @@ test('runtime build memory observation reads the admission owner without dispatc
   assert.equal(result.stderr, '');
 });
 
+test('runtime control uses the command pool and forwards ACK only after worker READY without replaying a started exit', { timeout: 15000 }, async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  await executable(join(fixture.binDir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    ' *getconf*) case "$*" in *starved-host*) cat "$STARVED_SAMPLE" ;; *) printf "8 12 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n" ;; esac ;;',
+    ' *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
+    ' *" cancel "*) exit 0 ;;',
+    ' *remote_execution_custody.sh*)',
+    '  printf "starved\\n" >> "$DISPATCHES"',
+    '  printf \'HAPPIER_RUNTIME_BUILD_READY={"worker":"starved","runtimeTarget":{"platform":"linux","arch":"x64"}}\\n\'',
+    '  IFS= read -r ack || exit 130',
+    '  printf "BODY:%s\\n" "$ack"',
+    '  exit "${PAYLOAD_EXIT-75}" ;;',
+    ' *) exit 0 ;;',
+    'esac', '',
+  ].join('\n'));
+  for (const exitCode of [75, 255, 137]) {
+    const child = spawn('/bin/sh', [launcher, '--runtime-build-target=darwin-arm64', '--runtime-build-components=server', '--control-stdin', '--', 'node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], { ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: String(exitCode) }, stdio: ['pipe', 'pipe', 'pipe'] });
+    t.after(() => child.kill('SIGTERM'));
+    let out = '', err = '', ack = false;
+    child.stdout.on('data', chunk => {
+      out += chunk;
+      if (!ack && out.includes('HAPPIER_RUNTIME_BUILD_READY=')) { ack = true; child.stdin.write('{"requestPath":"/tmp/fixture-request"}\n'); }
+    });
+    child.stderr.on('data', chunk => { err += chunk; });
+    const result = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+    assert.equal(result.code, exitCode, err);
+    assert.match(out, /BODY:\{"requestPath":"\/tmp\/fixture-request"\}/);
+  }
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved','starved','starved']);
+});
+
+async function runtimeAdmissionTransportFixture(t) {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 9437184, roomyAvailableKiB: 9437184, roomyLoad: 12 });
+  const workers = {};
+  for (const name of ['starved', 'roomy']) {
+    workers[name] = await installNativeAdmissionFixture({ root: join(fixture.root, name) });
+    workers[name].sample = join(fixture.root, `${name}-sample`);
+    await writeFile(workers[name].sample, `8 ${name === 'starved' ? '0.1' : '12'} 0.3 22000000 20 0 9437184 28311552 0 0 0 0 0 0 0 linux\n`);
+  }
+  const controller = join(fixture.root, 'worker-controller.mjs');
+  await writeFile(controller, `
+import { createInterface } from 'node:readline';
+const worker = process.env.HAPPIER_RUNTIME_BUILD_WORKER_NAME;
+console.log('HAPPIER_RUNTIME_BUILD_READY=' + JSON.stringify({worker,controllerPid:process.pid,runtimeTarget:{platform:process.platform,arch:process.arch}}));
+process.stdin.on('end', () => { console.error('fixture-controller-input-EOF:' + worker); process.exitCode = 91; });
+createInterface({input:process.stdin}).once('line', line => { console.log('BODY:' + worker + ':' + line); process.exit(Number(process.env.PAYLOAD_EXIT || 0)); });
+`);
+  await executable(join(fixture.binDir, 'node'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+  await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(fixture.binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7,$8}\' "$RUNTIME_WORKER_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/bash',
+    'printf "ssh:%s\\n" "$*" >> "$FIXTURE_TRACE"',
+    'case "$*" in *starved-host*) worker=starved; export RUNTIME_WORKER_SAMPLE="$STARVED_SAMPLE"; native="$STARVED_NATIVE" ;; *) worker=roomy; export RUNTIME_WORKER_SAMPLE="$ROOMY_SAMPLE"; native="$ROOMY_NATIVE" ;; esac',
+    'for argument in "$@"; do remote=$argument; done',
+    'case "$*" in',
+    ' *getconf*) cat "$RUNTIME_WORKER_SAMPLE" ;;',
+    ' *-O\\ check*|*-MNf*) exit 0 ;;',
+    ' *remote_execution_custody.sh*)',
+    '  case "$remote" in *" cancel "*) eval "$remote"; exit $? ;; esac',
+    '  printf "%s\\n" "$worker" >> "$DISPATCHES"',
+    '  remote=${remote//"$RUNTIME_REAL_LAUNCHER"/"$native"}',
+    '  remote=${remote//"apps/stack/scripts/build/remote_runtime_build.mjs"/"$RUNTIME_CONTROLLER"}',
+    '  eval "$remote" ;;',
+    ' *) eval "$remote" ;;',
+    'esac', '',
+  ].join('\n'));
+  fixture.invocation.env = { ...fixture.invocation.env, STARVED_SAMPLE: workers.starved.sample, ROOMY_SAMPLE: workers.roomy.sample,
+    STARVED_NATIVE: workers.starved.launcher, ROOMY_NATIVE: workers.roomy.launcher,
+    RUNTIME_REAL_LAUNCHER: launcher, RUNTIME_CONTROLLER: controller };
+  return { ...fixture, workers };
+}
+
+function startRuntimeController(t, fixture, extra = {}, { target = 'darwin-arm64', components = 'server', nodeOptions = [] } = {}) {
+  const child = spawn('/bin/sh', [launcher, `--runtime-build-target=${target}`, `--runtime-build-components=${components}`, '--control-stdin', '--', 'node', ...nodeOptions, 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], { ...fixture.invocation, env: { ...fixture.invocation.env, ...extra }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const result = { child, stdout: '', stderr: '', completion: new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal }))) };
+  child.stdout.on('data', chunk => { result.stdout += chunk; });
+  child.stderr.on('data', chunk => { result.stderr += chunk; });
+  t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await result.completion; });
+  return result;
+}
+
+async function waitForRuntime(predicate, message) {
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    if (await predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail(message());
+}
+
+test('all-busy runtime placement preserves the real waiting head and backfill charge until later remote admission', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  fixture.config.commandExecution.fallback = 'local';
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeFile(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  const runtime = startRuntimeController(t, fixture);
+  const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
+  let waiterPath;
+  await waitForRuntime(async () => {
+    const entries = await readdir(waiters).catch(() => []);
+    if (entries.length !== 1) return false;
+    waiterPath = join(waiters, entries[0]);
+    return (await readFile(waiterPath, 'utf8')).includes(' runtime-build ') && runtime.stderr.includes('waiting for heavyweight admission');
+  }, () => runtime.stderr);
+  const original = (await readFile(waiterPath, 'utf8')).trim().split(' ');
+  const small = () => spawnSync('/bin/sh', [fixture.workers.starved.launcher, '--heavyweight-admission', '--class=validation', '--machine=fixture', '--no-wait', '--', '/usr/bin/printf', 'backfill'], { ...fixture.invocation, env: { ...fixture.invocation.env, HAPPIER_DEV_TARGET_EXECUTION: '1', RUNTIME_WORKER_SAMPLE: fixture.workers.starved.sample }, encoding: 'utf8' });
+  for (let index = 0; index < 3; index++) { const result = small(); assert.equal(result.status, 0, `backfill ${index}: ${result.stderr}; head=${await readFile(waiterPath, 'utf8')}`); }
+  await waitForRuntime(async () => (await readFile(fixture.invocation.env.DISPATCHES, 'utf8').catch(() => '')).includes('roomy'), () => runtime.stderr);
+  assert.equal(runtime.stdout, '');
+  const retained = (await readFile(waiterPath, 'utf8')).trim().split(' ');
+  assert.deepEqual(retained.slice(0, 4), original.slice(0, 4), 'failed alternative replaced or re-aged waiting demand');
+  assert.equal(retained[4], '18874368', 'backfill charge was reset');
+  assert.equal(small().status, 75, 'new validations bypassed exhausted runtime head');
+  await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY='), () => runtime.stderr);
+  assert.doesNotMatch(runtime.stdout, /BODY:/);
+  runtime.child.stdin.write('{"requestPath":"/tmp/runtime-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.match(runtime.stdout, /BODY:starved:/);
+  assert.doesNotMatch(runtime.stderr, /running locally/);
+});
+
+test('runtime placement switches only after an alternative is actually admitted and cancels the original queue', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const runtime = startRuntimeController(t, fixture);
+  const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
+  await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 1, () => runtime.stderr);
+  await writeFile(fixture.workers.roomy.sample, '8 12 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await waitForRuntime(() => runtime.stdout.includes('"worker":"roomy"'), () => runtime.stderr);
+  assert.doesNotMatch(runtime.stdout, /BODY:/);
+  await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 0, () => runtime.stderr);
+  runtime.child.stdin.write('{"requestPath":"/tmp/runtime-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.match(runtime.stdout, /BODY:roomy:/, runtime.stderr);
+  assert.doesNotMatch(runtime.stdout, /BODY:starved:/);
+});
+
+test('runtime alternatives observe a recovered worker on the next cadence despite unavailable caches', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const down = join(fixture.root, 'roomy-down');
+  await writeFile(down, '');
+  const ssh = join(fixture.binDir, 'ssh');
+  const body = await readFile(ssh, 'utf8');
+  await executable(ssh, body.replace('#!/bin/bash\n', '#!/bin/bash\ncase "$*" in *roomy-host*) [ ! -f "$WORKER_DOWN" ] || exit 255 ;; esac\n'));
+  const runtime = startRuntimeController(t, fixture, { WORKER_DOWN: down });
+  const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
+  await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 1 && runtime.stderr.includes('roomy command preflight failed'), () => runtime.stderr);
+  const [original] = await readdir(waiters);
+  await writeFile(fixture.workers.roomy.sample, '8 12 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await rm(down);
+  await waitForRuntime(() => runtime.stdout.includes('"worker":"roomy"'), () => runtime.stderr);
+  assert.doesNotMatch(runtime.stdout, /BODY:/);
+  runtime.child.stdin.write('{"requestPath":"/tmp/recovered-runtime-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.match(runtime.stdout, /BODY:roomy:/);
+  await waitForRuntime(async () => !(await readdir(waiters)).includes(original), () => runtime.stderr);
+});
+
+test('daemon placement prefers a native worker over a less-loaded capable cross builder', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  for (const worker of Object.values(fixture.workers)) await writeFile(worker.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  const ssh = join(fixture.binDir, 'ssh');
+  const body = await readFile(ssh, 'utf8');
+  // The remote OS/capability probe is the boundary: both workers are eligible,
+  // but only roomy matches the requested daemon's native support target.
+  await executable(ssh, body.replace(' *getconf*)', ' *componentArtifactTarget.mjs*) case "$worker" in roomy) printf "linux-arm64\\n" ;; *) printf "linux-x64\\n" ;; esac ;;\n *getconf*)'));
+  await writeFile(fixture.workers.roomy.sample, '8 12 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  const runtime = startRuntimeController(t, fixture, {}, { target: 'linux-arm64', components: 'daemon' });
+  await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY='), () => runtime.stderr);
+  assert.match(runtime.stdout, /"worker":"roomy"/, runtime.stderr);
+  runtime.child.stdin.write('{"requestPath":"/tmp/native-daemon-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  await writeFile(fixture.workers.roomy.sample, '8 12 0.3 22000000 20 0 9437184 28311552 0 0 0 0 0 0 0 linux\n');
+  const cross = startRuntimeController(t, fixture, {}, { target: 'linux-arm64', components: 'daemon' });
+  await waitForRuntime(() => cross.stdout.includes('HAPPIER_RUNTIME_BUILD_READY='), () => cross.stderr);
+  assert.match(cross.stdout, /"worker":"starved"/, 'a busy native worker must not prevent a capable cross builder from admitting');
+  cross.child.stdin.write('{"requestPath":"/tmp/cross-daemon-request"}\n');
+  assert.equal((await cross.completion).code, 0, cross.stderr);
+});
+
+test('runtime alternatives keep evaluating the pool while another alternative is flushing', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  fixture.config.targets.push({ ...fixture.config.targets[1], name: 'recovered', ssh: 'recovered-host' });
+  fixture.config.commandExecution.targets.push('recovered');
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeFile(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  const down = join(fixture.root, 'recovered-down');
+  const flushing = join(fixture.root, 'alternative-flushing');
+  await writeFile(down, '');
+  const ssh = join(fixture.binDir, 'ssh');
+  await executable(ssh, (await readFile(ssh, 'utf8')).replace('#!/bin/bash\n', '#!/bin/bash\ncase "$*" in *recovered-host*) [ ! -f "$RECOVERED_DOWN" ] || exit 255 ;; esac\n'));
+  const mutagen = join(fixture.binDir, 'mutagen');
+  await executable(mutagen, (await readFile(mutagen, 'utf8')).replace('#!/bin/sh\n', '#!/bin/sh\ncase "$*" in *"flush happier-roomy"*) : > "$ALTERNATIVE_FLUSHING"; exec /bin/sleep 60 ;; esac\n'));
+  const runtime = startRuntimeController(t, fixture, { RECOVERED_DOWN: down, ALTERNATIVE_FLUSHING: flushing });
+  await waitForRuntime(async () => (await readdir(join(fixture.workers.starved.admissionRoot, 'waiters')).catch(() => [])).length === 1, () => runtime.stderr);
+  await writeFile(fixture.workers.roomy.sample, '8 12 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await waitForRuntime(async () => access(flushing).then(() => true, () => false), () => runtime.stderr);
+  await rm(down);
+  await waitForRuntime(() => runtime.stdout.includes('"worker":"recovered"'), () => runtime.stderr);
+  runtime.child.stdin.write('{"requestPath":"/tmp/pool-recovered-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.match(runtime.stdout, /BODY:recovered:/);
+});
+
+test('runtime worker eligibility uses the command pool, physical class floor and canonical component capability', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  fixture.config.targets[0].name = 'mac2-linux';
+  fixture.config.targets.push({ ...fixture.config.targets[1], name: 'linux1', ssh: 'metro-host' });
+  fixture.config.commandExecution.targets = ['mac2-linux','roomy'];
+  fixture.config.runtimePlacement.build = { mode: 'prefer-target', targets: ['roomy'], fallback: 'local' };
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeFile(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  await writeFile(fixture.workers.roomy.sample, '8 0.1 0.9 22000000 20 0 15000000 16000000 0 0 0 0 0 0 0 linux\n');
+  const runtime = startRuntimeController(t, fixture);
+  await waitForRuntime(() => runtime.stdout.includes('"worker":"mac2-linux"'), () => runtime.stderr);
+  runtime.child.stdin.write('{"requestPath":"/tmp/runtime-request"}\n');
+  assert.equal((await runtime.completion).code, 0, runtime.stderr);
+  assert.match(runtime.stderr, /insufficient memory capacity on roomy/);
+  assert.doesNotMatch(await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8'), /metro-host/);
+  const daemon = spawn('/bin/sh', [launcher, '--runtime-build-target=darwin-arm64', '--runtime-build-components=daemon', '--control-stdin', '--', 'node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], { ...fixture.invocation, stdio: ['pipe','pipe','pipe'] });
+  let error = '';
+  daemon.stderr.on('data', chunk => { error += chunk; });
+  const code = await new Promise(resolve => daemon.once('close', resolve));
+  assert.equal(code, 1, error);
+  assert.match(error, /daemon:.*host-native runtime packages require a matching host target/);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved'], 'cached server eligibility bypassed daemon capability filtering');
+});
+
+test('native runtime control admits web, mixed web and daemon, and all runtime components', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  for (const components of ['web', 'web,daemon', 'web,server,daemon']) {
+    const runtime = startRuntimeController(t, fixture, {}, { target: `${process.platform}-${process.arch}`, components });
+    await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY=') || runtime.child.exitCode !== null, () => runtime.stderr);
+    assert.equal(runtime.child.exitCode, null, `${components} exited before admission: ${runtime.stderr}`);
+    assert.match(runtime.stdout, /"worker":"starved"/);
+    assert.doesNotMatch(runtime.stdout, /BODY:/);
+    runtime.child.stdin.write('{"requestPath":"/tmp/runtime-web-request"}\n');
+    assert.equal((await runtime.completion).code, 0, `${components}: ${runtime.stderr}`);
+    assert.match(runtime.stdout, /BODY:starved:/);
+  }
+});
+
+test('native runtime admission preserves Node preload arguments and runs the hook in the admitted controller before READY', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const hook = 'console.error("fixture-preload:" + process.pid + ":" + process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN)';
+  const module = 'data:text/javascript;base64,' + Buffer.from(hook).toString('base64');
+  await writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n');
+  for (const nodeOptions of [[`--import=${module}`], ['--import', module]]) {
+    const runtime = startRuntimeController(t, fixture, {}, { nodeOptions });
+    await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY=') || runtime.child.exitCode !== null, () => runtime.stderr);
+    assert.equal(runtime.child.exitCode, null, runtime.stderr);
+    const preload = runtime.stderr.match(/fixture-preload:(\d+):(\d+:\d+)/);
+    assert.ok(preload, runtime.stderr);
+    const ready = JSON.parse(runtime.stdout.trim().slice('HAPPIER_RUNTIME_BUILD_READY='.length));
+    assert.equal(Number(preload[1]), ready.controllerPid, 'preload ran in a different process from the admitted controller');
+    runtime.child.stdin.write('{"requestPath":"/tmp/runtime-preload-request"}\n');
+    assert.equal((await runtime.completion).code, 0, runtime.stderr);
+    assert.match(runtime.stdout, /BODY:starved:/);
+  }
+});
+
+test('EOF before runtime READY removes only its retained worker demand', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const runtime = startRuntimeController(t, fixture);
+  const waiters = join(fixture.workers.starved.admissionRoot, 'waiters');
+  await waitForRuntime(async () => (await readdir(waiters).catch(() => [])).length === 1, () => runtime.stderr);
+  runtime.child.stdin.end();
+  assert.equal((await runtime.completion).code, 130, runtime.stderr);
+  assert.deepEqual(await readdir(waiters), []);
+  assert.equal(runtime.stdout, '');
+});
+
 test('native launcher hands Mac workspace execution to the configured execution-host bridge', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-native-host-bridge-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -127,7 +404,7 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 2831
     '',
   ].join('\n'));
   return {
-    stackDir, samplePath,
+    root, binDir, configPath, config, stackDir, samplePath,
     invocation: { cwd: repoRoot, encoding: 'utf8', env: {
       ...executionNeutralEnv, HOME: root, TMPDIR: root, XDG_RUNTIME_DIR: root,
       HAPPIER_EXEC_CONFIG_PATH: configPath, HAPPIER_STACK_STORAGE_DIR: storageDir,
@@ -142,6 +419,166 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 2831
     } },
   };
 }
+
+test('automatic placement excludes mac-host unless it is in the configured command pool', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  fixture.config.targets[0].name = 'mac-host';
+  fixture.config.commandExecution.targets = ['roomy'];
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeFile(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  const automatic = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], fixture.invocation);
+  assert.equal(automatic.status, 0, automatic.stderr);
+  assert.match(automatic.stderr, /selected roomy /);
+  assert.doesNotMatch(await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8'), /starved-host/);
+  fixture.config.commandExecution.targets.push('mac-host');
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeFile(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  const configured = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], fixture.invocation);
+  assert.equal(configured.status, 0, configured.stderr);
+  assert.match(configured.stderr, /selected mac-host /);
+});
+
+test('automatic placement flushes an eligible no-watch first-cycle worker before dispatch', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const marker = join(fixture.root, 'flushed');
+  await executable(join(fixture.binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'printf "mutagen:%s\\n" "$*" >> "$FIXTURE_TRACE"',
+    'case "$2" in',
+    '  flush) : > "$FIRST_CYCLE_MARKER" ;;',
+    '  list)',
+    '    scanned=0; cycles=0',
+    '    if [ -e "$FIRST_CYCLE_MARKER" ]; then scanned=1; cycles=1; fi',
+    '    printf "%s|Watching|false|true|%s|0/0|0/0|true|%s|0/0|0/0|active|%s|ok|0|0|WatchModeNoWatch|WatchModeNoWatch\\n" "$3" "$scanned" "$scanned" "$cycles" ;;',
+    'esac',
+  ].join('\n'));
+  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, FIRST_CYCLE_MARKER: marker },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /selected starved /);
+  assert.equal(result.stdout.trim(), 'remote:starved');
+  const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
+  assert.ok(trace.indexOf('mutagen:sync flush') < trace.lastIndexOf('remote_execution_custody.sh'), trace);
+  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 1);
+});
+
+test('remote admission state failure is typed before payload dispatch', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-admission-io-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixture = await installNativeAdmissionFixture({ root });
+  await mkdir(fixture.admissionRoot);
+  await writeFile(join(fixture.admissionRoot, 'waiters'), 'not a directory');
+  const result = spawnSync('/bin/sh', [fixture.launcher, '--heavyweight-admission', '--failure-id=native-io-test', '--', '/bin/sh', '-c', 'echo unexpected-payload'], {
+    cwd: root, encoding: 'utf8', env: executionNeutralEnv,
+  });
+  assert.equal(result.status, 75, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^HSTACK_ADMISSION_UNAVAILABLE:native-io-test$/m);
+});
+
+test('automatic placement reroutes admission I/O failure with unavailable TTL and preserves payload exit 75', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) case "$*" in *starved-host*) cat "$STARVED_SAMPLE" ;; *) printf "8 12 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n" ;; esac ;;',
+    '  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
+    '  *starved-host*)',
+    '    case "$*" in *remote_execution_custody.sh*) ;; *) exit 0 ;; esac',
+    '    printf "starved\\n" >> "$DISPATCHES"',
+    '    for argument in "$@"; do remote=$argument; done',
+    '    id=$(printf "%s\\n" "$remote" | sed -n "s/.*--failure-id=\\(native-[A-Za-z0-9_-]*\\).*/\\1/p")',
+    '    printf "HSTACK_ADMISSION_UNAVAILABLE:%s\\n" "$id" >&2',
+    '    exit 75 ;;',
+    '  *) printf "roomy\\n" >> "$DISPATCHES"; printf "payload-result\\n"; exit "${PAYLOAD_EXIT-0}" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  const first = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /payload-result/);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy']);
+  const second = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: '75' },
+  });
+  assert.equal(second.status, 75, second.stderr);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'roomy']);
+});
+
+test('native nonblocking admission certifies busy without certifying state failure', async (t) => {
+  const fixture = await memoryRoutingFixture(t);
+  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(fixture.binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "5242880 28311552\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  const result = spawnSync('/bin/sh', [native.launcher, '--heavyweight-admission', '--no-wait', '--class=validation', '--failure-id=busy-test', '--', '/usr/bin/printf', 'unexpected'], fixture.invocation);
+  assert.equal(result.status, 75, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^HSTACK_ADMISSION_BUSY:busy-test$/m);
+  assert.doesNotMatch(result.stderr, /HSTACK_ADMISSION_UNAVAILABLE/);
+});
+
+async function installBusyAdmissionTransport(fixture) {
+  // SSH is the process boundary. The native busy certification is exercised
+  // separately above; no selector or admission domain logic is substituted.
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/sh',
+    'printf "ssh:%s\\n" "$*" >> "$FIXTURE_TRACE"',
+    'case "$*" in',
+    ' *getconf*) case "$*" in *starved-host*) cat "$STARVED_SAMPLE" ;; *) printf "8 12 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n" ;; esac ;;',
+    ' *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
+    ' *)',
+    '  case "$*" in *remote_execution_custody.sh*) ;; *) exit 0 ;; esac',
+    '  case "$*" in *starved-host*) name=starved ;; *) name=roomy ;; esac',
+    '  printf "%s\\n" "$name" >> "$DISPATCHES"',
+    '  attempts=$(wc -l < "$DISPATCHES")',
+    '  case "$*" in',
+    '   *--no-wait*)',
+    '    if [ "$name" = starved ] || [ "$attempts" -le "${BUSY_ATTEMPTS-0}" ]; then',
+    '     for argument in "$@"; do remote=$argument; done',
+    '     id=$(printf "%s\\n" "$remote" | sed -n "s/.*--failure-id=\\(native-[A-Za-z0-9_-]*\\).*/\\1/p")',
+    '     printf "HSTACK_ADMISSION_BUSY:%s\\n" "$id" >&2',
+    '     exit 75',
+    '    fi ;;',
+    '   *) printf "[preferred-execution] waiting for heavyweight admission on pinned fixture\\n" >&2 ;;',
+    '  esac',
+    '  printf "payload:%s\\n" "$name"; exit "${PAYLOAD_EXIT-0}" ;;',
+    'esac', '',
+  ].join('\n'));
+}
+
+test('automatic admission reroutes busy workers without an unavailable TTL while pins keep waiting', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  await installBusyAdmissionTransport(fixture);
+  for (const payloadExit of [0, 75]) {
+    const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+      ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: String(payloadExit) }, timeout: 15_000,
+    });
+    assert.equal(result.status, payloadExit, result.stderr);
+    assert.equal(result.stdout, 'payload:roomy\n');
+    assert.match(result.stderr, /admission busy before dispatch.*re-evaluating/);
+  }
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
+  const pinned = spawnSync('/bin/sh', [launcher, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(pinned.status, 0, pinned.stderr);
+  assert.equal(pinned.stdout, 'payload:starved\n');
+  assert.match(pinned.stderr, /waiting for heavyweight admission on pinned/);
+  const commands = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n').filter(line => line.includes('remote_execution_custody.sh') && line.includes('--heavyweight-admission'));
+  assert.match(commands[0], /--no-wait/);
+  assert.doesNotMatch(commands.at(-1), /--no-wait/);
+});
+
+test('automatic admission re-evaluates the pool after every worker is busy without local fallback', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12, fallback: 'local' });
+  await installBusyAdmissionTransport(fixture);
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, BUSY_ATTEMPTS: '2' }, timeout: 25_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'payload:roomy\n');
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
+  assert.doesNotMatch(result.stderr, /running locally/);
+});
 
 test('hosted CI public compiler scripts execute locally on a small host and preserve nested dispatch and failure', async (t) => {
   const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 16373452 });
@@ -627,16 +1064,16 @@ test('queue policy native: an unavailable SSH master uses the reachable direct c
   assert.equal(await readFile(invocation.env.DISPATCHES, 'utf8'), 'starved\n');
 });
 
-for (const dispatcher of ['native', 'javascript']) {
-  test(`queue policy ${dispatcher}: routed work waits at real target admission and runs after memory recovery`, { timeout: 30_000 }, async (t) => {
+for (const dispatcher of ['native', 'javascript', 'pinned']) {
+  test(`queue policy ${dispatcher}: routed work recovers from real target admission pressure`, { timeout: 30_000 }, async (t) => {
     const { invocation, samplePath } = await memoryRoutingFixture(t, { roomyAvailableKiB: 5242880, fallback: 'local' });
     const { launcher: fixtureLauncher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
     const checkout = resolve(fixtureLauncher, '../../../..');
     const config = JSON.parse(await readFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, 'utf8'));
     for (const target of config.targets) target.repoDir = checkout;
     await writeFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, JSON.stringify(config));
-    await writeFile(join(invocation.env.HAPPIER_STACK_STORAGE_DIR, 'repo-memory', 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: dispatcher === 'native' ? checkout : repoRoot }));
-    if (dispatcher === 'native') invocation.cwd = checkout;
+    await writeFile(join(invocation.env.HAPPIER_STACK_STORAGE_DIR, 'repo-memory', 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: dispatcher !== 'javascript' ? checkout : repoRoot }));
+    if (dispatcher !== 'javascript') invocation.cwd = checkout;
     const binDir = invocation.env.PATH.split(':')[0];
     await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
     await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -661,16 +1098,16 @@ for (const dispatcher of ['native', 'javascript']) {
       'esac', '',
     ].join('\n'));
     await executable(join(binDir, 'vitest'), '#!/bin/sh\nprintf "queued-remote-result\\n"\n');
-    const args = dispatcher === 'native'
-      ? [fixtureLauncher, '--', 'vitest', 'run', 'fixture.test.ts']
+    const args = dispatcher !== 'javascript'
+      ? [fixtureLauncher, ...(dispatcher === 'pinned' ? ['--target=starved'] : []), '--', 'vitest', 'run', 'fixture.test.ts']
       : [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--stack=repo-memory', '--', 'vitest', 'run', 'fixture.test.ts'];
-    const child = spawn(dispatcher === 'native' ? '/bin/sh' : process.execPath, args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(dispatcher !== 'javascript' ? '/bin/sh' : process.execPath, args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
     let stdout = '', stderr = '', recovery;
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => {
       stderr += chunk;
-      if (!recovery && stderr.includes('memory-available=5242880/28311552')) {
+      if (!recovery && /memory-available=5242880\/28311552|admission busy before dispatch/.test(stderr)) {
         assert.equal(stdout, '');
         recovery = writeFile(samplePath, '8 0.1 0.9 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 linux\n');
       }
@@ -679,7 +1116,7 @@ for (const dispatcher of ['native', 'javascript']) {
     await recovery;
     assert.equal(code, 0, stderr);
     assert.ok(recovery, stderr);
-    assert.match(stderr, /waiting for heavyweight admission on .*memory-available/);
+    assert.match(stderr, dispatcher === 'pinned' ? /waiting for heavyweight admission on .*memory-available/ : /admission busy before dispatch.*re-evaluating/);
     assert.equal(stdout, 'queued-remote-result\n');
     assert.doesNotMatch(stderr, /running locally/);
     assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /remote_dependency_bootstrap\.mjs/);
@@ -1942,12 +2379,14 @@ test('native launcher governs nested Vitest workers when automatic placement sel
   assert.match(packageScript.stdout, /^args:yarn -s test:migration:bundled-plugin-projections$/m);
 });
 
-test('native launcher exact target preserves remote-only cwd, environment, and TTY on only the named healthy target', async () => {
+test('native launcher exact target preserves remote-only cwd, environment, and TTY on only the named healthy target', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-exact-target-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const native = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   const stackDir = join(storageDir, `repo-${repoToken}-native`);
-  const remoteRepo = join(root, 'remote-repo');
+  const remoteRepo = resolve(native.launcher, '../../../..');
   const remoteHome = join(root, 'remote-home');
   const sshLog = join(root, 'ssh.log');
   const environmentValue = "a 'quoted' $value $(exit 99)\n\n";
@@ -1990,7 +2429,7 @@ test('native launcher exact target preserves remote-only cwd, environment, and T
     'case "$*" in',
     '  *getconf*) case "$*" in *mac-host*) printf "8 6 0.5 22000000 10\\n" ;; *) printf "8 0.1 0.9 22000000 10\\n" ;; esac ;;',
     '  *command\\ -v*) exit 0 ;;',
-    '  *probe-command*) printf "remote:mac:%s\\n" "$*"; for argument in "$@"; do remote_command=$argument; done; eval "set -- $remote_command"; exec /bin/bash -c "$3" ;;',
+    '  *probe-command*) printf "remote:mac:%s\\n" "$*"; for argument in "$@"; do remote_command=$argument; done; exec /bin/bash -c "$remote_command" ;;',
     '  *mac-host*) printf "remote:mac:%s\\n" "$*" ;;',
     '  *linux-host*) printf "wrong-target:linux\\n" ;;',
     'esac',
@@ -5025,7 +5464,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     await assert.rejects(readdir(staleOwner), { code: 'ENOENT' });
     await writeFile(staleWaiter, '99999998 stale\n', 'utf8');
 
-    nodeVitest = spawn('/bin/sh', [launcher, '--', 'node', 'node_modules/vitest/vitest.mjs', 'remote-node-vitest.test.ts'], {
+    nodeVitest = spawn('/bin/sh', [launcher, '--target=linux', '--', 'node', 'node_modules/vitest/vitest.mjs', 'remote-node-vitest.test.ts'], {
       cwd: join(repoRoot, 'apps', 'stack'),
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

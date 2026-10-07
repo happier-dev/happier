@@ -16,6 +16,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { sync } from '@/sync/sync';
+import type { ArtifactViewRead } from '@/sync/engine/artifacts/syncArtifacts';
 import { t } from '@/text';
 
 import {
@@ -88,7 +89,7 @@ export function ArtifactView(props: Readonly<{
     ) : body.state === 'loading' ? (
         <View style={styles.bodyPlaceholder} testID="artifact:bodyLoading" />
     ) : (
-        <ArtifactBody artifact={artifact} />
+        <ArtifactBody artifact={body.result?.artifact ?? artifact} prepared={body.result} onRetry={body.retry} />
     );
 
     if (props.presentation === 'pane') {
@@ -111,12 +112,14 @@ export function ArtifactView(props: Readonly<{
     );
 }
 
-function ArtifactBody(props: Readonly<{ artifact: DecryptedArtifact }>) {
+function ArtifactBody(props: Readonly<{ artifact: DecryptedArtifact; prepared: ArtifactViewRead | null; onRetry: () => void }>) {
     if (isArtifactHtmlHeaderV1(props.artifact.rawHeader ?? props.artifact.header)) return <ArtifactHtmlBody
         artifactId={props.artifact.id} headerVersion={props.artifact.headerVersion} bodyVersion={props.artifact.bodyVersion}
-        body={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readPreviewUrl={sync.fetchArtifactHtmlPreview} />;
+        body={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readPreviewUrl={sync.fetchArtifactHtmlPreview}
+        previewUrl={props.prepared?.htmlPreviewUrl} onRetry={props.onRetry} />;
     if (props.artifact.body !== null && typeof props.artifact.body === 'object') return <ArtifactBinaryBody
-        artifactId={props.artifact.id} reference={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readBytes={sync.fetchArtifactBinary} />;
+        artifactId={props.artifact.id} reference={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readBytes={sync.fetchArtifactBinary}
+        initialBytes={props.prepared?.binaryBytes} onRetry={props.onRetry} />;
     const markdown = bodyMarkdown(props.artifact);
     if (markdown === null) return <Text style={stylesheet.noContent}>{t('artifacts.noContent')}</Text>;
     return <MarkdownView testID="artifact:body" markdown={markdown} />;

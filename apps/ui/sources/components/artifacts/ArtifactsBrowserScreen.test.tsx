@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -11,6 +11,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { useArtifactStorageUsage } from './artifactActionsClient';
+import { useArtifactOperations } from './useArtifactOperations';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { Modal } from '@/modal';
 import { router } from 'expo-router';
@@ -80,6 +81,42 @@ function rowMenu(screen: Awaited<ReturnType<typeof renderRows>>, id: string): Re
 }
 
 describe('Artifacts browser row operations', () => {
+    it.each(['work-board.v1', 'prompt_doc.v2'])('opens Share from a cold owner %s row without opening its body', async kind => {
+        const served = await serveActionHomes({
+            homes: [{ key: 'owner', serverUrl: 'https://artifact-cold-share.test', accountId: 'owner' }],
+            route: () => undefined,
+        });
+        disposeHome = served.dispose;
+        const artifact = artifactFixture('cold-document', { header: { v: 1, kind, title: 'Cold document',
+            ...(kind === 'work-board.v1' ? { pinnedInSessions: false, readsNeedsYou: false } : {}) },
+            body: undefined, bodyVersion: undefined });
+        const screen = await renderRows([artifact]);
+        const menu = rowMenu(screen, artifact.id);
+        expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toContain('share');
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'share'); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+            props: expect.objectContaining({ artifactId: artifact.id, kind }),
+            chrome: expect.objectContaining({ testID: 'document-share-modal' }),
+        }));
+        expect(served.requests.filter(request => request.path.startsWith('/v1/artifacts/'))).toEqual([]);
+    });
+
+    it.each([
+        { access: undefined, kind: 'markdown' },
+        { access: 'view' as const, kind: 'prompt_doc.v2' },
+        { access: 'edit' as const, kind: 'work-board.v1' },
+        { access: 'owner' as const, kind: 'home-hub-layout.v1' },
+        { access: 'owner' as const, kind: 'approval_request.v1' },
+    ])('does not offer Share without positive managing access or when the kind denies it (%j)', async ({ access, kind }) => {
+        const artifact = artifactFixture('denied', { access, header: { kind, title: 'Denied' }, body: undefined });
+        const hook = await renderHook(() => useArtifactOperations(artifact, () => {}));
+        expect(hook.getCurrent().canShare).toBe(false);
+        vi.mocked(Modal.show).mockClear();
+        await act(async () => { hook.getCurrent().share(); });
+        expect(Modal.show).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('opens the shared Share and History owners and confirms revision-qualified deletion', async () => {
         const artifact = artifactFixture('document');
         const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://artifact-row.test', accountId: 'owner' }],

@@ -8,6 +8,7 @@ import {
   GITHUB_RESPONSE_FAILURE_CODE,
   classifyGithubResponseFacts,
   classifyGithubResponseFailure,
+  classifyGithubTransportFailure,
   isGithubInaccessibleResourceFailure,
 } from './githubResponseFailure.js';
 
@@ -24,6 +25,12 @@ function response(input: Readonly<{
 }
 
 describe('GitHub response failure classification', () => {
+  it('preserves the daemon native-login remediation as an authentication failure', () => {
+    expect(classifyGithubTransportFailure(Object.assign(new Error('sign in with gh CLI'), {
+      code: 'plugin_connected_account_native_unavailable',
+    }))).toEqual({ class: 'authentication', code: 'plugin_connected_account_native_unavailable' });
+  });
+
   it('classifies the credential, permission, and resource ladder from one owner', () => {
     expect(classifyGithubResponseFailure(response({ status: 401 }), 1_000)).toEqual({
       class: 'authentication',

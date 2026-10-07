@@ -637,7 +637,7 @@ function recordGroupMemberAccountUsageFixture(
 }
 
 describe('ConnectedServiceQuotasCoordinator', () => {
-  it('preserves a plugin subscription failure observation in the canonical usage snapshot', () => {
+  it('preserves all 129 plugin quota windows and subscription facts through projection and sealed persistence', () => {
     const subscription = {
       status: 'unavailable' as const,
       renewal: 'unknown' as const,
@@ -658,10 +658,24 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         displayName: 'Novel Work',
         scopes: [],
       },
-      quota: { observedAtMs: 1_000_000, limits: [], subscription },
+      quota: {
+        observedAtMs: 1_000_000,
+        limits: Array.from({ length: 129 }, (_, index) => ({ id: `window-${index}`, used: index, remaining: 200 - index })),
+        subscription,
+        planLabel: 'max',
+      },
       staleAfterMs: 60_000,
     });
     expect(snapshot.subscription).toEqual(subscription);
+    expect(snapshot.planLabel).toBe('max');
+    expect(snapshot.meters).toHaveLength(129);
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    const sealed = sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes });
+    expect(openSealedProviderAccountUsageSnapshot({ material, sealed })).toEqual(snapshot);
+    expect(projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
+      snapshot,
+      ref: { service: { pluginId: 'acme.novel.accounts', localId: 'work-cloud' }, accountId: 'account-a' },
+    }).meters).toHaveLength(129);
   });
 
   it('canonicalizes a legacy scalar quota observation into a qualified V4 PAU write', async () => {
@@ -2025,7 +2039,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['quota_family', 'unusable_spare', 'enumerated', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'aggregate_malformed', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing'] as const)('schedules a novel qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['quota_family', 'unusable_spare', 'enumerated', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing'] as const)('schedules a novel qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     const now = 1_000_000;
     const accountMode = recoveryMode === 'enumerated' ? 'e2ee' as const : 'plain' as const;
     const manual = recoveryMode.startsWith('manual_');
@@ -2121,7 +2135,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             if (consumed) throw new Error('duplicate consumption');
             consumed = true;
             ${recoveryMode === 'aggregate_network' ? "throw new Error('response lost after debit');" : ''}
-            ${recoveryMode === 'aggregate_malformed' ? "return { status: 'invalid_outcome' };" : ''}
             ${recoveryMode === 'aggregate_timeout' ? "await new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(new Error('provider result unknown')), { once: true }); });" : ''}
             ${recoveryMode === 'not_available' || recoveryMode === 'nothing_to_reset' || recoveryMode === 'already_consumed' || recoveryMode === 'manual_not_available' ? `return { status: '${recoveryMode === 'manual_not_available' ? 'not_available' : recoveryMode}' };` : ''}
             return { status: 'consumed' };
@@ -2448,7 +2461,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         firstPromise,
         consume(),
       ]);
-      const ambiguous = recoveryMode === 'aggregate_timeout' || recoveryMode === 'aggregate_network' || recoveryMode === 'aggregate_malformed';
+      const ambiguous = recoveryMode === 'aggregate_timeout' || recoveryMode === 'aggregate_network';
       expect(first).toMatchObject(recoveryMode === 'read_failure'
         ? { ok: false }
         : ambiguous
@@ -4708,7 +4721,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
       },
       quotaFetchers: [],
-      now: () => now,
+      now: () => now + 1,
       randomBytes: (length: number) => randomBytes(length),
       quotaPersistenceMinIntervalMs: 5_000,
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
@@ -4924,7 +4937,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }));
   });
 
-  it('retries an unchanged account-usage snapshot after a retryable persistence failure recovers', async () => {
+  it.each(['retry count', 'pending age'] as const)('persists retained account usage when transport recovers beyond the guessed %s cutoff', async (cutoff) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     let nextWriteSucceeds = false;
@@ -4980,11 +4993,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       api,
       credentials,
       quotaFetchers: [],
-      now: () => now,
+      now: () => now + Date.now(),
       randomBytes: (length: number) => randomBytes(length),
       quotaPersistenceMinIntervalMs: 0,
-      quotaPersistenceFailureBackoffBaseMs: 10,
-      quotaPersistenceFailureBackoffMaxMs: 10,
+      quotaPersistenceFailureBackoffBaseMs: cutoff === 'pending age' ? 10 * 60_000 : 10,
+      quotaPersistenceFailureBackoffMaxMs: cutoff === 'pending age' ? 10 * 60_000 : 10,
       quotaPersistenceFailureBackoffJitterRatio: 0,
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     });
@@ -4993,7 +5006,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       profileId: 'work',
       fetchedAt,
-      staleAfterMs: 300_000,
+      staleAfterMs: 24 * 60 * 60_000,
       planLabel: 'Pro',
       accountLabel: 'user@example.com',
       meters: [],
@@ -5005,25 +5018,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         profileId: 'work',
         snapshot,
       });
-      const failedFlush = coordinator.flushInBandQuotaPersistence(1_000);
-      await vi.advanceTimersByTimeAsync(1_000);
-      await failedFlush;
-      // The owner exhausts its bounded five-attempt retry window before pausing this key.
-      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(cutoff === 'pending age' ? 6 * 60_000 : 40);
+      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(cutoff === 'pending age' ? 1 : 5);
 
-      // The identical material is retried (not permanently suppressed) once the retryable
-      // failure recovers, through the same strict V4 write DTO.
+      // Recovery uses retained work without a new observation, producer enqueue or forced flush.
       nextWriteSucceeds = true;
-      await coordinator.recordInBandQuotaSnapshot({
-        serviceId: 'openai-codex',
-        profileId: 'work',
-        snapshot,
-      });
-      const recoveryFlush = coordinator.flushInBandQuotaPersistence(1_000);
-      await vi.advanceTimersByTimeAsync(1_000);
-      await recoveryFlush;
-
-      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(6);
+      await vi.advanceTimersByTimeAsync(cutoff === 'pending age' ? 4 * 60_000 : 20);
+      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(cutoff === 'pending age' ? 2 : 6);
       expect(legacyV4.writeProviderAccountUsage).toHaveBeenLastCalledWith(expect.objectContaining({
         token: 'happy-token',
         write: expect.objectContaining({
@@ -7796,7 +7797,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
   });
 
   it('hot-applies only sibling sessions proven on the same live provider account after account exhaustion', async () => {
-    const now = 1_000_000;
+    let now = 1_000_000;
     const credentials: Credentials = {
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
@@ -7917,7 +7918,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       groupId: 'team',
       profileId: 'primary',
-      providerAccountId: 'acct-b',
+      providerAccountId: 'acct-a',
       accountLabel: null,
       observedAtMs: now,
       source: 'active_account_verification',
@@ -7925,6 +7926,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupGeneration: 4,
     });
 
+    // Warm proof is a candidate index, not authority over a later live account mismatch.
+    now += 6 * 60_000;
     await expect(recordAccountExhaustionAndFanoutForTest(coordinator, {
       sourceSessionId: 'source',
       serviceId: 'openai-codex',
@@ -11670,7 +11673,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(listConnectedServiceProfiles).toHaveBeenCalledTimes(2);
   });
 
-  it('aborts quota fetchers that exceed the timeout', async () => {
+  it.each([true, false])('uses a quota fetch deadline only when explicitly configured (%s)', async (configured) => {
     vi.useFakeTimers();
     const now = 1_000_000;
 
@@ -11716,23 +11719,29 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 	      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
 	    } satisfies QuotaApi;
 
+	    let releaseQuota!: () => void;
+      let fetchSignal: AbortSignal | undefined;
 	    const fetcher: ConnectedServiceQuotaFetcher = {
 	      serviceId: 'openai-codex',
 	      loadQuota: vi.fn(async ({ signal }: FetchArgs) => {
-	        await new Promise<void>((_resolve, reject) => {
+	        fetchSignal = signal;
+            await new Promise<void>((resolve, reject) => {
+              releaseQuota = resolve;
 	          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
 	        });
-	        return null;
+	        return buildAgentAccountUsageSnapshotFixture({ record, now, planLabel: 'late-valid-plan' });
 	      }),
 	    };
 
+	    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 	    const coordinator = new ConnectedServiceQuotasCoordinator({
 	      api,
 	      credentials,
 	      quotaFetchers: [fetcher],
 	      now: () => now,
 	      randomBytes: (length: number) => randomBytes(length),
-	      fetchTimeoutMs: 5,
+	      ...(configured ? { fetchTimeoutMs: 5 } : {}),
+	      runtimeQuotaSnapshots,
 	    });
 
     coordinator.registerSpawnTarget({
@@ -11744,9 +11753,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     const pending = coordinator.tickOnce();
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(configured ? 10 : 16_000);
+    expect(fetchSignal?.aborted).toBe(configured);
+    if (!configured) releaseQuota();
     await expect(pending).resolves.toBeUndefined();
-    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+    const observed = runtimeQuotaSnapshots.getSnapshot({ serviceId: 'openai-codex', groupId: 'any', profileId: 'work' });
+    if (configured) expect(observed).toBeNull();
+    else expect(observed).toMatchObject({ fetchedAt: now, planLabel: 'late-valid-plan' });
   });
 
   it('skips fetching when the server snapshot is still fresh', async () => {

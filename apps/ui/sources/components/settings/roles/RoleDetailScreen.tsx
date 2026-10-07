@@ -10,7 +10,7 @@ import type {
     RoleRunsAsV1,
 } from '@happier-dev/protocol';
 
-import { invalidateRoleCatalog, useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
+import { invalidateRoleCatalog, useRoleCatalogEntry, useRoleCatalogPromptPreview } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -79,10 +79,9 @@ async function reportFailure(result: Readonly<{ ok: boolean; error?: string }>):
  * it); the reader's own roles save to their Artifact under its revision.
  */
 export const RoleDetailScreen = React.memo(function RoleDetailScreen(props: Readonly<{ target: RoleDetailTarget }>) {
-    const catalog = useRoleCatalog();
+    const catalog = useRoleCatalogEntry(props.target.kind === 'role' ? props.target.roleId : null);
     if (props.target.kind === 'draft') return <RoleDraft />;
-    const roleId = props.target.roleId;
-    const entry = catalog.entries.find((candidate) => candidate.roleId === roleId) ?? null;
+    const entry = catalog.entry;
     if (!entry) {
         return (
             <ItemList>
@@ -96,10 +95,10 @@ export const RoleDetailScreen = React.memo(function RoleDetailScreen(props: Read
             </ItemList>
         );
     }
-    return <RoleDetail key={entry.roleId} entry={entry} catalog={catalog.entries} />;
+    return <RoleDetail key={entry.roleId} entry={entry} />;
 });
 
-const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleCatalogEntry; catalog: ReadonlyArray<RoleCatalogEntry> }>) {
+const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleCatalogEntry }>) {
     const { entry } = props;
     const { role } = entry;
     const router = useRouter();
@@ -277,7 +276,7 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
                     />
                 ) : null}
             </ItemGroup>
-            <RolePreview entry={entry} catalog={props.catalog} />
+            <RolePreview entry={entry} />
             <ItemGroup title={t('roles.settings.advancedTitle')}>
                 <RoleLaunchProfileRow
                     profileId={role.profileId ?? null}
@@ -290,18 +289,26 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
 });
 
 /** The block an agent receives as session instructions, from the one role renderer — the preview is the prompt. */
-function RolePreview(props: Readonly<{ entry: RoleCatalogEntry; catalog: ReadonlyArray<RoleCatalogEntry> }>) {
+function OrchestratorRolePreview(props: Readonly<{ entry: RoleCatalogEntry }>) {
+    const block = useRoleCatalogPromptPreview(props.entry.role);
+    return <RolePreviewBlock block={block} />;
+}
+
+function RolePreview(props: Readonly<{ entry: RoleCatalogEntry }>) {
     const block = React.useMemo(() => renderSessionRoleBlockV1({
         role: props.entry.role,
         source: 'dispatch',
-        availableRoles: props.catalog.map((entry) => entry.role),
-    }), [props.catalog, props.entry.role]);
+    }), [props.entry.role]);
+    return props.entry.roleId === 'orchestrator' ? <OrchestratorRolePreview entry={props.entry} /> : <RolePreviewBlock block={block} />;
+}
+
+function RolePreviewBlock(props: Readonly<{ block: string }>) {
     return (
         <ItemGroup title={t('roles.settings.previewTitle')} description={t('roles.settings.previewDescription')}>
             <SectionContentRow testID="settings.roles.detail.preview">
                 <FieldTextInput
                     testID="settings.roles.detail.preview.block"
-                    value={block}
+                    value={props.block}
                     onChangeText={() => {}}
                     accessibilityLabel={t('roles.settings.previewTitle')}
                     editable={false}

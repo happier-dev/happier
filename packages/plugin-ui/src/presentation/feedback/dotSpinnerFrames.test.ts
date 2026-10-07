@@ -13,12 +13,12 @@ import {
   DEFAULT_HAPPIER_SPINNER_TIMING,
   DOT_REST_OPACITY,
   DOT_SPINNER_STYLES,
-  H_DOTS,
   HAPPIER_SPINNER_PAUSE_IDS,
   HAPPIER_SPINNER_SPEED_IDS,
   HAPPIER_SPINNER_STYLE_IDS,
   happierSpinnerStyleTimingControls,
   normalizeHappierSpinnerStyleId,
+  isHappierSpinnerStyleId,
   normalizeHappierSpinnerTiming,
   type DotSpinnerStyleId,
   type HappierSpinnerTiming,
@@ -30,10 +30,31 @@ const FRAME_MS = 1000 / DOT_SPINNER_FRAMES_PER_SECOND;
 
 function dotSeries(styleId: DotSpinnerStyleId, dotId: string, timing: HappierSpinnerTiming = DEFAULT): number[] {
   const frames = getDotSpinnerFrames(styleId, timing);
-  return readDotSeries(frames.opacity, H_DOTS.findIndex((dot) => dot.id === dotId), frames.frameCount);
+  return readDotSeries(frames, frames.opacity, frames.dots.findIndex((dot) => dot.id === dotId));
 }
 
 describe('dot spinner frames', () => {
+  it('draws the Happier mark by default and retains the seven-dot H as a selectable style', () => {
+    const ink = { color: 'red' };
+    const mark = getDotSpinnerFrames('wave', DEFAULT);
+    expect(buildDotSpinnerStillSvg(mark, ink).match(/<circle /g)).toHaveLength(8);
+    expect(buildDotSpinnerStillSvg(mark, ink)).toContain('cx="1.5" cy="2.5"');
+    expect(isHappierSpinnerStyleId('hWave')).toBe(true);
+    if (!isHappierSpinnerStyleId('hWave')) return;
+    const h = getDotSpinnerFrames('hWave', DEFAULT);
+    expect(buildDotSpinnerStillSvg(h, ink).match(/<circle /g)).toHaveLength(7);
+    expect(h.key).not.toBe(mark.key);
+    expect(h.cycleMs).toBe(mark.cycleMs);
+  });
+
+  it.each(DOT_STYLE_IDS.filter((id) => !id.startsWith('h') || id === 'handwritten'))('%s animates the bottom-centre dot with the rest of the mark', (styleId) => {
+    const frames = getDotSpinnerFrames(styleId, DEFAULT);
+    const index = frames.dots.findIndex((dot) => dot.id === 'BC');
+    expect(index).toBeGreaterThanOrEqual(0);
+    const series = readDotSeries(frames, frames.hue ?? frames.opacity, index);
+    expect(Math.max(...series) - Math.min(...series)).toBeGreaterThan(0.5);
+  });
+
   it('gives every selectable dot style a style definition', () => {
     expect(Object.keys(DOT_SPINNER_STYLES).sort()).toEqual([...DOT_STYLE_IDS].sort());
   });
@@ -49,10 +70,10 @@ describe('dot spinner frames', () => {
     const frames = getDotSpinnerFrames(styleId, DEFAULT);
 
     expect(frames.frameCount).toBe(Math.round((frames.cycleMs * DOT_SPINNER_FRAMES_PER_SECOND) / 1000));
-    expect(frames.opacity).toHaveLength(frames.frameCount * H_DOTS.length);
+    expect(frames.opacity).toHaveLength(frames.frameCount * frames.dots.length);
     expect(frames.opacity.every((value) => value >= 0 && value <= 1)).toBe(true);
 
-    for (const dot of H_DOTS) {
+    for (const dot of frames.dots) {
       if (style.loop === 'continuous') {
         expect(style.opacity(dot, style.motionMs)).toBeCloseTo(style.opacity(dot, 0), 5);
         if (style.hue) expect(style.hue(dot, style.motionMs) % 1).toBeCloseTo(style.hue(dot, 0) % 1, 5);
@@ -63,8 +84,8 @@ describe('dot spinner frames', () => {
     }
 
     const signal = frames.hue ?? frames.opacity;
-    const swing = Math.max(...H_DOTS.map((_, i) => {
-      const series = readDotSeries(signal, i, frames.frameCount);
+    const swing = Math.max(...frames.dots.map((_, i) => {
+      const series = readDotSeries(frames, signal, i);
       return Math.max(...series) - Math.min(...series);
     }));
     expect(swing).toBeGreaterThan(0.5);
@@ -79,7 +100,7 @@ describe('dot spinner frames', () => {
     const frames = getDotSpinnerFrames('wave', { speed: 'normal', pause: 'short' });
     // Apart from the motion's first frame (the foot about to light), the pause is the only rest.
     const restingFrames = Array.from({ length: frames.frameCount }, (_, frame) => frames.opacity
-      .slice(frame * H_DOTS.length, (frame + 1) * H_DOTS.length)
+      .slice(frame * frames.dots.length, (frame + 1) * frames.dots.length)
       .every((value) => value <= DOT_REST_OPACITY)).filter(Boolean).length;
     expect(restingFrames * FRAME_MS).toBeGreaterThanOrEqual(190);
     expect(restingFrames * FRAME_MS).toBeLessThanOrEqual(240);
@@ -145,8 +166,8 @@ describe('dot spinner frames', () => {
 
     expect(svg).toContain(`viewBox="0 0 ${frames.frameCount * 3} 3"`);
     expect(svg).toContain('fill="#123456"');
-    expect(svg.match(/<circle /g)).toHaveLength(frames.frameCount * H_DOTS.length);
-    expect(buildDotSpinnerStillSvg(frames, { color: '#123456' }).match(/<circle /g)).toHaveLength(H_DOTS.length);
+    expect(svg.match(/<circle /g)).toHaveLength(frames.frameCount * frames.dots.length);
+    expect(buildDotSpinnerStillSvg(frames, { color: '#123456' }).match(/<circle /g)).toHaveLength(frames.dots.length);
   });
 
   it('blends aurora dots across the three accent colors and keeps color values out of the markup syntax', () => {
@@ -164,8 +185,8 @@ describe('dot spinner frames', () => {
     expect(unwrapHueSeries([0.1, 0.02, 0.95, 0.9])).toEqual([0.1, 0.02, -0.05, -0.1].map((value) => expect.closeTo(value, 5)));
 
     const frames = getDotSpinnerFrames('aurora', DEFAULT);
-    for (let i = 0; i < H_DOTS.length; i++) {
-      const series = unwrapHueSeries(readDotSeries(frames.hue!, i, frames.frameCount));
+    for (let i = 0; i < frames.dots.length; i++) {
+      const series = unwrapHueSeries(readDotSeries(frames, frames.hue!, i));
       for (let frame = 1; frame < series.length; frame++) {
         expect(Math.abs(series[frame]! - series[frame - 1]!)).toBeLessThan(0.1);
       }

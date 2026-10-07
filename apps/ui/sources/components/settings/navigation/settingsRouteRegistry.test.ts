@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -29,6 +29,26 @@ function listSettingsRouteFiles(): string[] {
     return out.sort();
 }
 
+/** Expo stops flattening descendants at a child layout, including a layout that renders Slot. */
+function listSettingsRootNavigatorScreens(): string[] {
+    const root = join(__dirname, '..', '..', '..', 'app', '(app)', 'settings');
+    const out: string[] = [];
+    const visit = (dir: string) => {
+        for (const entry of readdirSync(dir)) {
+            const path = join(dir, entry);
+            if (statSync(path).isDirectory()) {
+                if (existsSync(join(path, '_layout.tsx'))) out.push(relative(root, path).replace(/\\/g, '/'));
+                else visit(path);
+                continue;
+            }
+            if (!entry.endsWith('.tsx') || entry.startsWith('_') || /\.(test|spec)\./.test(entry)) continue;
+            out.push(relative(root, path).replace(/\\/g, '/').replace(/\.tsx$/, ''));
+        }
+    };
+    visit(root);
+    return out;
+}
+
 /** The URL path a route name renders at (`index` is its directory), as a list of pattern segments. */
 function routePatternSegments(name: string): string[] {
     const segments = name.split('/');
@@ -43,6 +63,17 @@ function matchesPattern(pattern: readonly string[], segments: readonly string[])
 const translate = (key: string) => key;
 
 describe('settingsRouteRegistry', () => {
+    it('projects root screen chrome only to routes owned by the actual settings navigator', () => {
+        const rootScreens = new Set(listSettingsRootNavigatorScreens());
+        const definitions = getSettingsStackScreenDefinitions(translate as never);
+        expect(definitions.map(({ name }) => name).filter((name) => !rootScreens.has(name))).toEqual([]);
+        expect(definitions.find(({ name }) => name === 'prompts')?.options.headerTitle).toBe('settings.prompts');
+        // The Slot layout still resolves descendant titles and back targets from this same registry.
+        expect(resolveSettingsRouteTitleKey('/settings/prompts/assets')).toBe('promptLibrary.externalAssets');
+        expect(resolveSettingsRouteTitleKey('/settings/prompts/docs/doc-1')).toBe('promptLibrary.editPrompt');
+        expect(resolveSettingsRouteParentPathname('/settings/prompts/docs/doc-1')).toBe('/settings/prompts/docs');
+    });
+
     it('adds deterministic parent navigation to settings subroute headers', () => {
         const definitions = getSettingsStackScreenDefinitions(translate as never);
         const indexRoute = definitions.find((definition) => definition.name === 'index');

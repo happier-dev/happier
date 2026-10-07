@@ -7,20 +7,17 @@ import { isPresentUserSettingWriteV1 } from './accountSettingDeclarations.js';
 export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
 export const TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS = ['session.user_action.answer'] as const;
 
-/** Account mutations an Agent may request, but only a present user may approve. */
-export const AGENT_REQUESTABLE_PRESENT_USER_ACTION_IDS = [
-  'account.apiTokens.create', 'account.apiTokens.update', 'account.apiTokens.revoke',
-  'account.apiTokens.revokeAll', 'account.security.terminalPresentUser.set',
-  'account.encryption.historicalKey.forget',
-  'account.encryption.automationTemplates.recover',
-] as const;
-
-export function isAgentRequestablePresentUserActionId(actionId: string): boolean {
-  return (AGENT_REQUESTABLE_PRESENT_USER_ACTION_IDS as readonly string[]).includes(actionId);
+export function isAutomationApprovalRequestSurface(surface: string | null | undefined): boolean {
+  return surface === 'agent' || surface === 'mcp' || surface === 'plugin';
 }
 
-export function isAgentApprovalRequestSurface(surface: string | null | undefined): boolean {
-  return surface === 'agent' || surface === 'mcp';
+/** Requestability follows the Action owner, not a second mutation allowlist. */
+export function canRequestPresentUserApprovalForActionInputV1(
+  spec: Pick<ActionSpec, 'id' | 'requiredAuthority' | 'approvalInputCustody'>,
+  input?: unknown,
+): boolean {
+  return !(DECISION_ACTION_IDS as readonly string[]).includes(spec.id)
+    && requiresPresentUserExecutionAuthorityForActionInputV1(spec, input);
 }
 
 export function canCredentialDecideV1(input: Readonly<{ authority: ActionRequiredAuthority; grant: ApiTokenGrantV1 | null }>): boolean {
@@ -57,7 +54,7 @@ export function requiresPresentUserDecisionForActionInputV1(
 
 /** Decisions are opt-in; they never grant token, security, trust or policy authority. */
 export function resolveCredentialActionAdmissionV1(input: Readonly<{
-  spec: Pick<ActionSpec, 'id' | 'requiredAuthority'>;
+  spec: Pick<ActionSpec, 'id' | 'requiredAuthority' | 'approvalInputCustody'>;
   authority: ActionRequiredAuthority;
   grant: ApiTokenGrantV1 | null;
   surface?: string | null;
@@ -69,15 +66,15 @@ export function resolveCredentialActionAdmissionV1(input: Readonly<{
   // this Action's minimum authority must not widen token or terminal access.
   if (input.spec.id === 'session.permission.respond') {
     return canCredentialDecideV1(input)
-      || (isAgentApprovalRequestSurface(input.surface) && !input.hasExternalCredential && !input.grant)
+      || ((input.surface === 'agent' || input.surface === 'mcp') && !input.hasExternalCredential && !input.grant)
       ? { ok: true }
       : { ok: false, errorCode: 'present_user_required' };
   }
   if (!requiresPresentUserExecutionAuthorityForActionInputV1(input.spec, input.actionInput) || input.authority === 'present_user') return { ok: true };
   // Admission here permits requesting consent, never automatic execution.
   // The approval owner enforces a mandatory floor, including persisted waivers.
-  if (isAgentApprovalRequestSurface(input.surface) && !input.hasExternalCredential && !input.grant
-    && (isAgentRequestablePresentUserActionId(input.spec.id) || input.spec.id === 'session.open')) return { ok: true };
+  if (isAutomationApprovalRequestSurface(input.surface) && !input.hasExternalCredential && !input.grant
+    && canRequestPresentUserApprovalForActionInputV1(input.spec, input.actionInput)) return { ok: true };
   if ((DECISION_ACTION_IDS as readonly string[]).includes(input.spec.id) && canCredentialDecideV1(input)) return { ok: true };
   if (input.grant && (TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(input.spec.id)
     && evaluateApiTokenGrantV1({ grant: { ...input.grant, targets: null }, actionId: input.spec.id }).ok) return { ok: true };

@@ -13,7 +13,7 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  TriageConfiguredSourceInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   TriageEntryLocatorV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
@@ -59,7 +59,7 @@ const BooleanSchema = defineProtocolUnion([
 ]);
 
 const BitbucketEntryTargetFieldsV1 = {
-  instance: TriageConfiguredSourceInstanceV1Schema,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   lastKnownLocator: TriageEntryLocatorV1Schema,
 } as const;

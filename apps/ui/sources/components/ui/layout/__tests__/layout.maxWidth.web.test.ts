@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
+function installWebViewportBoundary() {
+    vi.doMock('react-native', async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Dimensions: { get: () => ({ width: 2400, height: 1400 }) },
+            Platform: { OS: 'web' },
+        });
+    });
+}
+
 describe('layout.maxWidth (web)', () => {
     it('caps main content and headers to the compact preference regardless of viewport size', async () => {
         vi.resetModules();
 
-        vi.doMock('react-native', () => ({
-            Dimensions: {
-                get: () => ({ width: 2400, height: 1400 }),
-            },
-            Platform: { OS: 'web' },
-        }));
+        installWebViewportBoundary();
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
         vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
@@ -26,12 +31,7 @@ describe('layout.maxWidth (web)', () => {
     it('uses the compact content width preference in Tauri desktop', async () => {
         vi.resetModules();
 
-        vi.doMock('react-native', () => ({
-            Dimensions: {
-                get: () => ({ width: 2400, height: 1400 }),
-            },
-            Platform: { OS: 'web' },
-        }));
+        installWebViewportBoundary();
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
         vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => true }));
@@ -48,12 +48,7 @@ describe('layout.maxWidth (web)', () => {
     it('uses the medium content width preference', async () => {
         vi.resetModules();
 
-        vi.doMock('react-native', () => ({
-            Dimensions: {
-                get: () => ({ width: 2400, height: 1400 }),
-            },
-            Platform: { OS: 'web' },
-        }));
+        installWebViewportBoundary();
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
         vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
@@ -70,12 +65,7 @@ describe('layout.maxWidth (web)', () => {
     it('removes the content width cap for the full-width preference', async () => {
         vi.resetModules();
 
-        vi.doMock('react-native', () => ({
-            Dimensions: {
-                get: () => ({ width: 2400, height: 1400 }),
-            },
-            Platform: { OS: 'web' },
-        }));
+        installWebViewportBoundary();
 
         vi.doMock('@/utils/platform/platform', () => ({ isRunningOnMac: () => false }));
         vi.doMock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));

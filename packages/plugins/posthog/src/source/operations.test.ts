@@ -170,6 +170,22 @@ function configuredInstance() {
 }
 
 describe('PostHog Triage source operations', () => {
+    it('refuses a native credential binding before account or provider access', async () => {
+        const host = context([]);
+        const result = await scanPosthogSource({
+            v: 1,
+            instance: { ...configuredInstance(), binding: {
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+                source: 'native',
+                service: ACCOUNT.service,
+            } },
+            page: { kind: 'initial', limit: 30 },
+        }, host.value);
+        expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+        expect(host.materializeListedAccount).not.toHaveBeenCalled();
+        expect(host.request).not.toHaveBeenCalled();
+    });
+
     it('discovers one non-durable candidate per organization using each exact listed account', async () => {
         const host = context([organizationsPage, projectsPage]);
 
@@ -594,6 +610,16 @@ describe('PostHog Triage source operations', () => {
         });
         if (queryStatus === 200) expect(result).not.toHaveProperty('enrichmentFailure');
         else expect(result.enrichmentFailure).toMatchObject({ class: failureClass });
+        if (queryStatus === 200) {
+            // The query plane's own sparkline: equal-width buckets across the detail window, oldest first.
+            const trend = result.trend ?? [];
+            expect(trend.map((point) => point.count)).toEqual([0, 0, 0, 0, 1, 2, 4, 6, 9, 11, 13, 12]);
+            const steps = trend.slice(1).map((point, index) => point.atMs - trend[index]!.atMs);
+            expect(new Set(steps).size).toBe(1);
+            expect(steps[0]).toBeGreaterThan(0);
+        } else {
+            expect(result).not.toHaveProperty('trend');
+        }
         expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
         // The private result must never leak into the aggregate observation ABI.
         expect(TriageGetResultV1Schema.parse(result.observation)).toEqual(result.observation);

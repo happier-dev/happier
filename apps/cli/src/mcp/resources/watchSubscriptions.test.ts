@@ -6,13 +6,17 @@ import { CallToolResultSchema, ResourceUpdatedNotificationSchema, McpError } fro
 import {
   createActionExecutor, projectSessionAwarenessV1, waitForSessionAwarenessV1,
   SessionAwarenessProjectionV1Schema, WaitActionResultV1Schema, type ActionExecutorDeps,
+  createWorkflowAccountRunActionOwner, WorkflowRunSummaryV1Schema,
 } from '@happier-dev/protocol';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { registerHappierMcpResources } from './registerHappierMcpResources';
+import { waitForExecutionRun } from '@/session/services/executionRuns';
+import { ExecutionRunWaitConditionSchema, waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 const input = { target: { kind: 'session', serverId: 'home', sessionId: 'session' }, condition: { kind: 'terminal' } };
 
-async function fixture(isEnabled = true) {
+async function fixture(isEnabled = true, additionalOwners: Partial<ActionExecutorDeps> = {}, defaultSessionId = 'session') {
   let active = true;
   let revision = 0;
   let reads = 0;
@@ -22,6 +26,7 @@ async function fixture(isEnabled = true) {
   // Session reads and invalidation are the storage/socket boundary. Real
   // Action admission, awareness projection, passive owner and MCP transport run.
   const owner = createActionExecutor({
+    ...additionalOwners,
     sessionActivityGet: async ({ signal }) => {
       reads++;
       if (pauseReads && signal) {
@@ -60,7 +65,7 @@ async function fixture(isEnabled = true) {
   } });
   const server = new McpServer({ name: 'watch-test', version: '1' }, { capabilities: { resources: { subscribe: true } } });
   registerHappierMcpResources(server, {
-    surface: 'mcp', watch: { server, execute: bridge.executeActionByToolName, defaultSessionId: 'session', isEnabled: () => isEnabled },
+    surface: 'mcp', watch: { server, execute: bridge.executeActionByToolName, defaultSessionId, isEnabled: () => isEnabled },
   });
   const client = new Client({ name: 'watch-client', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -78,6 +83,98 @@ function payload(result: Awaited<ReturnType<Client['callTool']>>) {
 }
 
 describe('MCP passive watch over the real observation owner', () => {
+  it('observes execution snapshots through the native service and releases the Run feed on disconnect', async () => {
+    const listeners = new Set<() => void>();
+    let snapshot = ExecutionRunGetResponseSchema.parse({ run: {
+      runId: 'run', callId: 'call', sidechainId: 'call', intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running',
+    } });
+    const f = await fixture(true, { executionRunWait: async (_sessionId, request, options) => waitForExecutionRun({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine', runId: request.runId,
+      timeoutMs: null, signal: options?.signal, onSnapshot: options?.onSnapshot,
+      // Only the daemon RPC/change source is substituted; both wait owners run.
+      invokeWait: async (request, signal) => {
+        if (!request || typeof request !== 'object') throw new Error('invalid_rpc_request');
+        const raw = request as Readonly<Record<string, unknown>>;
+        return await waitForExecutionRunTerminal({ runId: 'run', timeoutMs: null, signal,
+          condition: ExecutionRunWaitConditionSchema.parse(raw.condition), after: raw.after,
+          readRun: async () => ({ ok: true, data: snapshot }),
+          waitForTerminal: async () => { throw new Error('passive observation must not await terminal custody'); },
+          waitForChange: (_runId, signal) => new Promise<void>((resolve, reject) => {
+            const finish = () => { listeners.delete(change); signal?.removeEventListener('abort', abort); };
+            const change = () => { finish(); resolve(); };
+            const abort = () => { finish(); reject(signal?.reason); };
+            listeners.add(change);
+            signal?.addEventListener('abort', abort, { once: true });
+            if (signal?.aborted) abort();
+          }),
+        });
+      },
+    }) });
+    try {
+      const watched = payload(await f.client.callTool({ name: 'watch', arguments: {
+        target: { kind: 'execution_run', serverId: 'home', machineId: 'machine', sessionId: 'session', runId: 'run' },
+        condition: { kind: 'needs_attention' },
+      } }));
+      expect(watched).toMatchObject({ resourceUri: expect.any(String), snapshot: { run: { status: 'running' } } });
+      const uri = watched.resourceUri as string;
+      const notifications: string[] = [];
+      f.client.setNotificationHandler(ResourceUpdatedNotificationSchema, n => { notifications.push(n.params.uri); });
+      await f.client.subscribeResource({ uri });
+      await expect.poll(() => listeners.size).toBe(1);
+      snapshot = { ...snapshot, run: { ...snapshot.run, attention: { kind: 'permission_required', requestIds: ['permission'] } } };
+      for (const change of [...listeners]) change();
+      await expect.poll(() => notifications).toEqual([uri]);
+      const current = await f.client.readResource({ uri });
+      expect(JSON.parse(String(current.contents[0] && 'text' in current.contents[0] ? current.contents[0].text : '')).snapshot.run.attention.kind).toBe('permission_required');
+      await f.client.close();
+      await expect.poll(() => listeners.size).toBe(0);
+    } finally { await f.client.close(); await f.server.close(); }
+  });
+
+  it.each(['unsubscribe', 'disconnect'] as const)('observes FIN workflow baseline/change; %s releases its feed', async (cleanup) => {
+    const listeners = new Set<() => void>();
+    let run = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      id: '11111111-1111-4111-8111-111111111111', origin: { kind: 'direct' }, state: 'running', attentionRequired: false,
+      revision: 0, machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+      availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true,
+        inspectExecution: false, disabledReasons: [] }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+    // Substitute persisted storage/feed only; FIN selection and observation stay real.
+    const workflow = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account',
+      storage: { execute: async () => run.attentionRequired
+        ? { run, observation: 'needs_attention', matchedCondition: 'attention' } : { run, observation: 'waiting' },
+        observeChanges: (_runId, change) => { listeners.add(change); return { dispose: async () => { listeners.delete(change); } }; } },
+      definitions: { get: async () => { throw new Error('wait_requires_no_definition'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: () => null, randomBytes: () => { throw new Error('read_needs_no_randomness'); } });
+    const f = await fixture(true, { workflowAction: async args => {
+      if (args.actionId !== 'workflow.run.wait') throw new Error('watch_requires_only_workflow_wait');
+      return await workflow.execute(args);
+    } }, '');
+    try {
+      const watched = payload(await f.client.callTool({ name: 'watch', arguments: {
+        target: { kind: 'workflow_run', serverId: 'home', runId: run.id }, condition: { kind: 'needs_attention' },
+      } }));
+      expect(watched).toMatchObject({ resourceUri: expect.any(String), snapshot: { run: { revision: 0 } } });
+      const uri = watched.resourceUri as string;
+      const baseline = await f.client.readResource({ uri });
+      expect(JSON.parse(String(baseline.contents[0] && 'text' in baseline.contents[0] ? baseline.contents[0].text : '')).snapshot.run.revision).toBe(0);
+      const notifications: string[] = [];
+      f.client.setNotificationHandler(ResourceUpdatedNotificationSchema, n => { notifications.push(n.params.uri); });
+      await f.client.subscribeResource({ uri });
+      await expect.poll(() => listeners.size).toBe(1);
+      run = { ...run, revision: 1, attentionRequired: true };
+      for (const change of [...listeners]) change();
+      await expect.poll(() => notifications).toEqual([uri]);
+      const current = await f.client.readResource({ uri });
+      expect(JSON.parse(String(current.contents[0] && 'text' in current.contents[0] ? current.contents[0].text : '')).snapshot.run.attentionRequired).toBe(true);
+      if (cleanup === 'unsubscribe') await f.client.unsubscribeResource({ uri });
+      else await f.client.close();
+      await expect.poll(() => listeners.size).toBe(0);
+    } finally { await f.client.close(); await f.server.close(); }
+  });
+
   it.each(['unsubscribe', 'disconnect'] as const)('delivers a change hint and fresh read; %s releases observation', async (cleanup) => {
     const f = await fixture();
     try {
@@ -121,8 +218,6 @@ describe('MCP passive watch over the real observation owner', () => {
   });
 
   it.each([
-    { target: { kind: 'execution_run', serverId: 'home', machineId: 'machine', runId: 'run' }, condition: { kind: 'terminal' } },
-    { target: { kind: 'workflow_run', serverId: 'home', runId: 'run' }, condition: { kind: 'terminal_or_needs_attention' } },
     { target: { kind: 'plugin_source', serverId: 'home', pluginId: 'acme.checks', sourceId: 'checkpoint' },
       condition: { kind: 'plugin', actionLocalId: 'observe/checks', condition: 'checks_passed' } },
   ])('refuses unsupported passive targets in tools and subscribe with the same typed disposition: $target.kind', async (request) => {

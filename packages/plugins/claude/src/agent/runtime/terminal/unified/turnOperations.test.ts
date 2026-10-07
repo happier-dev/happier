@@ -527,6 +527,31 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     };
   }
 
+  it.each([
+    { label: 'nonempty', advertised: ['/Review'], commands: [{ name: 'review' }] },
+    { label: 'empty', advertised: [], commands: [] },
+  ])('publishes the $label terminal native command catalog and empty settings-source selection', async ({ advertised, commands }) => {
+    const terminalHost = createTerminalHostFixture();
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, { transcripts: transcripts.service });
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'terminal-native-catalog',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default', settingSources: [],
+      knownProviderSession: { providerSessionId: 'terminal-native', transcriptPath: '/tmp/terminal-native.jsonl' },
+    });
+    const events: ClaudeProviderEvent[] = [];
+    const unsubscribe = operations.subscribeProviderEvents((event) => events.push(event));
+    try {
+      await operations.startProviderSession();
+      await transcripts.emitRow({ type: 'system', subtype: 'init', uuid: 'native-init', sessionId: 'terminal-native', slash_commands: advertised });
+      expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'available-commands', commands })]));
+      expect((terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>).mock.calls[0]?.[0].launch.args).toEqual(expect.arrayContaining(['--setting-sources', '']));
+    } finally {
+      unsubscribe();
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('keeps Provider-bound terminal usage cost unavailable without billing provenance', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

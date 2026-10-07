@@ -170,6 +170,7 @@ export type WidgetsActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -705,6 +706,7 @@ export type WidgetsActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
     };
@@ -724,6 +726,7 @@ export type WidgetsActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | null | undefined;
             name?: string | undefined;
             body?: {
@@ -960,6 +963,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1108,6 +1112,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -1245,6 +1250,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1378,6 +1384,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1511,6 +1518,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1672,6 +1680,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1805,6 +1814,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -1938,6 +1948,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -2125,6 +2136,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -2258,6 +2270,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -2419,6 +2432,7 @@ export type WidgetsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeServicePath?: string | undefined;
                         }[] | undefined;
                     };
                 };
@@ -2556,6 +2570,7 @@ export type WidgetsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        nativeServicePath?: string | undefined;
                     }[] | undefined;
                 };
             };
@@ -2625,6 +2640,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
             sourceDefinition?: {
                 kind: 'installed';
@@ -2706,6 +2722,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
         placementSummary?: {
@@ -2810,6 +2827,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
     };
@@ -2884,6 +2902,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
     };
@@ -2958,6 +2977,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
     };
@@ -3036,6 +3056,7 @@ export type WidgetsActionResultById = {
                     pluginId: string;
                     localId: string;
                 };
+                nativeServicePath?: string | undefined;
             }[] | undefined;
         };
         suggestedBindings: Record<string, {

@@ -154,7 +154,7 @@ export function useAgentCollection(
     }), [agentEntries, inventory.agents, query]);
     return {
         collection,
-        detecting: inventory.status === 'loading',
+        detecting: executionTarget !== null && inventory.status === 'loading',
         refreshDetection: inventory.refresh,
     } as const;
 }

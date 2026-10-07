@@ -413,7 +413,7 @@ async function canonicalizePiSessionFile(params: Readonly<{
   source: ResolvedPiSource;
   filePath: string;
   remoteSessionId: string;
-  maxBytes: number;
+  maxBytes?: number;
 }>): Promise<ResolvedPiSessionFile | null> {
   const canonicalSessionsRoot = await canonicalizePath(params.source.sessionsRoot);
   const canonicalFilePath = await canonicalizePath(params.filePath);
@@ -423,7 +423,10 @@ async function canonicalizePiSessionFile(params: Readonly<{
   if (!fileMetadata?.isFile() || fileMetadata.isSymbolicLink()) return null;
   const header = await readPiV3Header({
     filePath: canonicalFilePath,
-    maxBytes: params.maxBytes,
+    // A missing identity result budget does not impose a native header cap.
+    // The scanner reads chunks and stops after its first record; the inspected
+    // file frontier bounds an otherwise unbudgeted read without a sentinel.
+    maxBytes: params.maxBytes ?? fileMetadata.size,
   });
   if (!header || header.sessionId !== params.remoteSessionId) return null;
   const fileStat = await stat(canonicalFilePath).catch(() => null);

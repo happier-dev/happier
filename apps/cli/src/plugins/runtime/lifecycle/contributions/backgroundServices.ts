@@ -50,12 +50,10 @@ type RunningBackgroundService = Readonly<{
     task: Promise<void>;
 }>;
 
-const DEFAULT_SETTLEMENT_TIMEOUT_MS = 5_000;
-
-function positiveSettlementTimeout(value: number | undefined): number {
+function positiveSettlementTimeout(value: number | undefined): number | null {
     return Number.isFinite(value) && value !== undefined && value > 0
         ? Math.floor(value)
-        : DEFAULT_SETTLEMENT_TIMEOUT_MS;
+        : null;
 }
 
 export function createBackgroundServiceRunnerHost(params: Readonly<{
@@ -166,13 +164,18 @@ export function createBackgroundServiceRunnerHost(params: Readonly<{
         if (unsettled.length === 0) return;
 
         const timeoutMs = positiveSettlementTimeout(params.settlementTimeoutMs);
+        const settlement = Promise.all(unsettled.map(async (service) => await service.task));
+        if (timeoutMs === null) {
+            await settlement;
+            return;
+        }
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<'timeout'>((resolve) => {
             timer = setTimeout(() => resolve('timeout'), timeoutMs);
             timer.unref?.();
         });
         const outcome = await Promise.race([
-            Promise.all(unsettled.map(async (service) => await service.task)).then(() => 'settled' as const),
+            settlement.then(() => 'settled' as const),
             timeout,
         ]);
         if (timer !== undefined) clearTimeout(timer);

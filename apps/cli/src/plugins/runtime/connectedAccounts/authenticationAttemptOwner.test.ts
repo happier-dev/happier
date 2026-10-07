@@ -151,7 +151,6 @@ function deviceMode(
 }
 
 function harness(input: Readonly<{
-    maxAttempts?: number;
     configuration?: ConnectedAccountAttemptConfigurationAdmission;
     admitConfiguration?: (input: unknown) => Promise<ConnectedAccountAttemptConfigurationAdmission>;
     admittedMode?: ConnectedAccountAttemptModeAdmission;
@@ -174,7 +173,6 @@ function harness(input: Readonly<{
     destroyAttemptConfiguration?: (attemptId: string) => void | Promise<void>;
     now?: () => number;
     onBackgroundTransition?: Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['onBackgroundTransition'];
-    attemptTtlMs?: number;
     deviceTransactions?: Readonly<{
         acknowledge(input: unknown): void | Promise<void>;
         read(attemptId: string): unknown | Promise<unknown>;
@@ -267,13 +265,11 @@ function harness(input: Readonly<{
         input.admitConfiguration ?? (async () => input.configuration ?? configured()),
     );
     const owner = createConnectedAccountAuthenticationAttemptOwner({
-        maxAttempts: input.maxAttempts ?? 3,
         createAttemptId:
             input.createAttemptId ?? (() => `attempt-${++attemptNumber}`),
         createAccountId: input.createAccountId ?? (() => 'host-account-1'),
         now: input.now ?? (() => 1_000),
         ...(input.onBackgroundTransition ? { onBackgroundTransition: input.onBackgroundTransition } : {}),
-        attemptTtlMs: input.attemptTtlMs ?? 60_000,
         accounts: {
             readExact: vi.fn(input.readAccount ?? (async () =>
                 input.account === undefined
@@ -355,6 +351,92 @@ async function waitForAttemptStatus(
     return current;
 }
 
+it('continues a captured manual attempt after runtime reload without readmitting or replaying authentication', async () => {
+    let current = true;
+    const h = harness({ generationCurrent: () => current });
+    const begun = await h.owner.beginConnect({ service, modeId: 'manual' });
+    expect(begun.status).toBe('awaitingManual');
+    if (!('attemptId' in begun) || !begun.attemptId) throw new Error('Expected an attempt');
+    current = false;
+
+    await expect(h.owner.submitManual({
+        attemptId: begun.attemptId, fields: { token: 'candidate' },
+    })).resolves.toMatchObject({ status: 'connected', account: accountA });
+    expect(h.invoke).toHaveBeenCalledOnce();
+    expect(h.settle).toHaveBeenCalledOnce();
+    h.owner.dispose();
+});
+
+it('settles typed authentication facts from a trusted runtime with computed fields', async () => {
+    const h = harness({ invoke: async () => ({
+        status: 'connected', accountId: 'account-a',
+        get displayName() { return 'Computed account name'; },
+        scopes: ['read'],
+    }) });
+    await h.owner.beginConnect({ service, modeId: 'manual' });
+    await expect(h.owner.submitManual({
+        attemptId: 'attempt-1', fields: { token: 'candidate' },
+    })).resolves.toMatchObject({ status: 'connected', account: accountA });
+    expect(h.settle).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Computed account name' }));
+    h.owner.dispose();
+});
+
+it('allows provider cancellation cleanup to finish without a guessed callback deadline', async () => {
+    vi.useFakeTimers();
+    // Native AbortSignal.timeout owns a real clock, outside Vitest's JS timers.
+    // Adapt that clock boundary so the actual attempt owner can be tested deterministically.
+    const timeoutClock = vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('Deadline exceeded', 'TimeoutError')), delay);
+        return controller.signal;
+    });
+    let releaseCleanup!: () => void;
+    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    let cleanupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { cleanupStarted = resolve; });
+    let cleanupFinished!: () => void;
+    const finished = new Promise<void>((resolve) => { cleanupFinished = resolve; });
+    let cleanupSignal: AbortSignal | undefined;
+    const h = harness({
+        admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
+        invoke: async ({ operation, signal }) => {
+            if (operation.kind === 'cancel') {
+                cleanupSignal = signal;
+                cleanupStarted();
+                await cleanupGate;
+                signal?.throwIfAborted();
+                cleanupFinished();
+                return undefined;
+            }
+            return {
+                status: 'awaitingOAuthRedirect',
+                authorizationUrl: 'https://provider.example/authorize',
+                expiresAtMs: 61_000,
+            };
+        },
+    });
+    try {
+        await h.owner.beginConnect({ service, modeId: 'oauth' });
+        await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
+        await expect(h.owner.cancel({ attemptId: 'attempt-1' })).resolves.toEqual({
+            status: 'cancelled', attemptId: 'attempt-1',
+        });
+        await started;
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(cleanupSignal?.aborted ?? false).toBe(false);
+        releaseCleanup();
+        await finished;
+        await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
+            status: 'cancelled', attemptId: 'attempt-1',
+        });
+    } finally {
+        releaseCleanup();
+        h.owner.dispose();
+        timeoutClock.mockRestore();
+        vi.useRealTimers();
+    }
+});
+
 type TestOAuthTransactionSnapshot = Readonly<{
     attemptId: string;
     phase: 'starting' | 'awaitingOAuth' | 'outcomeUnknown';
@@ -430,6 +512,27 @@ function durableOAuthTransactions(input: Readonly<{
 }
 
 describe('ConnectedAccountAuthenticationAttemptOwner', () => {
+    it('does not impose a guessed lifetime on a manual attempt', async () => {
+        let now = 1_000;
+        const h = harness({ now: () => now });
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+        now += 16 * 60_000;
+        await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'candidate' } })).resolves.toMatchObject({ status: 'connected' });
+        h.owner.dispose();
+    });
+    it('retains user-owned manual attempts beyond guessed capacity and lifetime limits', async () => {
+        let now = 1_000;
+        const h = harness({ now: () => now });
+        for (let index = 1; index <= 65; index += 1) {
+            await expect(h.owner.beginConnect({ service, modeId: 'manual' })).resolves.toMatchObject({
+                status: 'awaitingManual', attemptId: `attempt-${index}`,
+            });
+        }
+        now += 16 * 60_000;
+        await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toMatchObject({ status: 'awaitingManual' });
+        await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'candidate' } })).resolves.toMatchObject({ status: 'connected' });
+        h.owner.dispose();
+    });
     it('passes a provider-fixed OAuth callback to the single transaction owner', async () => {
         const create = vi.fn(async (transactionInput: Readonly<{
             snapshot: TestOAuthTransactionSnapshot;
@@ -771,7 +874,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(h.destroyAttemptConfiguration).not.toHaveBeenCalled();
     });
 
-    it.each(['runtime-currentness', 'peer-admission'] as const)(
+    it.each(['configuration-currentness', 'peer-admission'] as const)(
         'does not create OAuth custody after cancellation wins %s',
         async (boundary) => {
             let signalBoundaryStarted!: () => void;
@@ -792,8 +895,8 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
                     create,
                     read: vi.fn(async () => null),
                 },
-                generationCurrent: async () => {
-                    if (boundary === 'runtime-currentness') {
+                configurationCurrent: async () => {
+                    if (boundary === 'configuration-currentness') {
                         signalBoundaryStarted();
                         await boundaryWait;
                     }
@@ -934,7 +1037,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(h.settle).not.toHaveBeenCalled();
     });
 
-    it('retains sole attempt capacity until deferred OAuth creation compensation settles', async () => {
+    it('closes deferred OAuth creation custody after cancellation', async () => {
         const durable = durableOAuthTransactions();
         let signalCreated!: () => void;
         const created = new Promise<void>((resolve) => {
@@ -945,7 +1048,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             releaseCreate = resolve;
         });
         const h = harness({
-            maxAttempts: 1,
             admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
             oauthTransactions: {
                 create: vi.fn(async (input: unknown) => {
@@ -964,13 +1066,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
         });
 
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'oauth',
-        })).resolves.toEqual({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
         releaseCreate();
         await vi.waitFor(() => expect(durable.readRecord()).toBeNull());
 
@@ -983,7 +1078,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
     });
 
-    it('releases retained capacity when deferred OAuth creation rejects after cancellation', async () => {
+    it('retains cancellation when deferred OAuth creation rejects', async () => {
         let signalCreateStarted!: () => void;
         const createStarted = new Promise<void>((resolve) => {
             signalCreateStarted = resolve;
@@ -1000,7 +1095,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             .mockRejectedValueOnce(new Error('configuration cleanup unavailable'))
             .mockResolvedValue(undefined);
         const h = harness({
-            maxAttempts: 1,
             admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
             destroyAttemptConfiguration,
             oauthTransactions: {
@@ -1050,7 +1144,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         { transport: 'device' as const, outcome: 'null' as const },
         { transport: 'device' as const, outcome: 'reject' as const },
     ])(
-        'releases retained capacity when cancelled $transport restoration reads $outcome',
+        'retains cancellation when $transport restoration reads $outcome',
         async ({ transport, outcome }) => {
             let signalReadStarted!: () => void;
             const readStarted = new Promise<void>((resolve) => {
@@ -1067,7 +1161,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
                 };
             });
             const h = harness({
-                maxAttempts: 1,
                 ...(transport === 'oauth'
                     ? {
                         oauthTransactions: {
@@ -1213,7 +1306,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(h.invoke).not.toHaveBeenCalled();
     });
 
-    it('reports runtime generation drift when continueConnect observes the typed currentness error', async () => {
+    it('continues configuration-required custody across runtime replacement', async () => {
         const target = Object.freeze({
             kind: 'attempt' as const,
             attemptId: 'attempt-1',
@@ -1245,9 +1338,10 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
             expectedConfigurationRevision: 'configuration-1',
         })).resolves.toEqual({
-            status: 'conflict',
+            status: 'configurationRequired',
             attemptId: 'attempt-1',
-            code: 'connected_account_runtime_generation_changed',
+            target,
+            missingFieldIds: ['tenant'],
         });
         expect(h.invoke).not.toHaveBeenCalled();
     });
@@ -1539,7 +1633,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             providerIdentity: { accountId: 'provider-user-1', email: 'work@example.test' },
         }));
         expect(h.configurationCurrent).toHaveBeenCalled();
-        expect(h.generationCurrent).toHaveBeenCalled();
     });
 
     it('mints a canonical first-connect account id without reusing operation identity', async () => {
@@ -1773,7 +1866,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
     });
 
-    it('keeps prepared OAuth settlement retryable when snapshot acknowledgement observes drift', async () => {
+    it('settles prepared OAuth credentials once across runtime replacement', async () => {
         let generationCurrent = true;
         let markPreparedAcknowledgementStarted!: () => void;
         const preparedAcknowledgementStarted = new Promise<void>((resolve) => {
@@ -1820,21 +1913,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         await preparedAcknowledgementStarted;
         releasePreparedAcknowledgement();
 
-        await expect(completion).resolves.toMatchObject({
-            status: 'outcomeUnknown',
-            attemptId: 'attempt-1',
-        });
-        expect(h.settle).not.toHaveBeenCalled();
-
-        generationCurrent = true;
-        await expect(h.owner.completeOAuth({
-            attemptId: 'attempt-1',
-            completion: {
-                code: 'ignored-after-preparation',
-                callbackUrl: 'http://127.0.0.1:4000/auth/callback',
-                state: 'state-1',
-            },
-        })).resolves.toEqual({
+        await expect(completion).resolves.toEqual({
             status: 'connected',
             attemptId: 'attempt-1',
             account: accountA,
@@ -2727,7 +2806,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
     });
 
-    it('restores configuration-required custody when continuation currentness rejects', async () => {
+    it('preserves the captured configuration request when runtime currentness is unavailable', async () => {
         const target = Object.freeze({
             kind: 'attempt' as const,
             attemptId: 'attempt-1',
@@ -2762,9 +2841,10 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
             expectedConfigurationRevision: 'configuration-1',
         })).resolves.toEqual({
-            status: 'unavailable',
+            status: 'configurationRequired',
             attemptId: 'attempt-1',
-            code: 'connected_account_runtime_unavailable',
+            target,
+            missingFieldIds: ['tenant'],
         });
 
         rejectRuntimeCurrentness = false;
@@ -2782,230 +2862,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(h.settle).not.toHaveBeenCalled();
     });
 
-    it('reserves account-configuration attempt capacity before awaiting admission', async () => {
-        let finishFirstAdmission!: (value: ConnectedAccountAttemptConfigurationAdmission) => void;
-        const firstAdmission = new Promise<ConnectedAccountAttemptConfigurationAdmission>((resolve) => {
-            finishFirstAdmission = resolve;
-        });
-        const target = Object.freeze({
-            kind: 'attempt' as const,
-            attemptId: 'attempt-1',
-            service,
-            modeId: 'oauth',
-        });
-        const admitConfiguration = vi.fn()
-            .mockImplementationOnce(async () => await firstAdmission)
-            .mockResolvedValue({
-                status: 'configurationRequired',
-                target: { ...target, attemptId: 'attempt-2' },
-                missingFieldIds: ['tenant'],
-            });
-        const h = harness({
-            maxAttempts: 1,
-            admittedMode: oauthMode({
-                outcomeReconciliation: 'none',
-                configuration: {
-                    scope: 'account',
-                    changeBehavior: 'reconnect',
-                    fields: [{
-                        id: 'tenant',
-                        title: 'Tenant',
-                        schema: { type: 'string' },
-                        required: true,
-                        secret: false,
-                    }],
-                },
-            }),
-            admitConfiguration,
-        });
-
-        const first = h.owner.beginConnect({ service, modeId: 'oauth' });
-        await vi.waitFor(() => expect(admitConfiguration).toHaveBeenCalledOnce());
-        await expect(h.owner.beginConnect({ service, modeId: 'oauth' })).resolves.toMatchObject({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
-        expect(admitConfiguration).toHaveBeenCalledOnce();
-
-        finishFirstAdmission({
-            status: 'configurationRequired',
-            target,
-            missingFieldIds: ['tenant'],
-        });
-        await expect(first).resolves.toMatchObject({
-            status: 'configurationRequired',
-            attemptId: 'attempt-1',
-        });
-    });
-
-    it('keeps durable OAuth restoration within capacity while an account-configuration attempt is reserved', async () => {
-        const mode = oauthMode({
-            outcomeReconciliation: 'none',
-            configuration: accountScopedConfiguration(),
-        });
-        const durable = durableOAuthTransactions();
-        const first = harness({
-            admittedMode: mode,
-            oauthTransactions: durable.owner,
-            admitConfiguration: async (raw) => {
-                const attemptId = (raw as Readonly<{ attemptId: string }>).attemptId;
-                return configuredAttempt(attemptId, 'oauth');
-            },
-        });
-        await first.owner.beginConnect({ service, modeId: 'oauth' });
-        await waitForAttemptStatus(first.owner, 'attempt-1', 'awaitingOAuth');
-
-        let releaseReservation!: (
-            value: ConnectedAccountAttemptConfigurationAdmission,
-        ) => void;
-        const reservation = new Promise<ConnectedAccountAttemptConfigurationAdmission>(
-            (resolve) => {
-                releaseReservation = resolve;
-            },
-        );
-        const replacement = harness({
-            maxAttempts: 1,
-            createAttemptId: () => 'reserved-attempt',
-            admittedMode: mode,
-            oauthTransactions: durable.owner,
-            admitConfiguration: async (raw) => {
-                const attemptId = (raw as Readonly<{ attemptId: string }>).attemptId;
-                return attemptId === 'reserved-attempt'
-                    ? await reservation
-                    : configuredAttempt(attemptId, 'oauth');
-            },
-        });
-        const reserved = replacement.owner.beginConnect({
-            service,
-            modeId: 'oauth',
-        });
-        await vi.waitFor(() => expect(
-            replacement.admitConfiguration,
-        ).toHaveBeenCalledWith(expect.objectContaining({
-            attemptId: 'reserved-attempt',
-        })));
-
-        const restored = await replacement.owner.completeOAuth({
-            attemptId: 'attempt-1',
-            completion: {
-                code: 'callback-code',
-                callbackUrl: 'http://127.0.0.1:4000/auth/callback',
-                state: 'state-1',
-            },
-        });
-        releaseReservation({
-            status: 'configurationRequired',
-            target: {
-                kind: 'attempt',
-                attemptId: 'reserved-attempt',
-                service,
-                modeId: 'oauth',
-            },
-            missingFieldIds: ['tenant'],
-        });
-        await expect(reserved).resolves.toMatchObject({
-            status: 'configurationRequired',
-            attemptId: 'reserved-attempt',
-        });
-
-        expect(restored).toEqual({
-            status: 'conflict',
-            attemptId: 'attempt-1',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
-        expect(durable.readRecord()).not.toBeNull();
-        expect(replacement.invoke).not.toHaveBeenCalled();
-    });
-
-    it('keeps durable device restoration within capacity while an account-configuration attempt is reserved', async () => {
-        const mode = deviceMode(
-            'none',
-            'generation-1',
-            'artifact-acme-1',
-            accountScopedConfiguration(),
-        );
-        let durableSnapshot: unknown = null;
-        const deviceTransactions = {
-            acknowledge: vi.fn(async (snapshot: unknown) => {
-                durableSnapshot = snapshot;
-            }),
-            read: vi.fn(async () => durableSnapshot),
-            clear: vi.fn(async () => {
-                durableSnapshot = null;
-            }),
-        };
-        const first = harness({
-            admittedMode: mode,
-            deviceTransactions,
-            admitConfiguration: async (raw) => {
-                const attemptId = (raw as Readonly<{ attemptId: string }>).attemptId;
-                return configuredAttempt(attemptId, 'device');
-            },
-        });
-        await first.owner.beginConnect({ service, modeId: 'device' });
-        await waitForAttemptStatus(
-            first.owner,
-            'attempt-1',
-            'awaitingDeviceAuthorization',
-        );
-
-        let releaseReservation!: (
-            value: ConnectedAccountAttemptConfigurationAdmission,
-        ) => void;
-        const reservation = new Promise<ConnectedAccountAttemptConfigurationAdmission>(
-            (resolve) => {
-                releaseReservation = resolve;
-            },
-        );
-        const replacement = harness({
-            maxAttempts: 1,
-            createAttemptId: () => 'reserved-attempt',
-            admittedMode: mode,
-            deviceTransactions,
-            admitConfiguration: async (raw) => {
-                const attemptId = (raw as Readonly<{ attemptId: string }>).attemptId;
-                return attemptId === 'reserved-attempt'
-                    ? await reservation
-                    : configuredAttempt(attemptId, 'device');
-            },
-        });
-        const reserved = replacement.owner.beginConnect({
-            service,
-            modeId: 'device',
-        });
-        await vi.waitFor(() => expect(
-            replacement.admitConfiguration,
-        ).toHaveBeenCalledWith(expect.objectContaining({
-            attemptId: 'reserved-attempt',
-        })));
-
-        const restored = await replacement.owner.resumeDevice({
-            attemptId: 'attempt-1',
-        });
-        releaseReservation({
-            status: 'configurationRequired',
-            target: {
-                kind: 'attempt',
-                attemptId: 'reserved-attempt',
-                service,
-                modeId: 'device',
-            },
-            missingFieldIds: ['tenant'],
-        });
-        await expect(reserved).resolves.toMatchObject({
-            status: 'configurationRequired',
-            attemptId: 'reserved-attempt',
-        });
-
-        expect(restored).toEqual({
-            status: 'conflict',
-            attemptId: 'attempt-1',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
-        expect(durableSnapshot).not.toBeNull();
-        expect(deviceTransactions.clear).not.toHaveBeenCalled();
-        expect(replacement.invoke).not.toHaveBeenCalled();
-    });
 
     it('installs device restoration custody before the first durable read can be cancelled', async () => {
         let durableSnapshot: unknown = null;
@@ -3786,8 +3642,8 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
     it('turns a rejected background currentness check into a stable terminal response', async () => {
         const h = harness({
             admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
-            generationCurrent: async () => {
-                throw new Error('generation authority unavailable');
+            configurationCurrent: async () => {
+                throw new Error('configuration authority unavailable');
             },
         });
 
@@ -3872,7 +3728,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const h = harness({
             admittedMode: deviceMode(),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions: {
                 acknowledge,
                 read: vi.fn(async () => null),
@@ -3953,7 +3808,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const h = harness({
             admittedMode: deviceMode(),
             now: () => boundaryReads?.shift() ?? 1_000,
-            attemptTtlMs: 120_000,
             deviceTransactions: {
                 acknowledge: vi.fn(async () => {}),
                 read: vi.fn(async () => null),
@@ -4010,7 +3864,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const first = harness({
             admittedMode: deviceMode('none', 'process-generation-5', 'artifact-acme-1'),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             invoke: async ({ operation, context }) => {
                 if (operation.kind !== 'beginDevice') throw new Error('unexpected operation');
@@ -4032,7 +3885,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const replacement = harness({
             admittedMode: deviceMode('none', 'process-generation-1', 'artifact-acme-1'),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             invoke: async ({ operation, context }) => {
                 if (operation.kind !== 'pollDevice') throw new Error('unexpected operation');
@@ -4064,7 +3916,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const incompatible = harness({
             admittedMode: deviceMode('none', 'process-generation-1', 'artifact-acme-2'),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
         });
         await expect(incompatible.owner.resumeDevice({
@@ -4162,7 +4013,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const first = harness({
             admittedMode: deviceMode(),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             createAccountId: firstCreateAccountId,
             settle: async () => await firstSettlement,
@@ -4202,7 +4052,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const replacement = harness({
             admittedMode: deviceMode('none', 'replacement-process', 'artifact-acme-1'),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             createAccountId: replacementCreateAccountId,
             settle: async (request) => {
@@ -4358,7 +4207,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const h = harness({
             admittedMode: deviceMode(),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             invoke: async ({ operation }) => {
                 if (operation.kind === 'beginDevice') {
@@ -4432,7 +4280,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         const h = harness({
             admittedMode: deviceMode(),
             now: () => now,
-            attemptTtlMs: 120_000,
             deviceTransactions,
             invoke: async ({ operation }) => {
                 if (operation.kind === 'beginDevice') {
@@ -4560,7 +4407,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
         let settlementCalls = 0;
         const h = harness({
-            maxAttempts: 1,
             settle: async (request) => {
                 settlementCalls += 1;
                 if (settlementCalls === 1) {
@@ -4602,8 +4448,8 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             service,
             modeId: 'manual',
         })).resolves.toEqual({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
+            status: 'awaitingManual',
+            attemptId: 'attempt-2',
         });
 
         await expect(h.owner.reconcile({
@@ -4620,7 +4466,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             modeId: 'manual',
         })).resolves.toEqual({
             status: 'awaitingManual',
-            attemptId: 'attempt-2',
+            attemptId: 'attempt-3',
         });
     });
 
@@ -4813,111 +4659,8 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
     });
 
-    it.each([
-        [{ status: 'connected' }, 'manual'],
-        [{
-            status: 'connected',
-            displayName: 'Account A',
-            scopes: ['read', 'read'],
-        }, 'manual'],
-        [{
-            status: 'connected',
-            displayName: 'Account A',
-            scopes: [],
-            unexpected: true,
-        }, 'manual'],
-        [{
-            status: 'connected',
-            displayName: 'Account A',
-            scopes: [],
-            providerIdentity: { accountId: 'provider-a', unexpected: true },
-        }, 'manual'],
-        [{
-            status: 'rejected',
-            diagnostic: { code: 'provider_denied', unexpected: true },
-        }, 'manual'],
-        [{
-            status: 'awaitingDeviceAuthorization',
-            verificationUri: 'https://provider.example/device',
-            userCode: 'ABCD',
-            expiresAtMs: 61_000,
-            pollIntervalMs: 0,
-        }, 'device'],
-    ] as const)('treats malformed provider results as an uncertain remote outcome without settlement (%o)', async (result, mode) => {
-        const h = harness({
-            ...(mode === 'device' ? { admittedMode: deviceMode() } : {}),
-            invoke: async () => result,
-        });
 
-        const begun = await h.owner.beginConnect({ service, modeId: mode });
-        if (mode === 'manual') {
-            expect(begun).toMatchObject({ status: 'awaitingManual' });
-            await expect(h.owner.submitManual({
-                attemptId: 'attempt-1',
-                fields: { token: 'candidate' },
-            })).resolves.toMatchObject({
-                status: 'reconnectRequired',
-                code: 'connected_account_authentication_outcome_unknown',
-            });
-        } else {
-            await expect(waitForAttemptStatus(
-                h.owner,
-                'attempt-1',
-                'reconnectRequired',
-            )).resolves.toMatchObject({
-                code: 'connected_account_authentication_outcome_unknown',
-            });
-        }
-        expect(h.settle).not.toHaveBeenCalled();
-        expect(h.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
-    });
-
-    it('retains a malformed provider result for declared provider reconciliation without replaying the operation', async () => {
-        const h = harness({
-            admittedMode: oauthMode({ outcomeReconciliation: 'providerCheck' }),
-            invoke: async () => ({ status: 'connected' }),
-        });
-
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'oauth',
-        })).resolves.toMatchObject({ status: 'starting' });
-        await expect(waitForAttemptStatus(
-            h.owner,
-            'attempt-1',
-            'outcomeUnknown',
-        )).resolves.toMatchObject({
-            status: 'outcomeUnknown',
-            diagnostic: {
-                code: 'connected_account_provider_result_invalid',
-            },
-        });
-        expect(h.invoke).toHaveBeenCalledTimes(1);
-        expect(h.settle).not.toHaveBeenCalled();
-        expect(h.destroyAttemptConfiguration).not.toHaveBeenCalled();
-    });
-
-    it('treats an accessor-backed provider result as uncertain without invoking the accessor', async () => {
-        const readStatus = vi.fn(() => 'connected');
-        const result = Object.defineProperty({}, 'status', {
-            enumerable: true,
-            get: readStatus,
-        });
-        const h = harness({ invoke: async () => result });
-        await h.owner.beginConnect({ service, modeId: 'manual' });
-
-        await expect(h.owner.submitManual({
-            attemptId: 'attempt-1',
-            fields: { token: 'candidate' },
-        })).resolves.toMatchObject({
-            status: 'reconnectRequired',
-            code: 'connected_account_authentication_outcome_unknown',
-        });
-        expect(readStatus).not.toHaveBeenCalled();
-        expect(h.settle).not.toHaveBeenCalled();
-    });
-
-    it('accepts only bounded protocol diagnostics from provider results', async () => {
+    it('preserves trusted provider diagnostics without interpreting them as authentication', async () => {
         const accepted = harness({
             invoke: async () => ({
                 status: 'rejected',
@@ -4947,30 +4690,10 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             },
         });
 
-        for (const diagnostic of [
-            { code: 'provider_denied' },
-            {
-                code: 'provider_denied',
-                severity: 'error',
-                message: 'x'.repeat(2_049),
-            },
-        ]) {
-            const rejected = harness({
-                invoke: async () => ({ status: 'rejected', diagnostic }),
-            });
-            await rejected.owner.beginConnect({ service, modeId: 'manual' });
-            await expect(rejected.owner.submitManual({
-                attemptId: 'attempt-1',
-                fields: { token: 'denied' },
-            })).resolves.toMatchObject({
-                status: 'reconnectRequired',
-                code: 'connected_account_authentication_outcome_unknown',
-            });
-            expect(rejected.settle).not.toHaveBeenCalled();
-        }
     });
 
-    it('relays only normalized rate-limit evidence from a terminal provider result', async () => {
+
+    it('relays typed rate-limit evidence from a terminal provider result', async () => {
         const retryNotBeforeMs = 1_786_000_060_000;
         const accepted = harness({
             invoke: async () => ({
@@ -4993,29 +4716,10 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             retryNotBeforeMs,
         });
 
-        for (const invalidEvidence of [
-            { failureClass: 'transient', retryNotBeforeMs },
-            { failureClass: 'rateLimit', retryNotBeforeMs: -1 },
-        ]) {
-            const rejected = harness({
-                invoke: async () => ({
-                    status: 'unavailable',
-                    diagnostic: { code: 'provider_rate_limited', severity: 'error' },
-                    ...invalidEvidence,
-                }),
-            });
-            await rejected.owner.beginConnect({ service, modeId: 'manual' });
-            await expect(rejected.owner.submitManual({
-                attemptId: 'attempt-1',
-                fields: { token: 'candidate' },
-            })).resolves.toMatchObject({
-                status: 'reconnectRequired',
-                code: 'connected_account_authentication_outcome_unknown',
-            });
-        }
     });
 
-    it('bounds attempt credential staging before any settlement can persist it', async () => {
+
+    it('preserves typed credential values above the invented 64KiB staging cap', async () => {
         const h = harness({
             invoke: async ({ context }) => {
                 await context.attemptCredentials.set('token', 'x'.repeat(64 * 1024 + 1));
@@ -5031,11 +4735,13 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         await expect(h.owner.submitManual({
             attemptId: 'attempt-1',
             fields: { token: 'candidate' },
-        })).resolves.toMatchObject({ status: 'reconnectRequired' });
-        expect(h.settle).not.toHaveBeenCalled();
+        })).resolves.toMatchObject({ status: 'connected' });
+        expect(h.settle).toHaveBeenCalledWith(expect.objectContaining({
+            stagedCredentials: { token: 'x'.repeat(64 * 1024 + 1) },
+        }));
     });
 
-    it('destroys attempt-scoped configuration on cancel, provider rejection, and expiry', async () => {
+    it('destroys attempt-scoped configuration on cancel and provider rejection', async () => {
         const attemptTarget = Object.freeze({
             kind: 'attempt' as const,
             attemptId: 'attempt-1',
@@ -5082,62 +4788,23 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         })).resolves.toMatchObject({ status: 'rejected', code: 'provider_denied' });
         expect(rejected.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
 
-        let now = 1_000;
-        const expired = harness({
-            now: () => now,
-            attemptTtlMs: 60_000,
-        });
-        await expired.owner.beginConnect({ service, modeId: 'manual' });
-        now += 60_001;
-        await expect(expired.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
-            status: 'unavailable',
-            attemptId: 'attempt-1',
-            code: 'connected_account_attempt_expired',
-        });
-        expect(expired.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
     });
 
-    it('reclaims expired attempt capacity before reserving a replacement', async () => {
-        let now = 1_000;
-        const h = harness({
-            maxAttempts: 1,
-            now: () => now,
-            attemptTtlMs: 60_000,
-        });
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'manual',
-        })).resolves.toEqual({
-            status: 'awaitingManual',
-            attemptId: 'attempt-1',
-        });
 
-        now += 60_000;
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'manual',
-        })).resolves.toEqual({
-            status: 'awaitingManual',
-            attemptId: 'attempt-2',
-        });
-        expect(h.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
-        await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
-            status: 'unavailable',
-            attemptId: 'attempt-1',
-            code: 'connected_account_attempt_expired',
-        });
-    });
-
-    it('reclaims an expired attempt and closes its durable transaction through the earliest-expiry timer without new traffic', async () => {
+    it('closes a provider-expired OAuth transaction without unrelated traffic', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         try {
             const durable = durableOAuthTransactions();
             const h = harness({
                 now: () => Date.now(),
-                attemptTtlMs: 60_000,
                 admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
                 oauthTransactions: durable.owner,
+                invoke: async () => ({
+                    status: 'awaitingOAuthRedirect',
+                    authorizationUrl: 'https://provider.example/authorize',
+                    expiresAtMs: Date.now() + 60_000,
+                }),
             });
             await h.owner.beginConnect({ service, modeId: 'oauth' });
             await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
@@ -5160,12 +4827,11 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         }
     });
 
-    it('keeps one expiry timer and cancels it when attempts are empty or the owner is disposed', async () => {
+    it('does not create expiry timers for manual attempts', async () => {
         vi.useFakeTimers();
         try {
             const h = harness({
                 now: () => Date.now(),
-                attemptTtlMs: 60_000,
             });
             await expect(h.owner.beginConnect({
                 service,
@@ -5174,7 +4840,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
                 status: 'awaitingManual',
                 attemptId: 'attempt-1',
             });
-            expect(vi.getTimerCount()).toBe(1);
+            expect(vi.getTimerCount()).toBe(0);
 
             await expect(h.owner.cancel({ attemptId: 'attempt-1' })).resolves.toEqual({
                 status: 'cancelled',
@@ -5189,7 +4855,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
                 status: 'awaitingManual',
                 attemptId: 'attempt-2',
             });
-            expect(vi.getTimerCount()).toBe(1);
+            expect(vi.getTimerCount()).toBe(0);
 
             h.owner.dispose();
             expect(vi.getTimerCount()).toBe(0);
@@ -5200,56 +4866,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         }
     });
 
-    it('retains expired attempt capacity until its exact cleanup succeeds', async () => {
-        let now = 1_000;
-        let cleanupAvailable = false;
-        const destroyAttemptConfiguration = vi.fn(async () => {
-            if (!cleanupAvailable) {
-                throw new Error('configuration cleanup unavailable');
-            }
-        });
-        const h = harness({
-            maxAttempts: 1,
-            now: () => now,
-            attemptTtlMs: 60_000,
-            destroyAttemptConfiguration,
-        });
-        await h.owner.beginConnect({ service, modeId: 'manual' });
-
-        now += 60_000;
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'manual',
-        })).resolves.toEqual({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
-        expect(destroyAttemptConfiguration).toHaveBeenCalledOnce();
-
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'manual',
-        })).resolves.toEqual({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
-        });
-        expect(destroyAttemptConfiguration).toHaveBeenCalledOnce();
-
-        cleanupAvailable = true;
-        await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
-            status: 'unavailable',
-            attemptId: 'attempt-1',
-            code: 'connected_account_attempt_expired',
-        });
-        expect(destroyAttemptConfiguration).toHaveBeenCalledTimes(2);
-        await expect(h.owner.beginConnect({
-            service,
-            modeId: 'manual',
-        })).resolves.toEqual({
-            status: 'awaitingManual',
-            attemptId: 'attempt-2',
-        });
-    });
 
     it('surfaces failed durable cleanup and retains it for an exact retry', async () => {
         const destroyAttemptConfiguration = vi.fn()
@@ -5269,7 +4885,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         expect(destroyAttemptConfiguration).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps sole cleanup custody within capacity until its retry settles', async () => {
+    it('keeps exact cleanup custody without blocking independent attempts', async () => {
         let rejectFirstCleanup!: (reason: Error) => void;
         const firstCleanup = new Promise<void>((_resolve, reject) => {
             rejectFirstCleanup = reject;
@@ -5278,7 +4894,6 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             .mockImplementationOnce(async () => await firstCleanup)
             .mockResolvedValue(undefined);
         const h = harness({
-            maxAttempts: 1,
             destroyAttemptConfiguration,
         });
         await h.owner.beginConnect({ service, modeId: 'manual' });
@@ -5299,15 +4914,15 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
         });
         await expect(whileCleaning).resolves.toMatchObject({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
+            status: 'awaitingManual',
+            attemptId: 'attempt-2',
         });
         await expect(h.owner.beginConnect({
             service,
             modeId: 'manual',
         })).resolves.toMatchObject({
-            status: 'unavailable',
-            code: 'connected_account_attempt_capacity_exhausted',
+            status: 'awaitingManual',
+            attemptId: 'attempt-3',
         });
 
         await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
@@ -5320,7 +4935,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             modeId: 'manual',
         })).resolves.toEqual({
             status: 'awaitingManual',
-            attemptId: 'attempt-2',
+            attemptId: 'attempt-4',
         });
     });
 });

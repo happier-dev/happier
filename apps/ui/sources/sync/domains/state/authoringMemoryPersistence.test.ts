@@ -53,9 +53,16 @@ describe('authoring-memory local projection', () => {
         JSON.stringify({ ...values(), recentMachinePaths: [{ machineId: 'machine-a', path: '/valid' }, { machineId: 3, path: '/invalid' }] }),
         JSON.stringify({ ...values(), lastUsedProfile: { invalid: true } }),
         JSON.stringify({ recentMachinePaths: [], lastUsedProfile: null }),
-        JSON.stringify({ ...values(), unexpected: 'must-not-be-read' }),
     ])('ignores a malformed projection as a whole without exposing otherwise valid fields', (raw) => {
         getPersistenceStorage().set(persistedKey(scope), raw);
         expect(loadAuthoringMemoryProjection(scope)).toBeNull();
+    });
+
+    it('loads known persisted fields and opaque engine data while dropping additive projection fields', () => {
+        getPersistenceStorage().set(persistedKey(scope), JSON.stringify({
+            ...values(), futureProjectionField: { extra: true },
+            recentMachinePaths: [{ ...values().recentMachinePaths[0], futurePathField: true }],
+        }));
+        expect(loadAuthoringMemoryProjection(scope)).toEqual(values());
     });
 });

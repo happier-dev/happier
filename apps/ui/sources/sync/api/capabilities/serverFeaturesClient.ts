@@ -1,5 +1,6 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 import { AsyncTtlCache } from '@happier-dev/protocol';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
@@ -19,6 +20,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { decodeServerFeaturesResponse } from './serverFeaturesParse';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
 import { isServerFeaturesProbeRetryable } from './serverFeaturesProbeRetryability';
 import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
@@ -37,16 +39,6 @@ const TTL_ERROR_RESPONSE_STATUS_MS = 30 * 1000;
 // transition. Reuse the existing short retry window for transient feature
 // observations; this protects readiness freshness without a Search-owned poller.
 const TTL_TRANSITIONAL_FEATURE_MS = TTL_ERROR_NETWORK_MS;
-
-const FORCE_COOLDOWN_ENDPOINT_MISSING_MS = 60 * 1000;
-// Individual UI callers may stop waiting earlier, but the shared probe owns a
-// longer attempt bound so an impatient caller cannot cancel or poison every
-// consumer coalesced onto the same request.
-const REQUEST_ATTEMPT_TIMEOUT_MS = 60 * 1000;
-// Opt-in wait budget for callers with a real fallback, such as unbound v1
-// login. Callers without a fallback wait for the shared attempt by default.
-// A wait budget never cancels the request for other consumers.
-export const FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS = 800;
 
 export type ServerFeaturesSnapshot =
     | Readonly<{ status: 'ready'; features: ServerFeatures; serverIdentityId?: string | null }>
@@ -169,13 +161,6 @@ function getCacheTtlMs(snapshot: ServerFeaturesSnapshot): number {
     }
 }
 
-function getForceCooldownMs(snapshot: ServerFeaturesSnapshot): number {
-    if (snapshot.status === 'unsupported' && snapshot.reason === 'endpoint_missing') {
-        return FORCE_COOLDOWN_ENDPOINT_MISSING_MS;
-    }
-    return 0;
-}
-
 function getCacheKey(serverId?: string): string {
     const snapshot = getActiveServerSnapshot();
     const requested = String(serverId ?? '').trim();
@@ -293,11 +278,10 @@ async function getServerFeaturesSnapshotWithRetry(
         projection?: ActiveFeatureProjection;
         credentials?: AuthCredentials;
         scopedTransport?: ResolvedServerScopedTransport;
+        signal?: AbortSignal;
     } | undefined,
-    remainingSwitchAbortRetries: number,
 ): Promise<ServerFeaturesSnapshot> {
     const force = params?.force ?? false;
-    const timeoutMs = REQUEST_ATTEMPT_TIMEOUT_MS;
     const projection = params?.projection ?? 'public';
     const projectionCache = getActiveProjectionCache(projection);
     const cacheKey = getCacheKey(params?.serverId);
@@ -330,45 +314,28 @@ async function getServerFeaturesSnapshotWithRetry(
 
     const cachedEntry = projectionCache.get(cacheKey);
     const cached = cachedEntry?.kind === 'success' ? cachedEntry.value : null;
-    if (cached && cachedEntry) {
-        const ageMs = Date.now() - cachedEntry.updatedAt;
-        const fresh = projectionCache.isFresh(cachedEntry);
-        if (fresh) {
-            if (!force) return cached;
+    if (!force && cached && cachedEntry && projectionCache.isFresh(cachedEntry)) return cached;
 
-            const cooldownMs = getForceCooldownMs(cached);
-            if (ageMs < cooldownMs) {
-                return cached;
-            }
-        }
-    }
-
-    return await projectionCache.runDedupe(cacheKey, async (): Promise<ServerFeaturesSnapshot> => {
+    return await projectionCache.runDedupe(cacheKey, async ({ signal, isCurrent }): Promise<ServerFeaturesSnapshot> => {
+        const publishSnapshot = (value: ServerFeaturesSnapshot, key = cacheKey): ServerFeaturesSnapshot => {
+            return isCurrent()
+                ? writeActiveProjectionSnapshot(projection, key, value, getCacheTtlMs(value))
+                : value;
+        };
         const cachedEntry2 = projectionCache.get(cacheKey);
         const cached2 = cachedEntry2?.kind === 'success' ? cachedEntry2.value : null;
-        if (cached2 && cachedEntry2) {
-            const ageMs = Date.now() - cachedEntry2.updatedAt;
-            const fresh = projectionCache.isFresh(cachedEntry2);
-            if (fresh) {
-                if (!force) return cached2;
-                const cooldownMs = getForceCooldownMs(cached2);
-                if (ageMs < cooldownMs) return cached2;
-            }
-        }
+        if (!force && cached2 && cachedEntry2 && projectionCache.isFresh(cachedEntry2)) return cached2;
 
         if (isExplicitServerRequest && !explicitServerUrl) {
             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-            return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+            return publishSnapshot(value);
         }
 
-        let remainingRetries = remainingSwitchAbortRetries;
-        // If a server switch is in-flight, it can cancel a feature probe or make its completed response stale.
-        // Treat both as transient and retry a couple times so the UI doesn't get stuck behind a manual "Retry".
-        // This is separate from network timeouts (which should still be cached briefly).
+        // Public current-Home observations survive transport-owner retirement. Authenticated
+        // observations retain their captured Account/Home; ordinary network failures still settle.
         // eslint-disable-next-line no-constant-condition
         while (true) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            throwIfAborted(signal);
             let releaseExplicitTransport: (() => Promise<void>) | null = null;
 
             try {
@@ -412,7 +379,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                 projection === 'authenticated' ? '/v1/features/authenticated' : '/v1/features',
                                 {
                                     method: 'GET',
-                                    signal: controller.signal,
+                                    signal,
                                 },
                                 { includeAuth: projection === 'authenticated', retry: 'none' },
                             );
@@ -422,7 +389,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                         '/v1/features',
                                         {
                                             method: 'GET',
-                                            signal: controller.signal,
+                                            signal,
                                         },
                                         { includeAuth: false, retry: 'none' },
                                     );
@@ -443,12 +410,11 @@ async function getServerFeaturesSnapshotWithRetry(
                                 ),
                                 init: {
                                     method: 'GET',
-                                    signal: controller.signal,
+                                    signal,
                                     ...(projection === 'authenticated' && params?.credentials?.token
                                         ? { headers: { Authorization: `Bearer ${params.credentials.token}` } }
                                         : {}),
                                 },
-                                timeoutMs,
                             });
                             if (projection === 'authenticated') {
                                 if (isEndpointMissing(response.status)) {
@@ -461,9 +427,8 @@ async function getServerFeaturesSnapshotWithRetry(
                                         url: joinBaseAndPath(explicitServerUrl!, '/v1/features'),
                                         init: {
                                             method: 'GET',
-                                            signal: controller.signal,
+                                            signal,
                                         },
-                                        timeoutMs,
                                     });
                                 } else if (response.ok) {
                                     descriptorObservation = 'exact';
@@ -490,7 +455,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                 '/v1/features/authenticated',
                                 {
                                     method: 'GET',
-                                    signal: controller.signal,
+                                    signal,
                                 },
                                 { includeAuth: true, retry: 'none' },
                             )
@@ -498,7 +463,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                 '/v1/features',
                                 {
                                     method: 'GET',
-                                    signal: controller.signal,
+                                    signal,
                                 },
                                 // Public discovery must remain usable before a Home credential exists.
                                 { includeAuth: false, retry: 'none' },
@@ -520,7 +485,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                 '/v1/features',
                                 {
                                     method: 'GET',
-                                    signal: controller.signal,
+                                    signal,
                                 },
                                 { includeAuth: false, retry: 'none' },
                             );
@@ -529,26 +494,29 @@ async function getServerFeaturesSnapshotWithRetry(
                         }
                     }
                 } catch (error) {
-                    const timedOut = controller.signal.aborted;
+                    throwIfAborted(signal);
                     const aborted = isAbortErrorLike(error);
                     const serverSwitchFailure =
                         error instanceof ServerFetchAbortedForServerSwitchError
                         || error instanceof StaleServerGenerationError;
 
-                    if (!isExplicitServerRequest && serverSwitchFailure && remainingRetries > 0) {
-                        const current = getActiveServerSnapshot();
-                        const activeChanged =
-                            current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
-                        remainingRetries -= 1;
-                        // If we switched to a different active server, restart the whole flow so caching/dedupe uses
-                        // the new server's key. Otherwise, the abort was likely caused by the switch itself racing
-                        // with a follow-up probe against the already-selected server.
+                    const current = getActiveServerSnapshot();
+                    const activeChanged = current.serverId !== activeSnapshot.serverId
+                        || current.generation !== activeSnapshot.generation;
+                    // A Home-scoped reader must not adopt its successor or write the successor's
+                    // capabilities under the retired Home's key. An unscoped reader follows focus.
+                    if (!isExplicitServerRequest && projection === 'public' && requestedServerId
+                        && (serverSwitchFailure || (aborted && activeChanged))
+                        && !areServerProfileIdentifiersEquivalent(requestedServerId, current.serverId)) {
+                        return { status: 'error', reason: 'network' };
+                    }
+                    if (!isExplicitServerRequest && projection === 'public' && serverSwitchFailure) {
+                        // A different cache key must enter its own dedupe owner. A generation-only
+                        // change keeps this entry; re-entering it would await the current probe.
                         if (activeChanged) {
                             if (getCacheKey(params?.serverId) !== cacheKey) {
-                                return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                                return await getServerFeaturesSnapshotWithRetry({ ...params, signal });
                             }
-                            // A generation-only change keeps this cache key. Re-entering its active dedupe
-                            // invocation would await the current probe, so retry with the current snapshot here.
                             activeSnapshot = current;
                             continue;
                         }
@@ -556,14 +524,10 @@ async function getServerFeaturesSnapshotWithRetry(
                         continue;
                     }
 
-                    if (!timedOut && aborted) {
-                        const current = getActiveServerSnapshot();
-                        const activeChanged =
-                            current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
-                        if (!isExplicitServerRequest && activeChanged && remainingRetries > 0) {
-                            remainingRetries -= 1;
+                    if (aborted) {
+                        if (!isExplicitServerRequest && projection === 'public' && activeChanged) {
                             if (getCacheKey(params?.serverId) !== cacheKey) {
-                                return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                                return await getServerFeaturesSnapshotWithRetry({ ...params, signal });
                             }
                             activeSnapshot = current;
                             continue;
@@ -572,27 +536,29 @@ async function getServerFeaturesSnapshotWithRetry(
                         return { status: 'error', reason: 'network' };
                     }
 
-                    const value: ServerFeaturesSnapshot = { status: 'error', reason: timedOut ? 'timeout' : 'network' };
-                    return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                    const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
+                    return publishSnapshot(value);
                 }
 
+                throwIfAborted(signal);
                 if (!response.ok) {
                     const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
                         ? { status: 'unsupported', reason: 'endpoint_missing' }
                         : { status: 'error', reason: 'response_status', httpStatus: response.status };
-                    return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                    return publishSnapshot(value);
                 }
 
                 const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
                 if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                    return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                    return publishSnapshot(value);
                 }
 
                 const parsed = await decodeServerFeaturesResponse(response);
+                throwIfAborted(signal);
                 if (!parsed) {
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                    return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                    return publishSnapshot(value);
                 }
 
                 const serverIdentityId = parsed.capabilities.serverIdentity.serverIdentityId;
@@ -602,9 +568,10 @@ async function getServerFeaturesSnapshotWithRetry(
                         observedServerUrl,
                         serverIdentityId,
                     );
+                    throwIfAborted(signal);
                     if (!learnedProfile) {
                         const value: ServerFeaturesSnapshot = { status: 'error', reason: 'identity_conflict' };
-                        return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                        return publishSnapshot(value);
                     }
                     if (
                         learnedProfile.serverIdentityId === serverIdentityId
@@ -616,9 +583,10 @@ async function getServerFeaturesSnapshotWithRetry(
                             descriptor: parsed.homeConnectionDescriptor,
                             observation: descriptorObservation,
                         });
+                        throwIfAborted(signal);
                         if (reconciliation.kind === 'conflict') {
                             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'identity_conflict' };
-                            return writeActiveProjectionSnapshot(projection, cacheKey, value, getCacheTtlMs(value));
+                            return publishSnapshot(value);
                         }
                     }
                 }
@@ -635,8 +603,7 @@ async function getServerFeaturesSnapshotWithRetry(
                     requirements:
                         parsed.capabilities.accountStoredContentCompatibility,
                 });
-                const ttlMs = getCacheTtlMs(value);
-                writeActiveProjectionSnapshot(projection, cacheKey, value, ttlMs);
+                publishSnapshot(value);
                 // Learning a stable server identity can synchronously change
                 // the active/profile scope key. Publish the same observed
                 // snapshot under that canonical key before returning so an
@@ -646,49 +613,53 @@ async function getServerFeaturesSnapshotWithRetry(
                 // here would also remove this still-running dedupe entry.
                 const canonicalCacheKey = getCacheKey(params?.serverId);
                 if (canonicalCacheKey !== cacheKey) {
-                    writeActiveProjectionSnapshot(projection, canonicalCacheKey, value, ttlMs);
+                    publishSnapshot(value, canonicalCacheKey);
                 }
                 return value;
             } finally {
-                clearTimeout(timer);
                 if (releaseExplicitTransport) await releaseExplicitTransport();
             }
         }
-    });
+    }, { signal: params?.signal });
 }
 
 async function waitForServerFeaturesSnapshot(
-    request: Promise<ServerFeaturesSnapshot>,
+    request: (signal: AbortSignal) => Promise<ServerFeaturesSnapshot>,
     waitBudgetMs: number | undefined,
     signal?: AbortSignal,
 ): Promise<ServerFeaturesSnapshot> {
-    if (!signal && (typeof waitBudgetMs !== 'number' || !Number.isFinite(waitBudgetMs) || waitBudgetMs <= 0)) {
-        return await request;
-    }
-
+    if (signal?.aborted) return { status: 'error', reason: 'network' };
     return await new Promise<ServerFeaturesSnapshot>((resolve, reject) => {
+        const observer = new AbortController();
         let settled = false;
+        let cancelTimer: (() => void) | null = null;
+        const cleanup = () => {
+            cancelTimer?.();
+            signal?.removeEventListener('abort', onAbort);
+        };
         const finish = (snapshot: ServerFeaturesSnapshot) => {
             if (settled) return;
             settled = true;
-            if (timer) clearTimeout(timer);
-            signal?.removeEventListener('abort', onAbort);
+            cleanup();
             resolve(snapshot);
         };
-        const onAbort = () => finish({ status: 'error', reason: 'network' });
-        const timer = typeof waitBudgetMs === 'number' && Number.isFinite(waitBudgetMs) && waitBudgetMs > 0
-            ? setTimeout(() => finish({ status: 'error', reason: 'timeout' }), waitBudgetMs)
-            : null;
-        if (signal?.aborted) {
-            onAbort();
-            return;
-        }
+        const onAbort = () => {
+            finish({ status: 'error', reason: 'network' });
+            observer.abort(signal?.reason);
+        };
         signal?.addEventListener('abort', onAbort, { once: true });
-        void request.then(finish, (error) => {
+        if (typeof waitBudgetMs === 'number' && Number.isFinite(waitBudgetMs) && waitBudgetMs > 0) {
+            cancelTimer = armDeadlineTimer(Date.now() + waitBudgetMs, () => {
+                finish({ status: 'error', reason: 'timeout' });
+                observer.abort();
+            });
+        }
+        // Cancellation also settles a caller still preparing an explicit transport, before it
+        // reaches dedupe. The signal retires its shared demand whenever preparation completes.
+        void request(observer.signal).then(finish, (error: unknown) => {
             if (settled) return;
             settled = true;
-            if (timer) clearTimeout(timer);
-            signal?.removeEventListener('abort', onAbort);
+            cleanup();
             reject(error);
         });
     });
@@ -703,20 +674,11 @@ export async function observeAuthenticatedServerFeaturesFresh(params: Readonly<{
     request: ServerFetch;
     timeoutMs?: number;
 }>): Promise<ServerFeaturesSnapshot> {
-    const controller = new AbortController();
-    let didTimeout = false;
-    const timeoutMs = params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS;
-    const timer = timeoutMs > 0
-        ? setTimeout(() => {
-            didTimeout = true;
-            controller.abort('features-timeout');
-        }, timeoutMs)
-        : null;
     try {
         const response = await params.request(
             '/v1/features/authenticated',
-            { method: 'GET', signal: controller.signal },
-            { includeAuth: true, retry: 'none' },
+            { method: 'GET' },
+            { includeAuth: true, retry: 'none', ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }) },
         );
         if (!response.ok) {
             return isEndpointMissing(response.status)
@@ -731,9 +693,7 @@ export async function observeAuthenticatedServerFeaturesFresh(params: Readonly<{
             serverIdentityId: parsed.capabilities.serverIdentity.serverIdentityId,
         };
     } catch {
-        return { status: 'error', reason: didTimeout ? 'timeout' : 'network' };
-    } finally {
-        if (timer) clearTimeout(timer);
+        return { status: 'error', reason: 'network' };
     }
 }
 
@@ -745,8 +705,11 @@ export async function getServerFeaturesSnapshot(params?: {
     /** Cancels this waiter without aborting other consumers' shared request. */
     signal?: AbortSignal;
 }): Promise<ServerFeaturesSnapshot> {
-    const request = getServerFeaturesSnapshotWithRetry({ ...params, projection: 'public' }, 2);
-    return await waitForServerFeaturesSnapshot(request, params?.timeoutMs, params?.signal);
+    return await waitForServerFeaturesSnapshot(
+        (signal) => getServerFeaturesSnapshotWithRetry({ ...params, signal, projection: 'public' }),
+        params?.timeoutMs,
+        params?.signal,
+    );
 }
 
 /**
@@ -761,12 +724,11 @@ export async function refreshAuthenticatedServerFeaturesSnapshot(params: {
     serverId?: string;
     /** Existing secondary-runtime transport; ownership remains with the caller. */
     scopedTransport?: ResolvedServerScopedTransport;
+    signal?: AbortSignal;
 }): Promise<ServerFeaturesSnapshot> {
-    const request = getServerFeaturesSnapshotWithRetry({
-        ...params,
-        projection: 'authenticated',
-    }, 0);
-    return await waitForServerFeaturesSnapshot(request, params.timeoutMs);
+    return await waitForServerFeaturesSnapshot((signal) => getServerFeaturesSnapshotWithRetry({
+        ...params, signal, projection: 'authenticated',
+    }), params.timeoutMs, params.signal);
 }
 
 export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }): ServerFeaturesSnapshot | null {
@@ -818,7 +780,7 @@ export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): vo
 export type ProbeServerFeaturesAtUrlOptions = Readonly<{
     /**
      * How long this caller waits for the shared request before acting on its own fallback.
-     * Omit (or use `0`) to wait for the shared request's own attempt bound.
+     * Omit (or use `0`) to wait for the shared request.
      * A shorter budget is opt-in and requires a real fallback at the caller.
      */
     timeoutMs?: number;
@@ -888,115 +850,87 @@ export async function probeServerFeaturesAtUrl(
 
     const cachedEntry = endpointCache.get(cacheKey);
     const cached = cachedEntry?.kind === 'success' ? cachedEntry.value : null;
-    if (cached && cachedEntry && endpointCache.isFresh(cachedEntry)) {
-        if (!force) return cached;
-        const ageMs = Date.now() - cachedEntry.updatedAt;
-        if (ageMs < getForceCooldownMs(cached)) return cached;
-    }
+    if (!force && cached && cachedEntry && endpointCache.isFresh(cachedEntry)) return cached;
 
-    const request = endpointCache.runDedupe(cacheKey, async (): Promise<ServerFeaturesSnapshot> => {
+    const observe = (observerSignal: AbortSignal) => endpointCache.runDedupe(cacheKey, async ({ signal, isCurrent }): Promise<ServerFeaturesSnapshot> => {
+        const publishSnapshot = (value: ServerFeaturesSnapshot): ServerFeaturesSnapshot => {
+            if (isCurrent()) writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
+            return value;
+        };
         const cachedEntry2 = endpointCache.get(cacheKey);
         const cached2 = cachedEntry2?.kind === 'success' ? cachedEntry2.value : null;
-        if (cached2 && cachedEntry2 && endpointCache.isFresh(cachedEntry2)) {
-            if (!force) return cached2;
-            const ageMs = Date.now() - cachedEntry2.updatedAt;
-            if (ageMs < getForceCooldownMs(cached2)) return cached2;
-        }
+        if (!force && cached2 && cachedEntry2 && endpointCache.isFresh(cachedEntry2)) return cached2;
 
         if (!endpointUrl) {
             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-            writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-            return value;
+            return publishSnapshot(value);
         }
 
-        const controller = new AbortController();
-        let didTimeout = false;
-        const timer = setTimeout(() => {
-            didTimeout = true;
-            controller.abort('features-timeout');
-        }, REQUEST_ATTEMPT_TIMEOUT_MS);
+        recordAccountStoredContentServerRequirements({
+            serverUrl: endpointUrl,
+            requirements: undefined,
+        });
+        const request = serverHttp.createServerFetchAtEndpoint({
+            endpointUrl,
+            runtimeOrigin,
+            ...(input.homeCarrier ? { homeCarrier: input.homeCarrier } : {}),
+            serverId: input.serverId,
+            // A feature probe is intentionally unauthenticated. Passing null
+            // also prevents a scoped credential lookup if a future caller
+            // omits includeAuth on the request adapter.
+            credentials: null,
+        });
 
+        let response: Response;
         try {
-            recordAccountStoredContentServerRequirements({
-                serverUrl: endpointUrl,
-                requirements: undefined,
-            });
-            const request = serverHttp.createServerFetchAtEndpoint({
-                endpointUrl,
-                runtimeOrigin,
-                ...(input.homeCarrier ? { homeCarrier: input.homeCarrier } : {}),
-                serverId: input.serverId,
-                // A feature probe is intentionally unauthenticated. Passing null
-                // also prevents a scoped credential lookup if a future caller
-                // omits includeAuth on the request adapter.
-                credentials: null,
-            });
-
-            let response: Response;
-            try {
-                response = await request(
-                    '/v1/features',
-                    {
-                        method: 'GET',
-                        signal: controller.signal,
-                    },
-                    { includeAuth: false, retry: 'none' },
-                );
-            } catch (error) {
-                if (didTimeout) {
-                    const value: ServerFeaturesSnapshot = { status: 'error', reason: 'timeout' };
-                    writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-                    return value;
-                }
-                // An upstream cancellation is not a server observation. Keep the
-                // result uncached so a later owner can retry immediately.
-                if (controller.signal.aborted) {
-                    return { status: 'error', reason: 'network' };
-                }
-                const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-                writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-                return value;
-            }
-
-            if (!response.ok) {
-                const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
-                    ? { status: 'unsupported', reason: 'endpoint_missing' }
-                    : { status: 'error', reason: 'response_status', httpStatus: response.status };
-                writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-                return value;
-            }
-
-            const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
-            if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
-                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-                return value;
-            }
-
-            const parsed = await decodeServerFeaturesResponse(response);
-            if (!parsed) {
-                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-                return value;
-            }
-
-            const serverIdentityId = parsed.capabilities.serverIdentity.serverIdentityId;
-            const value: ServerFeaturesSnapshot = {
-                status: 'ready',
-                features: parsed,
-                serverIdentityId,
-            };
-            recordAccountStoredContentServerRequirements({
-                serverUrl: endpointUrl,
-                requirements: parsed.capabilities.accountStoredContentCompatibility,
-            });
-            writeEndpointServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
-            return value;
-        } finally {
-            clearTimeout(timer);
+            response = await request(
+                '/v1/features',
+                {
+                    method: 'GET',
+                    signal,
+                },
+                { includeAuth: false, retry: 'none' },
+            );
+        } catch (error) {
+            throwIfAborted(signal);
+            const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
+            return publishSnapshot(value);
         }
-    });
-    return await waitForServerFeaturesSnapshot(request, input.timeoutMs, input.signal);
+
+        throwIfAborted(signal);
+        if (!response.ok) {
+            const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
+                ? { status: 'unsupported', reason: 'endpoint_missing' }
+                : { status: 'error', reason: 'response_status', httpStatus: response.status };
+            return publishSnapshot(value);
+        }
+
+        const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
+        if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
+            const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+            return publishSnapshot(value);
+        }
+
+        const parsed = await decodeServerFeaturesResponse(response);
+        throwIfAborted(signal);
+        if (!parsed) {
+            const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+            return publishSnapshot(value);
+        }
+
+        const serverIdentityId = parsed.capabilities.serverIdentity.serverIdentityId;
+        const value: ServerFeaturesSnapshot = {
+            status: 'ready',
+            features: parsed,
+            serverIdentityId,
+        };
+        recordAccountStoredContentServerRequirements({
+            serverUrl: endpointUrl,
+            requirements: parsed.capabilities.accountStoredContentCompatibility,
+        });
+        return publishSnapshot(value);
+    }, { signal: observerSignal });
+    return await waitForServerFeaturesSnapshot(observe, input.timeoutMs, input.signal);
 }
 
 export function resetServerFeaturesClientForTests(): void {

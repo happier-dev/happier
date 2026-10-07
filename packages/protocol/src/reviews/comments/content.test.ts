@@ -573,7 +573,7 @@ describe('Review Comment event-sensitive binding', () => {
     });
   });
 
-  it('strictly bounds the authenticated Account-transition inventory', () => {
+  it('preserves complete authenticated Account-transition inventories with strict record fields', () => {
     const source = event();
     const requestBinding = buildReviewCommentEventRequestBindingV1({
       accountId: source.accountId,
@@ -627,6 +627,16 @@ describe('Review Comment event-sensitive binding', () => {
     expect(ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema.safeParse({
       v: 1,
       items: Array.from({ length: 201 }, () => item),
-    }).success).toBe(false);
+    }).success).toBe(true);
+    expect(ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema.parse({
+      v: 1,
+      items: [{ ...item, events: Array.from({ length: 2_001 }, () => item.events[0]) }],
+    }).items[0]?.events).toHaveLength(2_001);
+    expect(ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema.parse({
+      v: 1,
+      items: Array.from({ length: 201 }, () => ({
+        ...item, events: Array.from({ length: 10 }, () => item.events[0]),
+      })),
+    }).items.reduce((count, entry) => count + entry.events.length, 0)).toBe(2_010);
   });
 });

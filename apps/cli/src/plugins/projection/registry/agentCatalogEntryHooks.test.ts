@@ -43,12 +43,141 @@ function writePreflightFixtureExecutable(dir: string): string {
 }
 
 describe('Agent registration catalog projections', () => {
+  it('closes the native JSON-RPC process and prepared artifact when its catalog inspector ignores cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-catalog-native-cleanup-'));
+    const capture = join(root, 'pid.json');
+    const controller = new AbortController();
+    let releaseInspect!: () => void;
+    const inspected = new Promise<void>((resolve) => { releaseInspect = resolve; });
+    const executable = writePreflightFixtureExecutable(root);
+    const command = { toolId: 'native-cli', args: [], prepareCommand: () => ({ args: [{
+      kind: 'temporaryTextFile' as const, suffix: '.cjs',
+      contents: `require('node:fs').writeFileSync(${JSON.stringify(capture)},JSON.stringify({pid:process.pid,path:__filename}));setInterval(()=>{},1000);`,
+    }] }) };
+    const projected = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'fixture.native',
+      systemTools: [{ id: 'native-cli', title: 'Native fixture', executableNames: [executable] }],
+      preflightSessionControls: { jsonRpcCommands: [command], probeCatalogs: async (context) => (
+        context.withDeclaredJsonRpcClient(command, async () => { await inspected; return { commands: [], skills: null }; })
+      ) },
+      retirementSignal: new AbortController().signal, isCurrent: () => true,
+    });
+    const adapter = (await projected.getPreflightSessionControlsProbeAdapter!())!;
+    const discovery = adapter.probeCatalogsRaw!({ cwd: root, timeoutMs: 10_000, signal: controller.signal });
+    void discovery.catch(() => undefined);
+    let observation: {pid:number;path:string} | undefined;
+    try {
+      await vi.waitFor(async () => { observation = JSON.parse(await readFile(capture, 'utf8')); });
+      controller.abort(new Error('Caller cancelled the catalog'));
+      await expect(discovery).rejects.toThrow();
+      expect(() => process.kill(observation!.pid, 0)).toThrow();
+      await expect(access(observation!.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      controller.abort();
+      releaseInspect();
+      if (observation) await vi.waitFor(() => expect(() => process.kill(observation!.pid, 0)).toThrow());
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it.each(['callback', 'settings', 'parser'] as const)('settles a hung catalog %s at the caller deadline and accepts a later probe', async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-catalog-deadline-'));
+    const script = join(root, 'catalog.cjs');
+    await writeFile(script, 'process.stdout.write("[]");');
+    const executable = writePreflightFixtureExecutable(root);
+    let blocked = true;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const pending = new Promise<never>(() => {});
+    const result = { commands: [], skills: null };
+    const discover = () => {
+      entered();
+      return blocked ? pending : result;
+    };
+    if (stage !== 'parser') vi.useFakeTimers();
+    try {
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'fixture.native',
+        systemTools: [{ id: 'native-cli', title: 'Native fixture', executableNames: [executable] }],
+        preflightSessionControls: stage === 'parser'
+          ? { catalogs: { command: { toolId: 'native-cli', args: [script] }, parseOutput: discover } }
+          : { probeCatalogs: stage === 'callback' ? discover : () => result },
+        ...(stage === 'settings' ? { resolvePluginSettings: async () => {
+          entered();
+          return blocked ? await pending : null;
+        } } : {}),
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const adapter = (await projected.getPreflightSessionControlsProbeAdapter!())!;
+      let outcome: 'resolved' | 'rejected' | undefined;
+      const discovery = adapter.probeCatalogsRaw!({ cwd: root, timeoutMs: 10_000 });
+      void discovery.then(() => { outcome = 'resolved'; }, () => { outcome = 'rejected'; });
+      await started;
+      if (stage === 'parser') await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+      else await vi.advanceTimersByTimeAsync(10_000);
+      expect(outcome).toBe('rejected');
+      blocked = false;
+      await expect(adapter.probeCatalogsRaw!({ cwd: root, timeoutMs: 10_000 })).resolves.toEqual(result);
+    } finally {
+      vi.useRealTimers();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['callback', 'settings'] as const)('rejects native catalog completion after its plugin generation retires during %s', async (stage) => {
+    const retirement = new AbortController();
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => { complete = resolve; });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    let invoked = false;
+    const projected = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'fixture.native', systemTools: [],
+      preflightSessionControls: { probeCatalogs: async () => {
+        invoked = true;
+        if (stage === 'callback') { started(); await completed; }
+        return { commands: [{ name: 'retired-command' }], skills: null };
+      } },
+      ...(stage === 'settings' ? { resolvePluginSettings: async () => {
+        started();
+        await completed;
+        return null;
+      } } : {}),
+      retirementSignal: retirement.signal, isCurrent: () => !retirement.signal.aborted,
+    });
+    const adapter = await projected.getPreflightSessionControlsProbeAdapter?.();
+    const discovery = adapter!.probeCatalogsRaw!({ cwd: tmpdir(), timeoutMs: 60_000 });
+    await entered;
+    retirement.abort();
+    complete();
+    await expect(discovery).rejects.toThrow();
+    if (stage === 'settings') {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(invoked).toBe(false);
+    }
+  });
+
+  it('runs one-shot native initialization input through the scoped catalog process', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-native-catalog-input-')));
+    const script = join(root, 'native.cjs');
+    await writeFile(script, `let input=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',c=>input+=c); process.stdin.on('end',()=>process.stdout.write(JSON.stringify({commands:[{name:JSON.parse(input).request.subtype}],skills:null,cwd:process.cwd()})));`);
+    const executable = writePreflightFixtureExecutable(root);
+    try {
+      const projected = projectAgentPreflightSessionControlsCatalogEntry({
+        agentId: 'fixture.native', systemTools: [{ id: 'native-cli', title: 'Native fixture', executableNames: [executable] }],
+        preflightSessionControls: { catalogs: { command: { toolId: 'native-cli', args: [script], stdin: JSON.stringify({ request: { subtype: 'initialize' } }) + '\n' }, parseOutput: ({ stdout }) => JSON.parse(stdout) } },
+        retirementSignal: new AbortController().signal, isCurrent: () => true,
+      });
+      const adapter = await projected.getPreflightSessionControlsProbeAdapter?.();
+      await expect(adapter?.probeCatalogsRaw?.({ cwd: root, timeoutMs: 60_000 })).resolves.toEqual({ commands: [{ name: 'initialize' }], skills: null, cwd: root });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 90_000);
+
   it('runs the Copilot preflight with the host working directory and observed effort controls', async () => {
     const register = vi.fn();
     await COPILOT_PLUGIN.activate({ agents: { register } } as never);
     const preflightSessionControls: AgentPreflightSessionControlsContributionV1 | undefined = register.mock.calls[0]?.[2]?.preflightSessionControls;
     expect(preflightSessionControls).toBeDefined();
-    const toolRoot = await mkdtemp(join(tmpdir(), 'happier-copilot-preflight-'));
+    const toolRoot = await realpath(await mkdtemp(join(tmpdir(), 'happier-copilot-preflight-')));
     const script = writeAcpTestAgentScript({ dir: toolRoot, fileName: 'copilot-fixture.mjs', source: `
       let buffer = '';
       process.stdin.on('data', chunk => {
@@ -218,27 +347,6 @@ describe('Agent registration catalog projections', () => {
       reason: 'plugin_generation_retired',
     });
     expect(verifyResumeReachable).toHaveBeenCalledTimes(1);
-  });
-
-  it('retires native-file runtime-auth projection with its captured Agent generation', async () => {
-    let current = true;
-    const projected = projectAgentConnectedAccountLaunchCatalogEntry({
-      pluginId: 'acme.plugin', agentId: 'acme.external' as never, isCurrent: () => current,
-      connectedAccountLaunch: { continuity: { nativeAuthCodec: {
-        materialize: () => ({ files: {} }),
-        inspect: () => ({ status: 'unavailable', retryable: false, reason: 'unused' }),
-        runtimeAuthRefresh: { purpose: 'primary', materialization: { kind: 'files', fileIds: ['auth.json'] },
-          decode: ({ credentialRevision }) => ({ accessToken: 'fresh', credentialRevision }) },
-      } } },
-    });
-    const refresh = await projected.getConnectedAccountNativeAuthRefreshCodec?.();
-    expect(refresh).toBeDefined();
-    expect(refresh?.decode({ files: {}, credentialRevision: 'revision' })).toEqual({
-      accessToken: 'fresh', credentialRevision: 'revision',
-    });
-    current = false;
-    expect(await projected.getConnectedAccountNativeAuthRefreshCodec?.()).toBeNull();
-    expect(() => refresh?.decode({ files: {}, credentialRevision: 'revision' })).toThrow();
   });
 
   it('keeps credential, declared-file, and currentness custody behind typed native-auth operations', async () => {

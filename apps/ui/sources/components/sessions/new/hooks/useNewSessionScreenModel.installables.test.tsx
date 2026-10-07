@@ -395,7 +395,8 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/store/settingsWriters', () => ({
+vi.mock('@/sync/store/settingsWriters', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/settingsWriters')>(),
     useApplySettings: () => applySettingsMock,
     useDeleteAiLaunchProfile: () => vi.fn(async () => {}),
 }));
@@ -405,9 +406,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
+
 
 const machineCapabilitiesInvoke = vi.hoisted(() =>
     vi.fn(async () => ({ supported: true, response: { ok: true, result: null } })),
@@ -678,10 +677,18 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
     },
 }));
 
+// IndexedDB is the browser persistence boundary; the real draft repository prepares and runs beneath it.
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
+});
+
 const useNewSessionScreenModelModulePromise = import('./useNewSessionScreenModel');
 
 describe('useNewSessionScreenModel (installables)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
         applySettingsMock.mockClear();
         modalShowMock.mockClear();
         modalAlertMock.mockClear();
@@ -753,6 +760,53 @@ describe('useNewSessionScreenModel (installables)', () => {
         preflightConfigOptionsByTargetKeyState.value = {};
         chromeSafeAreaInsetsState.value = { top: 0, bottom: 0, left: 0, right: 0 };
         routeParamsState.value = {};
+    });
+
+    it('enables workspace, native skill and slash suggestions before a session exists', async () => {
+        routeParamsState.value = { machineId: 'machine-1', path: '/repo' };
+        includeLaunchSelectionMachinesState.value = true;
+        cliAvailabilityState.value = {
+            ...cliAvailabilityState.value,
+            available: { codex: true, claude: true, opencode: null },
+        };
+        machineRpcWithServerScopeMock.mockReset();
+        machineRpcWithServerScopeMock.mockResolvedValue({ ok: true, result: {
+            commands: { supported: true, items: [{ command: 'project-check' }] },
+            skills: { supported: true, items: [{
+                name: 'project-check', origin: 'codex_native', path: '/repo/.agents/skills/project-check/SKILL.md',
+            }] },
+        } });
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+            expect(model?.simpleProps?.selectedMachineId).toBe('machine-1');
+            expect(model?.simpleProps?.selectedPath).toBe('/repo');
+            const nativeCalls = () => machineRpcWithServerScopeMock.mock.calls
+                .map(([params]) => params as { machineId: string; serverId: string; payload: { method?: string; params?: unknown } })
+                .filter((params) => params.payload?.method === 'probeCatalogs');
+            expect(nativeCalls()).toEqual([]);
+            expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual(['file', 'session', 'composerReference', 'skill', 'slashCommand']);
+            await act(async () => {
+                const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('/go');
+                expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '/goal')).toBe(true);
+            });
+            await flushHookEffects();
+            const current = hook.getCurrent();
+            expect(await current?.simpleProps?.emptyAutocompleteSuggestions('$project')).toEqual(expect.arrayContaining([
+                expect.objectContaining({ text: '$project-check', structuredInput: expect.objectContaining({ origin: 'vendor', backendId: 'codex' }) }),
+            ]));
+            expect(await current?.simpleProps?.emptyAutocompleteSuggestions('/project')).toEqual(expect.arrayContaining([
+                expect.objectContaining({ text: '/project-check' }),
+            ]));
+            expect(nativeCalls()).toEqual([expect.objectContaining({
+                machineId: 'machine-1', serverId: 's1',
+                payload: expect.objectContaining({ params: expect.objectContaining({
+                    cwd: '/repo', backendTarget: { kind: 'backend', backendId: 'codex' }, environmentVariables: {},
+                }) }),
+            })]);
+        } finally {
+            machineRpcWithServerScopeMock.mockReset();
+        }
     });
 
     it('renders without throwing during initial new-session screen model setup', async () => {
@@ -1785,6 +1839,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             'file',
             'session',
             'composerReference',
+            'skill',
             'slashCommand',
         ]);
 

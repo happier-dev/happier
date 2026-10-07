@@ -98,7 +98,7 @@ function useSetupEntries(presentation: SetupPresentation) {
     const router = useRouter();
     const auth = useAuth();
     const { hidden, dismiss } = useHomeSetupDismissals();
-    const { isComputer, isPhone } = useSetupDevice();
+    const { isComputer, isPhone, tileLayout } = useSetupDevice();
     const { connectTerminal, isLoading: isConnectingTerminal } = useConnectTerminal();
     const { processAuthUrl } = useScannedAuthUrlProcessor(TERMINAL_AUTH_URL_PROCESSOR_OPTIONS);
     // Only a machine known to have no installed plugins is an invitation; unknown shows nothing.
@@ -230,22 +230,23 @@ function useSetupEntries(presentation: SetupPresentation) {
         }
     }, [connectTerminal, processAuthUrl, recoveryKey.markSaved, recoveryKey.secret, router]);
 
-    return { entries, steps, open, runAction, isPhone, hidden, dismiss };
+    return { entries, steps, open, runAction, tileLayout, hidden, dismiss };
 }
 
 /** Home's Get set up: tiles on a computer, rows on a phone; each grows in place when it can. */
 function HubSetupTiles(props: HubSectionProps) {
-    const { entries, runAction, isPhone, hidden, dismiss } = useSetupEntries('tiles');
+    const { entries, runAction, tileLayout, hidden, dismiss } = useSetupEntries('tiles');
+    const phone = tileLayout === 'row';
     // The Homes journeys' steps lead the row (lab order: J6 laptop nudge, J2 reconcile, K1 "Already
     // use Happier?"); they share this row's morph and its dismissed-steps store.
-    const journeyItems = useHomesJourneySetupItems({ onDismiss: dismiss });
+    const journeyItems = useHomesJourneySetupItems({ onDismiss: dismiss, layout: tileLayout });
     // Connecting Claude or ChatGPT (lab csvc H2): the connected-services owner decides what is offered
     // and grows its setup panel through this row; it is null when nothing is left to offer.
-    const servicesItem = useConnectServicesSetupItem({ layout: isPhone ? 'row' : 'card' });
+    const servicesItem = useConnectServicesSetupItem({ layout: tileLayout });
     // A composer machine with no agent yet (lab agent-setup H1): the agents owner decides; it leads the row.
-    const firstAgentItem = useFirstAgentSetupItem({ phone: isPhone });
+    const firstAgentItem = useFirstAgentSetupItem({ phone });
     // "Set up voice" (lab voice-moments SA): the Voice setup owner decides; null once Voice is set up.
-    const voiceItem = useVoiceSetupBlock({ layout: isPhone ? 'row' : 'card' });
+    const voiceItem = useVoiceSetupBlock({ layout: tileLayout });
     // "Personalize Happier" (lab personalize H1): after the steps that connect real work on a
     // computer, first on a phone where there are fewer of them. Its owner decides; null once done.
     const personalizeItem = usePersonalizeSetupItem({ hidden, onDismiss: dismiss });
@@ -256,7 +257,7 @@ function HubSetupTiles(props: HubSectionProps) {
         renderTile: ({ open }) => (
             <SetupBlockTile
                 testID={entry.testID}
-                layout={isPhone ? 'row' : 'card'}
+                layout={tileLayout}
                 icon={entry.icon}
                 title={entry.title}
                 subtitle={entry.subtitle}
@@ -277,16 +278,16 @@ function HubSetupTiles(props: HubSectionProps) {
     }));
 
     const allItems = [
-        ...(personalizeItem && isPhone ? [personalizeItem] : []),
+        ...(personalizeItem && phone ? [personalizeItem] : []),
         ...(firstAgentItem ? [firstAgentItem] : []),
         ...journeyItems.filter((item) => !hidden.has(item.id)),
         ...(voiceItem ? [voiceItem] : []),
         ...items,
-        ...(personalizeItem && !isPhone ? [personalizeItem] : []),
+        ...(personalizeItem && !phone ? [personalizeItem] : []),
         ...(servicesItem ? [servicesItem] : []),
     ];
     if (allItems.length === 0) return null;
-    return <HubSetupGridView items={allItems} phone={isPhone} menu={props.menu} />;
+    return <HubSetupGridView items={allItems} phone={phone} menu={props.menu} />;
 }
 
 /** "Get set up" as drawn: the title, ⋯, and the set-up blocks (the `/dev/home` fixture draws it too). */

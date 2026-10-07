@@ -1,34 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { withTimeout } from '@/utils/timing/time';
-
-/**
- * Native font registration reaches a platform boundary that can stall without ever rejecting, and
- * `SplashScreen.preventAutoHideAsync()` has already armed the splash by the time we get here — an
- * unbounded await there is a splash-forever bug, not a slow boot. The bound is deliberately far
- * above any healthy load (healthy loads are tens of milliseconds) so it only fires on a real stall.
- */
-export const APP_BOOT_FONT_LOAD_TIMEOUT_MS = 6_000;
-
-/**
- * The keychain read has the same stall shape. Missing this deadline does NOT mean "signed out":
- * the read stays in flight and the session is applied when it lands (see `authGeneration`).
- */
-export const APP_BOOT_CREDENTIAL_RESOLUTION_TIMEOUT_MS = 8_000;
-
-/**
- * The warm cache's at-rest key comes from the OS keystore, which stalls the same way. Missing this
- * deadline costs a cold first paint, never correctness: the cache is derived state and the key
- * applies to whatever is written after it lands.
- */
-export const APP_BOOT_WARM_CACHE_KEY_TIMEOUT_MS = 3_000;
 
 export type AppBootReadyState = Readonly<{
     credentials: AuthCredentials | null;
-    /**
-     * `0` for the normal boot. Incremented only when a credential read that missed its deadline
-     * lands afterwards, so the auth tree can adopt the recovered session.
-     */
-    authGeneration: number;
 }>;
 
 export type AppBootSequence = Readonly<{
@@ -38,8 +11,8 @@ export type AppBootSequence = Readonly<{
     resolveCredentials: () => Promise<AuthCredentials | null>;
     /**
      * Retires plaintext warm-cache bytes older builds left behind and resolves the cache's at-rest
-     * key. Sync restore reads that cache synchronously, so this has to have settled before
-     * `restoreSync` runs or the boot hydrates nothing.
+     * key in the background. Sync restore reads any cache already available synchronously;
+     * unresolved preparation takes the cache owner's cold path and never gates rendering.
      */
     prepareWarmCache: () => Promise<unknown>;
     /** Authoritative user input must be loaded before any synchronous reader can mount. */
@@ -54,9 +27,6 @@ export type AppBootSequence = Readonly<{
      */
     restoreSync: ((credentials: AuthCredentials) => Promise<unknown>) | null;
     onReady: (state: AppBootReadyState) => void;
-    fontLoadTimeoutMs?: number;
-    credentialResolutionTimeoutMs?: number;
-    warmCacheKeyTimeoutMs?: number;
 }>;
 
 type CredentialOutcome = Readonly<{ credentials: AuthCredentials | null }>;
@@ -83,58 +53,41 @@ function startSyncRestore(sequence: AppBootSequence, credentials: AuthCredential
 /**
  * Owns everything that gates the app's first paint.
  *
- * Fonts, the libsodium runtime and the credential read have no dependency on each other, yet they
- * used to run as one `await` chain, so the gate cost their sum. They now start together and the gate
- * costs their maximum. The two legs that reach a stallable system boundary are additionally bounded,
- * because an unbounded await behind an armed splash screen is unrecoverable for the user.
+ * Fonts, the libsodium runtime and the credential read start together. Optional fonts never gate
+ * first paint: the platform fallback is usable while registration continues. Account authority
+ * comes from the credential read, never from how long the read takes.
  *
- * Degradation rules:
- * - fonts miss their deadline -> boot with platform fallback fonts; the load stays in flight and
- *   applies to text mounted afterwards.
- * - the credential read misses its deadline -> boot unauthenticated **without** discarding the
- *   session: the same in-flight read is still awaited, and if it yields credentials they are
- *   restored and published with a bumped `authGeneration`.
- *
- * Only restore's local phase is on the critical path: the persisted warm cache is what makes the
- * first frame show real session rows instead of an empty list, and it reaches the store
- * synchronously when restore starts. The transport phase (an Iroh carrier, the socket, bootstrap)
- * is not: an unreachable Home must paint its last-known list, not hold the splash until the
- * carrier gives up. The connection owner serializes any switch or retry behind that phase.
+ * Restore's local phase publishes whatever warm cache is already available synchronously. An
+ * unresolved cache key means a cold restore; its eventual completion enables future cache use,
+ * never another restore of this boot's Account. The transport phase (an Iroh carrier, the socket,
+ * bootstrap) is also background work: an unreachable Home must not hold the splash. The connection
+ * owner serializes any switch or retry behind that phase.
  */
 export async function runAppBootSequence(sequence: AppBootSequence): Promise<void> {
-    const fontLoadTimeoutMs = sequence.fontLoadTimeoutMs ?? APP_BOOT_FONT_LOAD_TIMEOUT_MS;
-    const credentialResolutionTimeoutMs =
-        sequence.credentialResolutionTimeoutMs ?? APP_BOOT_CREDENTIAL_RESOLUTION_TIMEOUT_MS;
-    const warmCacheKeyTimeoutMs = sequence.warmCacheKeyTimeoutMs ?? APP_BOOT_WARM_CACHE_KEY_TIMEOUT_MS;
-
-    // Every leg starts here, at t0, so each deadline measures wall clock from boot rather than from
-    // whenever the previous leg happened to finish.
-    const fontsLoaded = start(sequence.loadFonts).then(
+    // Independent preparation starts together.
+    void start(sequence.loadFonts).then(
         () => {},
         (error: unknown) => {
             // Font loading failures should not brick startup.
-            console.error('Failed to load fonts during init, continuing startup:', error);
+            console.info('Font loading unavailable, using platform fallback:', error);
         },
     );
-    const fontGate = withTimeout(fontsLoaded, fontLoadTimeoutMs, 'app font load').catch((error: unknown) => {
-        console.error('Font loading missed its boot deadline, continuing startup:', error);
-    });
     if (sequence.context === 'embed') {
         // The bridge is the credential authority in this realm. No persisted app state belongs
         // to the frame, including drafts or a warm cache from another signed-in Account.
-        await Promise.all([fontGate, Promise.resolve(sequence.sodiumReady)]);
-        sequence.onReady({ credentials: null, authGeneration: 0 });
+        await Promise.resolve(sequence.sodiumReady);
+        sequence.onReady({ credentials: null });
         return;
     }
     const credentialsResolved: Promise<CredentialOutcome> = start(sequence.resolveCredentials).then(
         (credentials) => ({ credentials }),
         (error: unknown) => {
             console.error('Failed to resolve credentials during init, continuing startup:', error);
-            // A rejected read is a definitive answer for this boot; only a missed deadline is retried.
+            // A rejected read is a definitive answer for this boot.
             return { credentials: null };
         },
     );
-    const warmCacheReady = start(sequence.prepareWarmCache).then(
+    void start(sequence.prepareWarmCache).then(
         () => {},
         (error: unknown) => {
             // No key means a cold boot, which the cache is designed to survive.
@@ -143,52 +96,20 @@ export async function runAppBootSequence(sequence: AppBootSequence): Promise<voi
     );
     const sodiumReady = Promise.resolve(sequence.sodiumReady);
 
-    // `fontsLoaded` / `credentialsResolved` never reject, so the only rejection either race can
-    // produce is its own `AsyncTimeoutError`; both are attached now so a deadline that fires before
-    // it is awaited cannot surface as an unhandled rejection.
-    const credentialGate: Promise<CredentialOutcome | null> = withTimeout(
-        credentialsResolved,
-        credentialResolutionTimeoutMs,
-        'boot credential resolution',
-    ).catch((error: unknown) => {
-        console.error('Credential read missed its boot deadline, continuing startup:', error);
-        return null;
-    });
-    const warmCacheGate = withTimeout(warmCacheReady, warmCacheKeyTimeoutMs, 'warm cache key').catch(
-        (error: unknown) => {
-            console.error('Warm cache key missed its boot deadline, painting cold:', error);
-        },
-    );
-
     // Unlike the disposable warm cache, drafts cannot degrade to an empty snapshot on failure.
     // Attach this await immediately so a rejected storage open reaches the boot recovery owner.
     await start(sequence.prepareSessionDrafts);
 
-    let gatedCredentials: CredentialOutcome | null = null;
+    let initialCredentials: AuthCredentials | null = null;
     try {
-        gatedCredentials = await credentialGate;
+        initialCredentials = (await credentialsResolved).credentials;
         await sodiumReady;
     } catch (error) {
         console.error('Error initializing:', error);
     }
 
-    const initialCredentials = gatedCredentials?.credentials ?? null;
     if (initialCredentials) {
-        // The warm cache is read synchronously by sync restore, so its key must be settled (or its
-        // deadline spent) before restore runs; otherwise the boot paints an empty list it could
-        // have filled.
-        await warmCacheGate;
         startSyncRestore(sequence, initialCredentials);
     }
-    await fontGate;
-    sequence.onReady({ credentials: initialCredentials, authGeneration: 0 });
-
-    if (gatedCredentials) return;
-
-    // The keychain missed its deadline. The app is already interactive, so keep waiting on the same
-    // read: a slow keychain must become a late sign-in, never a silent sign-out.
-    const deferredCredentials = (await credentialsResolved).credentials;
-    if (!deferredCredentials) return;
-    startSyncRestore(sequence, deferredCredentials);
-    sequence.onReady({ credentials: deferredCredentials, authGeneration: 1 });
+    sequence.onReady({ credentials: initialCredentials });
 }

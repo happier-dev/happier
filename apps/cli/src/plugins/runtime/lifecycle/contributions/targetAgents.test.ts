@@ -939,7 +939,7 @@ describe('target Agent runtime registry', () => {
         expect(managedEndpointRead).toHaveBeenCalledTimes(2);
     });
 
-    it('cancels an over-budget managed response during finite reconciliation', async () => {
+    it('preserves a managed response above the former reconciliation byte cutoff', async () => {
         const responseCancelled = vi.fn();
         let pulls = 0;
         let releaseThirdPull: (() => void) | undefined;
@@ -977,6 +977,7 @@ describe('target Agent runtime registry', () => {
             if (!reader) throw new Error('Expected managed endpoint response body');
             await reader.read();
             await reader.read();
+            await reader.cancel();
             return {
                 purpose: 'observation_evidence' as const,
                 outcomes: request.links.map(({ linkKey }) => ({
@@ -1015,7 +1016,10 @@ describe('target Agent runtime registry', () => {
                 },
             }],
             signal: new AbortController().signal,
-        })).rejects.toThrow(/managed endpoint response exceeds its 262144-byte operation budget/u);
+        })).resolves.toMatchObject({
+            purpose: 'observation_evidence',
+            outcomes: [{ linkKey: 'link-1', facts: [{ kind: 'retrieval_failed' }] }],
+        });
 
         expect(exactRead).toHaveBeenCalledWith({ pathAndQuery: '/session' });
         expect(responseCancelled).toHaveBeenCalledOnce();
@@ -1210,11 +1214,12 @@ describe('target Agent runtime registry', () => {
         }
     });
 
-    it('times out reconciliation while a managed endpoint bind ignores abort', async () => {
+    it('cancels reconciliation while a slow managed endpoint bind ignores abort', async () => {
         vi.useFakeTimers();
         try {
             let settleBind!: (read: AgentExternalSessionsManagedEndpointRead) => void;
             let bindSignal: AbortSignal | undefined;
+            const caller = new AbortController();
             const reconcile = vi.fn(createObservationContribution().reconcileResource);
             const managedEndpointRead = vi.fn(({ signal }: { signal: AbortSignal }) => {
                 bindSignal = signal;
@@ -1246,18 +1251,18 @@ describe('target Agent runtime registry', () => {
                         linkData: {},
                     },
                 }],
-                signal: new AbortController().signal,
+                signal: caller.signal,
             }));
             void reconciliation.catch(() => undefined);
             await Promise.resolve();
             expect(managedEndpointRead).toHaveBeenCalledOnce();
-            await vi.advanceTimersByTimeAsync(15_000);
+            await vi.advanceTimersByTimeAsync(46_000);
+            expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('pending');
+            caller.abort();
 
             expect(bindSignal?.aborted).toBe(true);
             expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('rejected');
-            await expect(reconciliation).rejects.toThrow(/timed out/u);
-            // A deadline is a typed, retryable Agent timeout — not an internal error.
-            await expect(reconciliation).rejects.toMatchObject({ code: 'timeout', retryable: true });
+            await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
             expect(reconcile).not.toHaveBeenCalled();
             expect(vi.getTimerCount()).toBe(0);
 
@@ -1266,7 +1271,7 @@ describe('target Agent runtime registry', () => {
             });
             await Promise.resolve();
             expect(reconcile).not.toHaveBeenCalled();
-            await expect(reconciliation).rejects.toThrow(/timed out/u);
+            await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
         } finally {
             vi.useRealTimers();
         }
@@ -1929,6 +1934,33 @@ describe('target Agent runtime registry', () => {
             .toBe(contribution.installationVariants);
     });
 
+    it('preserves a caller deadline beyond 15 seconds for hook installation', async () => {
+        vi.useFakeTimers();
+        const contribution = createExternalSessionHooksContribution();
+        const resolveInstallation: AgentExternalSessionHooksContribution['resolveInstallation'] = async (request, context) => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 46_000));
+            return await contribution.resolveInstallation(request, context);
+        };
+        const registry = await createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [externalSessionHooksRegistration({ contribution: createExternalSessionHooksContribution({ resolveInstallation }) })],
+            isOccurrenceCurrent: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            onDuplicate: vi.fn(),
+        });
+        const hooks = registry.get('assistant')?.externalSessionHooks;
+        if (!hooks) throw new Error('Expected hook lease');
+        try {
+            const result = hooks.resolveInstallation({ ...resolveInstallationRequest(new AbortController().signal), deadlineAtMs: Date.now() + 60_000 });
+            void result.catch(() => undefined);
+            await vi.advanceTimersByTimeAsync(46_000);
+            await expect(result).resolves.toMatchObject({ ok: true });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('passes the canonical composed invocation context only to resolveInstallation', async () => {
         let receivedContext: PluginInvocationContext | undefined;
         let receivedRequestSignal: AbortSignal | undefined;
@@ -2493,7 +2525,7 @@ describe('target Agent runtime registry', () => {
         vi.useRealTimers();
     });
 
-    it('bounds reconciliation at 15 seconds, ignores its late result, and releases listeners and deadline', async () => {
+    it('preserves slow reconciliation until caller cancellation and ignores its late result', async () => {
         vi.useFakeTimers();
         let settle!: (
             result: Awaited<
@@ -2532,12 +2564,12 @@ describe('target Agent runtime registry', () => {
             }],
             signal: caller.signal,
         });
-        await vi.advanceTimersByTimeAsync(14_999);
+        await vi.advanceTimersByTimeAsync(46_000);
         expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('pending');
-        await vi.advanceTimersByTimeAsync(1);
+        caller.abort();
 
         expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('rejected');
-        await expect(reconciliation).rejects.toThrow(/timed out/u);
+        await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
         expect(callerRemove).toHaveBeenCalled();
         expect(retirementRemove).toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
@@ -2556,7 +2588,7 @@ describe('target Agent runtime registry', () => {
             }],
         });
         await Promise.resolve();
-        await expect(reconciliation).rejects.toThrow(/timed out/u);
+        await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
         vi.useRealTimers();
     });
 
@@ -2825,7 +2857,6 @@ describe('target Agent runtime registry', () => {
             retirement.abort();
             // Let Node run its unhandled-rejection detection for this turn.
             await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
-            expect(dispose).toHaveBeenCalledTimes(1);
             expect(unhandled).toEqual([]);
         } finally {
             process.off('unhandledRejection', onUnhandledRejection);
@@ -2835,10 +2866,11 @@ describe('target Agent runtime registry', () => {
         expect(dispose).toHaveBeenCalledTimes(2);
     });
 
-    it('bounds a non-cooperative observer disposal at the existing observation deadline', async () => {
+    it('awaits the same slow physical observer disposal without an invented deadline', async () => {
         vi.useFakeTimers();
         try {
-            const dispose = vi.fn(() => new Promise<void>(() => {}));
+            let releaseDisposal!: () => void;
+            const dispose = vi.fn(() => new Promise<void>((resolve) => { releaseDisposal = resolve; }));
             const observation = (await createTargetAgentRuntimeRegistry({
                 agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
                 activationTargets: [target()],
@@ -2862,14 +2894,10 @@ describe('target Agent runtime registry', () => {
             });
             const disposal = observer.dispose();
 
-            await vi.advanceTimersByTimeAsync(14_999);
+            await vi.advanceTimersByTimeAsync(46_000);
             expect(await readPromiseStateAfterMicrotasks(disposal)).toBe('pending');
-            await vi.advanceTimersByTimeAsync(1);
-
-            expect(await readPromiseStateAfterMicrotasks(disposal)).toBe('rejected');
-            await expect(disposal).rejects.toThrow(
-                'Agent External Session observation cleanup timed out after 15000ms',
-            );
+            releaseDisposal();
+            await expect(disposal).resolves.toBeUndefined();
             expect(dispose).toHaveBeenCalledOnce();
             expect(vi.getTimerCount()).toBe(0);
         } finally {
@@ -2877,13 +2905,14 @@ describe('target Agent runtime registry', () => {
         }
     });
 
-    it('admits a replacement occurrence after retirement while old physical cleanup is bounded', async () => {
+    it('admits a replacement occurrence after retirement while old physical cleanup is slow', async () => {
         vi.useFakeTimers();
         try {
             const firstRetirement = new AbortController();
             const secondRetirement = new AbortController();
             let firstCurrent = true;
-            const firstDispose = vi.fn(() => new Promise<void>(() => {}));
+            let releaseFirstDisposal!: () => void;
+            const firstDispose = vi.fn(() => new Promise<void>((resolve) => { releaseFirstDisposal = resolve; }));
             const secondDispose = vi.fn(async () => undefined);
             const first = (await createTargetAgentRuntimeRegistry({
                 agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
@@ -2972,13 +3001,11 @@ describe('target Agent runtime registry', () => {
                 onFacts() {},
             })).resolves.toEqual({ state: 'observing' });
 
-            await vi.advanceTimersByTimeAsync(15_000);
+            await vi.advanceTimersByTimeAsync(46_000);
+            releaseFirstDisposal();
             await reconciler.dispose();
             expect(firstDispose).toHaveBeenCalledOnce();
             expect(secondDispose).toHaveBeenCalledOnce();
-            // The expected timeout diagnostic owns a separate buffered-file
-            // flush timer. Drain that logger boundary before asserting that the
-            // observation lifecycle itself retained no timers.
             logger.flushSync();
             expect(vi.getTimerCount()).toBe(0);
         } finally {

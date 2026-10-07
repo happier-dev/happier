@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { SessionTerminalTargetV1Schema, SessionTerminalWorkspaceV1Schema } from '../terminal/workspace.js';
-import type { PreNormalizedActionSpec } from './actionSpecs.js';
+import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 
 export const SESSION_TERMINAL_ACTION_IDS = [
   'session.terminals.list', 'session.terminals.open', 'session.terminals.split',
@@ -47,6 +47,50 @@ export const SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS = {
   'session.terminals.detach': mutation,
   'session.terminals.reorder': mutation,
 } as const;
+const scopeHint = { path: 'scopeId', title: 'Home-qualified Session scope', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const terminalHint = { path: 'terminalId', title: 'Terminal id', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const tabHint = { path: 'tabId', title: 'Terminal tab id', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const targetHint = { path: 'target', title: 'Shell or attachment target', widget: 'json', required: true } satisfies ActionInputFieldHint;
+const titleHint = { path: 'title', title: 'Terminal title', widget: 'text' } satisfies ActionInputFieldHint;
+const inputFields = {
+  'session.terminals.list': [scopeHint],
+  'session.terminals.open': [scopeHint, targetHint, titleHint],
+  'session.terminals.split': [scopeHint, { ...tabHint, required: false }, targetHint, titleHint],
+  'session.terminals.focus': [scopeHint, terminalHint],
+  'session.terminals.restart': [scopeHint, terminalHint],
+  'session.terminals.open_in_details': [scopeHint, terminalHint],
+  'session.terminals.close': [scopeHint, terminalHint],
+  'session.terminals.close_tab': [scopeHint, tabHint],
+  'session.terminals.close_others': [scopeHint, tabHint],
+  'session.terminals.resize': [scopeHint, tabHint,
+    { path: 'splitId', title: 'Split id', widget: 'text', required: true },
+    { path: 'ratio', title: 'First terminal proportion', widget: 'text', required: true }],
+  'session.terminals.detach': [scopeHint, terminalHint],
+  'session.terminals.reorder': [scopeHint, tabHint, { path: 'index', title: 'Zero-based tab index', widget: 'text', required: true }],
+  'session.terminals.rename': [scopeHint, terminalHint, { ...titleHint, required: true, description: 'Use null to restore the default title.' }],
+  'session.terminals.list_view': [scopeHint, { path: 'showList', title: 'Show terminal list', widget: 'boolean', required: true }],
+  'session.terminals.run_script': [scopeHint,
+    { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+    { path: 'cwd', title: 'Package directory', widget: 'text', required: true },
+    { path: 'runTargetId', title: 'Package script target id', widget: 'text', required: true }, titleHint],
+} satisfies Record<SessionTerminalActionId, readonly ActionInputFieldHint[]>;
+const voiceExamples = {
+  'session.terminals.list': '{"scopeId":"home:session"}',
+  'session.terminals.open': '{"scopeId":"home:session","target":{"kind":"workspace_shell"}}',
+  'session.terminals.split': '{"scopeId":"home:session","target":{"kind":"workspace_shell"}}',
+  'session.terminals.focus': '{"scopeId":"home:session","terminalId":"terminal-main"}',
+  'session.terminals.restart': '{"scopeId":"home:session","terminalId":"terminal-main"}',
+  'session.terminals.open_in_details': '{"scopeId":"home:session","terminalId":"terminal-main"}',
+  'session.terminals.close': '{"scopeId":"home:session","terminalId":"terminal-main"}',
+  'session.terminals.close_tab': '{"scopeId":"home:session","tabId":"tab-main"}',
+  'session.terminals.close_others': '{"scopeId":"home:session","tabId":"tab-main"}',
+  'session.terminals.resize': '{"scopeId":"home:session","tabId":"tab-main","splitId":"split-main","ratio":0.5}',
+  'session.terminals.rename': '{"scopeId":"home:session","terminalId":"terminal-main","title":"Build"}',
+  'session.terminals.list_view': '{"scopeId":"home:session","showList":true}',
+  'session.terminals.run_script': '{"scopeId":"home:session","machineId":"machine-main","cwd":"/repo","runTargetId":"test"}',
+  'session.terminals.detach': '{"scopeId":"home:session","terminalId":"terminal-main"}',
+  'session.terminals.reorder': '{"scopeId":"home:session","tabId":"tab-main","index":0}',
+} satisfies Record<SessionTerminalActionId, string>;
 function row<const T extends SessionTerminalActionId>(actionId: T, title: string) {
   const mutatesProcess = actionId === 'session.terminals.run_script' || actionId === 'session.terminals.open' || actionId === 'session.terminals.split'
     || actionId === 'session.terminals.close' || actionId === 'session.terminals.close_tab' || actionId === 'session.terminals.close_others' || actionId === 'session.terminals.restart';
@@ -60,6 +104,8 @@ function row<const T extends SessionTerminalActionId>(actionId: T, title: string
     bindings: { mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_') },
     cli: { commands: [{ path: actionId.split('.'), visibility: 'canonical' }] },
     inputSchema: SESSION_TERMINAL_ACTION_INPUT_SCHEMAS[actionId], outputSchema: SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS[actionId],
+    inputHints: { title, fields: inputFields[actionId] },
+    examples: { voice: { argsExample: voiceExamples[actionId] } },
   } satisfies PreNormalizedActionSpec;
 }
 export const SESSION_TERMINAL_ACTION_SPECS = [

@@ -1,6 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
-  TriageConfiguredSourceInstanceV1,
+  TriageConfiguredSourceConnectedAccountInstanceV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
@@ -106,7 +106,7 @@ type AdmittedInvocation =
  */
 async function admitBitbucketDetailInvocation(
   input: Readonly<{
-    instance: TriageConfiguredSourceInstanceV1;
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1;
     localRef: Readonly<{ kindId: string; entryId: string; collisionScope: string }>;
     lastKnownLocator: Parameters<typeof admitBitbucketEntryInvocation>[0]['lastKnownLocator'];
   }>,

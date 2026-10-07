@@ -778,6 +778,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             mode="info"
             icon={<Icon name="info" size={20} color={theme.colors.state.warning.foreground} />}
             title={title}
+            titleLines={0}
             subtitle={body}
             subtitleLines={0}
             accessibilityLiveRegion="polite"

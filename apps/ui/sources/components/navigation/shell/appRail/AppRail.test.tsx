@@ -15,7 +15,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PluginAppPage } from '@/components/appShell/plugins/pluginAppPages';
 import { AppRailSurface } from './AppRail';
-import { buildAppRailEntries } from './appRailModel';
+import { buildAppRailEntries, buildAppRailPlacementItems } from './appRailModel';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({ styleSheet: { hairlineWidth: 1 } }));
@@ -51,6 +51,28 @@ const layout = (height: number): LayoutChangeEvent => ({
 } as LayoutChangeEvent);
 
 describe('AppRail measured room', () => {
+    it('keeps focusable customization reachable with every destination and footer hidden', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const all = entries();
+        const items = buildAppRailPlacementItems(all, true);
+        const customize = vi.fn();
+        const screen = await renderScreen(<AppRailSurface entries={all} activeId={null} onOpen={() => {}}
+            updatesVisible onCustomize={customize}
+            preferences={{ orderedIds: [], placements: Object.fromEntries(items.map(item => [item.id, 'hidden' as const])) }} />);
+        const trigger = screen.findHostByTestId('app-rail-more.trigger');
+        expect(trigger).not.toBeNull();
+        expect(trigger?.props.role).toBe('button');
+        expect(trigger?.props.tabIndex).not.toBe(-1);
+        await screen.pressByTestIdAsync('app-rail-more.trigger');
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 0 });
+        for (const item of items) expect(screen.findHostByTestId(`app-rail-more:${item.id}`)).toBeNull();
+        const action = screen.findHostByTestId('app-rail-more.customize');
+        expect(action?.props.role).toBe('button');
+        expect(action?.props.tabIndex).not.toBe(-1);
+        await screen.pressByTestIdAsync('app-rail-more.customize');
+        expect(customize).toHaveBeenCalledOnce();
+    });
+
     it('shows every destination in the reported tall rail even if the old plugin area was collapsed', async () => {
         const all = entries();
         const screen = await renderScreen(<InboxSummaryProvider><AppRailSurface entries={all} activeId={null} onOpen={() => {}}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -6,7 +6,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { hashArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { encodeBase64 } from '@/encryption/base64';
-import { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi, fetchArtifactHtmlPreviewFromApi, type ArtifactDataKeyCache } from './syncArtifacts';
+import { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi, fetchArtifactForViewFromApi, type ArtifactDataKeyCache } from './syncArtifacts';
 
 const artifactId = '29c6d6dd-8a45-4b30-a362-acdc5c700247';
 const blobId = 'f3d86e48-5552-4b66-af88-709c083bd134';
@@ -73,8 +73,22 @@ describe('Artifact HTML private preview', () => {
             if (path === `/v1/artifacts/${artifactId}/html-preview`) return Response.json({ url: `https://${artifactId}.preview.test/a/${artifactId}` });
             throw new Error(`Unexpected HTTP path ${path}`);
         };
-        const result = await fetchArtifactHtmlPreviewFromApi({ artifactId, credentials: { token: 'captured-token' }, request,
-            encryption, artifactDataKeys });
+        const headerOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptHeaderRaw');
+        const bodyOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptBody');
+        const params = { artifactId, credentials: { token: 'captured-token' }, request, encryption, artifactDataKeys };
+        const view = await fetchArtifactForViewFromApi({ ...params, includePdfPreview: true });
+        const result = view?.htmlPreviewUrl;
+        if (!result) throw new Error('Missing opened HTML preview');
+        console.info('HTML Artifact composed read measurement', { mode,
+            heads: paths.filter(path => path === `/v1/artifacts/${artifactId}`).length,
+            preparations: paths.filter(path => path.endsWith('/recipients')).length,
+            headerOpens: headerOpens.mock.calls.length, bodyOpens: bodyOpens.mock.calls.length });
+        expect(paths.filter(path => path === `/v1/artifacts/${artifactId}`)).toHaveLength(1);
+        expect(paths.filter(path => path.endsWith('/recipients'))).toHaveLength(mode === 'e2ee' ? 1 : 0);
+        expect(headerOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
+        expect(bodyOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
+        headerOpens.mockRestore();
+        bodyOpens.mockRestore();
         const url = new URL(result);
         expect(url.origin).toBe(`https://${artifactId}.preview.test`);
         expect(url.search).toBe('');

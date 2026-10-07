@@ -117,7 +117,7 @@ describe('GitHub SCM manifest', () => {
     // published two-arm input union. `listInstances` carries no account at all,
     // because producing account references is what it performs.
     const expectedAccountBindings = [
-      { path: 'instance.binding.account', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
+      { path: 'instance.binding.account', nativeServicePath: 'instance.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
     ];
     expect(actions.get(GITHUB_TRIAGE_ACTION_IDS_V1.get)?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
@@ -154,7 +154,7 @@ describe('GitHub SCM manifest', () => {
       // every other Triage read uses.
       expect(action.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
       expect(action.connectedAccountPurposeBindings).toEqual([
-        { path: 'instance.binding.account', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
+        { path: 'instance.binding.account', nativeServicePath: 'instance.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
       ]);
       expect(action.dangerLevel).toBe('safe');
       // They carry no Triage operation role: the aggregate never invokes them.
@@ -225,7 +225,7 @@ describe('GitHub SCM manifest', () => {
     });
 
     // The canonical whole-manifest admission owner accepts the published union
-    // only because both arms carry the same exact credential-ref leaf.
+    // only because every arm carries an exact account or native service selection.
     expect(ingestWithScan(scan)).toMatchObject({ ok: true });
 
     // A binding that cannot fail proves nothing, so the same declaration is
@@ -238,7 +238,8 @@ describe('GitHub SCM manifest', () => {
     })).toMatchObject({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
-        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'actions', 1, 'connectedAccountPurposeBindings', 0, 'path'],
       })]),
     });
 
@@ -251,7 +252,8 @@ describe('GitHub SCM manifest', () => {
     })).toMatchObject({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
-        message: 'Connected Account purpose bindings must target one exact qualified credential-ref input leaf in every declared input arm.',
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'actions', 1, 'connectedAccountPurposeBindings', 0, 'path'],
       })]),
     });
   });
@@ -281,7 +283,7 @@ describe('GitHub SCM manifest', () => {
       // resource, and rebinds the exact account the configured instance names.
       expect(action.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
       expect(action.connectedAccountPurposeBindings).toEqual([
-        { path: 'instance.binding.account', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
+        { path: 'instance.binding.account', nativeServicePath: 'instance.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
       ]);
       expect(() => PluginActionContributionV2Schema.parse(action)).not.toThrow();
     }

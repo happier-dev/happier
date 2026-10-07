@@ -53,6 +53,7 @@ export type ExternalSessionTakeoverCapability =
 
 export type ExternalSessionListPage = Readonly<{
     items: readonly ExternalSessionCandidateRecord[];
+    /** Opaque single-use continuation. Close its query demand when abandoning pagination. */
     nextCursor: string | null;
     diagnostics?: readonly PluginDiagnosticData[];
 }>;
@@ -195,6 +196,12 @@ export interface ExternalSessionsService {
         query?: ExternalSessionListQuery,
         options?: PluginCancellationOptions,
     ): Promise<ExternalSessionListPage>;
+    /**
+     * Release a list query and any in-flight continuation using any cursor it issued,
+     * including one already consumed. Exhaustion, cancellation and source retirement
+     * release it automatically. Repeated close is harmless.
+     */
+    closeList(cursor: string, options?: PluginCancellationOptions): Promise<void>;
     attach(
         ref: ExternalSessionRef,
         options?: PluginCancellationOptions,

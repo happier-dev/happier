@@ -18,6 +18,22 @@ describe('fetchWithTimeout', () => {
     vi.useRealTimers();
   });
 
+  it('lets a speech request use its configured timeout beyond sixty seconds', async () => {
+    vi.useFakeTimers();
+    let finish: ((response: Response) => void) | undefined;
+    runtimeFetch.mockImplementation((_input, init) => new Promise((resolve, reject) => {
+      finish = resolve;
+      init.signal.addEventListener('abort', () => reject(abortError('timed out')));
+    }));
+    const { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } = await import('./fetchWithTimeout');
+    const request = fetchWithTimeout('https://example.com', undefined,
+      resolveVoiceNetworkTimeoutMs(120_000, 15_000), 'stt_timeout');
+    const outcome = request.then(() => 'completed', () => 'timed_out');
+    await vi.advanceTimersByTimeAsync(90_000);
+    finish?.(new Response(null, { status: 200 }));
+    expect(await outcome).toBe('completed');
+  });
+
   it('forwards an external abort to the in-flight request and surfaces a typed abort', async () => {
     runtimeFetch.mockImplementation((_input, init) =>
       new Promise((_resolve, reject) => {

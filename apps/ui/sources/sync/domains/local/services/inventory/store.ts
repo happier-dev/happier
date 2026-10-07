@@ -56,6 +56,20 @@ function areRowsEquivalent(a: LocalServiceInventoryRow | undefined, b: LocalServ
     return Boolean(a) && rowKey(a as LocalServiceInventoryRow) === rowKey(b);
 }
 
+/** Scan observations stay in raw state; rows render only these material service facts. */
+export type LocalServiceInventoryPresentationRow = Omit<LocalServiceInventoryRow, 'lastSeenAt' | 'endpoint'> & {
+    endpoint?: Omit<NonNullable<LocalServiceInventoryRow['endpoint']>, 'probedAt'>;
+};
+const selectedRows = new WeakMap<LocalServiceInventoryState['rowsById'], readonly LocalServiceInventoryRow[]>();
+const presentationRows = new WeakMap<LocalServiceInventoryState['rowsById'], readonly LocalServiceInventoryPresentationRow[]>();
+
+function presentationRow(row: LocalServiceInventoryRow): LocalServiceInventoryPresentationRow {
+    const { lastSeenAt: _lastSeenAt, endpoint, ...material } = row;
+    if (!endpoint) return material;
+    const { probedAt: _probedAt, ...materialEndpoint } = endpoint;
+    return { ...material, endpoint: materialEndpoint };
+}
+
 export function createLocalServiceInventoryState(): LocalServiceInventoryState {
     return {
         machineId: null,
@@ -91,6 +105,7 @@ export function applyLocalServiceInventoryRefreshStarted(
         };
     }
 
+    if (state.machineId === machineId && state.refreshState === 'refreshing') return state;
     return {
         ...state,
         machineId,
@@ -122,6 +137,7 @@ export function applyLocalServiceInventoryRefreshFailed(
         };
     }
 
+    if (state.machineId === machineId && state.refreshState === 'error') return state;
     return {
         ...state,
         machineId,
@@ -140,13 +156,30 @@ export function applyLocalServiceInventorySnapshot(
         const previous = state.rowsById.get(row.id);
         rowsById.set(row.id, areRowsEquivalent(previous, row) ? previous as LocalServiceInventoryRow : row);
     }
+    const sameIds = state.rowIds.length === rowIds.length && rowIds.every((id, index) => id === state.rowIds[index]);
+    const sameRows = sameIds && rowIds.every(id => rowsById.get(id) === state.rowsById.get(id));
+    const nextMap = sameRows ? state.rowsById : rowsById;
+    const diagnostics = JSON.stringify(state.diagnostics) === JSON.stringify(snapshot.diagnostics) ? state.diagnostics : snapshot.diagnostics;
+    if (state.machineId === snapshot.machineId && state.generatedAt === snapshot.generatedAt
+        && state.refreshState === snapshot.refreshState && sameRows && diagnostics === state.diagnostics) return state;
+    if (!sameRows) {
+        const previousPresentation = selectLocalServiceInventoryPresentationRows(state);
+        const previousById = new Map(previousPresentation.map(row => [row.id, row]));
+        const nextPresentation = snapshot.entries.map(row => {
+            const material = presentationRow(row);
+            const previous = previousById.get(row.id);
+            return previous && JSON.stringify(previous) === JSON.stringify(material) ? previous : material;
+        });
+        presentationRows.set(nextMap, sameIds && nextPresentation.every((row, index) => row === previousPresentation[index])
+            ? previousPresentation : nextPresentation);
+    }
     return {
         machineId: snapshot.machineId,
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
-        rowIds,
-        rowsById,
-        diagnostics: snapshot.diagnostics,
+        rowIds: sameIds ? state.rowIds : rowIds,
+        rowsById: nextMap,
+        diagnostics,
     };
 }
 
@@ -167,7 +200,19 @@ function assertInventoryStateShape(state: LocalServiceInventoryState): void {
 
 export function selectLocalServiceInventoryRows(state: LocalServiceInventoryState): readonly LocalServiceInventoryRow[] {
     assertInventoryStateShape(state);
-    return state.rowIds
+    const previous = selectedRows.get(state.rowsById);
+    if (previous) return previous;
+    const rows = state.rowIds
         .map((id) => state.rowsById.get(id))
         .filter((row): row is LocalServiceInventoryRow => Boolean(row));
+    selectedRows.set(state.rowsById, rows);
+    return rows;
+}
+
+export function selectLocalServiceInventoryPresentationRows(state: LocalServiceInventoryState): readonly LocalServiceInventoryPresentationRow[] {
+    const previous = presentationRows.get(state.rowsById);
+    if (previous) return previous;
+    const rows = selectLocalServiceInventoryRows(state).map(presentationRow);
+    presentationRows.set(state.rowsById, rows);
+    return rows;
 }

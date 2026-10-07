@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -8,10 +8,11 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { writePidState } from '../expo/expo.mjs';
-import { readLinuxWorkerProcesses, readWorkerMemoryReservations } from './service_memory.mjs';
+import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows } from './service_memory.mjs';
 
 const policy = fileURLToPath(new URL('../dev_targets/native_command_policy.sh', import.meta.url));
 const identity = fileURLToPath(new URL('./native_process_identity.sh', import.meta.url));
+const hostState = fileURLToPath(new URL('./native_host_admission_state.sh', import.meta.url));
 
 async function memoryBoundary(fixture, { availableKiB, totalKiB }) {
   await mkdir(fixture.path('bin'), { recursive: true });
@@ -37,8 +38,11 @@ function classFloor(className) {
   return Number(result.stdout.trim());
 }
 
-async function legacyOwner(t, fixture) {
-  const root = fixture.path('old-cli-home', 'heavyweight-admission-v1');
+async function admittedOwner(t, fixture, {
+  root = fixture.path('old-cli-home', 'heavyweight-admission-v1'), resident = false,
+  env = process.env, nestedLauncher = null,
+} = {}) {
+  const descendantScript = 'globalThis.resident = Buffer.alloc(64 * 1024 * 1024, 1); process.stdout.write("ready\\n"); setInterval(() => {}, 1000);';
   const script = `
     const fs = require('node:fs');
     const path = require('node:path');
@@ -47,13 +51,23 @@ async function legacyOwner(t, fixture) {
     fs.mkdirSync(ownerPath, { recursive: true });
     fs.writeFileSync(path.join(ownerPath, 'process'), process.pid + ' ' + token + '\\n');
     fs.writeFileSync(path.join(ownerPath, 'class'), 'runtime-build\\n');
-    const descendant = require('node:child_process').spawn('/bin/sleep', ['60'], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(ownerPath, 'machine'), process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE + '\\n');
+    ${resident ? "globalThis.resident = Buffer.alloc(64 * 1024 * 1024, 1);" : ''}
+    const descendant = ${resident
+      ? `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { env: {}, stdio: ['ignore', 'pipe', 'ignore'] })`
+      : "require('node:child_process').spawn('/bin/sleep', ['60'], { stdio: 'ignore' })"};
     process.on('SIGTERM', () => {
       if (descendant.exitCode !== null || descendant.signalCode !== null) process.exit(0);
       descendant.once('exit', () => process.exit(0));
       descendant.kill('SIGTERM');
     });
-    descendant.once('spawn', () => process.stdout.write(JSON.stringify({ ownerPath, token, descendantPid: descendant.pid }) + '\\n'));
+    ${resident ? "descendant.stdout.once('data'," : "descendant.once('spawn',"} () => process.stdout.write(JSON.stringify({ ownerPath, token, descendantPid: descendant.pid }) + '\\n'));
+    ${nestedLauncher ? `process.on('SIGUSR2', () => {
+      const result = require('node:child_process').spawnSync('/bin/sh', [${JSON.stringify(nestedLauncher)},
+        '--heavyweight-admission', '--class=compilation', '--machine=local', '--no-wait', '--',
+        '/usr/bin/printf', 'escalation-admitted\\n'], { encoding: 'utf8' });
+      process.stdout.write(JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr }) + '\\n');
+    });` : ''}
     setInterval(() => {}, 1000);
   `;
   const child = spawn('/bin/sh', ['-c', `
@@ -61,8 +75,10 @@ async function legacyOwner(t, fixture) {
     owner_token=$(heavyweight_process_token "$$")
     export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$2"
     export HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN="$$:$owner_token"
+    . "$5"
+    export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$(resolve_native_host_admission_machine)"
     exec "$3" -e "$4"
-  `, 'legacy-owner', identity, root, process.execPath, script], { stdio: ['ignore', 'pipe', 'ignore'] });
+  `, 'admitted-owner', identity, root, process.execPath, script, hostState], { env, stdio: ['ignore', 'pipe', 'ignore'] });
   const exited = new Promise(resolve => child.once('exit', resolve));
   t.after(async () => {
     if (child.exitCode === null) child.kill('SIGTERM');
@@ -71,6 +87,162 @@ async function legacyOwner(t, fixture) {
   const record = JSON.parse(await new Promise(resolve => child.stdout.once('data', data => resolve(String(data)))));
   return { child, root, ...record };
 }
+
+test('native memory observation authenticates live owners before workspace dependencies are installed', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-fresh-memory-observer-' });
+  const procDir = fixture.path('fresh', 'proc');
+  const pathsDir = fixture.path('fresh', 'paths');
+  await Promise.all([mkdir(procDir, { recursive: true }), mkdir(pathsDir, { recursive: true })]);
+  await mkdir(fixture.path('fresh', 'dev_targets'));
+  for (const relative of ['proc/service_memory.mjs', 'proc/native_process_identity.sh', 'paths/canonical_home.mjs', 'paths/paths.mjs', 'dev_targets/heavyweight_pressure_cadence.mjs']) {
+    await copyFile(fileURLToPath(new URL(`../${relative}`, import.meta.url)), fixture.path('fresh', relative));
+  }
+  await assert.rejects(access(fixture.path('fresh', 'node_modules')), { code: 'ENOENT' });
+  const admissionRoot = fixture.path('admission');
+  const stackDir = fixture.path('stack');
+  await mkdir(stackDir);
+  const envPath = fixture.path('stack', 'env');
+  await writeFile(envPath, '');
+  const owner = await admittedOwner(t, fixture, {
+    root: admissionRoot,
+    env: { ...process.env, HAPPIER_STACK_STACK: 'fresh-memory-fixture', HAPPIER_STACK_ENV_FILE: envPath },
+  });
+  const statePath = fixture.path('stack', 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'fresh-memory-fixture', ownerPid: process.pid });
+  await recordStackRuntimeUpdate(statePath, { processes: { serverPid: owner.child.pid } });
+  const observe = () => spawnSync(process.execPath, [fixture.path('fresh', 'proc', 'service_memory.mjs'),
+    `--admission-root=${admissionRoot}`, '--include-admitted-rss'], { encoding: 'utf8' });
+  const sample = observe();
+  assert.equal(sample.status, 0, sample.stderr);
+  assert.match(sample.stdout, /^service [1-9]\d*$/m, 'the real canonical service state remains observable');
+  const admittedRow = new RegExp(`^admitted ${owner.child.pid} ${owner.token} [1-9]\\d*$`, 'm');
+  assert.match(sample.stdout, admittedRow, 'the fresh observer authenticates the live kernel generation and reports RSS');
+  await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
+  const invalid = observe();
+  assert.equal(invalid.status, 0, invalid.stderr);
+  assert.doesNotMatch(invalid.stdout, admittedRow, 'an inherited token cannot authorize a mismatched owner record');
+});
+
+test('admission diagnostics authenticate owner class, age and recent tree CPU progress without changing custody', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-owner-progress-' });
+  const owner = await admittedOwner(t, fixture, { root: fixture.path('admission') });
+  const all = readLinuxWorkerProcesses();
+  const processes = new Map([owner.child.pid, owner.descendantPid].map(pid => [pid, { ...all.get(pid) }]));
+  processes.get(owner.child.pid).ageSeconds = 14400;
+  processes.get(owner.child.pid).cpuSeconds = 5;
+  processes.get(owner.descendantPid).cpuSeconds = 1;
+  const observe = (nowMs, previousProgress) => readWorkerMemoryReservations({
+    admissionRoot: owner.root, readProcesses: () => processes, includeOwnerProgress: true, nowMs, previousProgress,
+  });
+  const first = observe(1000);
+  assert.equal(first.ownerProgress?.owners.length, 1);
+  assert.deepEqual(first.ownerProgress.owners[0], {
+    pid: owner.child.pid, token: owner.token, className: 'runtime-build', ageSeconds: 14400,
+    cpuSeconds: 6, recentCpuPercent: null,
+  });
+  const idle = observe(5000, first.ownerProgress);
+  assert.equal(idle.ownerProgress.owners[0].recentCpuPercent, 0);
+  processes.get(owner.descendantPid).cpuSeconds += 2;
+  const active = observe(9000, idle.ownerProgress);
+  assert.equal(active.ownerProgress.owners[0].recentCpuPercent, 50, 'CPU progress includes the actual descendant tree');
+  await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
+  assert.deepEqual(observe(13000, active.ownerProgress).ownerProgress.owners, [], 'mismatched owner identity is never reported as live');
+  await mkdir(fixture.path('invalid'));
+  await writeFile(fixture.path('invalid', 'owners'), 'not a directory');
+  assert.throws(() => readWorkerMemoryReservations({ admissionRoot: fixture.path('invalid'),
+    readProcesses: () => processes, includeOwnerProgress: true }), /ENOTDIR/,
+  'unobservable owner state must not be advertised as no live holders');
+});
+
+test('a real waiting admission reports its live holder and recent CPU without terminating it', { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-waiting-progress-' });
+  const observedPidsPath = fixture.path('worker-pids.json');
+  const native = await installNativeAdmissionFixture({ root: fixture.root, observedPidsPath });
+  const owner = await admittedOwner(t, fixture, { root: native.admissionRoot });
+  await writeFile(`${owner.ownerPath}/class`, 'validation\n');
+  await writeFile(observedPidsPath, JSON.stringify([owner.child.pid, owner.descendantPid]));
+  const env = await memoryBoundary(fixture, { availableKiB: classFloor('validation'), totalKiB: classFloor('compilation') * 2 });
+  const child = spawn('/bin/sh', [native.launcher, '--heavyweight-admission', '--class=runtime-build', '--machine=fixture', '--', '/usr/bin/printf', 'unexpected-payload'], { cwd: fixture.root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const completion = new Promise(resolve => child.once('close', resolve));
+  t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await completion; });
+  let stderr = '', stdout = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  for (let attempt = 0; attempt < 500 && !stderr.includes('recent CPU=~'); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(stderr, new RegExp(`waiting behind validation owner pid ${owner.child.pid}.*age=\\d+s.*recent CPU=~[\\d.]+%`));
+  assert.equal(stdout, '');
+  assert.equal(owner.child.exitCode, null);
+  const status = spawnSync(process.execPath, [fileURLToPath(new URL('./service_memory.mjs', import.meta.url)), `--admission-root=${native.admissionRoot}`, '--admission-status'], { encoding: 'utf8' });
+  assert.equal(status.status, 0, status.stderr);
+  const observed = JSON.parse(status.stdout);
+  assert.equal(observed.owners[0].pid, owner.child.pid);
+  assert.equal(observed.owners[0].className, 'validation');
+  assert.ok(Number.isFinite(observed.owners[0].recentCpuPercent));
+  assert.equal(owner.child.exitCode, null);
+});
+
+test('native admission preserves available headroom already consumed by an admitted owner and its descendants', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-admitted-rss-' });
+  const observedPidsPath = fixture.path('worker-pids.json');
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root, observedPidsPath });
+  const owner = await admittedOwner(t, fixture, { root: admissionRoot, resident: true });
+  await writeFile(observedPidsPath, JSON.stringify([owner.child.pid, owner.descendantPid]));
+  const processes = readLinuxWorkerProcesses();
+  const ownerRssKiB = processes.get(owner.child.pid).rssKiB;
+  const descendantRssKiB = processes.get(owner.descendantPid).rssKiB;
+  assert.ok(descendantRssKiB > 64 * 1024, 'the real untagged descendant consumes memory');
+  const suiteKiB = classFloor('validation');
+  const buildKiB = classFloor('runtime-build');
+  // Owner RSS alone is insufficient: the actual descendant must also release
+  // its already-consumed portion of the envelope from future reservations.
+  const availableKiB = buildKiB + suiteKiB - ownerRssKiB - Math.floor(descendantRssKiB / 2);
+  const env = await memoryBoundary(fixture, { availableKiB, totalKiB: buildKiB + suiteKiB * 2 });
+  const admitted = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
+    '--class=validation', '--machine=local', '--no-wait', '--',
+    '/usr/bin/printf', 'resident-headroom-admitted\\n'], { env, encoding: 'utf8' });
+  assert.equal(admitted.status, 0, admitted.stderr);
+  assert.equal(admitted.stdout, 'resident-headroom-admitted\n');
+  const busyEnv = await memoryBoundary(fixture, {
+    availableKiB: buildKiB + suiteKiB - ownerRssKiB - descendantRssKiB - 64 * 1024,
+    totalKiB: buildKiB + suiteKiB * 2,
+  });
+  const busy = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
+    '--class=validation', '--machine=local', '--no-wait', '--', 'true'], { env: busyEnv, encoding: 'utf8' });
+  assert.equal(busy.status, 75, busy.stderr);
+  await writeFile(observedPidsPath, '[]');
+  const unavailable = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
+    '--class=validation', '--machine=local', '--no-wait', '--', 'true'], { env, encoding: 'utf8' });
+  assert.equal(unavailable.status, 75, 'an owner missing from the OS snapshot retains its full reservation');
+});
+
+test('native admission escalation credits the authenticated inherited owner resident envelope', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-escalation-rss-' });
+  const observedPidsPath = fixture.path('worker-pids.json');
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root, observedPidsPath });
+  const compilationKiB = classFloor('compilation');
+  const env = await memoryBoundary(fixture, {
+    availableKiB: compilationKiB - 64 * 1024, totalKiB: compilationKiB + classFloor('validation'),
+  });
+  const owner = await admittedOwner(t, fixture, { root: admissionRoot, resident: true, env, nestedLauncher: launcher });
+  const requestEscalation = async () => {
+    const resultPromise = new Promise(resolve => owner.child.stdout.once('data', data => resolve(JSON.parse(String(data)))));
+    owner.child.kill('SIGUSR2');
+    return resultPromise;
+  };
+  await writeFile(observedPidsPath, '[]');
+  assert.equal((await requestEscalation()).status, 75, 'unobserved own RSS retains the requested floor');
+  await writeFile(observedPidsPath, JSON.stringify([owner.child.pid, owner.descendantPid]));
+  await memoryBoundary(fixture, { availableKiB: compilationKiB, totalKiB: compilationKiB - 1 });
+  assert.equal((await requestEscalation()).status, 1, 'resident RSS cannot make an undersized physical host capable');
+  await memoryBoundary(fixture, {
+    availableKiB: compilationKiB - 64 * 1024, totalKiB: compilationKiB + classFloor('validation'),
+  });
+  const result = await requestEscalation();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'escalation-admitted\n');
+  assert.equal((await readFile(`${owner.ownerPath}/class`, 'utf8')).trim(), 'compilation',
+    'escalation replaces the inherited class envelope');
+});
 
 test('native admission rejects a compilation that cannot fit beside a recorded live service', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-service-memory-' });
@@ -138,7 +310,7 @@ test('native admission counts a live pre-cutover owner in its original CLI-home 
   const fixture = await createTempFixture(t, { prefix: 'hstack-legacy-memory-' });
   const observedPidsPath = fixture.path('worker-pids.json');
   const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root, observedPidsPath });
-  const owner = await legacyOwner(t, fixture);
+  const owner = await admittedOwner(t, fixture);
   await writeFile(observedPidsPath, JSON.stringify([owner.child.pid, owner.descendantPid]));
   const suiteKiB = classFloor('validation');
   const buildKiB = classFloor('runtime-build');
@@ -162,7 +334,9 @@ test('native admission counts a live pre-cutover owner in its original CLI-home 
   const check = spawnSync('/bin/sh', [launcher, '--heavyweight-admission-check',
     '--class=validation', '--machine=local'], { env, encoding: 'utf8' });
   assert.equal(check.status, 1, check.stderr);
-  assert.match(check.stderr, new RegExp(`reserved-memory=${buildKiB}`));
+  const reservedKiB = Number(/ reserved-memory=(\d+)/.exec(check.stderr)?.[1]);
+  assert.ok(reservedKiB > suiteKiB && reservedKiB < buildKiB,
+    'migration merges the larger legacy class and credits resident memory exactly once');
 });
 
 test('service RSS uses current canonical generations and counts overlapping roots and untagged descendants once', { skip: process.platform !== 'linux' }, async t => {
@@ -219,7 +393,7 @@ test('service RSS uses current canonical generations and counts overlapping root
 
 test('legacy observation validates the original owner, deduplicates inherited tokens and ignores current-root owners', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-legacy-rss-' });
-  const owner = await legacyOwner(t, fixture);
+  const owner = await admittedOwner(t, fixture);
   const all = readLinuxWorkerProcesses();
   const snapshot = new Map([owner.child.pid, owner.descendantPid].map(pid => [pid, all.get(pid)]));
   assert.ok([...snapshot.values()].every(Boolean));
@@ -228,8 +402,37 @@ test('legacy observation validates the original owner, deduplicates inherited to
     pid: owner.child.pid, token: owner.token, className: 'runtime-build',
   }]);
   assert.deepEqual(observe(owner.root).legacyOwners, []);
+  assert.doesNotMatch(renderWorkerMemoryReservationRows(observe(fixture.path('current'))), /^admitted /m,
+    'an already-loaded launcher keeps its original row protocol');
+  const observeRss = admissionRoot => readWorkerMemoryReservations({ admissionRoot, readProcesses: () => snapshot, includeAdmittedRss: true });
+  const expected = [{
+    pid: owner.child.pid, token: owner.token,
+    rssKiB: snapshot.get(owner.child.pid).rssKiB + snapshot.get(owner.descendantPid).rssKiB,
+  }];
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected);
+  assert.deepEqual(observeRss(owner.root).admittedOwners, expected, 'canonical owners use the same authenticated RSS observation');
+  const migrated = fixture.path('current', 'owners', `${owner.child.pid}-${owner.token}`);
+  await mkdir(migrated, { recursive: true });
+  await writeFile(`${migrated}/process`, `${owner.child.pid} ${owner.token}\n`);
+  await writeFile(`${migrated}/class`, 'validation\n');
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected,
+    'canonical and legacy records credit the same process incarnation once');
+  const fingerprint = snapshot.get(owner.child.pid).fingerprint;
+  snapshot.get(owner.child.pid).fingerprint = 'linux-proc:0';
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, [], 'reused owner PIDs grant no RSS credit');
+  snapshot.get(owner.child.pid).fingerprint = fingerprint;
+  // Detached custody can outlive its original parent edge while its admitted
+  // owner remains live. Change only that OS ancestry boundary in the snapshot.
+  snapshot.get(owner.descendantPid).parentPid = 1;
+  assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected,
+    'inherited authenticated custody is counted even after reparenting');
+  const rss = snapshot.get(owner.descendantPid).rssKiB;
+  snapshot.get(owner.descendantPid).rssKiB = undefined;
+  assert.deepEqual(observeRss(owner.root).admittedOwners, [], 'unavailable tree RSS must not release the reservation');
+  snapshot.get(owner.descendantPid).rssKiB = rss;
   await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
   assert.deepEqual(observe(fixture.path('current')).legacyOwners, [], 'a live inherited token cannot authorize a mismatched owner record');
+  assert.deepEqual(observeRss(owner.root).admittedOwners, [], 'mismatched canonical records also cannot grant RSS credit');
   await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} ${owner.token}\n`);
   const exited = new Promise(resolve => owner.child.once('exit', resolve));
   owner.child.kill('SIGTERM');

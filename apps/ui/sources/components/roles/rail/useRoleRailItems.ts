@@ -8,9 +8,9 @@ import type { RoleRailItem } from './rolesRailTypes';
 import { resolveRoleSelectionV1, type WorkflowRoleV1 } from '@happier-dev/protocol';
 
 /** The reader's enabled roles as rail rows, read when the rail opens. */
-export function useRoleRailItems(workflowRoles?: readonly WorkflowRoleV1[]): ReadonlyArray<RoleRailItem> {
-    const catalog = useRoleCatalog();
-    const presentEngine = useRoleEnginePresentation();
+export function useRoleRailItems(workflowRoles?: readonly WorkflowRoleV1[], serverId?: string | null): ReadonlyArray<RoleRailItem> {
+    const catalog = useRoleCatalog(serverId);
+    const presentEngine = useRoleEnginePresentation(serverId);
     return React.useMemo(() => [...new Set([...catalog.entries.map(entry => entry.roleId), ...(workflowRoles ?? []).map(role => role.roleId)])]
         .flatMap((roleId) => {
             const entry = catalog.entries.find(candidate => candidate.roleId === roleId);

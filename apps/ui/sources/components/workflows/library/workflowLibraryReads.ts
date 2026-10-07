@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
 
 import {
     resolveWorkflowProblemPresentation,
@@ -84,6 +85,7 @@ type DefinitionsState = ReadStatus & Readonly<{
     definitions: readonly WorkflowLibraryDefinition[];
     pluginWorkflows: readonly WorkflowPluginSourceV1[];
     nextCursor: string | null;
+    loadedPages: number;
 }>;
 
 const INITIAL_DEFINITIONS: DefinitionsState = Object.freeze({
@@ -91,35 +93,58 @@ const INITIAL_DEFINITIONS: DefinitionsState = Object.freeze({
     definitions: Object.freeze([]) as readonly WorkflowLibraryDefinition[],
     pluginWorkflows: Object.freeze([]) as readonly WorkflowPluginSourceV1[],
     nextCursor: null,
+    loadedPages: 0,
 });
 
 const definitionsCell = createCell<DefinitionsState>(INITIAL_DEFINITIONS);
-let definitionsInFlight: Readonly<{ scopeKey: string | null; promise: Promise<void> }> | null = null;
+let definitionsInFlight: Readonly<{ scopeKey: string | null; promise: Promise<void>; kind: 'refresh' | 'more' }> | null = null;
 
-/** Read the first page again; mounts in the same Account share one request. */
+function retainEqualLibraryRows<T>(previous: readonly T[], incoming: readonly T[], key: (row: T) => string): readonly T[] {
+    const previousById = new Map(previous.map((row) => [key(row), row]));
+    const rows = incoming.map((row) => {
+        const stored = previousById.get(key(row));
+        return stored !== undefined && sameStrictJsonValue(stored, row) ? stored : row;
+    });
+    return rows.length === previous.length && rows.every((row, index) => row === previous[index]) ? previous : rows;
+}
+
+/** Refresh the already-demanded pages atomically; mounts in the same Account share one read. */
 function refreshDefinitions(): Promise<void> {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime === null) return Promise.resolve();
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     if (definitionsInFlight?.scopeKey === scopeKey) return definitionsInFlight.promise;
     const previous = definitionsCell.get();
+    const demandedPages = previous.scopeKey === scopeKey ? Math.max(1, previous.loadedPages) : 1;
     // Another Account's rows are never shown while this one loads.
     if (previous.scopeKey !== scopeKey) definitionsCell.set({ ...INITIAL_DEFINITIONS, scopeKey });
     else if (previous.status === 'failed') definitionsCell.set({ ...previous, status: 'loading' });
     const readDefinitions = async (): Promise<void> => {
         try {
-            const page = await listWorkflowDefinitions({});
+            let page = await listWorkflowDefinitions({});
+            const definitions = new Map(page.definitions.map((row) => [row.definitionId, row]));
+            const plugins = new Map((page.pluginWorkflows ?? []).map((row) => [row.workflow, row]));
+            let loadedPages = 1;
+            while (lifetime.isCurrent() && page.nextCursor && loadedPages < demandedPages) {
+                page = await listWorkflowDefinitions({ cursor: page.nextCursor });
+                for (const row of page.definitions) definitions.set(row.definitionId, row);
+                for (const row of page.pluginWorkflows ?? []) plugins.set(row.workflow, row);
+                loadedPages += 1;
+            }
             if (!lifetime.isCurrent()) return;
-            definitionsCell.set({
+            const current = definitionsCell.get();
+            const next: DefinitionsState = {
                 scopeKey,
                 status: 'loaded',
                 failure: null,
                 loadingMore: false,
                 loadMoreFailed: false,
-                definitions: page.definitions,
-                pluginWorkflows: page.pluginWorkflows ?? INITIAL_DEFINITIONS.pluginWorkflows,
+                definitions: retainEqualLibraryRows(current.definitions, [...definitions.values()], (row) => row.definitionId),
+                pluginWorkflows: retainEqualLibraryRows(current.pluginWorkflows, [...plugins.values()], (row) => row.workflow),
                 nextCursor: page.nextCursor ?? null,
-            });
+                loadedPages,
+            };
+            definitionsCell.set(sameStrictJsonValue(current, next) ? current : next);
         } catch (error) {
             if (!lifetime.isCurrent()) return;
             // A failed refresh keeps what is already loaded and says why.
@@ -134,7 +159,7 @@ function refreshDefinitions(): Promise<void> {
         }
     };
     const promise = readDefinitions();
-    definitionsInFlight = { scopeKey, promise };
+    definitionsInFlight = { scopeKey, promise, kind: 'refresh' };
     return promise;
 }
 
@@ -142,31 +167,46 @@ async function loadMoreDefinitions(): Promise<void> {
     const current = definitionsCell.get();
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime === null || current.nextCursor === null || current.loadingMore) return;
+    const cursor = current.nextCursor;
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     if (current.scopeKey !== scopeKey) return;
-    definitionsCell.set({ ...current, loadingMore: true, loadMoreFailed: false });
-    try {
-        const page = await listWorkflowDefinitions({ cursor: current.nextCursor });
-        if (!lifetime.isCurrent()) return;
-        const latest = definitionsCell.get();
-        const seen = new Set(latest.definitions.map((entry) => entry.definitionId));
-        const seenPlugins = new Set(latest.pluginWorkflows.map((entry) => entry.workflow));
-        const addedPlugins = (page.pluginWorkflows ?? []).filter((entry) => {
-            if (seenPlugins.has(entry.workflow)) return false;
-            seenPlugins.add(entry.workflow);
-            return true;
-        });
-        definitionsCell.set({
-            ...latest,
-            loadingMore: false,
-            definitions: [...latest.definitions, ...page.definitions.filter((entry) => !seen.has(entry.definitionId))],
-            pluginWorkflows: addedPlugins.length === 0 ? latest.pluginWorkflows : [...latest.pluginWorkflows, ...addedPlugins],
-            nextCursor: page.nextCursor ?? null,
-        });
-    } catch {
-        // The loaded rows and the cursor stay; Retry asks for exactly this page again.
-        if (lifetime.isCurrent()) definitionsCell.set({ ...definitionsCell.get(), loadingMore: false, loadMoreFailed: true });
+    const pending = definitionsInFlight;
+    if (pending?.scopeKey === scopeKey) {
+        await pending.promise;
+        if (pending.kind === 'refresh' && lifetime.isCurrent()) await loadMoreDefinitions();
+        return;
     }
+    definitionsCell.set({ ...current, loadingMore: true, loadMoreFailed: false });
+    const readPage = async () => {
+        try {
+            const page = await listWorkflowDefinitions({ cursor });
+            if (!lifetime.isCurrent()) return;
+            const latest = definitionsCell.get();
+            const seen = new Set(latest.definitions.map((entry) => entry.definitionId));
+            const seenPlugins = new Set(latest.pluginWorkflows.map((entry) => entry.workflow));
+            const addedPlugins = (page.pluginWorkflows ?? []).filter((entry) => {
+                if (seenPlugins.has(entry.workflow)) return false;
+                seenPlugins.add(entry.workflow);
+                return true;
+            });
+            definitionsCell.set({
+                ...latest,
+                loadingMore: false,
+                definitions: [...latest.definitions, ...page.definitions.filter((entry) => !seen.has(entry.definitionId))],
+                pluginWorkflows: addedPlugins.length === 0 ? latest.pluginWorkflows : [...latest.pluginWorkflows, ...addedPlugins],
+                nextCursor: page.nextCursor ?? null,
+                loadedPages: latest.loadedPages + 1,
+            });
+        } catch {
+            // The loaded rows and the cursor stay; Retry asks for exactly this page again.
+            if (lifetime.isCurrent()) definitionsCell.set({ ...definitionsCell.get(), loadingMore: false, loadMoreFailed: true });
+        } finally {
+            if (definitionsInFlight?.promise === promise) definitionsInFlight = null;
+        }
+    };
+    const promise = readPage();
+    definitionsInFlight = { scopeKey, promise, kind: 'more' };
+    await promise;
 }
 
 /** Drop a deleted definition from the loaded rows without re-reading the list. */
@@ -248,7 +288,6 @@ type RunReadStatus = ReadStatus & Readonly<{ knownAt: number | null }>;
 const INITIAL_RUN_STATUS: RunReadStatus = Object.freeze({ ...INITIAL_STATUS, knownAt: null });
 type RunWindowStatuses = Readonly<Partial<Record<WorkflowRunListWindowId, RunReadStatus>>>;
 const EMPTY_RUN_STATUSES: RunWindowStatuses = Object.freeze({});
-const readInactiveRunStatuses = () => EMPTY_RUN_STATUSES;
 const runWindowStatusCell = createCell<RunWindowStatuses>(EMPTY_RUN_STATUSES);
 type RunWindowRead = { scopeKey: string; promise: Promise<void>; refreshRequested: boolean };
 const runWindowInFlight = new Map<WorkflowRunListWindowId, RunWindowRead>();
@@ -416,12 +455,12 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
     const enabled = options.enabled !== false;
     const scope = useActiveServerAccountScope();
     const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
-    const statuses = React.useSyncExternalStore(
+    const readStatus = React.useCallback(() => enabled ? readRunWindowStatus(windowId) : INITIAL_RUN_STATUS, [enabled, windowId]);
+    const status = React.useSyncExternalStore(
         enabled ? runWindowStatusCell.subscribe : subscribeInactiveDefinitions,
-        enabled ? runWindowStatusCell.get : readInactiveRunStatuses,
-        enabled ? runWindowStatusCell.get : readInactiveRunStatuses,
+        readStatus,
+        readStatus,
     );
-    const status = statuses[windowId] ?? INITIAL_RUN_STATUS;
     const owned = status.scopeKey === scopeKey && scopeKey !== null;
     const storedIds = getStorage()((state) => enabled ? state.workflowRunListWindows[windowId]?.runIds : undefined);
     const hasNextCursor = getStorage()((state) => enabled && (state.workflowRunListWindows[windowId]?.nextCursor ?? null) !== null);

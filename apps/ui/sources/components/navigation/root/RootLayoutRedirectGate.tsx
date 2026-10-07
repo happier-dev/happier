@@ -13,6 +13,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { resolveWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
 import {
     commitWebServerUrlOverride,
+    consumeWebServerUrlOverrideFromLocation,
 } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -155,6 +156,7 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
                 try {
                     await commitWebServerUrlOverride({
                         action: overrideAction,
+                        signal: controller.signal,
                         switchServer: async ({ serverUrl, refreshAuth: refreshAfterSwitch }) => {
                             const saved = resolveUniqueServerProfileByUrl(serverUrl);
                             const profile = saved ?? await (async () => {
@@ -177,10 +179,6 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
                             if (switched === 'blocked') throw new Error(t('common.error'));
                         },
                         refreshAuth,
-                        replaceRelativeUrl: (nextRelativeUrl) => {
-                            if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-                            window.history.replaceState(null, '', nextRelativeUrl);
-                        },
                     });
                     if (cancelled) return;
                     webServerOverrideHandledRef.current = true;
@@ -189,9 +187,7 @@ export function WebServerOverrideGate({ children }: { children: React.ReactNode 
                 } catch (error) {
                     if (cancelled) return;
                     const dismissOverride = async () => {
-                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                            window.history.replaceState(null, '', overrideAction.cleanedRelativeUrl);
-                        }
+                        consumeWebServerUrlOverrideFromLocation({ serverUrl: overrideAction.serverUrl, signal: controller.signal });
                         webServerOverrideHandledRef.current = true;
                         openUnsavedHomeDraft();
                         try {

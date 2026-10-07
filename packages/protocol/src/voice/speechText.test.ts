@@ -28,12 +28,15 @@ describe('shared speech text policy', () => {
       .toThrowError(expect.objectContaining({ code: 'provider_settings_invalid' }));
   });
 
-  it('uses the admitted latency target after the first sentence while retaining the output segment maximum', () => {
+  it('uses the admitted latency target after the first sentence without a competing segment maximum', () => {
     const text = 'word '.repeat(30);
     expect(resolveVoiceSpeechSegmentLength(text, { force: false, firstSegment: false, targetChars: 120 })).toBe(150);
     expect(resolveVoiceSpeechSegmentLength(text, { force: false, firstSegment: false })).toBe(0);
     expect(resolveVoiceSpeechSegmentLength('Sure. More', { force: false, firstSegment: true, targetChars: 2000 })).toBe(5);
-    expect(resolveVoiceSpeechSegmentLength('x'.repeat(2000), { force: false, firstSegment: false, targetChars: 2000 })).toBe(1024);
+    expect(resolveVoiceSpeechSegmentLength('x'.repeat(1999), { force: false, firstSegment: false, targetChars: 2000 })).toBe(0);
+    expect(resolveVoiceSpeechSegmentLength('word '.repeat(400), { force: false, firstSegment: false, targetChars: 2000 })).toBe(2000);
+    expect(resolveVoiceSpeechSegmentLength('x'.repeat(2000), { force: false, firstSegment: false, targetChars: 2000 })).toBe(0);
+    expect(resolveVoiceSpeechSegmentLength('x'.repeat(3000), { force: true, firstSegment: false, targetChars: 2000 })).toBe(3000);
   });
 
   it('resolves the selected endpoint cap and its default through the declaration, rejecting invalid caps', () => {

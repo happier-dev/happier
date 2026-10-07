@@ -46,7 +46,7 @@ export function createConnectedServiceQuotaPersistenceScheduler<
   minKeyIntervalMs: number;
   maxKeys: number;
   maxKeyAgeMs: number;
-  maxPendingPayloadAgeMs: number;
+  maxPendingPayloadAgeMs?: number;
   maxConsecutiveFailures?: number;
   now?: () => number;
   isConnected?: () => boolean;
@@ -55,7 +55,9 @@ export function createConnectedServiceQuotaPersistenceScheduler<
   shouldPauseAfterFailure?: (error: unknown) => boolean;
   onEvent?: (event: Readonly<{ type: keyof KeyedLatestWorkCounters; key: TKey; reason?: string }>) => void;
 }>): ConnectedServiceQuotaPersistenceScheduler<TKey, TPayload> {
-  const maxConsecutiveFailures = normalizePositiveInteger(options.maxConsecutiveFailures, 5);
+  const maxConsecutiveFailures = options.maxConsecutiveFailures === undefined
+    ? null
+    : normalizePositiveInteger(options.maxConsecutiveFailures, 1);
   const maxPausedKeys = normalizePositiveInteger(options.maxKeys, 1);
   const now = options.now ?? Date.now;
   const pausedByKey = new Map<TKey, PausedQuotaPersistencePayload<TPayload>>();
@@ -119,9 +121,13 @@ export function createConnectedServiceQuotaPersistenceScheduler<
         }
 
         if (!shouldRetry(error)) {
-          rememberPausedPayload(key, payload, maxConsecutiveFailures, 'nonretryable_failure');
+          rememberPausedPayload(key, payload, 0, 'nonretryable_failure');
           throw new QuotaPersistenceRetryControlError(false, error);
         }
+
+        // The canonical scheduler owns retry backoff and latest-payload custody.
+        // Pause retryable work only when its caller explicitly supplies a retry budget.
+        if (maxConsecutiveFailures === null) throw error;
 
         const previous = pausedByKey.get(key);
         const previousFailures =

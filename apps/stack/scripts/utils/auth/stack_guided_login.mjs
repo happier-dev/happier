@@ -22,6 +22,7 @@ import {
   resolveCliRuntimeLaunchSpec,
 } from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveStackCredentialPaths } from './credentials_paths.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
 function extractEnvVar(cmd, key) {
   const re = new RegExp(`${key}="([^"]+)"`);
@@ -58,7 +59,7 @@ async function resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env = pr
     ) return '';
     const port = Number(st?.expo?.port ?? st?.expo?.webPort ?? st?.expo?.mobilePort);
     if (!Number.isFinite(port) || port <= 0) return '';
-    const live = await looksLikeExpoMetro({ port, timeoutMs: 900 });
+    const live = await looksLikeExpoMetro({ port });
     if (!live) return '';
     const host = resolveLocalhostHost({ stackMode: true, stackName });
     return `http://${host}:${port}`;
@@ -175,7 +176,7 @@ export async function resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env 
   return await preferStackLocalhostUrl(expoUrl, { stackName });
 }
 
-async function fetchText(url, { timeoutMs = 2000 } = {}) {
+async function fetchText(url, { timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS } = {}) {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeout = setTimeout(() => controller?.abort(), timeoutMs);
   try {
@@ -189,7 +190,7 @@ async function fetchText(url, { timeoutMs = 2000 } = {}) {
   }
 }
 
-async function fetchResponse(url, { timeoutMs = 2000 } = {}) {
+async function fetchResponse(url, { timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS } = {}) {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeout = setTimeout(() => controller?.abort(), timeoutMs);
   try {
@@ -256,7 +257,7 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
   let lastError = '';
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
-    const htmlRes = await fetchText(`${base}/`, { timeoutMs: 2500 });
+    const htmlRes = await fetchText(`${base}/`, { timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline - Date.now())) });
     if (!htmlRes.ok) {
       lastError = `HTTP ${htmlRes.status} loading ${base}/`;
       // eslint-disable-next-line no-await-in-loop
@@ -337,7 +338,7 @@ async function assertServerWebappReadyOrThrow({ webappUrl, timeoutMs = 30_000 } 
   let lastError = '';
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
-    const rootRes = await fetchText(webappUrl, { timeoutMs: 2500 });
+    const rootRes = await fetchText(webappUrl, { timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline - Date.now())) });
     const contentType = String(rootRes.headers?.get?.('content-type') ?? '').toLowerCase();
     const body = String(rootRes.text ?? '');
     if (isHappierServerHtmlResponse({ ok: rootRes.ok, contentType, body })) {
@@ -458,19 +459,6 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
   return String(resolved?.webappUrl ?? '').trim();
 }
 
-function resolvePortFromUrl(urlRaw) {
-  const raw = String(urlRaw ?? '').trim();
-  if (!raw) return null;
-  try {
-    const parsed = new URL(raw);
-    if (!parsed.port) return null;
-    const n = Number(parsed.port);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
   return (await resolveStackServerEndpoint({ stackName, env, defaultPort: null })).port;
 }
@@ -485,12 +473,12 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
     throw new Error('[auth] cannot run stack login: unable to resolve stack server port');
   }
 
-  const internalServerUrl = String(merged.HAPPIER_SERVER_URL ?? '').trim() || `http://127.0.0.1:${serverPort}`;
   const resolvedPublic = await resolveServerUrls({
     env: merged,
     serverPort,
     allowEnable: false,
   });
+  const internalServerUrl = resolvedPublic.internalServerUrl;
   const publicServerUrl =
     String(merged.HAPPIER_PUBLIC_SERVER_URL ?? '').trim() || String(resolvedPublic.publicServerUrl ?? '').trim();
   if (!publicServerUrl) {

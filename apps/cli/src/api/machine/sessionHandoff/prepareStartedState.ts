@@ -1,5 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
@@ -71,7 +71,7 @@ export async function prepareStartedState(input: Readonly<{
     if (callInput.request.targetDirectory?.kind === 'managed') {
       const activeServerDir = input.activeServerDir ?? configuration.activeServerDir;
       const path = typeof callInput.metadata.path === 'string' ? callInput.metadata.path : '';
-      const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(callInput.metadata.sessionCreationCorrespondenceV1);
+      const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(callInput.metadata.sessionCreationCorrespondenceV1);
       const source = readSessionDirectoryKind(callInput.metadata) === 'managed'
         ? await createManagedSessionDirectories({ activeServerDir }).resolveForSession({
             sessionId: callInput.request.sessionId, path,

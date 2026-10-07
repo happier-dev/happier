@@ -108,6 +108,33 @@ function failingChecksAnswer(): JsonValue {
   } as JsonValue;
 }
 
+/** GitHub's own pull request, as the exact overview read states it. */
+function overviewAnswer(): JsonValue {
+  return {
+    kind: 'overview',
+    kindId: 'pull-request',
+    observedAtMs: 1_760_000_800_000,
+    title: 'Consolidate the duplicated normalizer',
+    state: 'open',
+    author: 'octocat',
+    createdAtMs: 1_759_990_000_000,
+    body: 'Moves rounding to the pricing service.',
+    labels: ['performance'],
+    assignees: ['hubot'],
+    milestone: 'August',
+    headBranch: 'frame-pump',
+    baseBranch: 'main',
+    requestedReviewers: [{ kind: 'user', subject: 'monalisa' }],
+    headRevision: HEAD_REVISION,
+    additions: 388,
+    deletions: 142,
+    changedFiles: 17,
+    branchUpdateEligibility: 'not-behind',
+  } as JsonValue;
+}
+
+const overviewReads: string[] = [];
+
 function emptyFeedbackAnswer(kind: string): JsonValue {
   return { kind, rows: [] } as JsonValue;
 }
@@ -116,6 +143,7 @@ const mounted: PluginUiTestkit[] = [];
 
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
+  overviewReads.splice(0);
 });
 
 /**
@@ -126,6 +154,9 @@ afterEach(async () => {
 async function mountPanel(panel: string | (() => string), options: Readonly<{
   visible?: () => boolean;
   readCapabilities?: (signal: AbortSignal) => Promise<JsonValue>;
+  feedback?: (connection: string) => JsonValue;
+  timeline?: (continuation: string | undefined) => JsonValue;
+  checks?: JsonValue;
 }> = {}): Promise<PluginUiTestkit> {
   let detail!: PluginUiTestkit;
   await act(async () => {
@@ -148,10 +179,20 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: { ...(launchInput() as Record<string, JsonValue>), panel: typeof panel === 'string' ? panel : panel() } as JsonValue,
       handlers: {
-        executeAction: async ({ action, signal }) => {
+        executeAction: async ({ action, input, signal }) => {
           const localId = (action as { localId: string }).localId;
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities && options.readCapabilities !== undefined) return await options.readCapabilities(signal);
-          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) return failingChecksAnswer();
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback && options.feedback !== undefined) {
+            return options.feedback((input as { connection: string }).connection);
+          }
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline && options.timeline !== undefined) {
+            return options.timeline((input as { continuation?: string }).continuation);
+          }
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) return options.checks ?? failingChecksAnswer();
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview) {
+            overviewReads.push(localId);
+            return overviewAnswer();
+          }
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline) return {
             kind: 'timeline',
             rows: [{ id: 'timeline-1', kind: 'unsupported', rawKind: 'provider-specific-event', actor: 'Mara', summary: 'Source-only timeline record.' }],
@@ -201,12 +242,61 @@ describe('the GitHub detail as Triage panels', () => {
     await act(async () => { await detail.retire(); });
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
-  it('composes host Activity as a public story section', async () => {
+  it('composes host Activity as one stream with no step marker of its own', async () => {
     const detail = await mountPanel('activity');
-    await expect(detail.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
+    await expect(detail.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
     await expect(detail.getByText('Source-only timeline record.')).resolves.toBeDefined();
-    await expect(detail.getByText('provider-specific-event · Mara')).resolves.toBeDefined();
+    await expect(detail.getByText('provider-specific-event')).resolves.toBeDefined();
+    await expect(detail.getByText('Mara')).resolves.toBeDefined();
     await expect(detail.queryAllByRole('tab')).resolves.toEqual([]);
+  });
+
+  it('reads the conversation and the timeline as one chronological Activity stream', async () => {
+    const HOUR = 3_600_000;
+    const at = (hoursAgo: number) => Date.now() - hoursAgo * HOUR;
+    const commentUrl = 'https://github.com/octo-org/example-app/pull/1284#issuecomment-11';
+    const timelineCalls: (string | undefined)[] = [];
+    const detail = await mountPanel('activity', {
+      feedback: (connection) => (connection === 'comments'
+        ? {
+          kind: 'comments',
+          rows: [{ id: 'IC_11', author: 'hubber', body: 'This normalizer is duplicated.', createdAtMs: at(20), url: commentUrl }],
+          omittedRowCount: 0, projectionTruncated: false,
+        }
+        : { kind: connection, rows: [], omittedRowCount: 0, projectionTruncated: false }) as JsonValue,
+      timeline: (continuation) => {
+        timelineCalls.push(continuation);
+        return (continuation === undefined
+          ? {
+            kind: 'timeline',
+            rows: [
+              { id: 'github-timeline-event:1', kind: 'forcePushed', rawKind: 'head_ref_force_pushed', actor: 'Mara', atMs: at(30) },
+              // GitHub's own record of the remark above: the same permalink, read twice.
+              { id: 'github-timeline-event:11', kind: 'commented', rawKind: 'commented', actor: 'hubber', atMs: at(20), webUrl: commentUrl },
+              { id: 'github-timeline-event:2', kind: 'labeled', rawKind: 'labeled', actor: 'Mara', summary: 'p1', atMs: at(10) },
+            ],
+            omittedRowCount: 0, projectionTruncated: false, continuation: 'timeline-page-2',
+          }
+          : {
+            kind: 'timeline',
+            rows: [{ id: 'github-timeline-event:3', kind: 'closed', rawKind: 'closed', actor: 'Mara', atMs: at(1) }],
+            omittedRowCount: 0, projectionTruncated: false,
+          }) as JsonValue;
+      },
+    });
+
+    await expect(detail.getByText('This normalizer is duplicated.')).resolves.toBeDefined();
+    const before = document.body.textContent ?? '';
+    const order = ['Force-pushed the head branch', 'This normalizer is duplicated.', 'Added a label'].map((part) => before.indexOf(part));
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect([...order].sort((left, right) => left - right)).toEqual(order);
+    // The timeline's record of the remark is not a second remark.
+    expect(before.split('Commented').length - 1).toBe(1);
+
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Load more events' })); });
+    expect(timelineCalls).toEqual([undefined, 'timeline-page-2']);
+    const after = document.body.textContent ?? '';
+    expect(after.indexOf('Closed')).toBeGreaterThan(after.indexOf('Added a label'));
   });
   it('renders only the requested panel, with no tab strip of its own', async () => {
     const detail = await mountPanel('checks');
@@ -216,10 +306,35 @@ describe('the GitHub detail as Triage panels', () => {
 
   it('draws the story rail: the ask, what changed, and the failing checks state in words', async () => {
     const detail = await mountPanel('overview');
+    // The story reads GitHub's own overview when it opens; no Re-read control stands in for it.
+    expect(overviewReads).toHaveLength(1);
+    await expect(detail.queryByRole('button', { name: 'Re-read this overview from GitHub' })).resolves.toBeUndefined();
     await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();
+    await expect(detail.getByText('Moves rounding to the pricing service.')).resolves.toBeDefined();
+    // The facts that lived in the key/value block stay, said once each without the block.
+    const page = document.body.textContent ?? '';
+    for (const fact of ['octocat', 'performance', 'hubot', 'August', 'monalisa', 'frame-pump → main']) expect(page).toContain(fact);
+    await expect(detail.queryByText('Requested reviewers')).resolves.toBeUndefined();
+    await expect(detail.queryByText('Observed head')).resolves.toBeUndefined();
     await expect(detail.getByRole('heading', { name: 'What changed' })).resolves.toBeDefined();
-    await expect(detail.getByText('src/cart/totals.ts')).resolves.toBeDefined();
-    await expect(detail.getByText('+97 −71 in 2 files')).resolves.toBeDefined();
-    await expect(detail.getByRole('image', { name: '1 failing' })).resolves.toBeDefined();
+    // GitHub's own whole-change totals, not the two files read so far.
+    await expect(detail.getByText('+388')).resolves.toBeDefined();
+    await expect(detail.getByText('in 17 files')).resolves.toBeDefined();
+    await expect(detail.getByRole('image', { name: 'src/cart/totals.ts: 96 added, 71 removed' })).resolves.toBeDefined();
+    await expect(detail.getByText('15 smaller files')).resolves.toBeDefined();
+    // The shared checks step: its marker, its counts, and what failed.
+    await expect(detail.getByRole('image', { name: '1 failed' })).resolves.toBeDefined();
+    await expect(detail.getByText('1 failing')).resolves.toBeDefined();
+    await expect(detail.getByText('· 0 passed')).resolves.toBeDefined();
+    await expect(detail.getByText('build')).resolves.toBeDefined();
+  });
+
+  it('keeps the failing checks read when GitHub has more check pages than were read', async () => {
+    const { failingCount: _failing, runningCount: _running, passingCount: _passing, ...rest } = failingChecksAnswer() as Record<string, JsonValue>;
+    const detail = await mountPanel('overview', { checks: { ...rest, state: 'knownIncomplete' } as JsonValue });
+    await expect(detail.getByRole('image', { name: '1 failed' })).resolves.toBeDefined();
+    await expect(detail.getByText('1 failing so far')).resolves.toBeDefined();
+    await expect(detail.getByText('· more checks not read')).resolves.toBeDefined();
+    await expect(detail.getByText('build')).resolves.toBeDefined();
   });
 });

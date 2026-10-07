@@ -47,7 +47,7 @@ export function VoiceServiceListScreen() {
           <Item
             key={tile.id}
             testID={tile.testID}
-            icon={<Icon name="microphone" size={20} color={theme.colors.text.secondary} />}
+            icon={tile.mark}
             title={tile.title}
             subtitle={tile.status?.text ?? tile.subtitle}
             subtitleLines={0}

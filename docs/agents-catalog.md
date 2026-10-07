@@ -207,6 +207,32 @@ removes unrelated ambient credentials; only explicitly selected profile/account 
 back before the Agent contribution runs. Model, mode, config-option, and passive-setup probes all
 consume that same environment and include the selected profile identity in their cache scope.
 
+
+In development source, native composer discovery uses `probeCatalogs` through the same host
+preflight boundary and each Agent's `preflightSessionControls` contribution. Agent-native leaves
+live in `packages/plugins/<agentId>/src/agent/**`; host consumers receive separate native command
+and typed skill catalogs. A slash command remains a command unless the Agent exposes a typed
+skill catalog. The new-session composer demands discovery only for `/` or `$`, retains the
+successful snapshot for its mounted launch scope, and leaves local slash rows available while
+native discovery is pending. The scope includes machine/server/account, operational backend and
+runtime descriptor, project, profile, Connected Service bindings, and selected authentication.
+Profile selections carry the strict V2 `SecretReferenceOverlay`; the daemon materializes those
+references through the launch secret owner rather than receiving GUI-decrypted profile values.
+Selected native skills retain any agent-supplied identifier and source reference through structured
+input. Catalog reference identifiers synthesized for lookup are not native invocation identifiers;
+entries without a native identifier retain name/source-path resolution. An older daemon without
+`probeCatalogs` contributes no native pre-session rows.
+
+Pre-session discovery requires managed prerequisites to be ready: the canonical managed-dependency
+executable resolver requires readiness and does not install missing dependencies. Actual session
+launch retains its configured installation policy.
+
+OpenCode V2 cold pre-session discovery is unavailable in development source: its public API does
+not expose a plugin-activation completion barrier that makes a cold command/skill inventory
+authoritative. Discovery must report that limitation rather than submit a bootstrap prompt or
+publish an unverified empty catalog. Existing-session V2 command and skill dispatch is a separate
+runtime contract.
+
 The current development Copilot plugin probes `copilot --acp` through that host-owned JSON-RPC
 client, passing the host-selected working directory to `session/new`. It projects observed effort
 choices onto the current model only; it does not infer other models' reasoning support. Model
@@ -251,6 +277,24 @@ use the exact native Session writers before reporting application. V1 selections
 until the next prompt. A fresh V1 Session seeds only its initial native default from the ordered,
 visible-primary Agent inventory; a resumed Session does not guess that default or treat staged
 intent as accepted current state. V1's local TUI selection is not an ongoing server observation.
+
+In development source, OpenCode publishes native commands through the SDK `available-commands`
+event and the host's existing slash-command metadata owner. Known names use the native command
+endpoint with their arguments preserved; unknown slash text remains an ordinary prompt. Native
+commands resolve structured selections while skipping replay and fresh-system-prompt seeding.
+V1 accepts file attachments and waits for completion; unsupported extras or in-flight delivery
+are rejected before dispatch. V2 preserves native skill and agent selections and supports steer.
+Skill catalog normalization marks synthesized reference IDs with `idSource: 'generated'` and
+preserves legacy `location` as `path`. Those reference IDs remain composer identities; native
+V2 dispatch resolves their name/path against OpenCode's skill inventory. Supplied opaque IDs
+remain unchanged, including values that resemble generated references.
+A successful V2 command response completes the callback, which can generate parent work,
+a subtask, or no inference.
+Actual execution and assistant events supply provider-origin lifecycle and streaming evidence;
+the response alone supplies neither a native user message ID nor proof of parent inference.
+Built-in V2 config subtasks deliver internal synthetic input to the parent and resume its normal
+assistant continuation. Commands are refreshed after a real prompt activates native plugins;
+a cold V2 session can lack project commands until then. Happier sends no hidden bootstrap prompt.
 
 The existing dynamic-model cache owns stale-while-revalidate, in-flight sharing and exact-key
 subscriptions. Scope includes the machine, server, target, working directory, selected profile,

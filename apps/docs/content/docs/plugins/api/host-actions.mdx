@@ -28,6 +28,85 @@ Bundled and externally installed plugins reach these Actions through the same `a
 - `session.message.send` accepts an optional `recipient`. Omit it for the main Session; `{ kind: 'execution_run', runId }` addresses one Session-owned run through the Session's own Pending queue and target admission. The separate `execution.run.send` Action is only for a **detached** run with `sessionId: null`.
 - The trusted plugin `userText` binding additionally carries manifest-declared attachments and host-stamped source provenance. The public API-Token/SDK binding for the same Action is intentionally strict and smaller: it rejects `source`, attachments, structured launch and `idempotencyKey` rather than accepting them as untyped JSON. That is an authority boundary, not a reduced capability set. See [Actions, tools and commands](/plugins/api/actions-tools-commands#calling-host-actions).
 
+## `account.apiTokens.create`
+
+**Create API token** — Create a named API token for the current Account, optionally with trusted-device-prepared encryption access. The token secret is shown once.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `label` (text, required): Label
+- `expiresAt` (text): Expiry
+
+## `account.apiTokens.list`
+
+**List API tokens** — List non-secret API-token summaries for the current Account.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.apiTokens.revoke`
+
+**Revoke API token** — Revoke one API token for the current Account.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `tokenId` (text, required): Token id
+
+## `account.apiTokens.revokeAll`
+
+**Revoke all API tokens** — Revoke every API token for the current Account. Signed sessions are unaffected.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.apiTokens.update`
+
+**Update API token access** — Update the label, grant, or embed configuration of one API token for the current Account.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+- `tokenId` (text, required): Token id
+
+## `account.email.change.request`
+
+**Change sign-in email** — Send verification for a replacement sign-in email address.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `account.encryption.automationTemplates.recover`
 
 **Recover older automation templates** — Recover encrypted predecessor templates on a plain Account using genuine historical material held by the invoking client. Each template uses version CAS; retained encrypted Session templates and historical keys remain unchanged.
@@ -54,6 +133,45 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
+## `account.password.change`
+
+**Change password** — Replace the current Account password credential.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.password.enroll`
+
+**Add a password** — Enroll email and password authentication for the current Account.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.password.remove`
+
+**Remove password** — Remove email and password authentication after verifying another viable sign-in route.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `account.plugins.data.erase`
 
 **Erase Account plugin data** — Erase the current Account’s retained data for one plugin without uninstalling local plugin code.
@@ -61,7 +179,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`.
+- Also surfaced on: `ui`, `agent`, `mcp`.
 
 ### Input guidance
 
@@ -80,6 +198,19 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
+## `account.security.terminalPresentUser.set`
+
+**Set terminal present-user policy** — Set whether trusted terminal credentials may prove present-user authority for this Account.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `account.sessions.signOutEverywhere`
 
 **Sign out everywhere** — Invalidate all signed sessions for the current Account. API tokens remain active.
@@ -87,7 +218,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`.
+- Also surfaced on: `ui`, `agent`, `mcp`.
 
 ### Input guidance
 
@@ -705,7 +836,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `agent`.
+- Also surfaced on: `ui`, `agent`, `mcp`.
 
 ### Input guidance
 
@@ -1736,7 +1867,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `agent`.
+- Also surfaced on: `ui`, `agent`, `mcp`.
 
 ### Input guidance
 
@@ -1792,7 +1923,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `account` (json, required): Qualified account
+- `agentId` (text, required): Agent id
+- `makeDefault` (boolean, required): Use this account
+- `machineId` (text): Catalog machine
 
 ## `connectedServices.accounts.rename`
 
@@ -1832,7 +1966,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `service` (json, required): Qualified service
+- `group` (json, required): New pool identity, name and policy
 
 ## `connectedServices.pools.default.set`
 
@@ -1861,7 +1996,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `group` (json, required): Qualified pool
+- `expectedGeneration` (text, required): Expected pool generation
+- `expectedIncarnation` (text, required): Expected pool incarnation
+- `expectedRuntimeStateRevision` (text): Expected runtime revision
 
 ## `connectedServices.pools.members.add`
 
@@ -1874,7 +2012,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `group` (json, required): Qualified pool
+- `expectedGeneration` (text, required): Expected pool generation
+- `expectedIncarnation` (text): Expected pool incarnation
+- `connectedAccountId` (text, required): Connected account id
+- `expectedRuntimeStateRevision` (text): Expected runtime revision
+- `priority` (text): Priority
+- `enabled` (boolean): Enabled
 
 ## `connectedServices.pools.members.patch`
 
@@ -1887,7 +2031,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `group` (json, required): Qualified pool
+- `expectedGeneration` (text, required): Expected pool generation
+- `expectedIncarnation` (text): Expected pool incarnation
+- `connectedAccountId` (text, required): Connected account id
+- `expectedRuntimeStateRevision` (text): Expected runtime revision
+- `priority` (text): Priority
+- `enabled` (boolean): Enabled
 
 ## `connectedServices.pools.members.remove`
 
@@ -1900,7 +2050,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `group` (json, required): Qualified pool
+- `expectedGeneration` (text, required): Expected pool generation
+- `expectedIncarnation` (text): Expected pool incarnation
+- `connectedAccountId` (text, required): Connected account id
+- `expectedRuntimeStateRevision` (text): Expected runtime revision
 
 ## `connectedServices.pools.patch`
 
@@ -1913,7 +2067,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `service` (json, required): Qualified service
+- `groupId` (text, required): Pool id
+- `expectedGeneration` (text, required): Expected pool generation
+- `expectedIncarnation` (text): Expected pool incarnation
+- `displayName` (text): Pool name
+- `policy` (json): Pool policy
+- `expectedRuntimeStateRevision` (text): Expected runtime revision
 
 ## `connectedServices.pools.reorder`
 
@@ -2916,7 +3076,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -2942,7 +3102,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -2955,7 +3115,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -2968,7 +3128,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -2981,7 +3141,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -2994,7 +3154,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3007,7 +3167,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3020,7 +3180,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3046,7 +3206,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3072,7 +3232,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3111,7 +3271,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3124,7 +3284,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3567,7 +3727,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `machineId` (text, required): Machine id
+- `agentId` (text, required): Agent id
+- `terminalId` (text, required): Native sign-in terminal id
 
 ## `machines.agents.signIn.restart`
 
@@ -3580,7 +3742,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `machineId` (text, required): Machine id
+- `agentId` (text, required): Agent id
+- `terminalId` (text, required): Native sign-in terminal id
 
 ## `machines.agents.signIn.start`
 
@@ -3978,7 +4142,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -3991,7 +4155,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4004,7 +4168,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4017,7 +4181,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4030,7 +4194,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4043,7 +4207,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4056,7 +4220,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4199,7 +4363,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4212,7 +4376,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4290,7 +4454,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4303,7 +4467,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4316,7 +4480,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4342,7 +4506,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `agent`, `mcp`, `rpc`.
 
 ### Input guidance
 
@@ -4394,7 +4558,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `cli`.
+- Also surfaced on: `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4407,7 +4571,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `cli`.
+- Also surfaced on: `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -4433,7 +4597,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `cli`.
+- Also surfaced on: `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -6216,6 +6380,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `view` (select): View — The released activity digest, or the canonical awareness projection.
 - `windowSeconds` (text): Window seconds
 
+## `session.approval_reviewer.set`
+
+**Set session approval reviewer** — Enable or disable request-only background approval review for this session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `enabled` (boolean, required): Enabled
+
 ## `session.archive`
 
 **Archive session** — Archive the specified session.
@@ -6228,6 +6406,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `sessionId` (text, required): Session id
+
+## `session.attention.set`
+
+**Settle or snooze a session** — Write the caller’s own Inbox attention standing for a session: settle it (standing false), keep it standing, or snooze it until a time (remindAt). Settle pairs with session.read_state.set. Agent calls use the normal Action approval policy.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `cli`, `voice`, `agent`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `standing` (boolean): Keep in Needs you
+- `remindAt` (integer): Snooze until (epoch ms)
 
 ## `session.board.get`
 
@@ -6304,7 +6497,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `tabId` (text, required): Canvas tab id
 
 ## `session.canvas.tabs.close`
 
@@ -6317,7 +6512,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `tabId` (text, required): Canvas tab id
 
 ## `session.canvas.tabs.list`
 
@@ -6330,7 +6527,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
 
 ## `session.canvas.tabs.move`
 
@@ -6343,7 +6541,12 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `tabId` (text, required): Canvas tab id
+- `targetLeafId` (text, required): Destination pane id
+- `placement` (select): Placement
+- `beforeTabId` (text): Insert before tab (null appends)
 
 ## `session.canvas.tabs.open`
 
@@ -6356,7 +6559,12 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `sessionId` (text, required): Session id
+- `leafId` (text, required): Destination pane id
+- `placement` (select): Placement
+- `beforeTabId` (text): Insert before tab (null appends)
 
 ## `session.canvas.tabs.pin`
 
@@ -6369,7 +6577,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `tabId` (text, required): Canvas tab id
+- `pinned` (boolean, required): Keep pinned
 
 ## `session.canvas.tabs.reorder`
 
@@ -6382,7 +6593,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scope` (json, required): Exact Home and Account
+- `canvasKey` (text, required): Mounted Session canvas key
+- `tabId` (text, required): Canvas tab id
+- `beforeTabId` (text, required): Insert before tab (null appends)
 
 ## `session.checkpoint`
 
@@ -7186,6 +7400,36 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `decision` (select, required): Decision
 - `scope` (select, required): Scope
 
+## `session.permission.respond`
+
+**Respond to permission request** — Approve or deny an active permission request in a session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `decision` (select, required): Decision
+- `requestId` (text): Request id
+- `turnId` (text): Turn id
+
+## `session.permission_mode.set`
+
+**Set session permission mode** — Update the permission intent (read_only/default/auto/yolo) for the specified session. Compatible aliases are accepted.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `permissionMode` (text, required): Permission mode
+
 ## `session.public_link.create`
 
 **Create Session public link** — No additional description is published.
@@ -7588,7 +7832,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
 
 ## `session.terminals.close_others`
 
@@ -7601,7 +7846,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `tabId` (text, required): Terminal tab id
 
 ## `session.terminals.close_tab`
 
@@ -7614,7 +7860,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `tabId` (text, required): Terminal tab id
 
 ## `session.terminals.detach`
 
@@ -7627,7 +7874,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
 
 ## `session.terminals.focus`
 
@@ -7640,7 +7888,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
 
 ## `session.terminals.list`
 
@@ -7653,7 +7902,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
 
 ## `session.terminals.list_view`
 
@@ -7666,7 +7915,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `showList` (boolean, required): Show terminal list
 
 ## `session.terminals.open`
 
@@ -7679,7 +7929,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `target` (json, required): Shell or attachment target
+- `title` (text): Terminal title
 
 ## `session.terminals.open_in_details`
 
@@ -7692,7 +7944,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
 
 ## `session.terminals.rename`
 
@@ -7705,7 +7958,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
+- `title` (text, required): Terminal title — Use null to restore the default title.
 
 ## `session.terminals.reorder`
 
@@ -7718,7 +7973,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `tabId` (text, required): Terminal tab id
+- `index` (text, required): Zero-based tab index
 
 ## `session.terminals.resize`
 
@@ -7731,7 +7988,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `tabId` (text, required): Terminal tab id
+- `splitId` (text, required): Split id
+- `ratio` (text, required): First terminal proportion
 
 ## `session.terminals.restart`
 
@@ -7744,7 +8004,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `terminalId` (text, required): Terminal id
 
 ## `session.terminals.run_script`
 
@@ -7757,7 +8018,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `machineId` (text, required): Machine id
+- `cwd` (text, required): Package directory
+- `runTargetId` (text, required): Package script target id
+- `title` (text): Terminal title
 
 ## `session.terminals.split`
 
@@ -7770,7 +8035,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `scopeId` (text, required): Home-qualified Session scope
+- `tabId` (text): Terminal tab id
+- `target` (json, required): Shell or attachment target
+- `title` (text): Terminal title
 
 ## `session.title.set`
 
@@ -8696,7 +8964,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -8735,7 +9003,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -8774,7 +9042,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -8787,7 +9055,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -8984,7 +9252,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -8997,7 +9265,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9010,7 +9278,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9036,7 +9304,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9062,7 +9330,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9114,7 +9382,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9127,7 +9395,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9140,7 +9408,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
 
 ### Input guidance
 
@@ -9647,7 +9915,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `op` (select, required): Operation
+- `query` (text): Search text
+- `options` (json): Case and regular-expression options
+- `target` (text): Mounted surface id
+- `direction` (text): Next (1) or previous (-1)
 
 ## `ui.pet.choose`
 
@@ -9673,7 +9945,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `composerRef` (json): Mounted composer address
 
 ## `ui.voice_agent.teleport`
 
@@ -9901,7 +10173,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `target` (json, required): Home-qualified work handle
+- `condition` (json, required): Observation condition
+- `timeout.durationMs` (text): Observation timeout in milliseconds
 
 ## `widgets.area.layout.get`
 

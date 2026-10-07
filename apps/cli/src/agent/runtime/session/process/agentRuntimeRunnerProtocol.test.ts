@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { AgentSessionProviderCheckpointMaxJsonBytesV1 } from '@happier-dev/protocol/runtime';
+import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 
 import {
   AgentRuntimeDaemonSessionDescriptorV1Schema,
   projectAgentRuntimeDaemonSessionOpenAttestationRequestV1,
   AgentRuntimeDaemonSessionOpenRequestV1Schema,
+  AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema,
   AgentRuntimeDaemonTurnContributionRequestV1Schema,
   AgentRuntimeDaemonTurnContributionsResultV1Schema,
   COMPOSER_STAGED_MEDIA_ADMISSION_SETTLEMENT_FIELD,
@@ -12,6 +14,22 @@ import {
 } from './agentRuntimeRunnerProtocol';
 
 describe('Runner Agent protocol', () => {
+  it('preserves canonical Session identities across open and retained attestation carriers', () => {
+    const sessionId = 's'.repeat(SessionIndexedIdentifierMaxLengthV1);
+    for (const schema of [AgentRuntimeDaemonSessionOpenRequestV1Schema, AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema]) {
+      expect(schema.parse({ kind: 'create', sessionId, cwd: '/workspace' }).sessionId).toBe(sessionId);
+      for (const invalidId of [`${sessionId}s`, ' lead', 'lead ']) {
+        expect(schema.safeParse({ kind: 'create', sessionId: invalidId, cwd: '/workspace' }).success).toBe(false);
+      }
+    }
+    expect(projectAgentRuntimeDaemonSessionOpenAttestationRequestV1({
+      kind: 'create', sessionId, cwd: '/workspace',
+    }).sessionId).toBe(sessionId);
+    expect(() => projectAgentRuntimeDaemonSessionOpenAttestationRequestV1({
+      kind: 'fork', sessionId, cwd: '/workspace',
+      source: { sessionId: ' source', providerSessionId: 'provider', cwd: '/workspace' },
+    })).toThrow();
+  });
   it('keeps the private runner descriptor strict and bounded', () => {
     const descriptor = {
       v: 1,

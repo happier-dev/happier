@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createCodexAppServerRpcError } from './compatibility.js';
 
 const UPLOAD_PATH = '.happier/uploads/messages/m1/screenshot.png';
 
@@ -22,7 +23,7 @@ const clientState = vi.hoisted(() => {
       turnStartCount = 0;
       rejectStructuredTurnInput = false;
     },
-    /** Emulates a Codex app-server that predates structured turn input items. */
+    /** Native JSON-RPC rejection boundary for structured turn input. */
     rejectStructuredTurnInput() {
       rejectStructuredTurnInput = true;
     },
@@ -33,7 +34,7 @@ const clientState = vi.hoisted(() => {
         && (method === 'turn/start' || method === 'turn/steer')
         && readInputLength(params) > 1
       ) {
-        throw Object.assign(new Error('Invalid params: unknown variant in `input`'), { code: -32602 });
+        throw createCodexAppServerRpcError({ method, code: -32602, message: 'Invalid params: unknown variant in `input`' });
       }
       if (method === 'thread/start' || method === 'thread/resume') {
         return { threadId: 'thread-1' };
@@ -258,6 +259,62 @@ describe('Codex app-server structured input dispatch', () => {
     })).resolves.toMatchObject({ status: 'unsupported' });
 
     expect(clientState.readTurnInputs('turn/steer')).toHaveLength(1);
+  });
+
+  it('surfaces rejected skill and plugin input without sending a text-only new turn', async () => {
+    clientState.rejectStructuredTurnInput();
+    const runtime = createCodexNativeAppServerSessionRuntime(createRuntime(), 'session-1');
+    const input = {
+      v: 1,
+      vendorPluginMentions: STRUCTURED_INPUT.vendorPluginMentions,
+      skillMentions: STRUCTURED_INPUT.skillMentions,
+    };
+
+    await expect(runtime.send({
+      inputIds: ['input-mentions'],
+      input: { text: 'Use @gmail and $review', structuredInput: input },
+      delivery: { kind: 'newTurn', turnId: 'turn-mentions' },
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: { code: 'codex_send_unsupported', message: 'codex_structured_input_rejected' } });
+    expect(clientState.readTurnInputs('turn/start')).toEqual([[
+      { type: 'text', text: 'Use @gmail and $review' },
+      { type: 'mention', name: 'Gmail', path: 'plugin://gmail@openai-curated' },
+      { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' },
+    ]]);
+    await expect(runtime.send({
+      inputIds: ['input-recovery'],
+      input: { text: 'plain recovery' },
+      delivery: { kind: 'newTurn', turnId: 'turn-recovery' },
+    })).resolves.toEqual({ status: 'admitted' });
+  });
+
+  it('surfaces rejected skill and plugin input without sending a text-only steer', async () => {
+    const runtime = createCodexNativeAppServerSessionRuntime(createRuntime(), 'session-1');
+    await runtime.send({
+      inputIds: ['input-primary'],
+      input: { text: 'first prompt' },
+      delivery: { kind: 'newTurn', turnId: 'turn-primary' },
+    });
+    clientState.rejectStructuredTurnInput();
+
+    await expect(runtime.send({
+      inputIds: ['input-mentions'],
+      input: { text: 'Use @gmail and $review', structuredInput: {
+        v: 1,
+        vendorPluginMentions: STRUCTURED_INPUT.vendorPluginMentions,
+        skillMentions: STRUCTURED_INPUT.skillMentions,
+      } },
+      delivery: { kind: 'steer', turnId: 'turn-primary' },
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: { code: 'codex_send_unsupported', message: 'codex_structured_input_rejected' } });
+    expect(clientState.readTurnInputs('turn/steer')).toEqual([[
+      { type: 'text', text: 'Use @gmail and $review' },
+      { type: 'mention', name: 'Gmail', path: 'plugin://gmail@openai-curated' },
+      { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' },
+    ]]);
+    await expect(runtime.send({
+      inputIds: ['input-recovery'],
+      input: { text: 'plain recovery' },
+      delivery: { kind: 'steer', turnId: 'turn-primary' },
+    })).resolves.toEqual({ status: 'admitted' });
   });
 
   it('sends a text-only turn input when the runtime input carries no structured input', async () => {

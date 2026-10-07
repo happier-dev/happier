@@ -27,7 +27,7 @@ const SessionModelTransitionKnownActiveFailureV1Schema = z.object({
   ]),
   activeSelection: ProviderBoundModelRefSchema,
   requestedSelection: ProviderBoundModelRefSchema,
-  reason: z.string().trim().min(1).max(512).optional(),
+  reason: z.string().trim().min(1).optional(),
 }).strict();
 
 const SessionModelTransitionReconciliationRequiredV1Schema = z.object({
@@ -35,7 +35,7 @@ const SessionModelTransitionReconciliationRequiredV1Schema = z.object({
   status: z.literal('reconciliation_required'),
   activeSelection: ProviderBoundModelRefSchema.nullable(),
   requestedSelection: ProviderBoundModelRefSchema,
-  reason: z.string().trim().min(1).max(512).optional(),
+  reason: z.string().trim().min(1).optional(),
 }).strict();
 
 const SessionModelTransitionOwnerUnavailableV1Schema = z.object({
@@ -43,7 +43,7 @@ const SessionModelTransitionOwnerUnavailableV1Schema = z.object({
   status: z.literal('owner_unavailable'),
   activeSelection: ProviderBoundModelRefSchema.nullable(),
   requestedSelection: ProviderBoundModelRefSchema,
-  reason: z.string().trim().min(1).max(512).optional(),
+  reason: z.string().trim().min(1).optional(),
 }).strict();
 
 export const SessionModelTransitionResultV1Schema = z.union([

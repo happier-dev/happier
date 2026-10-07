@@ -72,6 +72,7 @@ function avccEnvelope(tag: number, payload: readonly number[]): Uint8Array {
 describe('LiveStreamPlayer', () => {
     it('shows H264 playing only after decoder output and counts actual decoded frames', async () => {
         const mod = await loadLiveStreamPlayer();
+        vi.useFakeTimers();
         let decoded: (() => void) | undefined;
         const screen = await renderScreen(<mod.LiveStreamPlayer
             state={{ phase: 'opening', selectedCodec: 'h264.avcc', activeRenderer: 'webcodecs', decodedFrames: 0, droppedFrames: 0, bufferedBytes: 0 }}
@@ -82,6 +83,10 @@ describe('LiveStreamPlayer', () => {
             }} testID="live-stream" />);
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(screen.findByTestId('live-stream-status-opening')).toBeTruthy();
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 4_000 });
+        expect(screen.findByTestId('live-stream-status-opening')).toBeTruthy();
+        expect(screen.findByTestId('live-stream-status-error')).toBeNull();
+        vi.useRealTimers();
         decoded?.();
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(screen.findByTestId('live-stream-status-playing')).toBeTruthy();
@@ -214,7 +219,7 @@ describe('LiveStreamPlayer', () => {
         expect(screen.findByTestId('live-stream-unavailable')).toBeNull();
     });
 
-    it('renders errored WebCodecs startup timeout as unavailable even when AVCC input remains mounted', async () => {
+    it('renders an actual WebCodecs failure as unavailable even when AVCC input remains mounted', async () => {
         const mod = await loadLiveStreamPlayer();
 
         const screen = await renderScreen(
@@ -235,7 +240,7 @@ describe('LiveStreamPlayer', () => {
                     decodedFrames: 0,
                     droppedFrames: 0,
                     bufferedBytes: 0,
-                    diagnostic: { reasonCode: 'decoder_startup_timeout' },
+                    diagnostic: { reasonCode: 'webcodecs_decode_failed' },
                 }}
                 testID="live-stream"
             />,
@@ -274,9 +279,13 @@ describe('LiveStreamPlayer', () => {
         expect(screen.findByTestId('live-stream-status-error')).toBeTruthy();
     });
 
-    it('propagates WebCodecs startup timeout from product-style AVCC input into player state', async () => {
+    it('keeps supported WebCodecs input opening until output or an actual decoder error', async () => {
         vi.useFakeTimers();
+        let decoderError: ((error: unknown) => void) | undefined;
         class HangingVideoDecoder {
+            constructor(input: { error: (error: unknown) => void }) {
+                decoderError = input.error;
+            }
             configure(): void {
                 // Supported decoder that never produces an output frame.
             }
@@ -318,9 +327,14 @@ describe('LiveStreamPlayer', () => {
             />,
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
-        await flushHookEffects({ cycles: 1, runOnlyPendingTimers: true, turns: 1 });
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 4_000, turns: 1 });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        expect(screen.findByTestId('live-stream-webcodecs-surface')).toBeTruthy();
+        expect(screen.findByTestId('live-stream-unavailable')).toBeNull();
+        expect(screen.findByTestId('live-stream-status-opening')).toBeTruthy();
+        decoderError?.(new Error('private decoder failure'));
+        await flushHookEffects({ cycles: 2, turns: 2 });
         expect(screen.findByTestId('live-stream-webcodecs-surface')).toBeNull();
         expect(screen.findByTestId('live-stream-unavailable')).toBeTruthy();
         expect(screen.findByTestId('live-stream-status-error')).toBeTruthy();

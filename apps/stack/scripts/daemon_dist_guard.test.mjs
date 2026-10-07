@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -1649,7 +1650,7 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
-async function writePidOnlyFalseReadyStubHappyCli({ cliDir }) {
+async function writePidOnlyFalseReadyStubHappyCli({ cliDir, daemonProcessSource = 'setInterval(() => {}, 1000)' }) {
   const distScript = `
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -1678,7 +1679,7 @@ if (sub === 'stop') {
 }
 
 if (sub === 'start') {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'daemon', 'start'], { detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, ['-e', ${JSON.stringify(daemonProcessSource)}, 'daemon', 'start'], { detached: true, stdio: 'ignore' });
   child.unref();
   writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }), 'utf-8');
   process.exit(0);
@@ -1929,7 +1930,7 @@ process.exit(0);
   `;
 
   await writeFile(join(packageDistDir, 'index.mjs'), distScript.trimStart(), 'utf-8');
-  await writeFile(cliBin, 'exit 42\n', 'utf-8');
+  await writeFile(cliBin, `#!/bin/sh\nexec "${process.execPath}" "${join(packageDistDir, 'index.mjs')}" "$@"\n`, 'utf-8');
   await chmod(cliBin, 0o755);
   return {
     cliBin,
@@ -2381,7 +2382,12 @@ test('startLocalDaemonWithAuth requires daemon control ping before accepting run
   try {
     const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliDir = join(tmp, 'apps', 'cli');
-    const cliBin = await writePidOnlyFalseReadyStubHappyCli({ cliDir });
+    // A live startup is allowed to continue past a readiness checkpoint. End the
+    // OS-process fixture without publishing a control ping so failure is terminal.
+    const cliBin = await writePidOnlyFalseReadyStubHappyCli({
+      cliDir,
+      daemonProcessSource: 'setTimeout(() => process.exit(0), 1000)',
+    });
     await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
     runGit(['init'], tmp);
     runGit(['config', 'user.email', 'test@example.com'], tmp);
@@ -3577,7 +3583,7 @@ test('startLocalDaemonWithAuth accepts a runtime snapshot cli executable without
   }
 });
 
-test('startLocalDaemonWithAuth admits runtime snapshot node entrypoint from the build-manifest identity without rehashing payload bytes', async () => {
+test('startLocalDaemonWithAuth rejects runtime snapshot payload changed after build-manifest admission', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-node-entrypoint-'));
   try {
     const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
@@ -3599,38 +3605,27 @@ test('startLocalDaemonWithAuth admits runtime snapshot node entrypoint from the 
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
     await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 
-    await startLocalDaemonWithAuth({
-      cliBin,
-      cliNodeEntrypoint,
-      cliHomeDir,
-      internalServerUrl,
-      publicServerUrl,
-      isShuttingDown: () => false,
-      forceRestart: true,
-      env: buildDaemonDistGuardEnv({
-        HAPPIER_STACK_CLI_BUILD: '0',
+    await assert.rejects(
+      () => startLocalDaemonWithAuth({
+        cliBin,
+        cliNodeEntrypoint,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: buildDaemonDistGuardEnv({
+          HAPPIER_STACK_CLI_BUILD: '0',
+        }),
+        stackName: 'dev',
+        cliIdentity: 'default',
+        runtimeStatePath,
+        runtimeBacked: true,
+        admittedDistClosureFingerprint: admittedFingerprint,
       }),
-      stackName: 'dev',
-      cliIdentity: 'default',
-      runtimeStatePath,
-      runtimeBacked: true,
-      admittedDistClosureFingerprint: admittedFingerprint,
-    });
-
-    const authenticated = await checkDaemonStatePingAware(cliHomeDir, {
-      serverUrl: internalServerUrl,
-      env: buildDaemonDistGuardEnv(),
-    });
-    assert.equal(authenticated.distClosureFingerprint, admittedFingerprint);
-
-    await stopLocalDaemon({
-      cliBin,
-      cliNodeEntrypoint,
-      internalServerUrl,
-      cliHomeDir,
-    });
-
-    assert.ok(true);
+      { code: 'EIMMUTABLERUNTIMEDAEMONCLOSURE' },
+    );
+    assert.equal(existsSync(join(cliHomeDir, 'daemon.state.json')), false);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -4016,7 +4011,7 @@ test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daem
   }
 });
 
-test('failed Stack restart preserves a concurrently published successor lock and state byte-for-byte', async () => {
+test('cancelled Stack restart preserves a concurrently published successor lock and state byte-for-byte', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-successor-publication-'));
   const successor = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
     detached: true,
@@ -4032,6 +4027,7 @@ test('failed Stack restart preserves a concurrently published successor lock and
     const commandPath = join(binDir, cliCommand);
     const serverSetHelperPath = join(binDir, 'happier-successor-server-set.mjs');
     const lsofPath = join(binDir, 'lsof');
+    const startAttemptMarker = join(tmp, 'start-attempted');
     await mkdir(binDir, { recursive: true });
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
@@ -4090,6 +4086,7 @@ case "$1:$2" in
     exit 0
     ;;
   daemon:start)
+    printf 'attempted' > "$HAPPIER_TEST_START_ATTEMPT_MARKER"
     exit 47
     ;;
   *)
@@ -4108,7 +4105,9 @@ esac
         cliHomeDir,
         internalServerUrl,
         publicServerUrl,
-        isShuttingDown: () => false,
+        // The foreign successor stays alive; explicitly cancel this failed
+        // attempt instead of treating a readiness checkpoint as terminal.
+        isShuttingDown: () => existsSync(startAttemptMarker),
         forceRestart: true,
         env: {
           ...baseEnv,
@@ -4116,6 +4115,7 @@ esac
           HAPPIER_TEST_SUCCESSOR_LOCK_PATH: lockPath,
           HAPPIER_TEST_SUCCESSOR_STATE_RAW: successorStateRaw,
           HAPPIER_TEST_SUCCESSOR_LOCK_RAW: successorLockRaw,
+          HAPPIER_TEST_START_ATTEMPT_MARKER: startAttemptMarker,
         },
         stackName: 'dev',
         cliIdentity: 'default',

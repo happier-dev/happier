@@ -10,6 +10,7 @@ import {
     bindDeclaredEventSubscriptions,
     createStablePluginEventsBroker,
 } from '@/plugins/runtime/invocation/services/events';
+import { activatePluginRuntimeRegistry } from '../lifecycle/manager';
 
 import {
     createPluginReloadController,
@@ -1820,6 +1821,58 @@ describe('createPluginReloadController', () => {
         await vi.advanceTimersByTimeAsync(1);
         await shutdown;
         expect(settled).toBe(true);
+    });
+
+    it.each(['lease', 'cleanup'])('waits beyond five seconds for %s retirement without a caller shutdown budget', async (phase) => {
+        vi.useFakeTimers();
+        const cleanupEntered = createDeferred<void>();
+        const cleanupGate = createDeferred<void>();
+        let cleanupStarted = false;
+        const fixture = createRuntimeRegistry('slow-shutdown');
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: fixture.contributes,
+            generation: 1,
+        });
+        activated.addRuntimeDisposable('slow-shutdown', async () => {
+            cleanupStarted = true;
+            cleanupEntered.resolve();
+            await cleanupGate.promise;
+        });
+        const registry: ResolvedExecutablePluginRuntimeRegistry = {
+            ...fixture,
+            ...activated,
+            dispose: (options) => activated.dispose({
+                ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+                onError: (event) => {
+                    // This empty contribution fixture has no target-activation cleanup.
+                    // Forward the executable registry's supported phases unchanged.
+                    if (event.phase === 'target_activation') return;
+                    options?.onError?.({ ...event, phase: event.phase });
+                },
+            }),
+        };
+        const controller = createPluginReloadController({ resolveRuntimeRegistry: async () => registry });
+        const lease = await controller.acquireRuntimeRegistry();
+        if (phase === 'cleanup') await lease.release();
+        let settled = false;
+        const shutdown = controller.shutdown().then(() => { settled = true; });
+        try {
+            await vi.advanceTimersByTimeAsync(5_001);
+            expect(settled).toBe(false);
+            if (phase === 'lease') {
+                expect(cleanupStarted).toBe(false);
+                await lease.release();
+            }
+            await cleanupEntered.promise;
+            cleanupGate.resolve();
+            await shutdown;
+            expect(settled).toBe(true);
+            expect(controller.getState().activeRegistry).toBeNull();
+        } finally {
+            cleanupGate.resolve();
+            await lease.release();
+            await shutdown;
+        }
     });
 
     it('rejects an in-flight cold acquisition and disposes its registry when shutdown wins', async () => {

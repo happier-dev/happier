@@ -67,6 +67,16 @@ function tracked(): TrackedSession {
 }
 
 describe('tracked Runner Agent daemon-service operation authority', () => {
+  it('checks the complete admitted batch, including a changed sequence beyond 4096', () => {
+    const userMessageSeqs = Array.from({ length: 4097 }, (_, index) => index + 1);
+    const admitted = tracked();
+    admitted.agentRuntimeDaemonServiceAdmittedUserMessageSeqs = userMessageSeqs;
+    const batchWitness = { ...witness, userMessageSeqs: [...userMessageSeqs] };
+    const request = { tracked: admitted, ...direct, witness: batchWitness, allowIdleCurrentGeneration: false };
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(true);
+    batchWitness.userMessageSeqs[4096] = 4098;
+    expect(authorizeTrackedRunnerAgentDaemonServiceOperation(request)).toBe(false);
+  });
   it('admits only the exact session, runner, retained Agent, and active-turn witness', () => {
     expect(authorizeTrackedRunnerAgentDaemonServiceOperation({
       tracked: tracked(),

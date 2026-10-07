@@ -55,6 +55,37 @@ function harness(enabled = true) {
 }
 
 describe('BasePermissionHandler approval reviewer', () => {
+    it('leaves role engine, Launch Profile and instructions binding to the run admission owner', async () => {
+        const session = new SessionBoundary();
+        const handler = new Handler(session as unknown as ApiSessionClient, {
+            getAccountSettings: () => accountSettingsParse({
+                approvalReviewerEnabled: true,
+                rolesV1: { overrides: { approval_reviewer: {
+                    roleId: 'approval_reviewer',
+                    engine: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'review-model', effort: 'high' },
+                    profileId: 'review-launch-profile',
+                    instructionsOverride: 'Review using the configured role instructions.',
+                } } },
+            }),
+        });
+
+        await expect(handler.request('read', 'Read', { file_path: '/workspace/README.md' })).resolves.toEqual({ decision: 'approved' });
+
+        const request = session.executionRuns.start.mock.calls[0]?.[0];
+        const parsedRequest = ExecutionRunStartRequestSchema.safeParse(request);
+        expect(parsedRequest.success ? [] : parsedRequest.error.issues).toEqual([]);
+        expect(request).toMatchObject({ roleId: 'approval_reviewer', permissionMode: 'no_tools' });
+        // The public request selects a role. Its target host stamps the engine,
+        // Launch Profile and rendered prompt once; profileId selects an execution Profile.
+        expect(request).not.toHaveProperty('profileId');
+        expect(request).not.toHaveProperty('launchProfileId');
+        expect(request).not.toHaveProperty('modelId');
+        expect(request).not.toHaveProperty('sessionConfigOptionOverrides');
+        if (!parsedRequest.success) throw new Error('Expected a valid public execution-run request');
+        expect(parsedRequest.data.instructions?.trim()).toBeTruthy();
+        expect(parsedRequest.data.instructions).not.toContain('Review using the configured role instructions.');
+    });
+
     it('inherits the Account default on a fresh unattended step and records a request-only reviewer origin', async () => {
         const { session, handler } = harness();
         // A fresh step has no per-session override; its permission owner reads the Account default.

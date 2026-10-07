@@ -1,6 +1,12 @@
 import { access } from 'node:fs/promises';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+
+// This file's teardown runs after setup registration. It must retain access to
+// the default home until its own fixture cleanup has finished.
+afterAll(async () => {
+  await access(process.env.HAPPIER_HOME_DIR!);
+});
 
 describe('temp dir helpers', () => {
   it('creates and cleans up temporary directories', async () => {

@@ -14,7 +14,16 @@ import { t } from '@/text';
  */
 export type VoicePresenceFixtureState =
     | 'rest' | 'connecting' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
-    | 'interrupted' | 'muted' | 'blocked' | 'reconnecting' | 'failed' | 'ended';
+    | 'interrupted' | 'muted' | 'blocked' | 'reconnecting' | 'failed' | 'ended' | 'working' | 'needs_you';
+
+export function isVoicePresenceFixtureState(value: unknown): value is VoicePresenceFixtureState {
+    return typeof value === 'string' && Object.hasOwn(SURFACE_STATE, value);
+}
+
+export const VOICE_PRESENCE_FIXTURE_STATES: readonly VoicePresenceFixtureState[] = [
+    'rest', 'connecting', 'listening', 'transcribing', 'thinking', 'speaking', 'working',
+    'needs_you', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
+];
 
 const NOOP = (): void => {};
 const SPECIMEN_STARTED_AT = Date.now() - 134_000;
@@ -32,6 +41,8 @@ const SURFACE_STATE: Readonly<Record<VoicePresenceFixtureState, VoiceSurfaceStat
     reconnecting: 'reconnecting',
     failed: 'error',
     ended: 'idle',
+    working: 'listening',
+    needs_you: 'listening',
 };
 
 export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): VoiceAttemptControlProjection {
@@ -65,8 +76,9 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         : state === 'failed' ? t(resolveVoiceMachineErrorTranslationKey('transport_disconnect')) : '';
     return {
         ...control,
-        statusWord: state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
-        statusLabel: state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
+        statusCell: state === 'working' || state === 'needs_you' ? state : control.statusCell,
+        statusWord: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
+        statusLabel: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         ended: state === 'ended' ? { sessionId: 'specimen-voice', adapterId: null, startedAt: SPECIMEN_STARTED_AT - 118_000, endedAt: SPECIMEN_STARTED_AT + 134_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null } : null,
         onDismissEnded: NOOP,
         onDismissFailedAttempt: NOOP,

@@ -13,6 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionMetadata } from '@/sync/domains/state/storage';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { roleActions } from '@/sync/ops/roles/roleActions';
 import { t } from '@/text';
 
@@ -25,30 +26,33 @@ const COLLAPSED_LINES = 3;
  * three lines with More when they run longer; ✎ edits in place and saves through
  * `session.notes.set`. With no notes, one row starts them. Mounted after the Roles section.
  */
-export const SessionNotesSection = React.memo(function SessionNotesSection(props: Readonly<{
+type SessionNotesSectionProps = Readonly<{
     sessionId: string;
-    /** A cross-owner worker's notes are the copy made at spawn: shown, not edited. */
-    copiedAtSpawn?: boolean;
-}>) {
-    const metadata = useSessionMetadata(props.sessionId);
+    serverId?: string | null;
+}>;
+
+export const SessionNotesSection = React.memo(function SessionNotesSection(props: SessionNotesSectionProps) {
+    return <SessionNotesContent key={sessionAddressKey({ sessionId: props.sessionId, serverId: props.serverId ?? '' })} {...props} />;
+});
+
+function SessionNotesContent(props: SessionNotesSectionProps) {
+    const metadata = useSessionMetadata(props.sessionId, props.serverId);
     const notes = React.useMemo(() => readSessionRolesV1(metadata)?.notes ?? '', [metadata]);
     const [editing, setEditing] = React.useState(false);
     const [draft, setDraft] = React.useState(notes);
 
     const startEditing = React.useCallback(() => {
-        if (props.copiedAtSpawn) return;
         setDraft(notes);
         setEditing(true);
-    }, [notes, props.copiedAtSpawn]);
+    }, [notes]);
     // The editor closes only once the notes are saved; a refusal keeps the draft for retry.
     const save = async () => {
-        if (props.copiedAtSpawn) return;
-        if (draft !== notes && !await settleSessionRoleWrite(await roleActions.setSessionNotes(props.sessionId, draft))) return;
+        if (draft !== notes && !await settleSessionRoleWrite(await roleActions.setSessionNotes(props.sessionId, draft, { serverId: props.serverId }))) return;
         setEditing(false);
     };
 
-    // A worker's copy with nothing in it has nothing to show and nothing to start.
-    if (props.copiedAtSpawn && !notes) return null;
+    // Unknown exact-Home content is not an empty note that can be overwritten.
+    if (!metadata) return null;
 
     return (
         <WorkSection
@@ -56,7 +60,7 @@ export const SessionNotesSection = React.memo(function SessionNotesSection(props
             anatomy="page"
             title={t('roles.session.notesTitle')}
             count=""
-            action={props.copiedAtSpawn || editing || !notes ? null : (
+            action={editing || !notes ? null : (
                 <IconButton
                     testID="session-work-notes.edit"
                     iconName="pencil-simple"
@@ -67,7 +71,7 @@ export const SessionNotesSection = React.memo(function SessionNotesSection(props
                 />
             )}
         >
-            {editing && !props.copiedAtSpawn ? (
+            {editing ? (
                 <View style={styles.inset}>
                     <FieldTextInput
                         testID="session-work-notes.field"
@@ -96,7 +100,7 @@ export const SessionNotesSection = React.memo(function SessionNotesSection(props
             )}
         </WorkSection>
     );
-});
+}
 
 /**
  * Three lines, then More. Whether the notes overflow is measured, not guessed: an invisible,

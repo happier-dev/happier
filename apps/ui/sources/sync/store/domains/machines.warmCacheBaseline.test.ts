@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { Machine, MachineMetadata } from '../../domains/state/storageTypes';
+import type { StorageState } from '../types';
+import type { createMachinesDomain, MachinesDomain } from './machines';
 
 const { mmkvStore } = vi.hoisted(() => ({
     mmkvStore: new Map<string, string>(),
@@ -24,10 +26,20 @@ vi.mock('react-native-mmkv', () => {
         clearAll() {
             mmkvStore.clear();
         }
+
+        getAllKeys() { return [...mmkvStore.keys()]; }
+        trim() {}
     }
 
     return { MMKV };
 });
+
+// The native keystore boundary already contains a valid cache key this boot.
+vi.mock('expo-secure-store', () => ({
+    getItemAsync: async () => 'ABCDEFGHIJKLMNOP',
+    setItemAsync: async () => {},
+    deleteItemAsync: async () => {},
+}));
 
 afterEach(() => {
     vi.resetModules();
@@ -75,6 +87,12 @@ async function createHarness() {
 
 async function flushWarmCacheSave(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+async function loadMachineDomainAfterBoot() {
+    const { prepareWarmCacheStorage } = await import('../../domains/state/warmCachePersistence');
+    await prepareWarmCacheStorage();
+    return await import('./machines');
 }
 
 function readPersistedMachineEntry(machineId: string): Record<string, unknown> | undefined {

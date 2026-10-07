@@ -1467,12 +1467,12 @@ describe("workflowRunService (integration)", () => {
         await expect(admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, acceptedEnvelope: accepted, resultDelivery: { kind: "originating_session" } })).resolves.toMatchObject({ kind: "existing", run: { id: runId } });
         await expect(admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId, originSessionId: seeded.sessionId, deliver: true, permission: "read-only" }), resultDelivery: { kind: "originating_session" } })).rejects.toMatchObject({ code: "currentness_conflict" });
         await claimRun(runId, seeded.machineId);
-        const rootId = randomUUID();
+        const rootId = `workflow-root-é-${randomUUID()}`;
         const checkpoint = checkpointEnvelope(seeded.accountId, runId, rootId, 1n);
         const rootContentEnvelope = progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n });
         const initialize = { accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1, expectedRevision: 0, checkpointEnvelope: checkpoint, rootInvocation: { id: rootId, contentEnvelope: rootContentEnvelope } } as const;
-        await expect(initializeWorkflowRunExecution({ ...initialize, machineId: randomUUID() })).rejects.toMatchObject({ code: "currentness_conflict" });
         await expect(initializeWorkflowRunExecutionOwner({ ...initialize, accountCurrentness: initialCurrentness })).resolves.toMatchObject({ initialization: "created" });
+        await expect(initializeWorkflowRunExecution({ ...initialize, machineId: randomUUID() })).rejects.toMatchObject({ code: "currentness_conflict" });
         await expect(initializeWorkflowRunExecution(initialize)).resolves.toMatchObject({ initialization: "existing", run: { revision: 1 } });
         await commitWorkflowInvocationFact({ accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1, invocationId: rootId, invocationAttempt: 0n, expectedLifecycle: "pending", lifecycle: "completed", contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) });
         const completedEnvelope = progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n });
@@ -1563,7 +1563,7 @@ describe("workflowRunService (integration)", () => {
         await admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId, originSessionId: seeded.sessionId }) });
         const rootId = randomUUID();
         await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n), rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
-        const childId = randomUUID();
+        const childId = `workflow-child-é-${randomUUID()}`;
         const request = {
             accountId: seeded.accountId,
             runId,
@@ -2831,7 +2831,7 @@ describe("workflowRunService (integration)", () => {
         await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n), rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
         await db.workflowRunInvocation.update({ where: { id: rootId }, data: { lifecycle: "failed" } });
         await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted" } });
-        const retryId = randomUUID();
+        const retryId = `workflow-retry-é-${randomUUID()}`;
         const retryRequest = { accountId: seeded.accountId, runId, expectedRevision: 1, invocationId: rootId, newInvocationId: retryId, newSequence: 99n, contentEnvelope: progressEnvelope({ ...seeded, runId, id: retryId, sequence: 1n, parentRecordId: null, memberOrdinal: 0n, attempt: 1n, previousAttemptRecordId: rootId, logicalInvocationRecordId: rootId }) } as const;
         await expect(retryWorkflowInvocation(retryRequest)).resolves.toMatchObject({ disposition: "accepted", run: { revision: 2 }, invocation: { sequence: "1", attempt: "1" } });
         await expect(retryWorkflowInvocation(retryRequest)).resolves.toMatchObject({ disposition: "existing", run: { revision: 2 }, invocation: { id: retryId } });
@@ -2961,7 +2961,7 @@ describe("workflowRunService (integration)", () => {
             contentEnvelope: progressEnvelope({ ...seeded, runId, id, sequence: BigInt(index + 1), parentRecordId: rootId, memberOrdinal: BigInt(index) }),
         })) });
         await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted" } });
-        const newIds = [randomUUID(), randomUUID()];
+        const newIds = [`workflow-recovery-é-${randomUUID()}`, randomUUID()];
         const request = {
             accountId: seeded.accountId,
             machineId: seeded.machineId,

@@ -32,7 +32,7 @@ function nonDefaultAppearanceState(): Record<string, unknown> {
         uiBackdropBlurEnabled: false,
         detailsPaneTabsBehavior: 'persistent',
         settingsNavSidebarEnabled: false,
-        loadingIndicatorStyle: 'radar',
+        loadingIndicatorStyle: 'hWave',
         loadingIndicatorSpeed: 'fast',
         loadingIndicatorPause: 'none',
         avatarStyle: 'brutalist',
@@ -130,7 +130,7 @@ describe('Appearance reset', () => {
         expect(state.themeProfiles).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [CUSTOM_PROFILE] });
         for (const key of [
             'uiFontScale', 'uiContentWidthMode', 'uiItemDensity', 'uiMultiPanePanelsEnabled',
-            'uiBackdropBlurEnabled', 'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled',
+            'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled',
             'loadingIndicatorStyle', 'loadingIndicatorSpeed', 'loadingIndicatorPause',
         ] as const) {
             expect(state[key], key).toEqual(localSettingsDefaults[key]);
@@ -144,6 +144,8 @@ describe('Appearance reset', () => {
             expect(storage.getState().settings[key], key).toEqual(settingsDefaults[key]);
             expect(account?.persistedSettings[key], `${key} persisted`).toEqual(settingsDefaults[key]);
         }
+        // Legacy backdrop blur is not shown on Appearance; Reset preserves it.
+        expect(state.uiBackdropBlurEnabled).toBe(false);
         // Language has its own page and is not an appearance preference.
         expect(storage.getState().settings.preferredLanguage).toBe('fr');
         expect(account?.persistedSettings.preferredLanguage).toBe('fr');

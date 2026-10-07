@@ -40,7 +40,7 @@ export function SessionReminderPresetManagerModal(props: Readonly<{
         props.onClose();
     }, [props]);
     const footer = React.useMemo(() => (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
             <RoundButton display="inverted" title={t('common.cancel')} disabled={saving} onPress={() => finish(null)} />
             <RoundButton title={t('common.save')} disabled={saving} loading={saving} onPress={() => {
                 if (saving) return;

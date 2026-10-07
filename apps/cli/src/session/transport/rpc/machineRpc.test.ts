@@ -202,6 +202,27 @@ describe('callMachineRpc', () => {
     }));
   });
 
+  it('keeps passive change reads on the exact Machine socket and advances the accepted snapshot', async () => {
+    axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-session',
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    const accepted: number[] = [];
+    let after = 0;
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.method).toBe('machine-session:execution.run.wait');
+      ack({ ok: true, result: { revision: payload.params.after + 1 } });
+    });
+    const result = await callExactMachineRpc({ credentials: { token: 'account-token', encryption: null },
+      machineId: 'machine-session', method: 'execution.run.wait', request: { after }, timeoutMs: null,
+      reattachOnReconnect: { readRequest: () => ({ after }), onResult: async (raw: unknown) => {
+        if (!raw || typeof raw !== 'object' || !('revision' in raw) || typeof raw.revision !== 'number') throw new Error('invalid snapshot');
+        after = raw.revision; accepted.push(after); return after === 2;
+      } },
+    });
+    expect(result).toEqual({ revision: 2 });
+    expect(accepted).toEqual([1, 2]);
+  });
+
   it.each([
     'session.board.item.upsert',
     'session.follow.sources.set',

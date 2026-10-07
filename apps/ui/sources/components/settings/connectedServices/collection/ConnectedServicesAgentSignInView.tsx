@@ -14,7 +14,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { Modal } from '@/modal';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { canExecuteConnectedServiceAction, getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useActiveServerAccountScope, useSettingMutable, useSettingsSelector } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
@@ -68,12 +68,10 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
         enabled: teamCredentialResourcesEnabled,
     });
 
-    /** Released V2/V3 default-auth ingress, explicitly resolved by the adapter; it needs an executable owner. */
+    /** Released V2/V3 default-auth ingress uses the same action admission as the index. */
     const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string) => {
         const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
-        const canOpen = entry.executable === true
-            || (index.transport === 'legacy' && Boolean(entry.legacyServiceId) && !entry.projectedDescriptor);
-        if (!entry.service || !canOpen) {
+        if (!entry.service || !canExecuteConnectedServiceAction(entry, index.transport)) {
             await Modal.alert(t('errors.daemonUnavailableTitle'), t('errors.daemonUnavailableBody'));
             return;
         }

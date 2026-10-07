@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '../approvals/executionRunHostActionApprovalRequestV1.js';
 import type { TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
+import type { ActionRequiredAuthority } from './metadata.js';
 
 export type BlockingApprovalRequest =
   | ApprovalRequest
@@ -8,7 +9,7 @@ export type BlockingApprovalRequest =
   | ExecutionRunHostActionApprovalRequestV1;
 
 export type BlockingApprovalWaitDecision =
-  | Readonly<{ decision: 'approve'; request: BlockingApprovalRequest }>
+  | Readonly<{ decision: 'approve'; request: BlockingApprovalRequest; decisionAuthority?: ActionRequiredAuthority }>
   | Readonly<{ decision: 'reject'; request: BlockingApprovalRequest; reason?: string }>
   | Readonly<{ decision: 'canceled'; request: BlockingApprovalRequest; reason?: string }>;
 
@@ -38,6 +39,8 @@ export type BlockingApprovalCoordinator = Readonly<{
     artifactId: string;
     request: ApprovalRequest;
     decision: 'approve' | 'reject';
+    /** Authenticated live decision ingress only; never read from the Artifact. */
+    decisionAuthority?: ActionRequiredAuthority;
   }>) => Promise<Readonly<{ resolved: boolean }>>;
   cancelApproval: (artifactId: string, reason?: string) => void;
   dispose: (reason?: string) => void;
@@ -241,16 +244,19 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
         },
       });
     },
-    resolveBlockingDecision: async ({ artifactId: rawArtifactId, request, decision }) => {
+    resolveBlockingDecision: async ({ artifactId: rawArtifactId, request, decision, decisionAuthority }) => {
       const artifactId = normalizeId(rawArtifactId);
       if (!artifactId) return { resolved: false };
       const waiters = waitersByArtifactId.get(artifactId);
       if (!waiters || waiters.size === 0) return { resolved: false };
 
       const resolvedDecision = readDecision(request) ?? { decision, request };
+      const liveDecision = resolvedDecision.decision === 'approve' && decisionAuthority !== undefined
+        ? { ...resolvedDecision, decisionAuthority }
+        : resolvedDecision;
       waitersByArtifactId.delete(artifactId);
       for (const waiter of waiters) {
-        waiter.resolve(resolvedDecision);
+        waiter.resolve(liveDecision);
       }
       return { resolved: true };
     },

@@ -76,6 +76,28 @@ describe('SCM diff summary operations', () => {
         ops.retireScope(scope);
         expect(Object.keys(ops.getState().entriesByKey)).toEqual([otherKey]);
     });
+    it('does not notify readers for identical saved-result echoes but publishes same-revision progress', () => {
+        const ops = createScmDiffSummaryOperations();
+        const scope = { serverId: 'home', accountId: 'account' };
+        const result = { resultId: 'result_1', revision: 3, canUndo: true, output: { ...complete, revision: 3 } };
+        const key = ops.loadSavedResult({ sessionId: 'session_1', scope, result })!;
+        const original = ops.getState();
+        const notifications = vi.fn();
+        const unsubscribe = ops.subscribe(notifications);
+        try {
+            for (let index = 0; index < 10; index += 1) ops.applySavedResult(key, structuredClone(result));
+            expect(notifications).not.toHaveBeenCalled();
+            expect(ops.getState()).toBe(original);
+            ops.applySavedResult(key, { ...result, canUndo: false });
+            expect(notifications).toHaveBeenCalledTimes(1);
+            expect(getScmDiffSummaryOperationState(ops.getState(), key).savedResult?.canUndo).toBe(false);
+            ops.applySavedResult(key, { ...result, revision: 4, output: { ...result.output, revision: 4 } });
+            expect(notifications).toHaveBeenCalledTimes(2);
+            expect(getScmDiffSummaryOperationState(ops.getState(), key).revision).toBe(4);
+        } finally {
+            unsubscribe();
+        }
+    });
     it('does not publish a late admission after its captured Account has retired', async () => {
         let current = true;
         let resolve!: (output: ScmDiffSummaryGenerateOutput) => void;

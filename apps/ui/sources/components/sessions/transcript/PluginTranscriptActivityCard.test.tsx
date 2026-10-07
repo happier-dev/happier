@@ -79,7 +79,7 @@ type RenderedItem = Readonly<{ props: Record<string, unknown> }> | null | undefi
  * The line an `Item` paints for its title, derived from the props the card actually passed and
  * `Item`'s own clamp rule — never from a literal, and never from the descriptor under test.
  */
-function paintedTitleLine(node: RenderedItem): Readonly<{ text: unknown; maxLines: number }> {
+function paintedTitleLine(node: RenderedItem) {
     if (!node) throw new Error('Expected the card to paint this Item.');
     return {
         text: node.props.title,

@@ -1,5 +1,4 @@
 import {
-    SPLIT_CANVAS_DEFAULT_MAX_LEAVES,
     splitCanvasReduce,
 } from '@/components/appShell/splitCanvas/model/splitCanvasReducer';
 import {
@@ -51,7 +50,6 @@ export function createDetailsWorkspaceSplitCanvasState(
         root: details.root,
         focusedLeafId: details.focusedGroupId,
         maximizedLeafId: details.maximizedGroupId,
-        maxLeaves: SPLIT_CANVAS_DEFAULT_MAX_LEAVES,
     };
 }
 

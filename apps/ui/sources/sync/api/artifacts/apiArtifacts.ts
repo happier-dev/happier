@@ -3,6 +3,7 @@ import { backoff } from '@/utils/timing/time';
 import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse } from '@/sync/domains/artifacts/artifactTypes';
 import { HappyError } from '@/utils/errors/errors';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { encodeBase64 } from '@/encryption/base64';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1,
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
 import {
@@ -27,6 +28,11 @@ import {
     type ArtifactAccessGrantRemoveInputV1,
     type ArtifactRecipientKeyEnvelopeCommitInputV1,
 } from '@happier-dev/protocol';
+
+/** The /v1/artifacts transport cursor; shared by complete sync and Action paging. */
+export function encodeArtifactListCursor(row: Readonly<{ artifactId: string; updatedAt: number }>): string {
+    return encodeBase64(new TextEncoder().encode(JSON.stringify({ updatedAt: row.updatedAt, id: row.artifactId })), 'base64url');
+}
 
 async function uploadArtifactContent(credentials: AuthCredentials, destination: ArtifactUploadDestinationV1,
     content: ArtifactBlobStoredContentV1, opts: Pick<ArtifactApiOptions, 'request' | 'signal'>): Promise<Response> {
@@ -263,6 +269,7 @@ export async function fetchArtifacts(
         if (opts.includeBody) query.set('includeBody', 'true');
         const search = query.toString();
         const response = await (opts.request ?? serverFetch)(`/v1/artifacts${search ? `?${search}` : ''}`, {
+            ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'

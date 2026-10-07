@@ -67,8 +67,9 @@ describe('getPosthogIssue', () => {
                     issueId: ISSUE_ID,
                     dateRange: { date_from: '-30d', date_to: null },
                     filterTestAccounts: false,
-                    volumeResolution: 0,
-                    includeSparkline: false,
+                    // The provider buckets the sparkline itself (12 equal-width buckets
+                    // across `dateRange` when no resolution is sent).
+                    includeSparkline: true,
                 },
             },
         ]);

@@ -27,6 +27,7 @@ import {
   TriageListInstancesResultV1Schema,
   TriageReadConfiguredSourceInstancesResultV1Schema,
   TriageSourceAdministrationActionResultV1Schema,
+  triageSourceBindingComponentsV1,
   type TriageConfiguredSourceInstanceRecordV1,
   type TriageSourceAccountBindingV1,
   type TriageSourceFailureV1,
@@ -51,7 +52,7 @@ export type TriageSourceSettingsCandidateV1 = Readonly<{
   draft: TriageSourceInstanceDraftV1;
   label: string;
   path: string | null;
-  accountId: string;
+  accountId: string | null;
   /**
    * A `locatorDerived` key follows the provider's own display value, so the
    * same scope renamed upstream becomes a different configured instance. The
@@ -63,7 +64,7 @@ export type TriageSourceSettingsCandidateV1 = Readonly<{
 /** One exact-binding discovery failure, projected beside the candidates it concerns. */
 export type TriageSourceSettingsDiscoveryFailureV1 = Readonly<{
   key: string;
-  accountId: string;
+  accountId: string | null;
   localInstanceKey: string | null;
   failure: TriageSourceFailureV1;
 }>;
@@ -146,7 +147,9 @@ function projectConfiguredInstance(
     // A stored locator is optional on the configured record, and the source's
     // own instance key is the only other thing in it a person can recognize.
     label: configured.locator?.displayLabel ?? configured.localInstanceKey,
-    locator: configured.locator?.displayPath ?? configured.binding.account.accountId,
+    locator: configured.locator?.displayPath ?? ('account' in configured.binding
+      ? configured.binding.account.accountId
+      : configured.locator?.displayLabel ?? configured.localInstanceKey),
   };
 }
 
@@ -295,10 +298,7 @@ function instanceKey(
   // tuples with provider-owned strings. A delimiter cannot be safe here:
   // accountId and localInstanceKey both admit every printable character.
   return JSON.stringify([
-    binding.purpose,
-    binding.account.service.pluginId,
-    binding.account.service.localId,
-    binding.account.accountId,
+    ...triageSourceBindingComponentsV1(binding),
     localInstanceKey,
   ]);
 }
@@ -309,7 +309,7 @@ function projectCandidate(draft: TriageSourceInstanceDraftV1): TriageSourceSetti
     draft,
     label: draft.locator.displayLabel,
     path: draft.locator.displayPath ?? null,
-    accountId: draft.binding.account.accountId,
+    accountId: 'account' in draft.binding ? draft.binding.account.accountId : null,
     keyFollowsProviderName: draft.keyStability === 'locatorDerived',
   };
 }
@@ -345,13 +345,10 @@ export function readTriageSourceDiscovery(
     failures: result.failures.map((entry, index) => ({
       key: JSON.stringify([
         index,
-        entry.binding.purpose,
-        entry.binding.account.service.pluginId,
-        entry.binding.account.service.localId,
-        entry.binding.account.accountId,
+        ...triageSourceBindingComponentsV1(entry.binding),
         entry.localInstanceKey,
       ]),
-      accountId: entry.binding.account.accountId,
+      accountId: 'account' in entry.binding ? entry.binding.account.accountId : null,
       localInstanceKey: entry.localInstanceKey ?? null,
       failure: entry.failure,
     })),
@@ -679,7 +676,7 @@ function subjectFromCandidate(
   return {
     key: candidate.key,
     label: candidate.label,
-    locator: candidate.path ?? candidate.accountId,
+    locator: candidate.path ?? candidate.accountId ?? candidate.label,
     keyFollowsProviderName: candidate.keyFollowsProviderName,
     presence: 'discovered',
     draft: candidate.draft,

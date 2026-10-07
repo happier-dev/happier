@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol";
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { enableErrorHandlers } from "../utils/enableErrorHandlers";
 import {
     isRestrictedAuthTokenDeniedForRoute,
     PRESENT_USER_REQUIRED_ERROR,
@@ -17,6 +18,8 @@ export function createAuthenticatedTestApp(
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    // Route validation failures use the same public error contract as startApi.
+    enableErrorHandlers(typed);
 
     typed.decorate("authenticate", async (request: any, reply: any) => {
         const userId = request.headers["x-test-user-id"];

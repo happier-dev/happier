@@ -4,12 +4,9 @@ import { RuntimeAccountIdentityIndex } from './RuntimeAccountIdentityIndex';
 import { resolveSessionsSharingProviderAccount } from './resolveSessionsSharingProviderAccount';
 
 describe('RuntimeAccountIdentityIndex', () => {
-  it('resolves only fresh sessions proven on the same live provider account', () => {
+  it('retains exact session proof until its lifecycle or group generation invalidates it', () => {
     let now = 10_000;
-    const index = new RuntimeAccountIdentityIndex({
-      nowMs: () => now,
-      ttlMs: 5_000,
-    });
+    const index = new RuntimeAccountIdentityIndex();
 
     index.record({
       sessionId: 'source',
@@ -58,18 +55,24 @@ describe('RuntimeAccountIdentityIndex', () => {
       ]),
     }).map((entry) => entry.sessionId)).toEqual(['same-account']);
 
-    now = 20_001;
+    now += 6 * 60_000;
+    expect(index.readSessionIdentity('same-account')).toMatchObject({ providerAccountId: 'acct-a' });
     expect(resolveSessionsSharingProviderAccount(index, {
       serviceId: 'openai-codex',
       providerAccountId: 'acct-a',
+      excludeSessionId: 'source',
+      currentGroupGenerationBySessionId: new Map([['same-account', 4]]),
+    }).map((entry) => entry.sessionId)).toEqual(['same-account']);
+    expect(resolveSessionsSharingProviderAccount(index, {
+      serviceId: 'openai-codex',
+      providerAccountId: 'acct-a',
+      excludeSessionId: 'source',
+      currentGroupGenerationBySessionId: new Map([['same-account', 5]]),
     })).toEqual([]);
   });
 
   it('refuses weak auth-surface proof and invalidates by session', () => {
-    const index = new RuntimeAccountIdentityIndex({
-      nowMs: () => 1_000,
-      ttlMs: 60_000,
-    });
+    const index = new RuntimeAccountIdentityIndex();
 
     expect(index.record({
       sessionId: 'claude-session',
@@ -105,10 +108,7 @@ describe('RuntimeAccountIdentityIndex', () => {
   });
 
   it('refuses group-bound exact account identity without group generation proof', () => {
-    const index = new RuntimeAccountIdentityIndex({
-      nowMs: () => 1_000,
-      ttlMs: 60_000,
-    });
+    const index = new RuntimeAccountIdentityIndex();
 
     expect(index.record({
       sessionId: 'codex-session',

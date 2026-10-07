@@ -19,6 +19,17 @@ export const LOADING_INDICATOR_STYLE_LABEL_KEYS = {
     radar: 'settingsAppearance.loadingIndicatorOptions.radar',
     ripple: 'settingsAppearance.loadingIndicatorOptions.ripple',
     aurora: 'settingsAppearance.loadingIndicatorOptions.aurora',
+    hWave: 'settingsAppearance.loadingIndicatorOptions.hWave',
+    hHandwritten: 'settingsAppearance.loadingIndicatorOptions.hHandwritten',
+    hBuildAndRelease: 'settingsAppearance.loadingIndicatorOptions.hBuildAndRelease',
+    hRelay: 'settingsAppearance.loadingIndicatorOptions.hRelay',
+    hTwinStems: 'settingsAppearance.loadingIndicatorOptions.hTwinStems',
+    hSlowBreath: 'settingsAppearance.loadingIndicatorOptions.hSlowBreath',
+    hStarfield: 'settingsAppearance.loadingIndicatorOptions.hStarfield',
+    hSweep: 'settingsAppearance.loadingIndicatorOptions.hSweep',
+    hRadar: 'settingsAppearance.loadingIndicatorOptions.hRadar',
+    hRipple: 'settingsAppearance.loadingIndicatorOptions.hRipple',
+    hAurora: 'settingsAppearance.loadingIndicatorOptions.hAurora',
     classicRing: 'settingsAppearance.loadingIndicatorOptions.classicRing',
 } as const satisfies Record<HappierSpinnerStyleId, LoadingIndicatorLabelKey>;
 

@@ -9,6 +9,8 @@ import type { ResolvedRolesSnapshotV1 } from '../../prompts/roles/rolesV1.js';
 import type { AgentPermissionIntentV1 } from '../../runtime/permissionIntentV1.js';
 import type { SessionSpawnNewInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import type { SessionAgentSpawnPolicyV1, SessionAgentStartOverridesV1 } from './sessionAgentSpawnPolicyV1.js';
+import { SessionIdSchema } from '../../sessions/idsV1.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, type SessionAgentStartAllowListsV1 } from './sessionAgentStartAllowListsV1.js';
 
 /** Private field check; admitAgentStartV1 is the single public admission owner. */
@@ -96,7 +98,7 @@ export type AgentStartRequestV1 =
 
 export const AgentStartSessionCallerV1Schema = z.object({
   kind: z.literal('session'),
-  sessionId: z.string().trim().min(1).max(512),
+  sessionId: asProtocolZod(SessionIdSchema),
   starterDepth: z.number().int().nonnegative().safe(),
   turnDepth: z.number().int().nonnegative().safe(),
 }).strict();

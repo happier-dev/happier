@@ -21,6 +21,7 @@ import {
     type TriageEntryRefV1,
 } from './identity.js';
 import {
+    TriageConfiguredSourceConnectedAccountInstanceV1Schema,
     TriageConfiguredSourceInstanceV1Schema,
     type TriageConfiguredSourceInstanceV1,
 } from './instances.js';
@@ -112,9 +113,7 @@ export type TriageReviewWorkspaceCurrentnessV1 = ReturnType<
  * probe; the `AbortSignal` is execution options, never serialized input
  * (`CONTRACT.md` §5.3).
  */
-export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1),
-    instance: TriageConfiguredSourceInstanceV1Schema,
+const triagePrepareReviewWorkspaceInputFieldsV1 = {
     entryRef: TriageEntryRefV1Schema,
     /**
      * The source's newest opaque route for this exact row. Account-scoped
@@ -124,6 +123,16 @@ export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
     workspace: TriageSelectedWorkspaceScopeV1Schema.optional(),
+} as const;
+export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceInstanceV1Schema,
+    ...triagePrepareReviewWorkspaceInputFieldsV1,
+}, { policy: 'closed' });
+export const TriagePrepareReviewWorkspaceConnectedAccountInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+    ...triagePrepareReviewWorkspaceInputFieldsV1,
 }, { policy: 'closed' });
 export type TriagePrepareReviewWorkspaceInputV1 = ReturnType<
     typeof TriagePrepareReviewWorkspaceInputV1Schema.parse
@@ -215,9 +224,7 @@ export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
  * result. Triage cannot substitute a path or provider reference from another
  * source.
  */
-export const TriageVerifyReviewWorkspaceInputV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1),
-    instance: TriageConfiguredSourceInstanceV1Schema,
+const triageVerifyReviewWorkspaceInputFieldsV1 = {
     entryRef: TriageEntryRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
@@ -226,6 +233,16 @@ export const TriageVerifyReviewWorkspaceInputV1Schema = defineProtocolObject({
         repositoryPath: TriageLocationV1ProtocolSchema,
         pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
     }, { policy: 'closed' }),
+} as const;
+export const TriageVerifyReviewWorkspaceInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceInstanceV1Schema,
+    ...triageVerifyReviewWorkspaceInputFieldsV1,
+}, { policy: 'closed' });
+export const TriageVerifyReviewWorkspaceConnectedAccountInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+    ...triageVerifyReviewWorkspaceInputFieldsV1,
 }, { policy: 'closed' });
 export type TriageVerifyReviewWorkspaceInputV1 = ReturnType<
     typeof TriageVerifyReviewWorkspaceInputV1Schema.parse

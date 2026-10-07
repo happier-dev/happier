@@ -197,6 +197,19 @@ function rowMetaTypography(): Pick<TextStyle, 'fontFamily' | 'fontSize' | 'lineH
     };
 }
 
+/**
+ * Reading prose — a detail's ask, a summary, a step's body: text that is read rather than scanned, a step
+ * above the row meta line (lab c7 `.body`, 14/21) and below the row title in weight.
+ */
+function readingTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
+    return {
+        ...defaultTypography('regular'),
+        fontSize: Platform.select({ ios: 15, default: 14 }),
+        lineHeight: Platform.select({ ios: 22, default: 21 }),
+        letterSpacing: Platform.select({ ios: -0.12, default: -0.08 }),
+    };
+}
+
 function pillLabelTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
     return {
         ...defaultTypography('semiBold'),
@@ -242,6 +255,9 @@ export const Typography = {
     // Standard two-tier row rhythm (non-editable typography primitives)
     rowTitle: rowTitleTypography,
     rowMeta: rowMetaTypography,
+
+    // Reading prose (detail bodies, summaries, story steps)
+    reading: readingTypography,
 
     // Compact label primitives for status pills and keyboard hints
     pillLabel: pillLabelTypography,

@@ -26,7 +26,7 @@ import {
   resolveStackRuntimePaths,
   validateRuntimeSnapshotId,
 } from '../shared/runtime_paths.mjs';
-import { resolveStackBaseDir } from '../../utils/paths/paths.mjs';
+import { getStackName, resolveStackBaseDir } from '../../utils/paths/paths.mjs';
 import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
 
 async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
@@ -298,9 +298,20 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
 }
 
 /** Diagnostics inspect the selected deployment, not the controller's executable target. */
-export async function inspectStackRuntimeSelection({ stackBaseDir, env = process.env }) {
+export async function inspectStackRuntimeSelection({ stackName, stackBaseDir, env = process.env, placement,
+  hostTarget = { platform: process.platform, arch: process.arch } }) {
+  if (env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK) {
+    const { resolveStackRuntimeComponentSnapshots } = await import('./resolveStackRuntimeLaunchContext.mjs');
+    try {
+      return await resolveStackRuntimeComponentSnapshots({ stackName: stackName || String(env.HAPPIER_STACK_STACK ?? '').trim() || getStackName(env),
+        stackBaseDir, env, placement, hostTarget });
+    } catch (error) {
+      const inspection = await inspectActiveRuntimeSnapshot({ stackBaseDir, env, requiredComponents: ['server'], target: null });
+      return { ...inspection, valid: false, snapshot: null,
+        errors: [...inspection.errors, error instanceof Error ? error.message : String(error)] };
+    }
+  }
   return await inspectActiveRuntimeSnapshot({
-    stackBaseDir, env,
-    ...(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? { requiredComponents: ['server'], target: null } : {}),
+    stackBaseDir, env, target: hostTarget,
   });
 }

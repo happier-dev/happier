@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
 import { VoiceAssistantActionSchema, type VoiceAssistantAction } from './actions.js';
-import { speechTextEndAtOrBefore } from './speechText.js';
+import { resolveVoiceSpeechSegmentLength, speechTextEndAtOrBefore } from './speechText.js';
 
 const VoiceOutputIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const VoiceOutputTurnIdSchema = VoiceOutputIdSchema;
 const VoiceOutputSequenceSchema = z.number().int().min(0).max(4_095);
-const VoiceSpeechTextSchema = z.string().min(1).max(16_384);
+const MAX_SPEECH_SEGMENT_CHARACTERS = 16_384;
+const VoiceSpeechTextSchema = z.string().min(1).max(MAX_SPEECH_SEGMENT_CHARACTERS);
 const VoiceStatusTextSchema = z.string().min(1).max(1_024);
 const VoiceFinalTextSchema = z.string().max(65_536);
 
@@ -75,6 +76,22 @@ export type VoiceAgentOutputTurnV1 = Readonly<{
 const MAX_EVENTS_PER_TURN = 256;
 const MAX_PAYLOAD_BYTES_PER_TURN = 256 * 1024;
 export const VOICE_OUTPUT_INCOMPLETE_TEXT = '\n\n[Voice output incomplete: turn output budget reached.]';
+
+/** Pack semantic speech into the existing wire envelope without discarding its remainder. */
+export function resolveVoiceAgentOutputSpeechSegmentLength(
+  text: string,
+  options: Parameters<typeof resolveVoiceSpeechSegmentLength>[1],
+): number {
+  const semanticLength = resolveVoiceSpeechSegmentLength(text, options);
+  const length = semanticLength || (text.length >= MAX_SPEECH_SEGMENT_CHARACTERS ? MAX_SPEECH_SEGMENT_CHARACTERS : 0);
+  const end = speechTextEndAtOrBefore(text, Math.min(length, MAX_SPEECH_SEGMENT_CHARACTERS));
+  if (end < length || semanticLength === 0) {
+    for (let index = end - 1; index >= 0; index -= 1) {
+      if (/\s/u.test(text[index]!)) return index + 1;
+    }
+  }
+  return end;
+}
 
 function payloadByteLength(event: VoiceAgentOutputEventV1): number {
   return new TextEncoder().encode(JSON.stringify(event)).byteLength;

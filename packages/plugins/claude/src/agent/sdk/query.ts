@@ -10,6 +10,7 @@ import type {
     SDKUserMessage,
 } from './types.js';
 import { materializeClaudeMcpConfigArgsForSpawn } from '../mcp/materializeConfigArgs.js';
+import { buildClaudeSettingSourcesArgs } from '../runtime/launchSettings.js';
 import { materializeClaudeStartupInstructions } from '../runtime/startupInstructions.js';
 
 export type ClaudeSdkExecResult = Readonly<{
@@ -149,7 +150,7 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
 }
 
 function buildClaudeArgs(prompt: QueryPrompt, options: QueryOptions = {}): string[] {
-    const args = ['--output-format', 'stream-json', '--verbose'];
+    const args = ['--output-format', 'stream-json', '--verbose', ...buildClaudeSettingSourcesArgs(options.settingSources)];
     if (typeof options.systemPrompt === 'string') {
         args.push('--system-prompt', options.systemPrompt);
     } else if (options.customSystemPrompt) {

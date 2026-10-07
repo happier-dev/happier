@@ -27,7 +27,9 @@ import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/age
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import type { ClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../agentSettings/definition.js';
 import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';
-import { resolveClaudeLaunchSettingsOverlayArgs } from '../../launchSettings.js';
+import type { ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
+import { readClaudeNativeCommands } from '../../../transcripts/nativeCommands.js';
+import { buildClaudeSettingSourcesArgs, resolveClaudeLaunchSettingsOverlayArgs } from '../../launchSettings.js';
 import { randomUUID } from 'node:crypto';
 import { resolveClaudeTerminalHostDisposeIntent } from './terminalHostDisposeIntent.js';
 import { materializeClaudeStartupInstructions } from '../../startupInstructions.js';
@@ -387,6 +389,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   happierSessionId: string;
   hostPreference: TerminalHostPreference;
   launchEnv: Readonly<Record<string, string>>;
+  settingSources?: readonly ClaudeSettingSourceV2[];
   supportsEffort?: boolean;
   supportsSystemPromptSnapshotOff?: boolean;
   startupInstructions?: string;
@@ -849,6 +852,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (observation) await nativeRuntime.observeTerminalLifecycle(observation);
     },
     onObserveRow: async (row, observation) => {
+      const commands = readClaudeNativeCommands(row);
+      if (commands !== null) {
+        publishClaudeUnifiedRuntimeEvent({
+          handlers, logger: params.ctx.logger,
+          event: { kind: 'available-commands', sessionId: params.happierSessionId, emittedAtMs: Date.now(), commands },
+        });
+      }
       const payload = projectClaudeTranscriptRowToProviderPayload({
         providerSessionId: observation.providerSessionId,
         row,
@@ -1859,6 +1869,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
           args: applyClaudeUnifiedTerminalLaunchIntent(resolveClaudeLaunchSettingsOverlayArgs({
             args: [
+              ...buildClaudeSettingSourcesArgs(params.settingSources),
               ...(params.supportsSystemPromptSnapshotOff === true ? ['--system-prompt-snapshot', 'off'] : []),
               ...(startupInstructionsFile?.args ?? []),
               ...(resolvedHookPluginDir ? ['--plugin-dir', resolvedHookPluginDir] : []),

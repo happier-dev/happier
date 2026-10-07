@@ -81,6 +81,8 @@ export type AgentExternalSessionHookInstallationVariant = Readonly<{
 
 export type AgentExternalSessionHookResolveInstallationRequest =
     AgentExternalSessionsInvocationBounds & Readonly<{
+        deadlineAtMs: number;
+        maxSerializedBytes: number;
         installation: Readonly<{
             installationIdentity: string;
             executableIdentity: string;
@@ -137,6 +139,8 @@ export type AgentExternalSessionHookResolveInstallationResult =
 
 export type AgentExternalSessionHookMapEventRequest =
     AgentExternalSessionsInvocationBounds & Readonly<{
+        deadlineAtMs: number;
+        maxSerializedBytes: number;
         installationIdentity: string;
         variantId: string;
         eventId: string;
@@ -671,7 +675,7 @@ type CallbackName = keyof typeof AGENT_EXTERNAL_SESSION_HOOK_LIMITS.callbacks;
 function snapshotInvocation(
     record: Readonly<Record<string, unknown>>,
     callbackName: CallbackName,
-): AgentExternalSessionsInvocationBounds {
+) {
     if (!(record.signal instanceof AbortSignal)) {
         return invalid(`${callbackName} request`, 'signal must be an AbortSignal');
     }

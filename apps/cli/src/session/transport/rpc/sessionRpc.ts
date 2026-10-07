@@ -10,7 +10,7 @@ import {
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import { withUserScopedRpcSocket } from './withUserScopedRpcSocket';
+import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { createExternalActionMachineRpcExecution, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 
@@ -35,17 +35,14 @@ export function resolveSessionRpcContent(params: SessionRpcEncryption): SocketRp
 type CallSessionRpcParams = Readonly<{
   token: string;
   sessionId: string;
+  authorityCeiling?: 'account_automation';
   method: string;
   request: unknown;
   /** Null delegates acknowledgement lifetime to the caller signal/server lifecycle. */
   timeoutMs?: number | null;
   signal?: AbortSignal;
   /** Reissue only a read-only observation when the supervised transport reconnects. */
-  reattachOnReconnect?: Readonly<{
-    readRequest?: () => unknown;
-    /** Passive owner responses: false parks another change request on this connection. */
-    onResult?: (result: unknown) => boolean | Promise<boolean>;
-  }>;
+  reattachOnReconnect?: RpcObservationOptions;
   externalAction?: Readonly<{
     context: ActionExecutorContext;
     effectActionId: string;
@@ -63,6 +60,7 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
   try {
     return await withUserScopedRpcSocket({
       token: params.token, connectTimeoutMs, signal: params.signal,
+      ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
       disconnectMessage: 'RPC socket disconnected before acknowledgement',
       ...(params.reattachOnReconnect ? { reattachOnReconnect: true } : {}),
     }, async (socket, connect, signal) => {
@@ -75,10 +73,7 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
           if (!execution) throw new Error('External Action Session RPC authorization is unavailable');
           return execution;
         } : undefined;
-      while (true) {
-        signal?.throwIfAborted();
-        const request = await (params.reattachOnReconnect?.readRequest?.() ?? params.request);
-        signal?.throwIfAborted();
+      return await readRpcObservation({ request: params.request, signal, observation: params.reattachOnReconnect, read: async (request) => {
         const result = await callSocketRpc({
           socket,
           target: { kind: 'session', id: params.sessionId },
@@ -90,10 +85,8 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
           signal,
           ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
         });
-        signal?.throwIfAborted();
-        const value = params.mode === 'plain' ? result ?? null : result;
-        if (!params.reattachOnReconnect?.onResult || await params.reattachOnReconnect.onResult(value)) return value;
-      }
+        return params.mode === 'plain' ? result ?? null : result;
+      } });
     });
   } catch (error) {
     if (isSocketIoAckTimeoutError(error)) throw markRpcRequestDisposition(new Error('RPC call timeout'), 'outcomeUnknown');

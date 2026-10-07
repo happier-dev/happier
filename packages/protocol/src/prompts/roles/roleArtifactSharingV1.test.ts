@@ -21,4 +21,10 @@ describe('role Artifact grant projection', () => {
     expect(roleArtifactSharingAdapterV1.canShare({ ...artifact, body: '{}' })).toBe(false);
     expect(roleArtifactSharingAdapterV1.canShare({ ...artifact, header: { kind: 'notes.v1' } })).toBe(false);
   });
+
+  it('projects stored granted role documents with additive fields without losing the role', () => {
+    const opened = { ...artifact, body: JSON.stringify({ ...role, future: true, runsAs: { ...role.runsAs, future: true } }) };
+    expect(roleArtifactSharingAdapterV1.canShare(opened)).toBe(true);
+    expect(listSharedRoleArtifactsV1([opened])[0]?.role).toEqual(role);
+  });
 });

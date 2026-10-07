@@ -157,20 +157,15 @@ describe('useSessionExecutionRunLaunchability', () => {
         await hook.unmount();
     });
 
-    it('refreshes backend lookup when the preferred session server changes', async () => {
-        const { storage } = await import('@/sync/domains/state/storage');
-        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: undefined, metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude' } });
-        storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: 'server-canonical' }) } });
+    it('refreshes backend lookup when the exact session Home changes', async () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook((session: typeof sessionState.value) => useSessionExecutionRunLaunchability('session-1', session), {
             initialProps: sessionState.value,
         });
 
-        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-canonical');
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-explicit');
 
-        await act(async () => {
-            storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: 'server-updated' }) } });
-        });
+        sessionState.value = { ...sessionState.value, serverId: 'server-updated' };
         await hook.rerender(sessionState.value);
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-updated');
@@ -178,7 +173,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         await hook.unmount();
     });
 
-    it('uses the direct qualified session Home even when the legacy lookup has no Session', async () => {
+    it('uses the direct session Home without requiring a legacy bare-id lookup', async () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
 

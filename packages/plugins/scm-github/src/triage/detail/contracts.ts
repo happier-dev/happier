@@ -240,6 +240,8 @@ export const GithubOverviewResultV1Schema = defineProtocolUnion([
     headRevision: IdentifierSchema.optional(),
     additions: CountSchema.optional(),
     deletions: CountSchema.optional(),
+    /** GitHub's own count of changed files in the whole pull request (`changed_files`). */
+    changedFiles: CountSchema.optional(),
     branchUpdateEligibility: GithubBranchUpdateEligibilityV1Schema,
   }, { policy: 'closed' }),
   defineProtocolObject({

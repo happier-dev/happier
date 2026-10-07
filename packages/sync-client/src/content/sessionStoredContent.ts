@@ -1,6 +1,9 @@
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { resolveStoredContentKindForSessionEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import type { StrictJsonValue, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
+
+const SessionStoredMessageContentReadSchema = createStoredReadSchema(StrictSessionStoredMessageContentEnvelopeSchema);
 
 export type SessionContentEncryption = Readonly<{
   encryptRaw(payload: unknown): Promise<string>;
@@ -22,7 +25,7 @@ export function resolveSessionStoredContentEnvelope(
   context: Readonly<{ mode: 'plain' | 'e2ee' }> | null,
   input: unknown,
 ): ResolvedSessionStoredContentEnvelope {
-  const parsed = StrictSessionStoredMessageContentEnvelopeSchema.safeParse(input);
+  const parsed = SessionStoredMessageContentReadSchema.safeParse(input);
   if (!parsed.success) return { status: 'malformed' };
   if (!context) return { status: 'locked' };
   if (parsed.data.t !== resolveStoredContentKindForSessionEncryptionMode(context.mode)) return { status: 'mode_mismatch' };

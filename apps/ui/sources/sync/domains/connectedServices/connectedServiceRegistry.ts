@@ -14,6 +14,7 @@ import type {
   ConnectedAccountDescriptorProjectionState,
 } from './connectedAccountDescriptorProjection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 
 export type ConnectedServiceDisplayNameKey =
   | 'connectedServices.serviceNames.claudeSubscription'
@@ -103,6 +104,15 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   projectionConflicts?: readonly ConnectedAccountDescriptorProjectionConflict[];
   executable?: boolean;
 }>;
+
+/** Action admission is separate from retained service identity and read-only navigation. */
+export function canExecuteConnectedServiceAction(
+  entry: ConnectedServiceRegistryEntry,
+  transport: ConnectedAccountUiNegotiation,
+): boolean {
+  return entry.executable === true
+    || (transport === 'legacy' && Boolean(entry.legacyServiceId) && !entry.projectedDescriptor);
+}
 
 export type ConnectedServiceRegistrySnapshot = Readonly<{
   scopeKey: string | null;

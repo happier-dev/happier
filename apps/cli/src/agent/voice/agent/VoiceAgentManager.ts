@@ -85,8 +85,7 @@ function assertVoiceModelSelectionMatches(
 export class VoiceAgentManager {
   private static readonly MAX_HISTORY_TURNS = 48;
   private static readonly MAX_TURN_TEXT_CHARS = 4_000;
-  private static readonly MIN_IDLE_TTL_SECONDS = 60;
-  private static readonly MAX_IDLE_TTL_SECONDS = 6 * 60 * 60; // 6h
+  private static readonly DEFAULT_IDLE_TTL_SECONDS = 60;
   private readonly createRuntime: BackendFactory;
   private readonly resolveSystemAppendBlocks: (args: ResolveVoiceSystemAppendBlocksArgs) => Promise<readonly string[]>;
   private readonly responseTimeoutMs: number;
@@ -555,9 +554,9 @@ export class VoiceAgentManager {
       : randomUUID();
     const rawTtlSeconds = Number.isFinite(params.idleTtlSeconds)
       ? Math.floor(params.idleTtlSeconds)
-      : VoiceAgentManager.MIN_IDLE_TTL_SECONDS;
+      : VoiceAgentManager.DEFAULT_IDLE_TTL_SECONDS;
     const idleTtlMs =
-      Math.max(VoiceAgentManager.MIN_IDLE_TTL_SECONDS, Math.min(VoiceAgentManager.MAX_IDLE_TTL_SECONDS, rawTtlSeconds)) * 1000;
+      Math.max(1, rawTtlSeconds) * 1000;
     const verbosity: Verbosity = params.verbosity === 'balanced' ? 'balanced' : 'short';
     const disabledActionIds = Array.isArray(params.disabledActionIds)
       ? params.disabledActionIds.map((value) => String(value ?? '').trim()).filter(Boolean)

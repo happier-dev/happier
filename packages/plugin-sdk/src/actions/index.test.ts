@@ -358,7 +358,7 @@ describe('ActionsService source contract', () => {
             .toEqualTypeOf<never>();
     });
 
-    it('publishes only the safe Lane 02 Account Security read to installed plugins', () => {
+    it('projects Account Security actions for trusted installed plugins', () => {
         type HumanCredentialLifecycleActionId =
             | 'account.password.enroll'
             | 'account.password.change'
@@ -372,7 +372,7 @@ describe('ActionsService source contract', () => {
         expectTypeOf<Extract<PluginInvocableActionId, 'account.security.get'>>()
             .toEqualTypeOf<'account.security.get'>();
         expectTypeOf<Extract<PluginInvocableActionId, HumanCredentialLifecycleActionId>>()
-            .toEqualTypeOf<never>();
+            .toEqualTypeOf<HumanCredentialLifecycleActionId>();
         expect(getActionSpec('account.security.get').id).toBe('account.security.get');
     });
 
@@ -450,7 +450,7 @@ describe('ActionsService source contract', () => {
         expectTypeOf<PluginActionResultById['session.transcript.get']>()
             .toEqualTypeOf<CanonicalSessionTranscriptGetExternalShareableResultV1>();
         expectTypeOf<Extract<PluginInvocableActionId, 'session.permission_mode.set'>>()
-            .toEqualTypeOf<never>();
+            .toEqualTypeOf<'session.permission_mode.set'>();
         expectTypeOf<Extract<
             PluginInvocableActionId,
             'sessions.subagents.upsert' | 'sessions.subagents.updateStatus' | 'sessions.subagents.complete'

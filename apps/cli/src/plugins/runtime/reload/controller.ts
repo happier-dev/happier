@@ -245,9 +245,9 @@ export function hasBlockingPluginReloadDiagnostic(
     ));
 }
 
-function normalizeShutdownTimeoutMs(value: number | undefined): number {
+function normalizeShutdownTimeoutMs(value: number | undefined): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-        return 5_000;
+        return null;
     }
     return Math.max(0, Math.trunc(value));
 }
@@ -449,7 +449,7 @@ export function createPluginReloadController(params?: Readonly<{
 
     async function waitForRegistryLeasesToDrain(
         registries: ReadonlySet<ResolvedExecutablePluginRuntimeRegistry>,
-        timeoutMs: number,
+        timeoutMs: number | null,
     ): Promise<void> {
         const drained = () => [...registries].every(
             (registry) => (outstandingLeaseCounts.get(registry) ?? 0) === 0,
@@ -457,18 +457,20 @@ export function createPluginReloadController(params?: Readonly<{
         if (drained()) return;
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         let listener: (() => void) | null = null;
-        await Promise.race([
-            new Promise<void>((resolve) => {
-                listener = () => {
-                    if (drained()) resolve();
-                };
-                leaseDrainListeners.add(listener);
-            }),
-            new Promise<void>((resolve) => {
+        const drainPromise = new Promise<void>((resolve) => {
+            listener = () => {
+                if (drained()) resolve();
+            };
+            leaseDrainListeners.add(listener);
+        });
+        if (timeoutMs === null) {
+            await drainPromise;
+        } else {
+            await Promise.race([drainPromise, new Promise<void>((resolve) => {
                 timeoutHandle = setTimeout(resolve, timeoutMs);
                 timeoutHandle.unref?.();
-            }),
-        ]);
+            })]);
+        }
         if (listener) leaseDrainListeners.delete(listener);
         if (timeoutHandle) clearTimeout(timeoutHandle);
     }
@@ -491,11 +493,11 @@ export function createPluginReloadController(params?: Readonly<{
 
     async function disposeRegistryForShutdown(
         registry: ResolvedExecutablePluginRuntimeRegistry,
-        timeoutMs: number,
+        timeoutMs: number | null,
     ): Promise<void> {
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         const disposePromise = registry.dispose({
-            timeoutMs,
+            ...(timeoutMs === null ? {} : { timeoutMs }),
             onError: (event) => {
                 logger.warn('[PLUGIN RUNTIME] Plugin cleanup failed during daemon shutdown', {
                     pluginId: event.pluginId,
@@ -512,6 +514,10 @@ export function createPluginReloadController(params?: Readonly<{
                 return 'failed' as const;
             },
         );
+        if (timeoutMs === null) {
+            await disposePromise;
+            return;
+        }
         const timeoutPromise = new Promise<'timeout'>((resolve) => {
             timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
             timeoutHandle.unref?.();

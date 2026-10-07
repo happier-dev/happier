@@ -13,13 +13,16 @@ import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/eng
 import { stampTurnFacts } from '@/agent/runtime/session/turn/stampTurnFacts';
 import { AgentRuntimeDaemonServiceRequestV1Schema } from './agentRuntimeDaemonServiceProtocol';
 import { AgentRuntimeDaemonServiceTurnWitnessV1Schema, projectAgentRuntimeDaemonServiceTurnWitnessV1 } from './agentRuntimeDaemonServiceTurnWitness';
+import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
 
 describe('daemon service host turn depth', () => {
   it.each([
-    { name: 'fresh session', starterDepth: 0, senderDepth: undefined, turnDepth: 0, workDepth: 0 },
-    { name: 'depth-2 worker on a user turn', starterDepth: 2, senderDepth: undefined, turnDepth: 0, workDepth: 2 },
-    { name: 'agent-caused turn deeper than its session', starterDepth: 1, senderDepth: 3, turnDepth: 4, workDepth: 4 },
-  ])('preserves $name depth from the native host through daemon admission', async ({ starterDepth, senderDepth, turnDepth, workDepth }) => {
+    { name: 'fresh session', starterDepth: 0, senderDepth: undefined, turnDepth: 0, workDepth: 0, messageCount: 1 },
+    { name: 'depth-2 worker on a user turn', starterDepth: 2, senderDepth: undefined, turnDepth: 0, workDepth: 2, messageCount: 1 },
+    { name: 'agent-caused turn deeper than its session', starterDepth: 1, senderDepth: 3, turnDepth: 4, workDepth: 4, messageCount: 1 },
+    { name: 'batched turn with 4097 admitted messages', starterDepth: 0, senderDepth: undefined, turnDepth: 0, workDepth: 0, messageCount: 4097 },
+  ])('preserves $name depth from the native host through daemon admission', async ({ starterDepth, senderDepth, turnDepth, workDepth, messageCount }) => {
+    const userMessageSeqs = Array.from({ length: messageCount }, (_, index) => index + 1);
     const facts = stampTurnFacts({
       sessionWorkDepth: starterDepth,
       ...(senderDepth === undefined ? {} : {
@@ -57,7 +60,7 @@ describe('daemon service host turn depth', () => {
       },
     );
     try {
-      const meta = { localId: 'input-1', turnId: 'turn-1', agentStartCaller: caller };
+      const meta = { localId: 'input-1', turnId: 'turn-1', agentStartCaller: caller, userMessageSeqs };
       await native.sendTurnPrompt('Work on the task', meta);
       expect(admittedWitnesses).toEqual([expect.objectContaining({
         witness: expect.objectContaining({ workDepth, agentStartCaller: { ...caller, turnDepth } }),
@@ -67,6 +70,7 @@ describe('daemon service host turn depth', () => {
       if (!active) throw new Error('Expected an active admitted turn');
       const parsed = projectAgentRuntimeDaemonServiceTurnWitnessV1(active);
       expect(parsed).toMatchObject({ workDepth, agentStartCaller: caller });
+      expect(parsed.userMessageSeqs).toEqual(userMessageSeqs);
       if (!parsed.agentStartCaller) throw new Error('Expected host Session caller facts');
       expect(providerRequests[0]).not.toHaveProperty('agentStartCaller');
       expect(providerRequests[0]).not.toHaveProperty('workDepth');
@@ -95,6 +99,23 @@ describe('daemon service host turn depth', () => {
     });
     expect(projected).not.toHaveProperty('workDepth');
     expect(projected).not.toHaveProperty('agentStartCaller');
+  });
+
+  it('retains exact canonical Session identity on the private daemon request', () => {
+    const sessionId = 's'.repeat(SessionIndexedIdentifierMaxLengthV1);
+    const witness = projectAgentRuntimeDaemonServiceTurnWitnessV1({
+      inputId: 'input-1', turnId: 'turn-1', userMessageSeq: null, userMessageSeqs: [],
+    });
+    const request = {
+      v: 1, context: { sessionId, token: 'A'.repeat(43) },
+      operation: { kind: 'turn.admission.authorize', requestId: 'input-1', witness },
+    };
+    expect(AgentRuntimeDaemonServiceRequestV1Schema.parse(request).context.sessionId).toBe(sessionId);
+    for (const invalidId of [`${sessionId}s`, ' lead', 'lead ']) {
+      expect(AgentRuntimeDaemonServiceRequestV1Schema.safeParse({
+        ...request, context: { ...request.context, sessionId: invalidId },
+      }).success).toBe(false);
+    }
   });
 
   it('rejects malformed host depth rather than normalizing it to zero', () => {

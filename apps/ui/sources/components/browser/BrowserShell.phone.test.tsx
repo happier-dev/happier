@@ -1,15 +1,20 @@
 import * as React from 'react';
-import type { BrowserEventV1 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import type { BrowserCommandV1, BrowserEventV1 } from '@happier-dev/protocol';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
+import type { BrowserControlState } from '@/sync/domains/browser/control';
+
+const windowSize = vi.hoisted(() => ({ width: 390, height: 844 }));
 
 // The phone composition is decided by the window (a compact device) as well as the container, so
-// this file pins the window at a 390 × 844 phone through the canonical React Native boundary mock.
+// this file defaults to 390 × 844 through the canonical React Native boundary mock; the address
+// interaction regression also exercises the desktop composition.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }) });
+    return createReactNativeWebMock({ useWindowDimensions: () => ({ ...windowSize, scale: 3, fontScale: 1 }) });
 });
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -30,10 +35,6 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key) });
 });
-
-vi.mock('@/sync/domains/local/services/preview/useLocalServicePreviewState', () => ({
-    useLocalServicePreviewState: () => null,
-}));
 
 async function createPageState() {
     const reducer = await import('@/sync/domains/browser/control/reducer');
@@ -83,6 +84,61 @@ async function createPageState() {
 }
 
 describe('BrowserShell on a phone', () => {
+    beforeEach(() => { windowSize.width = 390; windowSize.height = 844; });
+
+    it.each([390, 1440])('takes control on a real address edit, preserving the draft through owner updates at width %i', async (width) => {
+        windowSize.width = width;
+        const { BrowserShell } = await import('./BrowserShell');
+        const reducer = await import('@/sync/domains/browser/control/reducer');
+        const initial = await createPageState();
+        const view = initial.viewsById.view_1;
+        const daemonState = {
+            ...initial,
+            viewsById: { ...initial.viewsById, view_1: { ...view, adapterKind: 'chromiumSidecar' as const, engineKind: 'streamedSurface' as const,
+                adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar', supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }) } },
+        };
+        const controlled = (controller: 'agent' | 'human', controlEpoch: number, interruptionSettling = false) => reducer.applyBrowserControlEvent(daemonState, {
+            kind: 'controllerChanged', eventId: `control_${controlEpoch}_${interruptionSettling}`, browserSessionId: 'browser_session_1', viewId: 'view_1', occurredAt: controlEpoch,
+            state: { browserSessionId: 'browser_session_1', viewId: 'view_1', controller, controlEpoch, interruptionSettling },
+        });
+        const commands: BrowserCommandV1[] = [];
+        const render = (state: BrowserControlState) => <BrowserShell browserSessionId="browser_session_1" platform="web" state={state}
+            onCommand={command => { commands.push(command); }} testID="browser-shell" />;
+        const screen = await renderScreen(render(controlled('agent', 4)));
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onFocus?.({}); });
+        if (width === 1440) await screen.pressByTestIdAsync('browser-shell-address-copy');
+        expect(commands).toEqual([]);
+
+        // A repeated platform value is not an edit; the first changed value interrupts before Submit.
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('https://app.lumen.test/login'); });
+        expect(commands).toEqual([]);
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('next.example/path'); });
+        expect(commands).toEqual([expect.objectContaining({ kind: 'takeControl', browserSessionId: 'browser_session_1', viewId: 'view_1' })]);
+        expect(screen.findByTestId('browser-shell-address')?.props.value).toBe('next.example/path');
+        expect(screen.findByTestId('browser-shell-presence-human')).toBeFalsy();
+
+        // Repeated keystrokes do not issue independent takeovers while this owner's epoch drains.
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('next.example/path?q=1'); });
+        expect(commands.map(command => command.kind)).toEqual(['takeControl']);
+        // No owner answer can also mean a failed transport. A fresh edit gesture must be retryable.
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onBlur?.({}); });
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onFocus?.({}); });
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('next.example/path?q=1'); });
+        expect(commands.map(command => command.kind)).toEqual(['takeControl', 'takeControl']);
+        await screen.update(render(controlled('human', 5, true)));
+        expect(screen.findByTestId('browser-shell-address')?.props.value).toBe('next.example/path?q=1');
+        await screen.update(render(controlled('human', 5)));
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('next.example/path?q=2'); });
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onSubmitEditing?.({}); });
+        expect(commands.map(command => command.kind)).toEqual(['takeControl', 'takeControl', 'navigate']);
+        expect(commands[2]).toMatchObject({ kind: 'navigate', url: 'https://next.example/path?q=2' });
+
+        // A later agent-owned epoch is a new edit intent even if the field remains focused.
+        await screen.update(render(controlled('agent', 6)));
+        await act(async () => { screen.findByTestId('browser-shell-address')?.props.onChangeText?.('other.example/'); });
+        expect(commands.map(command => command.kind)).toEqual(['takeControl', 'takeControl', 'navigate', 'takeControl']);
+    });
+
     it('recomposes the chrome: the host capsule on top, the page controls in a bottom bar', async () => {
         const { BrowserShell } = await import('./BrowserShell');
         const screen = await renderScreen(

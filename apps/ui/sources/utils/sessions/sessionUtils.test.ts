@@ -2083,11 +2083,17 @@ describe('a no-folder session', () => {
         homeDir: '/Users/test',
         host: 'mbp.local',
         sessionDirectoryV1: { v: 1, kind: 'managed' },
-    } as never;
+    } satisfies NonNullable<Session['metadata']>;
 
     it('is named “New chat” until it has a summary, never after its private folder', async () => {
         const { getSessionName } = await import('./sessionUtils');
         expect(getSessionName(createBaseSession({ metadata: managedMetadata }))).toBe('session.folderless.untitledChat');
+        expect(getSessionName(createBaseSession({
+            metadata: { ...managedMetadata, name: '   ' },
+        }))).toBe('session.folderless.untitledChat');
+        expect(getSessionName(createBaseSession({
+            metadata: { path: '/Users/test/project', host: 'mbp.local', name: '   ' },
+        }))).toBe('project');
         expect(getSessionName(createBaseSession({
             metadata: { ...(managedMetadata as object), summary: { text: 'Haiku in notes.md', updatedAt: 1 } } as never,
         }))).toBe('Haiku in notes.md');

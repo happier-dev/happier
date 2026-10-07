@@ -69,6 +69,8 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
 }: {
   set: StoreSet<S>;
 }): RealtimeDomain {
+  const setSyncError = (error: SyncError) => set((state) =>
+    state.syncError === error ? state : { ...state, syncError: error });
   return {
     socketStatus: 'disconnected',
     socketLastConnectedAt: null,
@@ -125,8 +127,8 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
           socketLastErrorAt: Date.now(),
         };
       }),
-    setSyncError: (error) => set((state) => ({ ...state, syncError: error })),
-    clearSyncError: () => set((state) => ({ ...state, syncError: null })),
+    setSyncError,
+    clearSyncError: () => setSyncError(null),
     setAccountSettingsSyncStatus: (status) => set((state) => ({ ...state, accountSettingsSyncStatus: status })),
     resetAccountSettingsSyncStatus: () => set((state) => ({ ...state, accountSettingsSyncStatus: createAccountSettingsIdleStatus() })),
     setLastSyncAt: (ts) => set((state) => ({ ...state, lastSyncAt: ts })),

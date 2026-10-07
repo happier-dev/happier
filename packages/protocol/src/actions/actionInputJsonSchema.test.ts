@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import * as m from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AutomationDefinitionCreateRequestSchema } from '../automations/automationApiV3.js';
 
 import {
   ActionJsonSchemaProjectionError,
@@ -146,4 +149,29 @@ describe('actionInputJsonSchema', () => {
     expect(JSON.stringify(kindSchema)).toContain('none');
     expect(JSON.stringify(kindSchema)).toContain('branch');
   });
+});
+
+it('projects Classic roots with genuine Mini children without weakening typed refusals', () => {
+ const mini = lazyZodSchema(() => z.object({ name: m.string().check(m.trim(),m.minLength(1)), count: m._default(m.number().check(m.int()),3) }).strict());
+ const classic = z.object({ name: z.string().trim().min(1), count: z.number().int().default(3) }).strict();
+ for(const target of ['draft-7','draft-2020-12'] as const) {
+  expect(zodSchemaToJsonSchemaObject(mini,{target})).toEqual(zodSchemaToJsonSchemaObject(classic,{target}));
+  const unsupported = lazyZodSchema(() => z.object({ value: m.date() }).strict());
+  expect(()=>zodSchemaToJsonSchemaObject(unsupported,{target})).toThrow(ActionJsonSchemaProjectionError);
+  try { zodSchemaToJsonSchemaObject(unsupported,{target}); } catch(error) {
+   expect(error).toMatchObject({name:'ActionJsonSchemaProjectionError',code:'action_schema_unrepresentable'});
+  }
+ }
+ expect(mini.parse({name:' kept '})).toEqual(classic.parse({name:' kept '}));
+ expect(()=>mini.parse({name:''})).toThrow(z.ZodError);
+});
+it('keeps ref-rich lazy Action roots at their concrete public projection', () => {
+ const repeated=z.object({id:z.string().min(1)}).strict().describe('Repeated argument');
+ const concrete=z.object({first:repeated,second:repeated}).strict();
+ for(const target of ['draft-7','draft-2020-12'] as const) {
+  expect(zodSchemaToJsonSchemaObject(lazyZodSchema(()=>concrete),{target})).toEqual(zodSchemaToJsonSchemaObject(concrete,{target}));
+  const automation=zodSchemaToJsonSchemaObject(AutomationDefinitionCreateRequestSchema,{target});
+  expect(automation).toMatchObject({type:'object',required:['automationId','name','enabled','executionRecipe','triggers']});
+  expect(automation.$ref).toBeUndefined();
+ }
 });

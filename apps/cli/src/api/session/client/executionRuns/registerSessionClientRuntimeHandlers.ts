@@ -262,14 +262,17 @@ export function registerSessionClientRuntimeHandlers(
     const resolveOwnerAccountSettings = async (): Promise<AccountSettings | null> => {
         return (await resolveOwnerAccountSettingsSnapshot())?.settings ?? null;
     };
+    const readCodingPromptBehavior = () => params.sessionRuntimeControls?.readCodingPromptBehavior?.() ?? null;
     const sessionInteractionHost = parentSessionForTools
         ? {
             session: parentSessionForTools,
             machineId: sessionMachineId,
+            readCodingPromptBehavior,
             permissionHandler: createProviderEnforcedPermissionHandler({
                 session: parentSessionForTools,
                 logPrefix: '[Voice Agent Session]',
                 getAccountSettings: () => ownerAccountSettingsForRuntime,
+                getCodingPromptBehavior: readCodingPromptBehavior,
             }),
             ...(typeof params.sessionRuntimeControls?.listSkills === 'function'
                 ? { listSkills: () => params.sessionRuntimeControls!.listSkills!() }
@@ -495,7 +498,6 @@ export function registerSessionClientRuntimeHandlers(
         }),
         // A.13 watcher bound floor: idle TTL must be >= 600_000 ms (10 min) per packet body section 2.
         transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({
-            maxLeases: 16,
             idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
         }),
         writeTranscriptItems: async (_sessionId: string, items: readonly SessionTranscriptActionItem[]) =>

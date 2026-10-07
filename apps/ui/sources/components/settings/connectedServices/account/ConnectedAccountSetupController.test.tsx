@@ -269,6 +269,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(authenticationCommands).toEqual([
             { operation: 'beginConnect', service, modeId: 'manual' },
             { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'secret-token' } },
+            { operation: 'cancel', attemptId: 'attempt-1' },
         ]);
     });
 
@@ -368,13 +369,35 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(screen.findHostByTestId('connected-account-manual:token')!.props.editable).toBe(true);
         expect(screen.findHostByTestId('connected-account-manual:token')!.props.value).toBe('');
         expect(screen.findHostByTestId('connected-account:error')).toBeNull();
+        expect(authenticationCommands).toContainEqual({ operation: 'cancel', attemptId: 'attempt-1' });
         await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-corrected'));
         await screen.pressByTestIdAsync('connected-account-manual:submit');
         await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service, accountId: 'corrected-account' }));
+        await vi.waitFor(() => expect(authenticationCommands).toContainEqual({ operation: 'cancel', attemptId: 'attempt-2' }));
         expect(authenticationCommands.filter((command) => command.operation === 'submitManual')).toEqual([
             { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'sk-ant-qa-fake' } },
             { operation: 'submitManual', attemptId: 'attempt-2', fields: { token: 'sk-ant-corrected' } },
         ]);
+    });
+
+    it('refreshes a stale described manual form before retrying a terminal admission rejection', async () => {
+        let attemptsBegun = 0;
+        handleAuthentication = (command) => command.operation === 'beginConnect'
+            ? { status: 'awaitingManual', attemptId: `attempt-${++attemptsBegun}` }
+            : command.operation === 'submitManual'
+                ? { status: 'rejected', attemptId: 'attempt-1', code: 'connected_account_manual_fields_invalid' }
+                : { status: 'cancelled', attemptId: 'attempt-1' };
+        const screen = await manualScreen();
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: {
+            defaultModeId: 'manual', modes: [{ ...authentication.modes[0], fields: [{ id: 'apiKey', title: 'API key', secret: true, schema: { type: 'string', minLength: 1 } }] }],
+        } } });
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'captured-token'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-account:error:retry');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:apiKey')).not.toBeNull());
+        expect(screen.findHostByTestId('connected-account-manual:token')).toBeNull();
+        expect(attemptsBegun).toBe(2);
     });
 
     it('keeps an unsupported legacy service closed before authentication, pool, or quota effects', async () => {
@@ -390,6 +413,30 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(authenticationCommands).toEqual([]);
         expect(httpRequests.filter((url) => url.pathname.startsWith('/v4/connect/qualified/'))).toEqual([]);
         expect(screen.findHostByTestId('qualified-account-detail')).toBeNull();
+    });
+
+    it('uses the generated legacy identity only to reach fresh revisioned setup, then submits through the daemon owner', async () => {
+        const compatibility = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID.github;
+        const modeId = compatibility.authenticationModeByCredentialKind.token!;
+        installDescription({ ...described, service: compatibility.service,
+            descriptor: { id: compatibility.service.localId, title: 'GitHub', authentication: {
+                defaultModeId: modeId, modes: [{ ...authentication.modes[0], id: modeId }],
+            } },
+            operationTransport: { kind: 'legacy', peerClass: 'revisioned_v2_v3', serviceId: 'github' },
+        }, 'github');
+        // No machine descriptor is retained: the generated identity cannot supply an authentication mode.
+        installConnectedAccountDescriptorProjection({ scopeKey: getActiveServerSnapshot().serverId,
+            status: 'ready', conflicts: [], errorReason: null, descriptors: [] });
+        handleAuthentication = (command) => command.operation === 'submitManual'
+            ? { status: 'connected', attemptId: 'attempt-1', account: { service: compatibility.service, accountId: 'new-account' } }
+            : { status: 'awaitingManual', attemptId: 'attempt-1' };
+        const screen = await renderScreen(element(selection, compatibility.service));
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+        expect(controlCommands).toContainEqual({ operation: 'describeService', service: compatibility.service, requiredOperation: 'account_list' });
+        expect(authenticationCommands).toContainEqual({ operation: 'beginConnect', service: compatibility.service, modeId });
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'github-token'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service: compatibility.service, accountId: 'new-account' }));
     });
 
     it('cancels locally without waiting and cancels a live reply to the abandoned submission', async () => {
@@ -633,6 +680,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(authenticationCommands).toEqual([
             { operation: 'beginReconnect', account: ref },
             { operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' },
+            { operation: 'cancel', attemptId: 'attempt-1' },
         ]);
         expect(controlCommands).toContainEqual({ operation: 'readConfiguration', target: { kind: 'account', account: ref } });
         expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration', target: { kind: 'account', account: ref },

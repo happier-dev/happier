@@ -283,7 +283,20 @@ describe('plugin UI public surface', () => {
             'bug',
             'pin',
             'conversations',
+            'waveform',
+            'desktop',
             'pause',
+            'failure',
+            'unavailable',
+            'denied',
+            'review',
+            'attention',
+            'escalating',
+            'merge-ready',
+            'mention',
+            'assigned',
+            'new',
+            'waiting',
         ]);
     });
 

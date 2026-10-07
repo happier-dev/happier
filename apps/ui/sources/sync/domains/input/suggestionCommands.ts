@@ -26,47 +26,12 @@ export interface CommandItem {
 }
 
 export interface SearchOptions {
+    nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
     limit?: number;
     threshold?: number;
     /** Current session composer Action descriptors, owned and filtered by its controller. */
     contributedActions?: readonly PluginContributedActionDescriptor[];
 }
-
-// Commands to ignore/filter out
-export const IGNORED_COMMANDS = [
-    "add-dir",
-    "agents",
-    "config",
-    "statusline",
-    "bashes",
-    "settings",
-    "cost",
-    "doctor",
-    "exit",
-    "help",
-    "ide",
-    "init",
-    "install-github-app",
-    "mcp",
-    "memory",
-    "migrate-installer",
-    "model",
-    "pr-comments",
-    "release-notes",
-    "resume",
-    "status",
-    "bug",
-    "review",
-    "security-review",
-    "terminal-setup",
-    "upgrade",
-    "vim",
-    "permissions",
-    "hooks",
-    "export",
-    "logout",
-    "login"
-];
 
 // Default commands always available
 const DEFAULT_COMMANDS: CommandItem[] = [
@@ -246,6 +211,7 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 function getCommandsFromSession(
     sessionId: string | null,
     contributedActions: readonly PluginContributedActionDescriptor[] = [],
+    nativeCommands: readonly Pick<CommandItem, 'command' | 'description'>[] = [],
 ): CommandItem[] {
     const state = storage.getState();
     const session = sessionId ? state.sessions?.[sessionId] : undefined;
@@ -261,33 +227,20 @@ function getCommandsFromSession(
         commands.push(invocation);
     }
     const metadata = session ? readSessionOwnerMetadataView(session) : null;
-    if (metadata) {
-        // Prefer richer metadata when available.
-        const details = (metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
-        if (Array.isArray(details) && details.length > 0) {
-            for (const d of details) {
-                const cmd = typeof d.command === 'string' ? d.command : null;
-                if (!cmd) continue;
-                if (IGNORED_COMMANDS.includes(cmd)) continue;
-                if (commands.find(c => c.command === cmd)) continue;
-                commands.push({
-                    command: cmd,
-                    description: typeof d.description === 'string' && d.description.trim().length > 0
-                        ? d.description
-                        : COMMAND_DESCRIPTIONS[cmd]
-                });
-            }
-        } else if (metadata.slashCommands) {
-            // Fallback: commands from metadata.slashCommands (filter with ignore list).
-            for (const cmd of metadata.slashCommands) {
-                if (IGNORED_COMMANDS.includes(cmd)) continue;
-                if (commands.find(c => c.command === cmd)) continue;
-                commands.push({
-                    command: cmd,
-                    description: COMMAND_DESCRIPTIONS[cmd]
-                });
-            }
-        }
+    const details = metadata?.slashCommandDetails;
+    const sessionCommands = Array.isArray(details) && details.length > 0
+        ? details
+        : (metadata?.slashCommands ?? []).map((command) => ({ command }));
+    for (const entry of [...sessionCommands, ...nativeCommands]) {
+        const command = entry.command;
+        if (!command) continue;
+        if (commands.some((item) => item.command === command)) continue;
+        commands.push({
+            command,
+            description: 'description' in entry && typeof entry.description === 'string' && entry.description.trim().length > 0
+                ? entry.description
+                : COMMAND_DESCRIPTIONS[command],
+        });
     }
 
     return [...commands, ...buildContributedActionSlashCommands(commands, contributedActions)];
@@ -302,7 +255,7 @@ export async function searchCommands(
     const { limit = 10, threshold = 0.3, contributedActions = [] } = options;
     
     // Get commands from session metadata (no caching)
-    const commands = getCommandsFromSession(sessionId, contributedActions);
+    const commands = getCommandsFromSession(sessionId, contributedActions, options.nativeCommands);
     
     // If query is empty, return all commands
     if (!query || query.trim().length === 0) {

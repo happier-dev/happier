@@ -1,4 +1,4 @@
-import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs } from '../../connect/configurationActionsV1.js';
 
 const common = {
@@ -9,14 +9,46 @@ const common = {
   cli: { commands: [], acceptsServerId: true },
 } satisfies Pick<PreNormalizedActionSpec, 'safety' | 'sideEffectClass' | 'requiredAuthority' | 'executionPlacement' | 'placements' | 'surfaces' | 'cli'>;
 const { cli: _cli, ...clientOnlyCommon } = common;
+const memberFields = [
+  { path: 'group', title: 'Qualified pool', widget: 'json', required: true },
+  { path: 'expectedGeneration', title: 'Expected pool generation', widget: 'text', required: true },
+  { path: 'expectedIncarnation', title: 'Expected pool incarnation', widget: 'text' },
+  { path: 'connectedAccountId', title: 'Connected account id', widget: 'text', required: true },
+  { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
+] satisfies readonly ActionInputFieldHint[];
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
-  { ...common, id: 'connectedServices.accounts.default.set', title: 'Set connected-account default', description: 'Set or clear this account as an Agent default through its declared connected-account purposes.', bindings: { mcpToolName: 'connected_services_accounts_default_set' }, inputSchema: inputs['connectedServices.accounts.default.set'], outputSchema: outputs['connectedServices.accounts.default.set'] },
-  { ...common, id: 'connectedServices.pools.create', title: 'Create connected-service pool', description: 'Create a pool through the qualified Connected Account owner.', bindings: { mcpToolName: 'connected_services_pools_create' }, inputSchema: inputs['connectedServices.pools.create'], outputSchema: outputs['connectedServices.pools.create'] },
-  { ...common, id: 'connectedServices.pools.patch', title: 'Edit connected-service pool', description: 'Update the pool name or policy under its current revision.', bindings: { mcpToolName: 'connected_services_pools_patch' }, inputSchema: inputs['connectedServices.pools.patch'], outputSchema: outputs['connectedServices.pools.patch'] },
-  { ...common, id: 'connectedServices.pools.delete', title: 'Delete connected-service pool', description: 'Delete the exact pool incarnation and clear its Agent defaults.', bindings: { mcpToolName: 'connected_services_pools_delete' }, inputSchema: inputs['connectedServices.pools.delete'], outputSchema: outputs['connectedServices.pools.delete'] },
-  { ...common, id: 'connectedServices.pools.members.add', title: 'Add connected-service pool member', description: 'Add an account using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_add' }, inputSchema: inputs['connectedServices.pools.members.add'], outputSchema: outputs['connectedServices.pools.members.add'] },
-  { ...common, id: 'connectedServices.pools.members.patch', title: 'Edit connected-service pool member', description: 'Update member priority or enabled state using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_patch' }, inputSchema: inputs['connectedServices.pools.members.patch'], outputSchema: outputs['connectedServices.pools.members.patch'] },
-  { ...common, id: 'connectedServices.pools.members.remove', title: 'Remove connected-service pool member', description: 'Remove an account using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_remove' }, inputSchema: inputs['connectedServices.pools.members.remove'], outputSchema: outputs['connectedServices.pools.members.remove'] },
+  { ...common, id: 'connectedServices.accounts.default.set', title: 'Set connected-account default', description: 'Set or clear this account as an Agent default through its declared connected-account purposes.', bindings: { mcpToolName: 'connected_services_accounts_default_set' }, inputSchema: inputs['connectedServices.accounts.default.set'], outputSchema: outputs['connectedServices.accounts.default.set'], inputHints: { fields: [
+    { path: 'account', title: 'Qualified account', widget: 'json', required: true },
+    { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+    { path: 'makeDefault', title: 'Use this account', widget: 'boolean', required: true },
+    { path: 'machineId', title: 'Catalog machine', widget: 'text' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.create', title: 'Create connected-service pool', description: 'Create a pool through the qualified Connected Account owner.', bindings: { mcpToolName: 'connected_services_pools_create' }, inputSchema: inputs['connectedServices.pools.create'], outputSchema: outputs['connectedServices.pools.create'], inputHints: { fields: [
+    { path: 'service', title: 'Qualified service', widget: 'json', required: true },
+    { path: 'group', title: 'New pool identity, name and policy', widget: 'json', required: true },
+  ] } },
+  { ...common, id: 'connectedServices.pools.patch', title: 'Edit connected-service pool', description: 'Update the pool name or policy under its current revision.', bindings: { mcpToolName: 'connected_services_pools_patch' }, inputSchema: inputs['connectedServices.pools.patch'], outputSchema: outputs['connectedServices.pools.patch'], inputHints: { fields: [
+    { path: 'service', title: 'Qualified service', widget: 'json', required: true },
+    { path: 'groupId', title: 'Pool id', widget: 'text', required: true },
+    { path: 'expectedGeneration', title: 'Expected pool generation', widget: 'text', required: true },
+    { path: 'expectedIncarnation', title: 'Expected pool incarnation', widget: 'text' },
+    { path: 'displayName', title: 'Pool name', widget: 'text' },
+    { path: 'policy', title: 'Pool policy', widget: 'json' },
+    { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.delete', title: 'Delete connected-service pool', description: 'Delete the exact pool incarnation and clear its Agent defaults.', bindings: { mcpToolName: 'connected_services_pools_delete' }, inputSchema: inputs['connectedServices.pools.delete'], outputSchema: outputs['connectedServices.pools.delete'], inputHints: { fields: [
+    { path: 'group', title: 'Qualified pool', widget: 'json', required: true },
+    { path: 'expectedGeneration', title: 'Expected pool generation', widget: 'text', required: true },
+    { path: 'expectedIncarnation', title: 'Expected pool incarnation', widget: 'text', required: true },
+    { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.members.add', title: 'Add connected-service pool member', description: 'Add an account using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_add' }, inputSchema: inputs['connectedServices.pools.members.add'], outputSchema: outputs['connectedServices.pools.members.add'], inputHints: { fields: [...memberFields,
+    { path: 'priority', title: 'Priority', widget: 'text' }, { path: 'enabled', title: 'Enabled', widget: 'boolean' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.members.patch', title: 'Edit connected-service pool member', description: 'Update member priority or enabled state using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_patch' }, inputSchema: inputs['connectedServices.pools.members.patch'], outputSchema: outputs['connectedServices.pools.members.patch'], inputHints: { fields: [...memberFields,
+    { path: 'priority', title: 'Priority', widget: 'text' }, { path: 'enabled', title: 'Enabled', widget: 'boolean' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.members.remove', title: 'Remove connected-service pool member', description: 'Remove an account using the pool revision owner.', bindings: { mcpToolName: 'connected_services_pools_members_remove' }, inputSchema: inputs['connectedServices.pools.members.remove'], outputSchema: outputs['connectedServices.pools.members.remove'], inputHints: { fields: memberFields } },
   { ...common, id: 'connectedServices.accounts.rename', title: 'Rename connected account', description: 'Set or clear the Account-owned display label of a connected account.', bindings: { mcpToolName: 'connected_services_accounts_rename' }, inputSchema: inputs['connectedServices.accounts.rename'], outputSchema: outputs['connectedServices.accounts.rename'], inputHints: { fields: [{ path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'label', title: 'Label', widget: 'text' }] } },
   { ...common, id: 'connectedServices.pools.switchNow', title: 'Switch connected-service pool account', description: 'Select an account through the pool revision and runtime cooldown owner. A cooldown override must be explicit.', bindings: { mcpToolName: 'connected_services_pools_switch_now' }, inputSchema: inputs['connectedServices.pools.switchNow'], outputSchema: outputs['connectedServices.pools.switchNow'], inputHints: { fields: [{ path: 'group', title: 'Qualified pool', widget: 'json', required: true }, { path: 'connectedAccountId', title: 'Account id', widget: 'text', required: true }, { path: 'expectedGeneration', title: 'Expected generation', widget: 'text', required: true }, { path: 'expectedIncarnation', title: 'Expected incarnation', widget: 'text' }, { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' }, { path: 'overrideRuntimeCooldown', title: 'Override cooldown', widget: 'boolean' }] } },
   { ...common, id: 'connectedServices.pools.reorder', title: 'Reorder connected-service pool', description: 'Move one member before or after a current anchor, or replace the complete member priority order. Preserve current membership and pool revision checks for every mutation.', bindings: { mcpToolName: 'connected_services_pools_reorder' }, inputSchema: inputs['connectedServices.pools.reorder'], outputSchema: outputs['connectedServices.pools.reorder'], inputHints: { fields: [{ path: 'group', title: 'Qualified pool', widget: 'json', required: true }, { path: 'move', title: 'Member and anchored position', widget: 'json', required: false }, { path: 'accountIds', title: 'Complete ordered member ids (alternative to move)', widget: 'json', required: false }] } },

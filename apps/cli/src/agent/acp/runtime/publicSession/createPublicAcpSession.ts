@@ -1671,30 +1671,43 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             retryable: true,
           };
         }
+        const steerProviderSessionId = providerSessionId;
         const providerSteer = options.definition?.delivery?.steer;
-        let promptContent: readonly ContentBlock[] | null = null;
-        if (!providerSteer) {
-          try {
-            promptContent = await buildAcpPromptContentBlocks({
-              cwd: request.cwd,
-              sessionId: 'sessionId' in request ? request.sessionId : undefined,
-              text: sendRequest.input.text,
-              ...(sendRequest.input.structuredInput === undefined
-                ? {}
-                : { structuredInput: sendRequest.input.structuredInput }),
-              acceptsImageInput: backend.supportsImagePrompts()
-                || options.definition?.acceptsVerifiedImageInput === true,
-            });
-          } catch (error) {
-            if (error instanceof AcpPromptProjectionError) {
-              return {
-                status: error.code === 'acp_image_input_unsupported' ? 'unsupported' : 'rejected',
-                diagnostic: diagnostic(error.code, error.message),
-                retryable: false,
-              };
-            }
-            throw error;
+        let promptContent: readonly ContentBlock[];
+        try {
+          promptContent = await buildAcpPromptContentBlocks({
+            cwd: request.cwd,
+            sessionId: 'sessionId' in request ? request.sessionId : undefined,
+            text: sendRequest.input.text,
+            ...(sendRequest.input.structuredInput === undefined
+              ? {}
+              : { structuredInput: sendRequest.input.structuredInput }),
+            acceptsImageInput: backend.supportsImagePrompts()
+              || options.definition?.acceptsVerifiedImageInput === true,
+          });
+        } catch (error) {
+          if (error instanceof AcpPromptProjectionError) {
+            return {
+              status: error.code === 'acp_image_input_unsupported' ? 'unsupported' : 'rejected',
+              diagnostic: diagnostic(error.code, error.message),
+              retryable: false,
+            };
           }
+          throw error;
+        }
+        if (disposed || runtimeEnded || dependencies.signal.aborted || !dependencies.isCurrent()) {
+          return {
+            status: 'unavailable' as const,
+            diagnostic: publicationFailureDiagnostic ?? diagnostic('acp_runtime_unavailable'),
+            retryable: false,
+          };
+        }
+        if (activeTurn !== turn || providerSessionId !== steerProviderSessionId) {
+          return {
+            status: 'rejected' as const,
+            diagnostic: diagnostic('acp_steer_requires_active_turn'),
+            retryable: true,
+          };
         }
         // A steer is a new admitted input. Install its exact carrier before the
         // transport call, because ACP may request permission while that call is
@@ -1704,9 +1717,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         try {
           if (providerSteer) {
             const extensionParams = AgentRuntimeJsonValueV1Schema.parse(providerSteer.buildParams({
-              providerSessionId,
+              providerSessionId: steerProviderSessionId,
               inputIds: sendRequest.inputIds,
               input: sendRequest.input,
+              content: promptContent.map((block) => AgentRuntimeJsonValueV1Schema.parse(block)),
             }));
             const response = AgentRuntimeJsonValueV1Schema.parse(
               await backend.requestExtension(providerSteer.method, extensionParams),
@@ -1715,7 +1729,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
               throw new Error('ACP provider steer extension did not accept input');
             }
           } else {
-            await backend.sendSteerPrompt(providerSessionId, promptContent!);
+            await backend.sendSteerPrompt(steerProviderSessionId, promptContent);
           }
         } catch (error) {
           publish({

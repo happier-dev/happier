@@ -31,6 +31,7 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
   return {
     freshness: 'fresh',
     pending: 'idle',
+    passes: 1,
     configuredSources: [{ sourceInstanceId: INSTANCE, source: SOURCE, available: true }],
     ...overrides,
   };

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveConnectMoreBlockForRequest, selectConnectMoreOffer, CONNECT_MORE_BROWSE_ID, readConnectedServiceSetupResult } from './connectMoreBlocks';
 
-type Entry = Parameters<typeof selectConnectMoreOffer>[0]['addable'][number];
+type Entry = Parameters<typeof selectConnectMoreOffer>[0]['catalog'][number];
 
 function entry(serviceKey: string, fields: Partial<Entry> & Readonly<{ oauth?: boolean }> = {}): Entry {
     return {
@@ -37,7 +37,7 @@ describe('selectConnectMoreOffer', () => {
     it('offers, on the page, the agents’ services nobody connected and nobody set aside, and browses the rest', () => {
         const offer = selectConnectMoreOffer({
             layout: 'section',
-            addable: [claude, gemini, keyed, github],
+            catalog: [claude, gemini, keyed, github],
             connectableKeys: new Set(['claude', 'gemini']),
             hidden: new Set(['connect:gemini']),
         });
@@ -55,7 +55,7 @@ describe('selectConnectMoreOffer', () => {
         const anthropic = entry('anthropic', { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } });
         const offer = selectConnectMoreOffer({
             layout: 'firstRun',
-            addable: [...featured, openai, anthropic, github],
+            catalog: [...featured, openai, anthropic, github],
             connectableKeys: new Set(['claude', 'chatgpt', 'gemini', 'openai', 'anthropic']),
             hidden: new Set(),
         });
@@ -66,7 +66,7 @@ describe('selectConnectMoreOffer', () => {
     it('does not browse when every addable service is already a block', () => {
         const offer = selectConnectMoreOffer({
             layout: 'section',
-            addable: [claude],
+            catalog: [claude],
             connectableKeys: new Set(['claude']),
             hidden: new Set(),
         });

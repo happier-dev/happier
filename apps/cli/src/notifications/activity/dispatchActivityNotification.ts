@@ -56,7 +56,9 @@ function notificationDedupeKey(event: ActivityNotificationEvent): string | null 
     return event.actionRequestId ? [event.topic, event.actionRequestId].join('\0') : null;
   }
   if (event.topic === 'workflow_run_update') {
-    return [event.topic, event.runId, event.updateKind].join('\0');
+    // The workflow owner emits committed occurrences. Two distinct invocation
+    // holds can share a Run and kind; time proximity is not replay evidence.
+    return null;
   }
   if (event.topic === 'connected_service_account_switch') {
     return [

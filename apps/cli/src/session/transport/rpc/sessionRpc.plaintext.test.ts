@@ -6,6 +6,11 @@ import { decrypt, decodeBase64, encrypt, encodeBase64 } from '@/api/encryption';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { API_TOKEN_FULL_GRANT_V1, verifyExternalActionMachineRpcRequestV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { createSocketIoManagerStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { io } from 'socket.io-client';
+import axios from 'axios';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 let nextRpcAck: any = null;
 let nextSocket: FakeSocket | null = null;
@@ -132,7 +137,71 @@ vi.mock('socket.io-client', () => ({
 }));
 
 import { callSessionRpc, readSessionRpcRequestDisposition } from './sessionRpc';
-import { waitForExecutionRun, watchExecutionRun } from '@/session/services/executionRuns';
+import { startExecutionRunStream, waitForExecutionRun, watchExecutionRun } from '@/session/services/executionRuns';
+
+describe('execution-run caller authority at the Socket.IO boundary', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    nextRpcAck = null;
+    nextSocket = null;
+  });
+
+  it('keeps an automation stream call narrowed when using Account credentials', async () => {
+    nextRpcAck = { ok: true, result: { streamId: 'voice-stream' } };
+    const request = {
+      token: 'account-token', sessionId: 'voice-session', mode: 'plain' as const, ctx: null,
+      authorityCeiling: 'account_automation' as const,
+      request: { runId: 'voice-run', message: 'Agent-authored turn' },
+    };
+    await expect(startExecutionRunStream(request)).resolves.toMatchObject({ ok: true, data: { streamId: 'voice-stream' } });
+    expect(vi.mocked(io).mock.calls.at(-1)?.[1]?.auth).toMatchObject({
+      token: 'account-token', authorityCeiling: 'account_automation',
+    });
+  });
+
+  it.each([
+    { scope: 'attached', authority: 'account_automation', surface: 'agent' },
+    { scope: 'detached', authority: 'account_automation', surface: 'agent' },
+    { scope: 'attached', authority: 'present_user', surface: 'cli' },
+  ] as const)('preserves $authority from the real Action executor through $scope list RPC', async ({ scope, authority, surface }) => {
+    const sessionId = 'c000000000000000000000000';
+    // Only Home HTTP and Socket.IO are replaced; Session resolution, Action
+    // options, CLI adapters, codecs and socket admission execute normally.
+    const homeHttp = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
+    if (scope === 'attached') {
+      homeHttp.mockResolvedValueOnce({ status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } }).mockResolvedValueOnce({ status: 200, data: { session: {
+        id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        encryptionMode: 'plain', metadata: '{}', metadataVersion: 0, dataEncryptionKey: null,
+        agentState: null, agentStateVersion: 0,
+      } } });
+    } else {
+      homeHttp.mockResolvedValue({ status: 200, data: { machine: {
+        id: 'voice-machine', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      } } });
+    }
+    nextRpcAck = (request: { method: string }) => ({ ok: true, result: request.method.includes('capabilities.detect')
+      ? { results: { 'tool.executionRuns': { ok: true, data: { protocolVersion: 2, features: { detachedScope: true } } } } }
+      : { runs: [] } });
+    const credentials = { token: 'account-token', encryption: null };
+    const executor = createActionExecutor(createCliActionDeps({
+      token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+    }));
+    const result = await executor.execute('execution.run.list', { sessionId: scope === 'attached' ? sessionId : null }, {
+      surface, authority, defaultSessionId: sessionId,
+      actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, executionRunTargetMachineId: 'voice-machine',
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { runs: [] } });
+    const socketAuth = vi.mocked(io).mock.calls.map((call) => call[1]?.auth);
+    expect(socketAuth.length).toBeGreaterThan(0);
+    expect(socketAuth.every((auth) => auth !== null && typeof auth === 'object'
+      && (authority === 'account_automation'
+        ? 'authorityCeiling' in auth && auth.authorityCeiling === 'account_automation'
+        : !('authorityCeiling' in auth)))).toBe(true);
+  });
+});
 
 describe('execution wait transport recovery', () => {
   const terminal = {

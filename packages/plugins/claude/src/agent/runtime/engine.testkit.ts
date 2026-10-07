@@ -35,6 +35,7 @@ type ClaudeTestPluginContext = ClaudeAgentSdkContext & ClaudeUnifiedTerminalCont
   settings: Readonly<{
     forScope(scope: Readonly<{ kind: string }>): Readonly<{
       get(key: string): Promise<unknown>;
+      snapshot(): Promise<Readonly<{ values: Readonly<Record<string, unknown>> }>>;
     }>;
   }>;
 }>;
@@ -557,7 +558,10 @@ export function createPluginContextFixture(
     settings: {
       forScope: vi.fn((scope: Readonly<{ kind: string }>) => {
         if (scope.kind !== 'account') throw new Error(`unexpected settings scope: ${scope.kind}`);
-        return { get: vi.fn(async (key: string) => settingsValues[key]) };
+        return {
+          get: vi.fn(async (key: string) => settingsValues[key]),
+          snapshot: vi.fn(async () => ({ scope: { kind: 'account' }, revision: '0', values: settingsValues })),
+        };
       }),
     },
     storage: createPluginStorageFixture(),

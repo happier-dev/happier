@@ -23,6 +23,7 @@ import type { ArtifactAccessActionIdV1 } from '../../artifacts/artifactAccessV1.
 import type { ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
 import type { SessionRoleConfigurationV1, SessionRolesV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
 import type { ExecutionRunSendRequest, ExecutionRunCancelTurnRequest } from '../../execution/runs/index.js';
+import type { ExecutionRunGetResponse } from '../../execution/runs/responseSchemas.js';
 import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ScopeActionId } from '../scopeActionFamily.js';
 import type {
@@ -975,7 +976,9 @@ export type ActionExecutorDeps = Readonly<{
   executionRunWait: (
     sessionId: string | null,
     request: ExecutionRunWaitActionRequest,
-    opts?: ExecutionRunActionOptions,
+    opts?: ExecutionRunActionOptions & Readonly<{
+      onSnapshot?: (snapshot: ExecutionRunGetResponse) => void | Promise<void>;
+    }>,
   ) => Promise<unknown>;
   reviewCommentAction?: (args: Readonly<{
     actionId: ReviewCommentActionIdV1;
@@ -1672,6 +1675,8 @@ export type ActionExecutorDeps = Readonly<{
   approvalsResolveBlockingDecision?: (args: Readonly<{
     artifactId: string;
     decision: 'approve' | 'reject';
+    /** Host-stamped live ingress authority; never persisted with the request. */
+    decisionAuthority: ActionRequiredAuthority;
     request: ApprovalRequest;
     serverId?: string | null;
   }>) => Promise<{ resolved: boolean }>;
@@ -1681,7 +1686,7 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<
-    | { decision: 'approve'; request: ApprovalRequest }
+    | { decision: 'approve'; request: ApprovalRequest; decisionAuthority?: ActionRequiredAuthority }
     | { decision: 'reject'; request: ApprovalRequest; reason?: string }
     | { decision: 'canceled'; request: ApprovalRequest; reason?: string }
   >;

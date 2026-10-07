@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { WORK_BOARD_ARTIFACT_KIND_V1, type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardsV1, type WorkBoardArtifactTransportV1 } from '@happier-dev/protocol';
+import { WORK_BOARD_ARTIFACT_KIND_V1, WorkBoardActionOutputSchemasV1, type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardsV1, type WorkBoardArtifactTransportV1 } from '@happier-dev/protocol';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -10,6 +10,8 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { createWorkBoardUiActionPort, type WorkBoardEntityContext } from './workBoardEntityDrop';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
 import { projectDisplayedWorkBoards, type WorkBoardSaveOutcome, type WorkBoardSaveQueue, type WorkBoardSaveState } from './workBoardSaveQueue';
 
@@ -74,14 +76,16 @@ function useBoardStore(bodyDemand = 'headers') {
                     const unsubscribeArtifacts = storage.subscribe((state, previous) => {
                         if (!shouldContinue() || state.artifacts === previous.artifacts) return;
                         const changed = new Set([...Object.keys(state.artifacts), ...Object.keys(previous.artifacts)]);
+                        const changedBoards: string[] = [];
                         for (const id of changed) {
                             const next = state.artifacts[id], old = previous.artifacts[id];
                             if (next !== old && (next?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1 || old?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1)) {
-                                refresh?.(); break;
+                                changedBoards.push(id);
                             }
                         }
+                        if (changedBoards.length > 0) { domain.invalidateBodies(changedBoards); refresh?.(); }
                     });
-                    const unsubscribeReconnect = apiSocket.onReconnected(() => refresh?.());
+                    const unsubscribeReconnect = apiSocket.onReconnected(() => { domain.invalidateBodies(); refresh?.(); });
                     return () => { invalidation.stop(); refresh = null; unsubscribeArtifacts(); unsubscribeReconnect(); };
                 }, demand);
                 refresh?.();
@@ -95,16 +99,52 @@ function useBoardStore(bodyDemand = 'headers') {
     return store;
 }
 
-export function useWorkBoardSaveQueue(): WorkBoardSaveQueue { return useBoardStore().queue; }
+/** Present-user capability ingress; the Account's raw queue remains below Action admission. */
+export function useWorkBoardSaveQueue(context?: Omit<WorkBoardEntityContext, 'scope'>): WorkBoardSaveQueue {
+    const store = useBoardStore();
+    const scope = useActiveServerAccountScope();
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const latestContext = React.useRef(context); latestContext.current = context;
+    return React.useMemo(() => {
+        const queue = store.queue;
+        const isCurrent = () => Boolean(scope && lifetime?.isCurrent() && 'isCurrent' in store && store.isCurrent());
+        const executor = createDefaultActionExecutor({ workBoardArtifacts: createWorkBoardUiActionPort(boardId => {
+            const current = latestContext.current;
+            return isCurrent() && scope && current && current.board.id === boardId ? { ...current, scope } : null;
+        }, queue, () => isCurrent() ? projectDisplayedWorkBoards(store.getBoards(), queue.getState().pending) : null) });
+        const dispatch = async (intent: WorkBoardIntentV1): Promise<WorkBoardSaveOutcome> => {
+            if (!isCurrent() || !scope) return { status: 'refused', code: 'board_scope_retired' };
+            const previousFailure = queue.getState().failure;
+            let result: Awaited<ReturnType<typeof executor.execute>>;
+            try {
+                result = await executor.execute('boards.apply', { intent }, { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui' });
+            } catch {
+                if (isCurrent()) queue.recordFailure(intent, 'unavailable');
+                return { status: 'refused', code: isCurrent() ? 'board_action_unavailable' : 'board_scope_retired' };
+            }
+            if (result.ok && WorkBoardActionOutputSchemasV1['boards.apply'].safeParse(result.result).success) return { status: 'applied', boards: store.getBoards() };
+            const code = result.ok ? 'approval_required' : result.errorCode ?? 'board_action_refused';
+            const unknown = code === 'outcome_unknown' || code === 'approval_execution_outcome_unknown';
+            if (isCurrent() && queue.getState().failure === previousFailure) queue.recordFailure(intent, code === 'board_not_found' ? 'not_found'
+                : code === 'invalid_parameters' || code === 'widget_inputs_invalid' ? 'invalidValue' : 'unavailable');
+            return { status: unknown ? 'unknown' : 'refused', code: unknown ? 'board_write_unknown' : code };
+        };
+        return { ...queue, dispatch, retry: () => {
+            const failure = queue.getState().failure;
+            return failure ? dispatch(failure.intent) : Promise.resolve(null);
+        } };
+    }, [store, scope?.serverId, scope?.accountId, lifetime]);
+}
 
 export function useWorkBoardReadState() {
     const store = useBoardStore();
     const state = React.useSyncExternalStore(store.subscribe, store.getReadState, store.getReadState);
-    return { ...state, retry: store.refresh };
+    const retry = React.useCallback(() => { store.invalidateBodies(); return store.refresh(); }, [store]);
+    return { ...state, retry };
 }
 
 export function useWorkBoardSaveState(): WorkBoardSaveState {
-    const queue = useWorkBoardSaveQueue();
+    const queue = useBoardStore().queue;
     return React.useSyncExternalStore(queue.subscribe, queue.getState, queue.getState);
 }
 
@@ -122,14 +162,17 @@ export function useWorkBoards(): WorkBoardsV1 {
 
 export function useWorkBoard(boardId: string | null): WorkBoardV1 | null {
     const store = useBoardStore(boardId ? `board:${boardId}` : 'headers');
-    const acknowledged = React.useSyncExternalStore(store.subscribe, store.getBoards, store.getBoards);
-    const { pending } = React.useSyncExternalStore(store.queue.subscribe, store.queue.getState, store.queue.getState);
-    const displayed = React.useMemo(() => pending.length === 0 ? acknowledged : projectDisplayedWorkBoards(acknowledged, pending), [acknowledged, pending]);
-    return boardId ? displayed.boards.find(board => board.id === boardId) ?? null : null;
+    const snapshot = React.useCallback(() => boardId ? store.getDisplayedBoard(boardId) : null, [store, boardId]);
+    const subscribe = React.useCallback((listener: () => void) => {
+        const releaseBoard = store.subscribe(listener);
+        const releaseQueue = store.queue.subscribe(listener);
+        return () => { releaseBoard(); releaseQueue(); };
+    }, [store]);
+    return React.useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
-export function useDispatchWorkBoardIntent(): (intent: WorkBoardIntentV1) => Promise<WorkBoardSaveOutcome> {
-    return useWorkBoardSaveQueue().dispatch;
+export function useDispatchWorkBoardIntent(context?: Omit<WorkBoardEntityContext, 'scope'>): (intent: WorkBoardIntentV1) => Promise<WorkBoardSaveOutcome> {
+    return useWorkBoardSaveQueue(context).dispatch;
 }
 
 /**
@@ -139,6 +182,6 @@ export function useDispatchWorkBoardIntent(): (intent: WorkBoardIntentV1) => Pro
  */
 export function useAcknowledgedWorkBoard(boardId: string): WorkBoardV1 | null {
     const store = useBoardStore('inactive');
-    const acknowledged = React.useSyncExternalStore(store.subscribe, store.getBoards, store.getBoards);
-    return acknowledged.boards.find(board => board.id === boardId) ?? null;
+    const snapshot = React.useCallback(() => store.getBoard(boardId), [store, boardId]);
+    return React.useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }

@@ -1,9 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
 import { createMemFs } from '@/voice/modelPacks/installerTestFs';
 
 describe('modelPacks installer (native)', () => {
+  it('allows an explicitly unbounded model-pack download to finish after a slow manifest read', async () => {
+    vi.useFakeTimers();
+    try {
+      const { createHash } = await import('node:crypto');
+      const bytes = new Uint8Array([1]);
+      const { fs } = createMemFs();
+      let finishManifest: ((response: Response) => void) | undefined;
+      const manifest = { packId: 'slow-download', kind: 'tts_sherpa', model: 'kokoro', version: 'v1',
+        files: [{ path: 'model.onnx', url: 'https://example.com/model.onnx', sizeBytes: 1,
+          sha256: createHash('sha256').update(bytes).digest('hex') }] };
+      const fetchImpl: typeof fetch = async (input) => String(input).includes('manifest.json')
+        ? await new Promise<Response>((resolve) => { finishManifest = resolve; })
+        : new Response(bytes, { status: 200, headers: { 'content-length': '1' } });
+      const install = ensureModelPackInstalled({ packId: 'slow-download', mode: 'download_if_missing',
+        manifestUrl: 'https://example.com/manifest.json',
+        timeoutMs: null,
+        signal: new AbortController().signal }, { fs, fetch: fetchImpl, invalidatePackRuntime: async () => {} });
+      const outcome = install.then(() => 'installed', (error: unknown) => error instanceof Error ? error.message : String(error));
+      await vi.advanceTimersByTimeAsync(300_000);
+      finishManifest?.(Response.json(manifest));
+      expect(await outcome).toBe('installed');
+      expect(await getModelPackInstallSummary({ packId: 'slow-download' }, { fs })).toMatchObject({ installed: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects pack ids that attempt to escape the model packs root directory', async () => {
     class Directory {
       uri: string;

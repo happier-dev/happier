@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
 import { usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
+import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 
 import {
   bindCorpusCollectionsWith,
@@ -42,11 +42,25 @@ export type TriageDurableAccountV1 = Readonly<{
 
 const UNREACHABLE: TriageDurableAccountV1 = Object.freeze({ collections: null, savedViews: null, actions: null });
 
-export function useTriageDurableAccount(): TriageDurableAccountV1 {
-  const client = usePluginUiDataClientOrNull();
-  return useMemo(() => client === null ? UNREACHABLE : Object.freeze({
+const BINDINGS = new WeakMap<PluginUiDataClient, TriageDurableAccountV1>();
+
+/**
+ * The one binding for an Account client. Pins, saved views, actions, configured sources, the list join and the
+ * detail all read through it, so one client is bound once rather than once per reader.
+ */
+export function bindTriageDurableAccountV1(client: PluginUiDataClient | null): TriageDurableAccountV1 {
+  if (client === null) return UNREACHABLE;
+  const bound = BINDINGS.get(client);
+  if (bound !== undefined) return bound;
+  const binding: TriageDurableAccountV1 = Object.freeze({
     collections: bindCorpusCollectionsWith((definition) => client.collection(definition)),
     savedViews: createTriageAccountKvCatalogStore(client.accountKv, TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
     actions: createTriageAccountKvCatalogStore(client.accountKv, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
-  }), [client]);
+  });
+  BINDINGS.set(client, binding);
+  return binding;
+}
+
+export function useTriageDurableAccount(): TriageDurableAccountV1 {
+  return bindTriageDurableAccountV1(usePluginUiDataClientOrNull());
 }

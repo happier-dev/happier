@@ -212,6 +212,7 @@ const TRIAGE_READ_HOST_ACCESS = ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]
  */
 const TRIAGE_INSTANCE_ACCOUNT_BINDINGS = [{
   path: 'instance.binding.account',
+  nativeServicePath: 'instance.binding.service',
   purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
 }];
 
@@ -446,7 +447,7 @@ function createGithubPlugin() {
     }, {
       id: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       capability: 'connectedAccounts',
-      reason: 'Materialize only the exact selected GitHub Connected Account for GitHub API requests.',
+      reason: 'Materialize the declared GitHub credential: an exact selected Connected Account or this machine’s GitHub CLI login.',
       scope: {
         serviceRefs: ['github-account'],
         operations: ['select', 'use'],
@@ -1406,6 +1407,7 @@ function createGithubPlugin() {
         title: 'GitHub account',
         description: 'GitHub account used for repository and pull-request operations.',
         authentication: {
+          native: { systemTool: 'gh' },
           defaultModeId: 'fine-grained-pat',
           modes: [{
             id: 'fine-grained-pat',

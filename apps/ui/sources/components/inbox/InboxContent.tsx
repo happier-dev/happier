@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';

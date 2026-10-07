@@ -452,7 +452,7 @@ export interface PluginUiHostApi {
     /** Hosted source/target events join the mounted host's shared drag owner. */
     updateEntityDragDrop(request: PluginUiUpdateEntityDragDropRequestV1, options?: PluginCancellationOptions): Promise<PluginUiUpdateEntityDragDropResultV1>;
     watchEntityDragDrop(request: PluginUiWatchEntityDragDropRequestV1, listener: (state: PluginUiEntityDragDropStateV1) => void, options?: PluginCancellationOptions): Promise<Disposable>;
-    /** Reads a native Session-image artifact from this mount's successfully delivered Action results under Sessions READ scope. */
+    /** Reads a file-backed native Session image under this plugin's declared Sessions READ scope. */
     readStoredImage(image: StoredImageRefV1, options?: PluginCancellationOptions): Promise<PluginUiReadStoredImageResultV1>;
     version(): Readonly<{
         apiVersion: string;

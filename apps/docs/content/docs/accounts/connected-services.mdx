@@ -36,6 +36,12 @@ This split is intentional. Subscription auth and API-key auth have different acc
 
 GitHub is different from the agent/backend credentials above. When enabled, it is used by source-control features such as GitHub repository publishing and GitHub pull request operations.
 
+In 0.3 development, GitHub source workflows can also use the executing machine's
+GitHub CLI login without storing a token in Happier. This native choice is
+configured with the source, not by creating a Connected Account; an explicitly
+selected Connected Account still takes precedence. See
+[PRs & Issues](/code/prs-and-issues#use-a-machines-github-cli-login).
+
 ## Where you manage them
 
 In the app:

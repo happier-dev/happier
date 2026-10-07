@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -177,6 +177,51 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
             argv: ['/usr/local/bin/node', '/usr/local/bin/vitest'],
             processEnv: { HAPPIER_STACK_CLI_ROOT_DIR: '/repo/apps/cli' },
         })).toBeNull();
+    });
+
+    it('keeps producer snapshot and physical daemon artifact custody on the same immutable identity', () => {
+        const stackRoot = mkdtempSync(join(tmpdir(), 'happier-producer-custody-'));
+        const artifactId = '1dfbd5fd4809f0fe';
+        const artifactDir = join(stackRoot, 'artifacts', 'daemon', artifactId);
+        const payloadRoot = join(artifactDir, 'payload');
+        const snapshotRoot = join(stackRoot, 'runtime', 'builds', 'ac31bc97e9707511');
+        try {
+            mkdirSync(join(payloadRoot, 'package-dist'), { recursive: true });
+            mkdirSync(snapshotRoot, { recursive: true });
+            writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
+                version: 1,
+                component: 'daemon',
+                artifactFingerprint: artifactId,
+                sourceFingerprint: '03f801f4867bd6df',
+                payloadDir: 'payload',
+                entrypoint: 'happier',
+            }));
+            const snapshotCliRoot = join(snapshotRoot, 'cli');
+            symlinkSync(payloadRoot, snapshotCliRoot, process.platform === 'win32' ? 'junction' : 'dir');
+            for (const runtimeRoot of [snapshotCliRoot, payloadRoot]) {
+                for (const native of [false, true]) {
+                    expect(resolveAuthoritativePackagedRuntimeCustody({
+                        moduleUrl: native ? 'file:///$bunfs/root/happier' : pathToFileURL(join(runtimeRoot, 'package-dist', 'chunk.js')).href,
+                        currentExecPath: native ? join(runtimeRoot, 'happier') : process.execPath,
+                        argv: native ? [join(runtimeRoot, 'happier'), '/$bunfs/root/happier'] : [process.execPath, join(runtimeRoot, 'package-dist', 'index.mjs')],
+                        processEnv: { HAPPIER_HOME_DIR: join(stackRoot, 'consumer-home') },
+                    })).toMatchObject({
+                        root: realpathSync(payloadRoot),
+                        packagedRuntime: { kind: 'pinned_runner_snapshot', snapshotId: artifactId },
+                    });
+                }
+            }
+            // A directory name alone must not grant a different artifact's custody.
+            writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
+                version: 1, component: 'daemon', artifactFingerprint: 'another-artifact', payloadDir: 'payload',
+            }));
+            expect(() => resolveAuthoritativePackagedRuntimeCustody({
+                moduleUrl: pathToFileURL(join(payloadRoot, 'package-dist', 'chunk.js')).href,
+                argv: [process.execPath, join(payloadRoot, 'package-dist', 'index.mjs')],
+            })).toThrow(FirstPartyVersionRootIdentityError);
+        } finally {
+            rmSync(stackRoot, { recursive: true, force: true });
+        }
     });
 
     it.each([

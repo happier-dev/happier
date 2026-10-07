@@ -81,12 +81,13 @@ function readRequestedOutputs(input: Readonly<Record<string, unknown>>) {
 }
 
 function saveCompletedOutput(start: ExecutionRunProfileTurnCompleteParams['start'], completion: ExecutionRunProfileBoundedCompleteResult | null) {
-  if (!completion || completion.nextInput) return completion;
+  if (!completion || completion.nextInput || completion.toolResultMeta?.scmResultUpdate) return completion;
   if (readRecord(readRecord(start.intentInput).reviewNarration).phase === 'writing') return completion;
   const output = ScmDiffSummaryGenerateOutputSchema.safeParse(completion.toolResultOutput);
   if (!output.success || !output.data.success || output.data.producer?.kind === 'review'
     || output.data.requestedOutputs?.some((kind) => output.data.outputs?.[kind]?.state !== 'complete')) return completion;
-  const intentInput: Readonly<Record<string, unknown>> = { ...readRecord(start.intentInput), cacheScopeKey: start.sessionId };
+  const intentInput: Readonly<Record<string, unknown>> = { ...readRecord(start.intentInput),
+    ...(output.data.requestedOutputs ? { outputs: output.data.requestedOutputs } : {}), cacheScopeKey: start.sessionId };
   if (!start.effectiveEngine?.modelId || start.effectiveEngine.modelId !== intentInput.requestedModelId) return completion;
   const keyInput = buildCacheKeyInput({ intentInput });
   if (keyInput) scmDiffSummaryCacheStore.set({ keyInput, value: output.data });
@@ -178,8 +179,8 @@ function completeScmDiffSummaryTurn({ start, rawText, previousStructuredMeta }: 
         ...(start.effectiveEngine?.modelId ? { modelId: start.effectiveEngine.modelId } : {}) },
     } : {}),
   });
-  return saveCompletedOutput(start, { status: 'succeeded', summary: 'Diff summary generated.', toolResultOutput: result,
-    structuredMeta: { kind: 'scm_diff_summary.v1', payload: result } })!;
+  return { status: 'succeeded', summary: 'Diff summary generated.', toolResultOutput: result,
+    structuredMeta: { kind: 'scm_diff_summary.v1', payload: result } };
 }
 
 export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
@@ -297,7 +298,7 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     };
   },
   buildPrompt: (params) => params.instructions,
-  onBoundedComplete: completeScmDiffSummaryTurn,
+  onBoundedComplete: (params) => saveCompletedOutput(params.start, completeScmDiffSummaryTurn(params))!,
   onStarted: async ({ start }) => {
     const input = readRecord(start.intentInput);
     const cached = ScmDiffSummaryGenerateOutputSchema.safeParse(input.cachedOutput);
@@ -400,9 +401,10 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
   },
   onTurnComplete: async (params) => {
     const progressive = hasActiveDiffSummaryAnalysis(params.start.intentInput);
-    return publishSavedScmDiffSummaryTurn(params, progressive
-      ? (turn) => saveCompletedOutput(turn.start, withReviewNarrationProvenance(turn, advanceDiffSummaryAnalysis(turn)))
+    const published = await publishSavedScmDiffSummaryTurn(params, progressive
+      ? (turn) => withReviewNarrationProvenance(turn, advanceDiffSummaryAnalysis(turn))
       : (turn) => withReviewNarrationProvenance(turn, completeScmDiffSummaryTurn(turn)), progressive);
+    return saveCompletedOutput(params.start, published);
   },
   onTurnFailed: (params) => ScmComparisonSchema.safeParse(readRecord(params.start.intentInput).comparison).success
     ? publishSavedScmDiffSummaryTurn(params, (turn) => withReviewNarrationProvenance(turn,

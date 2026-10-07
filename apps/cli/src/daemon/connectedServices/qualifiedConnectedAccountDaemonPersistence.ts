@@ -4,15 +4,13 @@ import {
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES, CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY, parseConnectedAccountServiceConfigurationsV1 } from '@happier-dev/protocol/account/settings/connectedAccountServiceConfigurationsV1';
 import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { parseBuiltInLegacyConnectedServiceCredentialRecordV1, parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import type { AccountScopedCryptoMaterial, ConnectedServiceCredentialRecordV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -36,13 +34,6 @@ import type {
   SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { generatePkceCodes } from '@/cloud/pkce';
-import {
-  storeConnectedServiceCredentialForAccount,
-  type ConnectedServiceCredentialStorageApi,
-} from '@/cloud/connectedServices/storeConnectedServiceCredentialForAccount';
-import {
-  resolveConnectedServiceCredentialSource,
-} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { StoredCredentials } from '@/persistence';
 import {
   commitActiveAccountSettingsSnapshot,
@@ -197,16 +188,6 @@ export type QualifiedConnectedAccountAttemptTransactionAdapters = Readonly<{
 }>;
 
 class ConfigurationRevisionConflict extends Error {}
-class LegacyCredentialSettlementConflict extends Error {}
-class LegacyCredentialSettlementError extends Error {
-  readonly cause: unknown;
-
-  constructor(cause: unknown) {
-    super('Legacy connected-account settlement failed');
-    this.name = 'LegacyCredentialSettlementError';
-    this.cause = cause;
-  }
-}
 
 const MAX_ATTEMPT_CONFIGURATION_RECORDS = 64;
 
@@ -380,98 +361,6 @@ function requireCryptoMaterial(
   );
 }
 
-type LegacyConnectedServiceId =
-  keyof typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID;
-type LegacyConnectedAccountApi = ConnectedServiceCredentialStorageApi & Readonly<{
-  listConnectedServiceProfiles(input: Readonly<{
-    serviceId: LegacyConnectedServiceId;
-    forceRefresh?: boolean;
-  }>): Promise<Readonly<{
-    serviceId: LegacyConnectedServiceId;
-    profiles: readonly Readonly<{
-      profileId: string;
-      status:
-        | 'connected'
-        | 'refreshing'
-        | 'needs_reauth'
-        | 'refresh_failed_retryable';
-      kind?: 'oauth' | 'token' | null;
-      providerEmail?: string | null;
-      providerAccountId?: string | null;
-      expiresAt?: number | null;
-      lastUsedAt?: number | null;
-    }>[];
-  }>>;
-}>;
-
-function projectLegacyAuthenticationMode(
-  serviceId: LegacyConnectedServiceId,
-  kind: ConnectedServiceCredentialRecordV1['kind'],
-  status:
-    | 'connected'
-    | 'refreshing'
-    | 'needs_reauth'
-    | 'refresh_failed_retryable',
-): Readonly<{
-  authenticationModeId: string | null;
-  status:
-    | 'connected'
-    | 'refreshing'
-    | 'needs_reauth'
-    | 'refresh_failed_retryable';
-}> {
-  const compatibility =
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
-  const supportedModeId = (
-    compatibility.authenticationModeByCredentialKind as Readonly<
-      Partial<Record<ConnectedServiceCredentialRecordV1['kind'], string>>
-    >
-  )[kind];
-  if (supportedModeId) {
-    return Object.freeze({
-      authenticationModeId: supportedModeId,
-      status,
-    });
-  }
-  const unsupportedModeId = (
-    compatibility.unsupportedAuthenticationModeByCredentialKind as Readonly<
-      Partial<Record<ConnectedServiceCredentialRecordV1['kind'], string>>
-    >
-  )[kind];
-  if (unsupportedModeId) {
-    return Object.freeze({
-      authenticationModeId: null,
-      status: 'needs_reauth',
-    });
-  }
-  throw new QualifiedConnectedAccountCompatibilityError(
-    'connected_account_legacy_operation_unsupported',
-  );
-}
-
-function legacyAuthenticationModeCardinality(
-  service: QualifiedConnectedAccountRef['service'],
-): 'single' | 'multiple' {
-  for (const compatibility of Object.values(
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  )) {
-    if (!sameService(compatibility.service, service)) continue;
-    return new Set(
-      [
-        ...Object.values(
-          compatibility.authenticationModeByCredentialKind,
-        ),
-        ...Object.values(
-          compatibility.unsupportedAuthenticationModeByCredentialKind,
-        ),
-      ],
-    ).size > 1
-      ? 'multiple'
-      : 'single';
-  }
-  return 'single';
-}
-
 function sameService(
   left: QualifiedConnectedAccountRef['service'],
   right: QualifiedConnectedAccountRef['service'],
@@ -591,7 +480,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       ) => CliServerFeaturesSnapshot | undefined;
     resolveSessionSyncPendingInputServerContractResult?: (
       ) => SessionSyncPendingInputServerContractResult | null;
-    legacyCredentialApi?: LegacyConnectedAccountApi;
     secrets: ConnectedAccountDaemonPersistence['configuration']['secrets'];
     randomBytes?: (length: number) => Uint8Array;
     callbackUrl?: string;
@@ -874,89 +762,27 @@ export function createQualifiedConnectedAccountDaemonPersistence(
     return mode;
   }
 
-  async function executeNegotiatedOperation<V4Result, LegacyResult>(
+  async function executeNegotiatedOperation<V4Result>(
     input: Readonly<{
       service: QualifiedConnectedAccountRef['service'];
       operation: Parameters<
         typeof executeQualifiedConnectedAccountNegotiatedOperation
       >[0]['operation'];
       executeV4(): Promise<V4Result>;
-      executeLegacy(
-        serviceId: LegacyConnectedServiceId,
-        api: LegacyConnectedAccountApi,
-      ): Promise<LegacyResult>;
     }>,
-  ): Promise<V4Result | LegacyResult> {
+  ): Promise<V4Result> {
     if (!params.resolveServerFeaturesSnapshot) {
       return await input.executeV4();
     }
     const snapshot = params.resolveServerFeaturesSnapshot();
     const serverContract =
       params.resolveSessionSyncPendingInputServerContractResult?.() ?? null;
-    const transport = resolveQualifiedConnectedAccountOperationTransport({
-      snapshot,
-      serverContract,
-      service: input.service,
-      operation: input.operation,
-    });
-    if (
-      transport.kind === 'legacy'
-      && transport.peerClass === 'exact_v0_2_1'
-    ) {
-      // Exact unfenced rows remain readable only through the legacy resolver.
-      // The qualified daemon surface cannot invent a credential revision.
-      throw new QualifiedConnectedAccountCompatibilityError(
-        'connected_account_legacy_operation_unsupported',
-      );
-    }
     return await executeQualifiedConnectedAccountNegotiatedOperation({
       snapshot,
       serverContract,
       service: input.service,
       operation: input.operation,
       executeV4: input.executeV4,
-      executeLegacy: async (serviceId) => {
-        if (!params.legacyCredentialApi) {
-          throw new QualifiedConnectedAccountCompatibilityError(
-            'connected_account_legacy_operation_unsupported',
-          );
-        }
-        return await input.executeLegacy(
-          serviceId,
-          params.legacyCredentialApi,
-        );
-      },
-    });
-  }
-
-  async function readLegacyCredentialRecord(input: Readonly<{
-    api: LegacyConnectedAccountApi;
-    serviceId: LegacyConnectedServiceId;
-    accountId: string;
-  }>): Promise<Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
-    credentialRevision: string;
-  }> | null> {
-    const accountMode = await resolveAccountMode();
-    const binding = {
-      serviceId: input.serviceId,
-      profileId: input.accountId,
-    };
-    const stored = await resolveConnectedServiceCredentialSource({
-      credentials: params.credentials,
-      api: input.api,
-      binding,
-      accountMode,
-    });
-    if (!stored) return null;
-    if (stored.revisionSemantics !== 'revisioned') {
-      throw new QualifiedConnectedAccountCompatibilityError(
-        'connected_account_legacy_operation_unsupported',
-      );
-    }
-    return Object.freeze({
-      record: stored.record,
-      credentialRevision: stored.credentialRevision,
     });
   }
 
@@ -970,71 +796,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             token: params.credentials.token,
             service,
           }),
-          executeLegacy: async (serviceId, api) => {
-            const listed = await api.listConnectedServiceProfiles({
-              serviceId,
-            });
-            const compatibility =
-              BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-                serviceId
-              ];
-            const accounts = await Promise.all(
-              listed.profiles.map(async (profile) => {
-                const exact = await readLegacyCredentialRecord({
-                  api,
-                  serviceId,
-                  accountId: profile.profileId,
-                });
-                if (!exact) {
-                  throw new QualifiedConnectedAccountCompatibilityError(
-                    'connected_account_legacy_operation_unsupported',
-                  );
-                }
-                const providerIdentity = {
-                  ...(profile.providerAccountId
-                    ? { accountId: profile.providerAccountId }
-                    : {}),
-                  ...(profile.providerEmail
-                    ? { email: profile.providerEmail }
-                    : {}),
-                };
-                const publicAuthentication =
-                  projectLegacyAuthenticationMode(
-                    serviceId,
-                    exact.record.kind,
-                    profile.status,
-                  );
-                return Object.freeze({
-                  ref: Object.freeze({
-                    service: compatibility.service,
-                    accountId: profile.profileId,
-                  }),
-                  status: publicAuthentication.status,
-                  authenticationModeId:
-                    publicAuthentication.authenticationModeId,
-                  revisionSemantics: 'revisioned' as const,
-                  credentialRevision: exact.credentialRevision,
-                  configurationReady: false,
-                  configurationRevision: null,
-                  kind: exact.record.kind,
-                  ...(Object.keys(providerIdentity).length > 0
-                    ? { providerIdentity }
-                    : {}),
-                  scopes: [],
-                  ...(profile.expiresAt === undefined
-                    ? {}
-                    : { expiresAt: profile.expiresAt }),
-                  ...(profile.lastUsedAt === undefined
-                    ? {}
-                    : { lastUsedAt: profile.lastUsedAt }),
-                });
-              }),
-            );
-            return Object.freeze({
-              service: compatibility.service,
-              accounts: Object.freeze(accounts),
-            });
-          },
         });
         if (!sameService(result.service, service)) {
           throw new Error(
@@ -1179,11 +940,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             token: params.credentials.token,
             target: accountTarget(target.account),
           }),
-          executeLegacy: async () => {
-            throw new QualifiedConnectedAccountCompatibilityError(
-              'connected_account_legacy_operation_unsupported',
-            );
-          },
         });
         if (
           !snapshot
@@ -1391,11 +1147,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 }),
               });
             },
-            executeLegacy: async () => {
-              throw new QualifiedConnectedAccountCompatibilityError(
-                'connected_account_legacy_operation_unsupported',
-              );
-            },
           });
         } catch (error) {
           return Object.freeze({
@@ -1440,30 +1191,8 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               // it publishes or continues an attempt.
               configurationState:
                 input.configurationState ?? 'unconfigured',
-              authenticationModeCardinality:
-                input.authenticationModeCardinality
-                ?? legacyAuthenticationModeCardinality(input.service),
             },
           });
-        if (
-          transport.kind === 'legacy'
-          && input.authenticationModeId !== undefined
-        ) {
-          const compatibility =
-            BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-              transport.serviceId
-            ];
-          const representableModeIds = new Set<string>(
-            Object.values(
-              compatibility.authenticationModeByCredentialKind,
-            ),
-          );
-          if (!representableModeIds.has(input.authenticationModeId)) {
-            throw new QualifiedConnectedAccountCompatibilityError(
-              'connected_account_legacy_operation_unsupported',
-            );
-          }
-        }
       },
       accounts: Object.freeze({
         async readExact(account: ExactAccount) {
@@ -1472,37 +1201,11 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             operation: {
               kind: 'credential_read',
               configurationState: 'unconfigured',
-              authenticationModeCardinality:
-                legacyAuthenticationModeCardinality(account.service),
             },
             executeV4: async () => await readCredential({
               token: params.credentials.token,
               ref: account,
             }),
-            executeLegacy: async (serviceId, api) => {
-              const exact = await readLegacyCredentialRecord({
-                api,
-                serviceId,
-                accountId: account.accountId,
-              });
-              if (!exact) return null;
-              const publicAuthentication = projectLegacyAuthenticationMode(
-                serviceId,
-                exact.record.kind,
-                'connected',
-              );
-              if (publicAuthentication.authenticationModeId === null) {
-                return null;
-              }
-              return Object.freeze({
-                ref: account,
-                authenticationModeId:
-                  publicAuthentication.authenticationModeId,
-                revisionSemantics: 'revisioned' as const,
-                credentialRevision: exact.credentialRevision,
-                configurationRevision: null,
-              });
-            },
           });
           if (
             !snapshot
@@ -1587,8 +1290,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                   && stagedAccountConfigurationContent === undefined
                     ? 'unconfigured'
                     : 'configured',
-                authenticationModeCardinality:
-                  legacyAuthenticationModeCardinality(account.service),
               },
               executeV4: async () => {
                 const accountMode = await resolveAccountMode();
@@ -1669,124 +1370,12 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                   );
                 }
               },
-              executeLegacy: async (serviceId, api) => {
-                try {
-                  const current = await readLegacyCredentialRecord({
-                    api,
-                    serviceId,
-                    accountId: request.accountId,
-                  });
-                  if (reconciliation) {
-                    if (!current) {
-                      throw new LegacyCredentialSettlementConflict();
-                    }
-                    const currentAuthentication =
-                      projectLegacyAuthenticationMode(
-                        serviceId,
-                        current.record.kind,
-                        'connected',
-                      );
-                    let currentPayload:
-                      ReturnType<
-                        typeof parseQualifiedConnectedAccountCredentialPlaintextV1
-                      >;
-                    try {
-                      currentPayload =
-                        parseQualifiedConnectedAccountCredentialPlaintextV1({
-                          ref: account,
-                          authenticationModeId:
-                            request.authenticationModeId,
-                          plaintext: current.record,
-                        });
-                    } catch {
-                      throw new LegacyCredentialSettlementConflict();
-                    }
-                    if (
-                      currentAuthentication.authenticationModeId
-                        !== request.authenticationModeId
-                      || !isDeepStrictEqual(
-                        currentPayload.values,
-                        request.stagedCredentials,
-                      )
-                    ) {
-                      throw new LegacyCredentialSettlementConflict();
-                    }
-                    return;
-                  }
-                  if (
-                    (current?.credentialRevision ?? null)
-                    !== request.expectedCredentialRevision
-                  ) {
-                    throw new QualifiedConnectedAccountCompatibilityError(
-                      'connected_account_legacy_operation_unsupported',
-                    );
-                  }
-                  const payload =
-                    QualifiedConnectedAccountCredentialPayloadV1Schema.parse({
-                      v: 1,
-                      values: request.stagedCredentials,
-                  });
-                  const record =
-                    projectQualifiedConnectedAccountCredentialPlaintextV1({
-                      ref: account,
-                      authenticationModeId: request.authenticationModeId,
-                      payload,
-                      metadata: {
-                        ...(request.providerIdentity
-                          ? { providerIdentity: request.providerIdentity }
-                          : {}),
-                        scopes: request.scopes,
-                      },
-                      now: now(),
-                    });
-                  const legacyRecord =
-                    parseBuiltInLegacyConnectedServiceCredentialRecordV1(record);
-                  if (
-                    legacyRecord.serviceId !== serviceId
-                    || legacyRecord.profileId !== request.accountId
-                  ) {
-                    throw new QualifiedConnectedAccountCompatibilityError(
-                      'connected_account_legacy_operation_unsupported',
-                    );
-                  }
-                  await storeConnectedServiceCredentialForAccount({
-                    api,
-                    credentials: params.credentials,
-                    record: legacyRecord,
-                    serverContract:
-                      params
-                        .resolveSessionSyncPendingInputServerContractResult?.()
-                      ?? null,
-                    randomBytes,
-                  });
-                } catch (error) {
-                  throw new LegacyCredentialSettlementError(error);
-                }
-              },
             });
             return Object.freeze({
               status: 'connected' as const,
               account,
             });
           } catch (error) {
-            if (error instanceof LegacyCredentialSettlementError) {
-              if (
-                error.cause
-                instanceof LegacyCredentialSettlementConflict
-              ) {
-                return Object.freeze({
-                  status: 'conflict' as const,
-                  code: 'connected_account_settlement_conflict',
-                });
-              }
-              if (readHttpStatus(error.cause) === 409) {
-                return Object.freeze({
-                  status: 'conflict' as const,
-                  code: 'connected_account_settlement_conflict',
-                });
-              }
-              throw error.cause;
-            }
             const namedCause = readQualifiedConnectedAccountCredentialSettlementCause(error);
             if (namedCause) return namedCause;
             const reconciliationConflict =

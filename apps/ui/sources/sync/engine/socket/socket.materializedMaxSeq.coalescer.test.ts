@@ -10,11 +10,10 @@ import {
 import { handleUpdateContainer } from './socket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { Encryption } from '@/sync/encryption/encryption';
 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { activatePendingQueueScope } from '../pending/pendingQueueV2.testHelpers';
-
-import { Encryption } from '@/sync/encryption/encryption';
 
 let encryption: Encryption;
 const initialStorageState = storage.getState();
@@ -219,11 +218,11 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         markSessionSurfaceVisible('s1');
         storage.setState((prev) => ({
             ...prev,
-            sessions: { ...prev.sessions, s1: buildSession('s1') },
+            sessions: { ...prev.sessions, s1: { ...buildSession('s1'), encryptionMode: 'plain' } },
             settings: {
                 ...prev.settings,
                 transcriptStreamingCoalesceEnabled: true,
-                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceWindowMs: 900,
                 transcriptStreamingCoalesceMaxBatchSize: 1_000,
             },
         }));
@@ -275,7 +274,9 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(onMessageGapDetected).not.toHaveBeenCalled();
 
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(899);
+        expect(materializedMaxSeq).toBe(2);
+        await vi.advanceTimersByTimeAsync(1);
 
         expect(applyMessages).toHaveBeenCalledTimes(2);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);
@@ -847,6 +848,100 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             expect.objectContaining({
                 seq: 12,
                 updatedAt: 1_012,
+                meaningfulActivityAt: 800,
+                hasUnreadMessages: false,
+            }),
+        );
+    });
+
+it('does not mark cache-only renderables unread or meaningful when a hidden durable new-message is auth maintenance', async () => {
+        storage.setState((prev) => ({
+            ...prev,
+            sessions: {},
+            ...withActiveSessionListRows(prev, {
+                's-cache-auth-maintenance': {
+                    id: 's-cache-auth-maintenance',
+                    seq: 10,
+                    createdAt: 1,
+                    updatedAt: 900,
+                    meaningfulActivityAt: 800,
+                    active: false,
+                    activeAt: 1,
+                    archivedAt: null,
+                    lastViewedSessionSeq: 10,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: { path: '/tmp', host: 'localhost' },
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 900,
+                    hasUnreadMessages: false,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                },
+
+            }),
+            settings: {
+                ...prev.settings,
+                transcriptStreamingCoalesceEnabled: true,
+                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceMaxBatchSize: 1_000,
+            },
+        }));
+
+        const applyMessages = vi.fn();
+        const fetchSessions = vi.fn();
+        const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
+            encryption,
+            artifactDataKeys: new Map(),
+            applySessions: vi.fn(),
+            fetchSessions,
+            applyMessages,
+            onSessionVisible: vi.fn(),
+            isSessionMessagesLoaded: vi.fn(() => true),
+            getSessionMaterializedMaxSeq: vi.fn(() => 10),
+            markSessionMaterializedMaxSeq: vi.fn(),
+            onMessageGapDetected: vi.fn(),
+            assumeUsers: vi.fn(async () => {}),
+            applyTodoSocketUpdates: vi.fn(async () => {}),
+            invalidateMachines: vi.fn(),
+            invalidateSessions: vi.fn(),
+            invalidateArtifacts: vi.fn(),
+            invalidateFriends: vi.fn(),
+            invalidateFriendRequests: vi.fn(),
+            invalidateFeed: vi.fn(),
+            invalidateAutomations: vi.fn(),
+            invalidateTodos: vi.fn(),
+            markSessionTranscriptDeferred: vi.fn(),
+            log: { log: vi.fn() },
+        };
+
+        await handleUpdateContainer({
+            ...baseParams,
+            updateData: buildPlainAuthSwitchUpdate({
+                sessionId: 's-cache-auth-maintenance',
+                messageId: 'm-auth-switch',
+                messageSeq: 11,
+            }),
+        });
+
+        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-cache-auth-maintenance']).find(Boolean)).toEqual(
+            expect.objectContaining({
+                seq: 10,
+                updatedAt: 900,
+                meaningfulActivityAt: 800,
+                hasUnreadMessages: false,
+            }),
+        );
+
+        await vi.runAllTimersAsync();
+
+        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-cache-auth-maintenance']).find(Boolean)).toEqual(
+            expect.objectContaining({
+                seq: 11,
+                updatedAt: 1_011,
                 meaningfulActivityAt: 800,
                 hasUnreadMessages: false,
             }),

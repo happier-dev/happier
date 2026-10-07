@@ -35,7 +35,11 @@ const observedPidsPath = ${JSON.stringify(observedPidsPath)};
 const selected = observedPidsPath ? new Set(JSON.parse(readFileSync(observedPidsPath, 'utf8'))) : new Set();
 const processes = selected.size ? new Map([...readLinuxWorkerProcesses()].filter(([pid]) => selected.has(pid))) : new Map();
 const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
-const sample = readWorkerMemoryReservations({ admissionRoot: argument?.slice('--admission-root='.length), readProcesses: () => processes });
+let previousProgress = null;
+if (process.argv.includes('--include-owner-progress')) {
+  try { previousProgress = JSON.parse(readFileSync(0, 'utf8')); } catch {}
+}
+const sample = readWorkerMemoryReservations({ admissionRoot: argument?.slice('--admission-root='.length), readProcesses: () => processes, includeAdmittedRss: process.argv.includes('--include-admitted-rss'), includeOwnerProgress: process.argv.includes('--include-owner-progress'), previousProgress });
 process.stdout.write(renderWorkerMemoryReservationRows(sample));
 `);
   return { launcher, admissionRoot };

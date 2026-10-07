@@ -12,7 +12,7 @@ const triggerId = AutomationTriggerIdSchema.parse('pr-trigger-one');
 const scopedTrigger = { triggerId, triggerRevision: 1, triggerKind: 'prComment' as const, sessionId: 'session-one',
   pullRequest: { repository: 'owner/repo', number: 42 } };
 
-function fixture(change: 'missing' | 'disabled' | 'scope' | 'kind' | 'selector' | 'encryptedRevision' | 'none') {
+function fixture(change: 'missing' | 'disabled' | 'scope' | 'kind' | 'selector' | 'encryptedRevision') {
   let locked = false;
   const definition = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion: 1, triggerEvidence: null,
     workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
@@ -55,7 +55,7 @@ function fixture(change: 'missing' | 'disabled' | 'scope' | 'kind' | 'selector' 
 describe('canonical scoped Conversation run admission', () => {
   it.each([
     ['missing', 'triggerNotFound'], ['disabled', 'triggerDisabled'], ['scope', 'triggerKindMismatch'],
-    ['kind', 'triggerKindMismatch'], ['selector', 'triggerKindMismatch'], ['encryptedRevision', 'triggerKindMismatch'], ['none', 'capacity'],
+    ['kind', 'triggerKindMismatch'], ['selector', 'triggerKindMismatch'], ['encryptedRevision', 'triggerKindMismatch'],
   ] as const)('rereads %s trigger state after the existing lock', async (change, reason) => {
     const result = await admitAutomationRunTx({ tx: fixture(change), accountId: 'account-one', automationId: 'automation-one',
       now: new Date(100), recipeFeaturePolicy: { workflowsEnabled: true }, scopedConversationTrigger: scopedTrigger,

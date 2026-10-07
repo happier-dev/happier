@@ -41,7 +41,7 @@ describe('CLI authoring-memory profile read', () => {
   it('authenticates encrypted row identity and rejects a transplanted sibling payload', async () => {
     const secret = new Uint8Array(32).fill(7);
     const seal = (key: string) => sealAccountScopedBlobCiphertext({ kind: 'authoring_memory', material: { type: 'legacy', secret },
-      payload: { key, value: 'profile-a' }, randomBytes: (length) => new Uint8Array(length).fill(8) });
+      payload: { key, value: 'profile-a', futurePayloadField: true }, randomBytes: (length) => new Uint8Array(length).fill(8) });
     const get = vi.spyOn(axios, 'get');
     get.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } })
       .mockResolvedValueOnce({ status: 200, data: { status: 'present', revision: 1, content: { t: 'encrypted', c: seal('lastUsedProfile') } } })

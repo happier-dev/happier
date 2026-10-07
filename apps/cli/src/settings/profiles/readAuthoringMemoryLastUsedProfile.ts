@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { randomBytes } from 'node:crypto';
-import { AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryPrivatePayloadV1Schema, AuthoringMemoryReadResponseV1Schema, AuthoringMemoryMutationResponseV1Schema, assertAuthoringMemoryContentForModeV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, AUTHORING_MEMORY_ROUTE_V1, StoredAuthoringMemoryPrivatePayloadV1Schema, AuthoringMemoryReadResponseV1Schema, AuthoringMemoryMutationResponseV1Schema, assertAuthoringMemoryContentForModeV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { LegacyLastUsedProfileSchema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -123,7 +123,7 @@ async function createProfileRowContext(credentials: StoredCredentials, signal?: 
       kind: AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
       material: resolveMaterial(), ciphertext: content.c,
     });
-    const payload = AuthoringMemoryPrivatePayloadV1Schema.safeParse(opened?.value);
+    const payload = StoredAuthoringMemoryPrivatePayloadV1Schema.safeParse(opened?.value);
     if (!payload.success || payload.data.key !== 'lastUsedProfile') throw new AuthoringMemoryReadUnavailableError();
     return LegacyLastUsedProfileSchema.parse(payload.data.value);
   }

@@ -165,8 +165,6 @@ function createCachedAuthEntryObservation(
     });
 }
 
-const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
-
 /**
  * Reads the Home's retention policy for the pre-sign-in disclosure. A policy that answered becomes
  * its summary; a failed read becomes "could not check" with a retry that forces a new read, so the
@@ -198,14 +196,6 @@ function isSameRetentionDisclosure(
     return false;
 }
 
-function readWelcomeServerCheckTimeoutMs(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_TIMEOUT_MS ?? '').trim();
-    if (!raw) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
-    return Math.max(1_000, Math.min(30_000, parsed));
-}
-
 /** Canonical deterministic provider choice for keyed account provisioning surfaces. */
 export function resolvePreferredProvisionProviderId(features: FeaturesResponse | null): string | null {
     const methods = projectAuthenticationMethodCapabilities(features);
@@ -225,7 +215,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         : undefined;
     const [enrollmentRead, setEnrollmentRead] = React.useState<Readonly<{
         serverId: string;
-        generation: number;
         descriptor: typeof enrollmentDescriptor;
         transport: HomeEnrollmentTransport;
     }> | null>(null);
@@ -244,7 +233,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     );
     const cachedObservationRef = React.useRef(cachedObservation);
     cachedObservationRef.current = cachedObservation;
-    const activeObservationKey = activeServerSnapshot.serverId || activeServerSnapshot.serverUrl;
+    const activeObservationKey = createServerUrlComparableKey(activeServerSnapshot.serverUrl) ?? activeServerSnapshot.serverUrl;
     const initialObservationRef = React.useRef(cachedObservation);
     const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>(
         () => initialObservationRef.current?.serverAvailability ?? 'loading',
@@ -272,8 +261,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         () => createServerUrlComparableKey(activeServerSnapshot?.serverUrl ?? '') ?? '',
         [activeServerSnapshot?.serverUrl],
     );
-    const activeServerGeneration = activeServerSnapshot?.generation ?? 0;
-
     React.useEffect(() => {
         if (serverAvailability !== 'unavailable') return;
         if (!cachedServerFeaturesSnapshot || cachedServerFeaturesSnapshot.status === 'error') return;
@@ -286,7 +273,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     React.useEffect(() => {
         let mounted = true;
         let authEntryController: AbortController | null = null;
-        let authEntryTimeout: ReturnType<typeof setTimeout> | null = null;
         let enrollmentTransport: HomeEnrollmentTransport | null = null;
         const releaseEnrollmentTransport = () => {
             const transport = enrollmentTransport;
@@ -345,33 +331,20 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                     }
                 }
 
-                const serverCheckTimeoutMs = readWelcomeServerCheckTimeoutMs();
                 authEntryController = new AbortController();
-                authEntryTimeout = setTimeout(() => {
-                    authEntryController?.abort('welcome-auth-entry-timeout');
-                }, serverCheckTimeoutMs);
-                // Neither probe consumes the other's result, so both run at
-                // once: first usable paint is bounded by one attempt timeout,
-                // not two.
-                let featuresSnapshot: Awaited<ReturnType<typeof getServerFeaturesSnapshot>>;
-                let authEntry: Awaited<ReturnType<typeof fetchHomeAuthEntry>>;
-                try {
-                    [featuresSnapshot, authEntry] = await Promise.all([
+                // Independent observations share the mount/target cancellation lifetime.
+                const [featuresSnapshot, authEntry] = await Promise.all([
                         enrollmentTransport ? probeServerFeaturesAtUrl({
                             endpointUrl: enrollmentTransport.canonicalServerUrl,
                             runtimeOrigin: enrollmentTransport.runtimeOrigin,
                             ...(enrollmentTransport.homeCarrier ? { homeCarrier: enrollmentTransport.homeCarrier } : {}),
                             serverId: enrollmentTransport.homeServerIdentityId,
                             force: forceServerCheck,
-                            timeoutMs: serverCheckTimeoutMs,
                             signal: authEntryController.signal,
                         }) : getServerFeaturesSnapshot({
-                            timeoutMs: serverCheckTimeoutMs,
+                            signal: authEntryController.signal,
                             // A retry nonce grants one forced revalidation. Keeping force
-                            // sticky after the retry succeeds turns an identity update into
-                            // a request loop: the response advances the active generation,
-                            // this effect re-runs, and another forced response advances it
-                            // again. Generation-only rechecks consume the canonical cache.
+                            // sticky after the retry succeeds would force unrelated cache recovery.
                             force: forceServerCheck,
                         }),
                         fetchHomeAuthEntry({
@@ -381,13 +354,14 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                                 runtimeOrigin: enrollmentTransport.runtimeOrigin,
                                 ...(enrollmentTransport.homeCarrier ? { homeCarrier: enrollmentTransport.homeCarrier } : {}),
                                 serverId: enrollmentTransport.homeServerIdentityId,
-                            } : {}),
+                            } : {
+                                endpointUrl: activeServerSnapshot.serverUrl,
+                                runtimeOrigin: activeServerSnapshot.runtimeOrigin,
+                                ...(activeHomeCarrier ? { homeCarrier: activeHomeCarrier } : {}),
+                                serverId: activeServerSnapshot.serverId,
+                            }),
                         }),
-                    ]);
-                } finally {
-                    clearTimeout(authEntryTimeout);
-                    authEntryTimeout = null;
-                }
+                ]);
 
                 if (featuresSnapshot.status === 'error') {
                     releaseEnrollmentTransport();
@@ -442,7 +416,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 if (mounted && enrollmentTransport) {
                     setEnrollmentRead({
                         serverId: activeServerSnapshot.serverId,
-                        generation: activeServerGeneration,
                         descriptor: enrollmentDescriptor,
                         transport: enrollmentTransport,
                     });
@@ -479,15 +452,11 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         return () => {
             mounted = false;
             authEntryController?.abort('welcome-auth-entry-unmounted');
-            if (authEntryTimeout) clearTimeout(authEntryTimeout);
             releaseEnrollmentTransport();
         };
-    // A server lifecycle can leave and restore the same canonical URL (the
-    // onboarding demo relay is one example) while invalidating the feature
-    // snapshot for that server. URL equality alone would retain the previous
-    // unavailable result forever. The active-server owner increments generation
-    // for that lifecycle transition, so re-run the canonical feature probe.
-    }, [activeObservationKey, activeServerComparableKey, activeServerGeneration, enrollmentDescriptor, serverCheckNonce, serverFeaturesRecoveryNonce]);
+    // Metadata/identity publication does not retire an anonymous Home observation.
+    // Real target/transport changes do; recovery is signaled by the feature cache owner.
+    }, [activeObservationKey, activeServerComparableKey, activeServerSnapshot.runtimeOrigin, activeHomeCarrier, enrollmentDescriptor, serverCheckNonce, serverFeaturesRecoveryNonce]);
 
     const carrierSnapshot = activeHomeCarrier ? getActiveServerSnapshot() : null;
     const exactActiveHomeCarrier = carrierSnapshot?.serverId === activeServerSnapshot.serverId
@@ -495,7 +464,6 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         ? activeHomeCarrier
         : null;
     const exactEnrollmentTransport = enrollmentRead?.serverId === activeServerSnapshot.serverId
-        && enrollmentRead.generation === activeServerGeneration
         && enrollmentRead.descriptor === enrollmentDescriptor
         ? enrollmentRead.transport : null;
     return {

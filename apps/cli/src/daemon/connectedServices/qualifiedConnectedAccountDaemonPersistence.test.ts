@@ -2559,268 +2559,25 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       expect(updateAccountSettings).not.toHaveBeenCalled();
     },
   );
-
   it.each([
-    {
-      legacyServiceId: 'openai' as const,
-      service: {
-        pluginId: 'happier.voice.openai',
-        localId: 'openai',
-      },
-      authenticationModeId: 'api-key',
-      stagedCredentials: { apiKey: 'sk-test' },
-    },
-    {
-      legacyServiceId: 'github' as const,
-      service: {
-        pluginId: 'happier.scm.forge.github',
-        localId: 'github-account',
-      },
-      authenticationModeId: 'fine-grained-pat',
-      stagedCredentials: { token: 'github-token' },
-    },
-  ])(
-    'settles unconfigured $legacyServiceId through its revisioned V2/V3 owner when V4 is absent',
-    async ({
-      legacyServiceId,
-      service: builtInService,
-      authenticationModeId,
-      stagedCredentials,
-    }) => {
-    const oldPeerFeatures = FeaturesResponseSchema.parse({
-      features: {},
-      capabilities: {
-        connectedServices: {
-          credentialDelete: { revisionGuard: true },
-        },
-        session: {
-          runtimeActivity: { protocolVersion: 2 },
-          pendingInput: { protocolVersion: 1 },
-          publisherAuthority: { protocolVersion: 1 },
-        },
-      },
-    });
-    const registerPlain = vi.fn(async (input: Readonly<{
-      content: unknown;
-    }>) => {
-      const content = z.object({
-        t: z.literal('plain'),
-        v: z.unknown(),
-      }).parse(input.content);
-      expect(ReleasedCredentialRecordSchema.parse(content.v)).toMatchObject({
-        serviceId: legacyServiceId,
-        profileId: 'work',
-        kind: 'token',
-      });
-      return {
-        success: true as const,
-        credentialRevision: 'csr_1234567890123456789012',
-      };
-    });
+    { pluginId: 'happier.voice.openai', localId: 'openai' },
+    { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+  ])('refuses a credential settlement without advertised V4 for $pluginId/$localId', async (service) => {
     const mutateCredential = vi.fn();
-    const legacyCredentialApi = {
-      getAccountEncryptionMode:
-        vi.fn(async (): Promise<'plain'> => 'plain'),
-      getServerFeaturesSnapshot:
-        vi.fn(async () => ({
-          status: 'ready' as const,
-          features: oldPeerFeatures,
-        })),
-      getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceCredentialPlain: registerPlain,
-      registerConnectedServiceCredentialSealed: vi.fn(),
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: legacyServiceId,
-        profiles: [],
-      })),
-    };
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32),
-          machineKey: new Uint8Array(32),
-        },
-      },
-      getAccountEncryptionMode:
-        vi.fn(async (): Promise<'plain'> => 'plain'),
-      resolveServerFeaturesSnapshot: () => ({
-        status: 'ready',
-        features: oldPeerFeatures,
-      }),
-      legacyCredentialApi,
+      credentials: { token: 'fixture', encryption: null },
+      getAccountEncryptionMode: async () => 'plain',
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { connectedServices: { credentialDelete: { revisionGuard: true } } } }) }),
       mutateCredential,
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
+      secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
     });
-
     await expect(persistence.attempts.settlement.settle({
-      intent: 'connect',
-      service: builtInService,
-      accountId: 'work',
-      authenticationModeId,
-      expectedCredentialRevision: null,
-      expectedCredentialConfigurationRevision: null,
-      expectedConfigurationRevision: 'unconfigured',
-      sourceCustody: managedCustody(),
-      stagedCredentials: retainStringValues(stagedCredentials),
-      displayName: legacyServiceId,
-      scopes: [],
-    })).resolves.toEqual({
-      status: 'connected',
-      account: {
-        service: builtInService,
-        accountId: 'work',
-      },
-    });
+      intent: 'connect', service, accountId: 'work', authenticationModeId: 'api-key',
+      expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+      expectedConfigurationRevision: 'unconfigured', sourceCustody: managedCustody(),
+      stagedCredentials: { apiKey: 'fixture-key' }, displayName: 'Fixture', scopes: [],
+    })).rejects.toMatchObject({ code: 'connected_account_capability_indeterminate' });
     expect(mutateCredential).not.toHaveBeenCalled();
-    expect(registerPlain).toHaveBeenCalledWith(expect.objectContaining({
-      serviceId: legacyServiceId,
-      profileId: 'work',
-      expectedCredentialRevision: null,
-      content: {
-        t: 'plain',
-        v: expect.objectContaining({
-          serviceId: legacyServiceId,
-          profileId: 'work',
-          kind: 'token',
-          token: expect.objectContaining({
-            token: legacyServiceId === 'github'
-              ? 'github-token'
-              : 'sk-test',
-          }),
-        }),
-      },
-    }));
-    },
-  );
-
-  it('reconciles a revisioned V2/V3 ambiguous settlement without repeating its credential write', async () => {
-    const revisionedFeatures = FeaturesResponseSchema.parse({
-      features: {},
-      capabilities: {
-        connectedServices: {
-          credentialDelete: { revisionGuard: true },
-        },
-      },
-    });
-    let committedRecord:
-      ReturnType<typeof ConnectedServiceCredentialRecordV1Schema.parse>
-      | null = null;
-    let credentialRead = 0;
-    const getConnectedServiceCredentialPlain = vi.fn(async () => {
-      credentialRead += 1;
-      if (credentialRead <= 2) return null;
-      if (credentialRead === 3) {
-        throw new Error('the first exact proof read was unavailable');
-      }
-      if (!committedRecord) {
-        throw new Error('expected the attempted credential write');
-      }
-      return {
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: 'csr_1234567890123456789012',
-        content: {
-          t: 'plain' as const,
-          v: committedRecord,
-        },
-      };
-    });
-    const lostAcknowledgement =
-      new Error('revisioned credential acknowledgement lost');
-    const registerConnectedServiceCredentialPlain = vi.fn(async (
-      input: Readonly<{ content: unknown }>,
-    ) => {
-      const content = z.object({
-        t: z.literal('plain'),
-        v: ConnectedServiceCredentialRecordV1Schema,
-      }).parse(input.content);
-      committedRecord = content.v;
-      throw lostAcknowledgement;
-    });
-    const legacyCredentialApi = {
-      getAccountEncryptionMode:
-        vi.fn(async (): Promise<'plain'> => 'plain'),
-      getServerFeaturesSnapshot:
-        vi.fn(async () => ({
-          status: 'ready' as const,
-          features: revisionedFeatures,
-        })),
-      getConnectedServiceCredentialPlain,
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceCredentialPlain,
-      registerConnectedServiceCredentialSealed: vi.fn(),
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'openai' as const,
-        profiles: [],
-      })),
-    };
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32),
-          machineKey: new Uint8Array(32),
-        },
-      },
-      getAccountEncryptionMode:
-        vi.fn(async (): Promise<'plain'> => 'plain'),
-      resolveServerFeaturesSnapshot: () => ({
-        status: 'ready',
-        features: revisionedFeatures,
-      }),
-      legacyCredentialApi,
-      mutateCredential: vi.fn(),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-    });
-    const builtInService = Object.freeze({
-      pluginId: 'happier.voice.openai',
-      localId: 'openai',
-    });
-    const request = {
-      intent: 'connect' as const,
-      service: builtInService,
-      accountId: 'work',
-      authenticationModeId: 'api-key',
-      expectedCredentialRevision: null,
-      expectedCredentialConfigurationRevision: null,
-      expectedConfigurationRevision: 'unconfigured',
-      sourceCustody: managedCustody(),
-      stagedCredentials: { apiKey: 'sk-test' },
-      displayName: 'OpenAI',
-      scopes: [],
-    };
-
-    await expect(
-      persistence.attempts.settlement.settle(request),
-    ).rejects.toThrow(lostAcknowledgement);
-    await expect(
-      persistence.attempts.settlement.reconcile!(request),
-    ).resolves.toEqual({
-      status: 'connected',
-      account: {
-        service: builtInService,
-        accountId: 'work',
-      },
-    });
-    expect(registerConnectedServiceCredentialPlain).toHaveBeenCalledOnce();
-    expect(getConnectedServiceCredentialPlain).toHaveBeenCalledTimes(4);
   });
 
   it('rejects configured revisioned authentication before provider or credential effects', () => {
@@ -2873,14 +2630,14 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       .assertAuthenticationActionAllowed?.({
         intent: 'connect',
         service: builtInService,
-      })).not.toThrow();
+      })).toThrow(expect.objectContaining({ code: 'connected_account_capability_indeterminate' }));
     expect(() => persistence.attempts
       .assertAuthenticationActionAllowed?.({
         intent: 'connect',
         service: builtInService,
         configurationState: 'configured',
       })).toThrow(expect.objectContaining({
-      code: 'connected_account_legacy_operation_unsupported',
+      code: 'connected_account_capability_indeterminate',
     }));
     expect(() => persistence.attempts
       .assertAuthenticationActionAllowed?.({
@@ -2890,7 +2647,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         configurationState: 'unconfigured',
         authenticationModeCardinality: 'single',
       })).toThrow(expect.objectContaining({
-        code: 'connected_account_legacy_operation_unsupported',
+        code: 'connected_account_capability_indeterminate',
       }));
     expect(readCredential).not.toHaveBeenCalled();
     expect(mutateCredential).not.toHaveBeenCalled();
@@ -2945,7 +2702,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           localId: 'gemini-account',
         },
       })).toThrow(expect.objectContaining({
-        code: 'connected_account_legacy_operation_unsupported',
+        code: 'connected_account_capability_indeterminate',
       }));
     expect(mutateCredential).not.toHaveBeenCalled();
   });
@@ -2985,23 +2742,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         sessionConnectionEpoch: 4,
         socket: { connected: true },
       }),
-      legacyCredentialApi: {
-        getAccountEncryptionMode:
-          vi.fn(async (): Promise<'plain'> => 'plain'),
-        getServerFeaturesSnapshot:
-          vi.fn(async () => ({
-            status: 'ready' as const,
-            features: exactOldFeatures,
-          })),
-        getConnectedServiceCredentialPlain: readPlain,
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-        registerConnectedServiceCredentialPlain: registerPlain,
-        registerConnectedServiceCredentialSealed: vi.fn(),
-        listConnectedServiceProfiles: vi.fn(async () => ({
-          serviceId: 'openai' as const,
-          profiles: [],
-        })),
-      },
       mutateCredential,
       readCredential: vi.fn(async () => null),
       readConfiguration: vi.fn(async () => null),
@@ -3022,7 +2762,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         intent: 'connect',
         service: builtInService,
       })).toThrow(expect.objectContaining({
-        code: 'connected_account_legacy_operation_unsupported',
+        code: 'connected_account_capability_indeterminate',
       }));
     await expect(persistence.attempts.settlement.settle({
       intent: 'connect',
@@ -3037,7 +2777,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       displayName: 'OpenAI',
       scopes: [],
     })).rejects.toMatchObject({
-      code: 'connected_account_legacy_operation_unsupported',
+        code: 'connected_account_capability_indeterminate',
     });
     expect(readPlain).not.toHaveBeenCalled();
     expect(registerPlain).not.toHaveBeenCalled();
@@ -3071,23 +2811,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         status: 'ready',
         features: revisionedFeatures,
       }),
-      legacyCredentialApi: {
-        getAccountEncryptionMode:
-          vi.fn(async (): Promise<'plain'> => 'plain'),
-        getServerFeaturesSnapshot:
-          vi.fn(async () => ({
-            status: 'ready' as const,
-            features: revisionedFeatures,
-          })),
-        getConnectedServiceCredentialPlain: readPlain,
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-        registerConnectedServiceCredentialPlain: registerPlain,
-        registerConnectedServiceCredentialSealed: vi.fn(),
-        listConnectedServiceProfiles: vi.fn(async () => ({
-          serviceId: 'claude-subscription' as const,
-          profiles: [],
-        })),
-      },
       mutateCredential,
       readCredential: vi.fn(async () => null),
       readConfiguration: vi.fn(async () => null),
@@ -3115,7 +2838,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       displayName: 'Claude',
       scopes: [],
     })).rejects.toMatchObject({
-      code: 'connected_account_legacy_operation_unsupported',
+        code: 'connected_account_capability_indeterminate',
     });
     expect(mutateCredential).not.toHaveBeenCalled();
     expect(readPlain).not.toHaveBeenCalled();

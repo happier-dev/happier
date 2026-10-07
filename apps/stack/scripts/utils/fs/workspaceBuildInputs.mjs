@@ -1,5 +1,43 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+
+const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
+const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
+
+export function isWorkspaceBuildSourcePath(path) {
+  return SOURCE_ROOTS.includes(String(path).replaceAll('\\', '/').split('/')[0]);
+}
+
+// Package admission, recursive watch traversal and runtime capture share this
+// source-membership rule. Explicit shipped resources are admitted separately.
+export function isWorkspaceBuildInputIgnoredPath(path) {
+  const parts = String(path).replaceAll('\\', '/').split('/').filter(Boolean);
+  const name = parts.at(-1) ?? '';
+  return parts.some(part => TEST_DIRECTORY_NAMES.has(part))
+    || /\.(?:test|spec|testkit|test-support)\.[^.]+$/.test(name)
+    || /^vitestSetup\.[cm]?[jt]sx?$/.test(name)
+    || name.startsWith('vitest.')
+    || name.startsWith('test-setup.');
+}
+
+export function createWorkspaceBuildInputIgnorePath(packageDirs, { repoDir, hostDir, ...options } = {}) {
+  // Inventory is the authority for exceptions: shipped/native data and relative
+  // extended configs may legitimately have test-like names.
+  const directories = Array.isArray(packageDirs) ? packageDirs : [packageDirs];
+  const inputPath = path => repoDir ? relative(repoDir, path) : path;
+  const admitted = new Set(directories.flatMap(packageDir =>
+    readWorkspaceBuildInputs(packageDir, { ...options, includeDirectories: true }).map(path => join(packageDir, path)))
+    .filter(path => isWorkspaceBuildInputIgnoredPath(inputPath(path))));
+  return path => {
+    if (hostDir) {
+      const hostRelative = relative(hostDir, path);
+      const belongsToHost = !isAbsolute(hostRelative) && hostRelative !== '..' && !hostRelative.startsWith(`..${sep}`);
+      // Host assets, native support and Prisma inputs are opaque build data.
+      if (belongsToHost && !isWorkspaceBuildSourcePath(hostRelative)) return false;
+    }
+    return isWorkspaceBuildInputIgnoredPath(inputPath(path)) && !admitted.has(path);
+  };
+}
 
 function isWorkspaceBuildConfigFile(name) {
   if (name === 'package.json') return true;
@@ -32,16 +70,7 @@ export function readWorkspaceBuildInputs(packageDir, {
     const generated = excludeGeneratedPluginArtifacts && isGeneratedPluginArtifactPath(relativePath);
     if (generated && relativePath !== '.happier-plugin' && relativePath !== '.happier-plugin/ui') return;
     if (excludeGeneratedPluginManifest && relativePath === '.happier-plugin/plugin.json') return;
-    const name = path.split(sep).at(-1) ?? '';
-    if (
-      ignoreTests && (
-      name === '__tests__'
-      || name === 'test'
-      || name === 'tests'
-      || name === 'fixtures'
-      || /\.(?:test|spec)\.[^.]+$/.test(name)
-      )
-    ) return;
+    if (ignoreTests && isWorkspaceBuildInputIgnoredPath(relativePath)) return;
 
     let entryStat;
     try {
@@ -65,7 +94,7 @@ export function readWorkspaceBuildInputs(packageDir, {
   }
   for (const entry of entries) {
     if (
-      (entry.isDirectory() && ['src', 'sources', 'scripts'].includes(entry.name))
+      (entry.isDirectory() && SOURCE_ROOTS.includes(entry.name))
       || (entry.isFile() && (isWorkspaceBuildConfigFile(entry.name) || /\.(?:mjs|cjs|js)$/.test(entry.name)))
     ) visit(join(packageDir, entry.name));
   }
@@ -80,7 +109,7 @@ export function readWorkspaceBuildInputs(packageDir, {
         || /[*?{}[\]]/.test(entry)
       ) throw new Error(`[workspace-build] invalid shipped package file: ${entry}`);
       if (entry === 'dist' || entry.startsWith('dist/') || entry === 'package.json') continue;
-      visit(join(packageDir, entry), { ignoreTests: false });
+      visit(join(packageDir, entry), { ignoreTests: isWorkspaceBuildSourcePath(entry) });
     }
   }
   // A config excluded as a test-only root can still be a consumed build input
@@ -114,7 +143,7 @@ export function resolveWorkspaceBuildInputWatchPaths(packageDir, {
   excludeGeneratedPluginArtifacts = false,
   includeShippedFiles = false,
 } = {}) {
-  const membershipRoots = ['src', 'sources', 'scripts', '.happier-plugin/ui/hosted-web'];
+  const membershipRoots = [...SOURCE_ROOTS, '.happier-plugin/ui/hosted-web'];
   return [...new Set([
     ...membershipRoots.map((path) => join(packageDir, path)),
     ...readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, excludeGeneratedPluginArtifacts, includeShippedFiles, includeDirectories: includeShippedFiles })

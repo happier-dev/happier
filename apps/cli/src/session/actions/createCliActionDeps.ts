@@ -830,8 +830,9 @@ export function createCliActionDeps(params: Readonly<{
   };
   const roleArtifactStore = params.credentials ? createCredentialedAccountArtifactStore(params.credentials) : undefined;
   const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
-  const artifactCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
-    ...(homeAccountId ? { runtimeAccountId: homeAccountId } : {}),
+  const accountCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
+    ...(homeAccountId ? { runtimeAccountId: homeAccountId } : {}) });
+  const artifactCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...accountCallerContext(context),
     ...(!context.defaultSessionId && params.sessionId ? { defaultSessionId: params.sessionId } : {}) });
   const todoHomeServerId = params.serverId ?? configuration.activeServerId;
   const todoHomeBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
@@ -1175,6 +1176,7 @@ export function createCliActionDeps(params: Readonly<{
     !serverId || serverId === (params.serverId ?? configuration.activeServerId);
   const callMachineAction = async (input: Readonly<{
     machineId: string;
+    authority?: ActionExecutorContext['authority'];
     serverId?: string;
     method: string;
     request: unknown;
@@ -1188,7 +1190,10 @@ export function createCliActionDeps(params: Readonly<{
       return await direct.invoke(
         input.method,
         input.request,
-        input.signal ? { signal: input.signal } : undefined,
+        input.signal || input.authority ? {
+          ...(input.signal ? { signal: input.signal } : {}),
+          ...(input.authority ? { localActionContext: { authority: input.authority } } : {}),
+        } : undefined,
       );
     }
     return await callMachineRpc({
@@ -1196,6 +1201,7 @@ export function createCliActionDeps(params: Readonly<{
       machineId: input.machineId,
       method: input.method,
       request: input.request,
+      ...executionRunAuthorityCeiling(input),
       ...(input.signal ? { signal: input.signal } : {}),
     });
   };
@@ -1726,6 +1732,7 @@ export function createCliActionDeps(params: Readonly<{
   };
 
   type ExecutionRunActionTransportOptions = Readonly<{
+    authority?: ActionExecutorContext['authority'];
     workDepth?: number;
     workspaceWrites?: 'allow' | 'deny';
     agentStartContext?: ActionExecutorContext['agentStartContext'];
@@ -1740,6 +1747,11 @@ export function createCliActionDeps(params: Readonly<{
     workflowObservationSink?: unknown;
     workflowRunId?: string;
   }>;
+  function executionRunAuthorityCeiling(opts?: Pick<ExecutionRunActionTransportOptions, 'authority'>): Readonly<{
+    authorityCeiling?: 'account_automation';
+  }> {
+    return opts?.authority === 'account_automation' ? { authorityCeiling: 'account_automation' } : {};
+  }
   type ExecutionRunMachineTarget =
     | Readonly<{ ok: true; machineId: string }>
     | Readonly<{ ok: false; errorCode: 'execution_run_target_not_selected' | 'execution_run_target_unavailable' }>;
@@ -1791,6 +1803,10 @@ export function createCliActionDeps(params: Readonly<{
       : { ok: false, errorCode: 'execution_run_target_not_selected' };
   };
 
+  const requiresDirectExecutionRunTransport = (opts?: ExecutionRunActionTransportOptions) =>
+    opts?.workDepth !== undefined || opts?.workspaceWrites !== undefined || opts?.permissionRequestStore !== undefined
+      || opts?.workflowObservationSink !== undefined || opts?.workflowRunId !== undefined;
+
   const callDetachedExecutionRunRpc = async (
     sessionId: string | null,
     method: string,
@@ -1812,7 +1828,7 @@ export function createCliActionDeps(params: Readonly<{
     const target = await resolveExecutionRunMachineTarget(sessionId, opts);
     if (!target.ok) return failure(target.errorCode, 'noRunCreated');
     try {
-      if (opts?.workDepth !== undefined || opts?.workspaceWrites !== undefined || opts?.permissionRequestStore !== undefined || opts?.workflowObservationSink !== undefined || opts?.workflowRunId !== undefined) {
+      if (opts && requiresDirectExecutionRunTransport(opts)) {
         const direct = params.machineActionDirectTargetTransport;
         if (!direct || direct.machineId !== target.machineId) {
           return failure('execution_run_target_unavailable', 'noRunCreated');
@@ -1820,6 +1836,7 @@ export function createCliActionDeps(params: Readonly<{
         return await direct.invoke(method, request, {
           ...(opts.signal ? { signal: opts.signal } : {}),
           localActionContext: {
+            ...(opts.authority ? { authority: opts.authority } : {}),
             ...(opts.workDepth === undefined ? {} : {
               surface: 'agent' as const,
               authority: 'account_automation' as const,
@@ -1851,6 +1868,7 @@ export function createCliActionDeps(params: Readonly<{
         machineId: target.machineId,
         method,
         request,
+        ...executionRunAuthorityCeiling(opts),
         ...(DETACHED_EXECUTION_RUN_CALLER_LIFECYCLE_METHODS.has(method)
           || getRequest?.success && Boolean(getRequest.data.waitForInputId || getRequest.data.waitForOutput)
           || method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ
@@ -1902,6 +1920,7 @@ export function createCliActionDeps(params: Readonly<{
         machineId: target.machineId,
         method: RPC_METHODS.CAPABILITIES_DETECT,
         request: { requests: [{ id: 'tool.executionRuns' }] },
+        ...(opts?.authority ? { authority: opts.authority } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
       const result = readRecord(readRecord(response).results)['tool.executionRuns'];
@@ -3010,6 +3029,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3031,6 +3051,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         skipLiveRpc: transport.rawSession.active === false,
         ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -3053,6 +3074,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3081,6 +3103,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3102,6 +3125,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3123,6 +3147,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3144,6 +3169,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3165,6 +3191,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3178,6 +3205,7 @@ export function createCliActionDeps(params: Readonly<{
       return await callSessionRpc({
         ...transport, token: params.token, sessionId: transport.sessionId,
         method: SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1, request,
+        ...executionRunAuthorityCeiling(opts),
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
@@ -3198,6 +3226,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3219,6 +3248,7 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -3247,17 +3277,27 @@ export function createCliActionDeps(params: Readonly<{
         serverUrl: params.serverHttpBaseUrl ?? configuration.serverUrl,
         method: RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
         request,
+        ...executionRunAuthorityCeiling(context),
         ...(context.signal ? { signal: context.signal } : {}),
       });
     },
     executionRunWait: async (sessionId, request, opts) => {
       if (sessionId === null) {
-        return await callDetachedExecutionRunRpc(
-          sessionId,
-          SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
-          request,
-          opts,
-        );
+        if (!params.credentials) return { ok: false, code: 'not_authenticated' };
+        const target = await resolveExecutionRunMachineTarget(sessionId, opts);
+        if (!target.ok) return { ok: false, code: target.errorCode };
+        return await waitForExecutionRun({ credentials: params.credentials, machineId: target.machineId,
+          serverUrl: params.serverHttpBaseUrl ?? configuration.serverUrl,
+          ...executionRunAuthorityCeiling(opts), runId: request.runId,
+          timeoutMs: normalizeExecutionRunWaitTimeoutMs(request.timeoutSeconds),
+          ...(request.condition ? { condition: request.condition } : {}),
+          ...(request.after ? { after: ExecutionRunGetResponseSchema.parse(request.after) } : {}),
+          ...(opts?.onSnapshot ? { onSnapshot: opts.onSnapshot } : {}),
+          ...(opts?.signal ? { signal: opts.signal } : {}),
+          ...(requiresDirectExecutionRunTransport(opts) ? { invokeWait: (request: unknown, signal?: AbortSignal) =>
+            callDetachedExecutionRunRpc(null, SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, request,
+              { ...opts, exactMachineId: target.machineId, ...(signal ? { signal } : {}) }) } : {}),
+        });
       }
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
@@ -3268,10 +3308,12 @@ export function createCliActionDeps(params: Readonly<{
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
+        ...executionRunAuthorityCeiling(opts),
         runId: request.runId,
         timeoutMs: normalizeExecutionRunWaitTimeoutMs(request.timeoutSeconds),
         ...(request.condition ? { condition: request.condition } : {}),
         ...(request.after ? { after: ExecutionRunGetResponseSchema.parse(request.after) } : {}),
+        ...(opts?.onSnapshot ? { onSnapshot: opts.onSnapshot } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },
@@ -6250,7 +6292,9 @@ export function createCliActionDeps(params: Readonly<{
         return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       }
       try {
-        let context = artifactCallerContext(args.context);
+        // A Machine/Account host's bound id is not a Workflow origin Session.
+        // Keep Session identity explicit at ingress; only enrich Account identity.
+        let context = accountCallerContext(args.context);
         const isTrustedCallingSession = normalizeStringValue(args.context.defaultSessionId) === normalizeStringValue(params.sessionId);
         if (args.actionId === 'workflow.run.start'
           && isTrustedCallingSession

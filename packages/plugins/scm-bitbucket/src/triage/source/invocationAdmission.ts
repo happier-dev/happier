@@ -4,6 +4,7 @@ import type {
   TriageEntryLocatorV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { isTriageSourceConnectedAccountInstanceV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { BitbucketTriageApiClient } from '../apiClient.js';
 import { createBitbucketFailure } from '../failures.js';
@@ -95,6 +96,11 @@ export async function admitBitbucketEntryInvocation(
   }>,
   runtime: BitbucketSourceRuntime,
 ): Promise<BitbucketAdmittedInvocation> {
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)) {
+    return { ok: false, failure: toTriageSourceFailure(createBitbucketFailure(
+      'unsupportedContract', 'unsupported-credential-source',
+    )) };
+  }
   if (input.localRef.kindId !== BITBUCKET_PULL_REQUEST_KIND_ID) {
     return { ok: false, failure: toTriageSourceFailure(KIND_NOT_DECLARED) };
   }

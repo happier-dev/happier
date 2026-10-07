@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import fastify, { type FastifyRequest } from 'fastify';
+import fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import axios from 'axios';
 import { Readable } from 'node:stream';
+import { readFile } from 'node:fs/promises';
 import tweetnacl from 'tweetnacl';
 import {
   CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -8,6 +10,7 @@ import {
   decodeBase64,
   deriveAccountMachineKeyFromRecoverySecret,
   formatRecoveryKey,
+  machineStoredContentMatchesAccountMode,
   verifyAccountContentKeyBindingV1,
 } from '@happier-dev/protocol';
 
@@ -20,12 +23,14 @@ const terminalBearer = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', 
   provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
 })).toString('base64url')}.signature`;
 
-function installNativeAuthTransport(app: ReturnType<typeof fastify>): () => void {
+function installNativeAuthTransport(app: ReturnType<typeof fastify>, mode: 'plain' | 'e2ee' = 'plain', failRegistration = false): () => void {
   // Machine registration is real; only the Home's HTTP boundary is substituted.
-  app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
-  app.post('/v1/machines', async (request: FastifyRequest) => {
-    const body = request.body as { id: string; metadata: string };
-    return { machine: { id: body.id, metadata: body.metadata, metadataVersion: 1, daemonState: null, daemonStateVersion: 0 } };
+  app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
+  app.post('/v1/machines', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (failRegistration) return reply.code(503).send({ error: 'unavailable', token: terminalBearer });
+    const body = request.body as { id: string; metadata: string; dataEncryptionKey?: string };
+    expect(machineStoredContentMatchesAccountMode({ mode, ...body })).toBe(true);
+    return { machine: { id: body.id, metadata: body.metadata, metadataVersion: 1, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: body.dataEncryptionKey ?? null } };
   });
   return installAxiosFastifyAdapter({ app, origin: 'http://account.test' });
 }
@@ -115,8 +120,9 @@ describe('native email and recovery CLI commands', () => {
     { canonicalUrl: 'https://public.account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: false },
     { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://other.account.test', identity: 'srv_home', succeeds: false },
     { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_other', succeeds: false },
-  ])('binds recovery login to canonical $canonicalUrl and audience $audienceOrigin / $identity', async ({ canonicalUrl, audienceOrigin, identity, succeeds }) => {
-    env.patch({ HAPPIER_PUBLIC_SERVER_URL: canonicalUrl, HAPPIER_LOCAL_SERVER_URL: 'http://account.test' });
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_home', succeeds: true, failRegistration: true },
+  ])('binds recovery login to canonical $canonicalUrl and audience $audienceOrigin / $identity ($failRegistration)', async ({ canonicalUrl, audienceOrigin, identity, succeeds, failRegistration }) => {
+    env.patch({ HAPPIER_PUBLIC_SERVER_URL: canonicalUrl, HAPPIER_LOCAL_SERVER_URL: 'http://account.test', HAPPIER_ACTIVE_SERVER_ID: 'stack_qa__id_default' });
     const app = fastify();
     const recoverySecret = new Uint8Array(32).fill(7);
     const recoveryKey = formatRecoveryKey(recoverySecret);
@@ -153,15 +159,40 @@ describe('native email and recovery CLI commands', () => {
       })).not.toBeNull();
       return { success: true, token: terminalBearer };
     });
-    const restore = installNativeAuthTransport(app);
+    const restore = installNativeAuthTransport(app, 'e2ee', failRegistration);
+    // A failed HTTP adapter may carry secrets in its Error text as well as
+    // its attached request/response. Keep that boundary shape realistic.
+    const interceptor = axios.interceptors.response.use(undefined, (error: unknown) => {
+      if (failRegistration && axios.isAxiosError(error)) {
+        error.message = `Registration refused ${recoveryKey} ${terminalBearer} ${Buffer.from(recoverySecret).toString('base64')}`;
+        error.stack = `AxiosError: ${error.message}\n    at generatedRegistrationFixture (fixture.ts:1:1)`;
+      }
+      return Promise.reject(error);
+    });
     const output = captureConsoleJsonOutput<unknown>();
     try {
-      await import('@/ui/auth');
       const { handleAuthCommand } = await import('./auth');
       await handleAuthCommand(['recovery-key', 'login', '--key', recoveryKey, '--json']);
       const envelope = output.json();
-      if (succeeds) {
+      if (failRegistration) {
+        expect(envelope).toMatchObject({ ok: false, error: { code: 'ERR_BAD_RESPONSE', phase: 'machine_registration' } });
+        const { logger } = await import('@/ui/logger');
+        logger.flushSync();
+        const log = await readFile(logger.logFilePath, 'utf8');
+        expect(log).toContain('ERR_BAD_RESPONSE');
+        expect(log).toContain('503');
+        expect(log).toContain('machine_registration');
+        expect(log).toContain('Registration refused');
+        expect(log).toContain('generatedRegistrationFixture');
+        expect(log).not.toContain(recoveryKey);
+        expect(log).not.toContain(terminalBearer);
+        expect(log).not.toContain(Buffer.from(recoverySecret).toString('base64'));
+        const { readStoredCredentials } = await import('@/persistence');
+        expect(await readStoredCredentials()).toBeNull();
+      } else if (succeeds) {
         expect(envelope).toEqual(expect.objectContaining({ ok: true, data: expect.objectContaining({ accountId: 'account-1' }) }));
+        const { readStoredCredentials } = await import('@/persistence');
+        expect(await readStoredCredentials()).toMatchObject({ token: terminalBearer, encryption: { type: 'legacy', secret: recoverySecret } });
       } else {
         expect(envelope).toMatchObject({ ok: false, error: { code: 'authentication_failed' } });
         const { readStoredCredentials } = await import('@/persistence');
@@ -170,6 +201,7 @@ describe('native email and recovery CLI commands', () => {
       expect(redeemed).toBe(succeeds);
       expect(output.logs.join('\n')).not.toContain(recoveryKey);
     } finally {
+      axios.interceptors.response.eject(interceptor);
       output.restore();
       restore();
       await app.close();
@@ -199,6 +231,43 @@ describe('native email and recovery CLI commands', () => {
       await app.close();
     }
   });
+
+  it.each([
+    { operation: 'reset-request', path: '/v1/auth/password/reset/request', responseDelayMs: 31_000 },
+    { operation: 'change-complete', path: '/v1/account/email/change', responseDelayMs: 16_000 },
+  ])('lets the caller own the lifetime of a slow $operation request', async ({ operation, path, responseDelayMs }) => {
+    const app = fastify();
+    app.get('/v1/features', async () => ({
+      features: {},
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } },
+    }));
+    app.post(path, async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, responseDelayMs));
+      return operation === 'reset-request' ? { accepted: true } : { v: 1, status: 'updated' };
+    });
+    // A real HTTP socket exercises Axios's request deadline; the injection
+    // adapter deliberately does not model socket timeout behavior.
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+    env.patch({ HAPPIER_LOCAL_SERVER_URL: origin });
+    vi.unstubAllGlobals();
+    const output = captureConsoleJsonOutput<unknown>();
+    try {
+      if (operation === 'change-complete') {
+        const { writeCredentialsTokenOnly } = await import('@/persistence');
+        await writeCredentialsTokenOnly({ token: 'interactive' });
+      }
+      const { handleAuthCommand } = await import('./auth');
+      await handleAuthCommand(operation === 'reset-request'
+        ? ['email', operation, '--email', 'person@example.test', '--json']
+        : ['email', operation, '--verification-token', 'V'.repeat(43), '--json']);
+      expect(output.json()).toMatchObject({ ok: true });
+    } finally {
+      output.restore();
+      await app.close();
+    }
+    // The real socket delay exceeds the package's 30s test default; leave room
+    // for command initialization and socket cleanup, not a product deadline.
+  }, 120_000);
 
   it('requests invitation-scoped mailbox proof before transferable invitation provisioning', async () => {
     const app = fastify();

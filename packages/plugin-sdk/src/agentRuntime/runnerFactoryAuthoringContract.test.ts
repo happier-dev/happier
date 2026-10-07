@@ -174,7 +174,10 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expectTypeOf<keyof AgentPreflightSessionControlsContributionV1>().toEqualTypeOf<
       | 'resolveProbeVariant'
       | 'models'
+      | 'catalogs'
+      | 'probeCatalogs'
       | 'jsonRpcCommands'
+      | 'managedServiceCommands'
       | 'probeModels'
       | 'probeModes'
       | 'probeConfigOptions'
@@ -188,18 +191,18 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       'command' | 'parseOutput' | 'fallback' | 'commandToolIds' | 'resolveCommandToolId'
     >();
     expectTypeOf<keyof AgentPreflightSessionControlsCommandV1>().toEqualTypeOf<
-      'toolId' | 'args' | 'prepareCommand' | 'environmentKeys' | 'environmentExcludeKeys' | 'ci'
+      'toolId' | 'executable' | 'args' | 'stdin' | 'prepareCommand' | 'environmentKeys' | 'environmentExcludeKeys' | 'ci'
     >();
     expectTypeOf<AgentPreflightSessionControlsCommandV1>()
       .not.toHaveProperty('timeoutMs');
     expectTypeOf<keyof AgentPreflightSessionControlsProbeInputV1>().toEqualTypeOf<
-      'accountSettings' | 'environment' | 'runtimeDescriptorV1' | 'runtimeKindOverride'
+      'accountSettings' | 'environment' | 'nonblankEnvironment' | 'pluginSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride'
     >();
     expectTypeOf<AgentPreflightSessionControlsProbeContextV1>()
       .not.toHaveProperty('exec');
     expectTypeOf<AgentPreflightSessionControlsProbeContextV1>()
       .not.toHaveProperty('process');
-    expectTypeOf<keyof AgentPreflightJsonRpcRequestClientV1>().toEqualTypeOf<'request' | 'notify'>();
+    expectTypeOf<keyof AgentPreflightJsonRpcRequestClientV1>().toEqualTypeOf<'request' | 'notify' | 'onNotification' | 'onRequest'>();
     expectTypeOf<AgentPreflightJsonRpcRequestClientV1>()
       .not.toHaveProperty('dispose');
     expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['terminalPromptSubmitVerification']>>()

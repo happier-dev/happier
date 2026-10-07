@@ -41,6 +41,65 @@ function scopeFor(
 }
 
 describe('Agent runner-factory registration transaction', () => {
+  it('retains a managed dependency ACP launch as an alternative to a system tool', () => {
+    const scope = scopeFor(['factory']);
+    const command = { executable: { kind: 'managedDependency' as const, id: 'native-acp' }, args: [] };
+    scope.api.agents.register('assistant', factory, { preflightSessionControls: { catalogs: { kind: 'acp', command } } });
+    const registered = scope.commit()[0]?.value as { preflightSessionControls?: { catalogs?: { command?: unknown } } };
+    expect(registered.preflightSessionControls?.catalogs?.command).toEqual(command);
+  });
+
+  it('retains the provider-owned ACP authentication selector with its receiver', () => {
+    const scope = scopeFor(['factory']);
+    const catalogs = {
+      kind: 'acp' as const,
+      command: { toolId: 'assistant', args: ['acp'] },
+      nativeMethodId: 'cached_token',
+      selectAuthentication() { return { methodId: this.nativeMethodId, metadata: { headless: true } }; },
+    };
+    scope.api.agents.register('assistant', factory, { preflightSessionControls: { catalogs } });
+    const registration = scope.commit()[0];
+    const registered = registration?.value as {
+      preflightSessionControls?: { catalogs?: { selectAuthentication?: () => unknown } };
+    };
+    const selector = registered.preflightSessionControls?.catalogs?.selectAuthentication;
+    expect(selector?.()).toEqual({ methodId: 'cached_token', metadata: { headless: true } });
+  });
+
+  it('retains the immutable native managed-service launch declaration admitted with a catalog probe', () => {
+    const scope = scopeFor(['factory']);
+    const args = ['serve'];
+    const contribution = {
+      managedServiceCommands: [{ toolId: 'assistant-cli', args, environmentExcludeKeys: ['UNSELECTED_TOKEN'] }],
+      probeCatalogs: () => ({ commands: null, skills: null }),
+    };
+    scope.api.agents.register('assistant', factory, { preflightSessionControls: contribution });
+    const [registration] = scope.commit();
+    args.push('--wrong-late-argument');
+    const registered = registration?.value as {
+      preflightSessionControls?: { managedServiceCommands?: unknown };
+    };
+    expect(registered.preflightSessionControls?.managedServiceCommands).toEqual([
+      { toolId: 'assistant-cli', args: ['serve'], environmentExcludeKeys: ['UNSELECTED_TOKEN'] },
+    ]);
+  });
+
+  it('preserves native catalog discovery in the admitted Agent preflight contribution', async () => {
+    const scope = scopeFor(['factory']);
+    const contribution = {
+      probeModels: () => null,
+      probeCatalogs: async () => ({ commands: [{ name: 'review' }], skills: null }),
+    };
+    scope.api.agents.register('assistant', factory, { preflightSessionControls: contribution });
+    const [registration] = scope.commit();
+    const registered = registration?.value as {
+      preflightSessionControls?: { probeCatalogs?: () => Promise<unknown> };
+    };
+    await expect(registered.preflightSessionControls?.probeCatalogs?.()).resolves.toEqual({
+      commands: [{ name: 'review' }], skills: null,
+    });
+  });
+
   it('captures bounded daemon spawn hooks in the same Agent registration transaction', async () => {
     const scope = scopeFor(['factory']);
     const spawnSelection = Object.freeze({}) satisfies AgentDaemonSpawnRuntimeSelectionV1;
@@ -386,34 +445,6 @@ describe('Agent runner-factory registration transaction', () => {
     })).resolves.toEqual({ ok: true });
     expect(findDeclaredCandidate).toHaveBeenCalledTimes(1);
     expect(verifyResumeReachable).toHaveBeenCalledTimes(1);
-  });
-
-  it('captures the native-file runtime-auth projection without retaining mutable registration fields', () => {
-    const scope = scopeFor(['factory']);
-    const refresh = {
-      purpose: 'primary',
-      materialization: { kind: 'files' as const, fileIds: ['auth.json'] },
-      decode: (_input: { files: Readonly<Record<string, Uint8Array>>; credentialRevision: string }) => ({
-        accessToken: 'fresh', credentialRevision: _input.credentialRevision,
-      }),
-    };
-    scope.api.agents.register('assistant', factory, { connectedAccountLaunch: { continuity: { nativeAuthCodec: {
-      materialize: () => ({ files: {} }),
-      inspect: () => ({ status: 'unavailable' as const, retryable: false, reason: 'unused' }),
-      runtimeAuthRefresh: refresh,
-    } } } });
-    const [registration] = scope.commit();
-    const captured = (registration?.value as {
-      connectedAccountLaunch?: { continuity?: { nativeAuthCodec?: { runtimeAuthRefresh?: typeof refresh } } };
-    }).connectedAccountLaunch?.continuity?.nativeAuthCodec?.runtimeAuthRefresh;
-    expect(captured).toBeDefined();
-    refresh.purpose = 'invented';
-    refresh.materialization.fileIds.push('refresh-secret.json');
-    expect(captured?.purpose).toBe('primary');
-    expect(captured?.materialization).toEqual({ kind: 'files', fileIds: ['auth.json'] });
-    expect(captured?.decode({ files: {}, credentialRevision: 'revision' })).toEqual({
-      accessToken: 'fresh', credentialRevision: 'revision',
-    });
   });
 
   it('rejects resume reachability without a host-owned state-sharing descriptor', () => {

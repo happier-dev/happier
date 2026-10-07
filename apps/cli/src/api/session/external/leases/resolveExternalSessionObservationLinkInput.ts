@@ -23,7 +23,6 @@ import type {
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import {
-    EXTERNAL_SESSIONS_INVOCATION_POLICY,
     type BoundedAgentExternalSessionsContribution,
 } from '@/session/external/agentExternalSessionsInvocation';
 import {
@@ -187,16 +186,12 @@ export async function resolveExternalSessionObservationLinkInput(
         );
         if (!qualified.ok || !qualified.link.qualifiedIdentity) return null;
         const signal = params.signal ?? new AbortController().signal;
-        const deadlineAtMs = params.deadlineAtMs
-            ?? Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs;
         const resolved = await runtimeSnapshot.externalSessions.resolveLinkedIdentity({
             source: qualified.link.source as AgentExternalSessionSource,
             remoteSessionId: qualified.link.remoteSessionId,
             linkData: qualified.link.linkData ?? {},
             signal,
-            deadlineAtMs,
-            maxSerializedBytes:
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity.maxSerializedBytes,
+            deadlineAtMs: params.deadlineAtMs,
         });
         if (
             !resolved.ok

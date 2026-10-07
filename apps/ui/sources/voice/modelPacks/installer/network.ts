@@ -44,17 +44,19 @@ function cacheBustUrl(url: string): string {
 export async function fetchRemoteManifest(opts: {
   fetchImpl: typeof fetch;
   manifestUrl: string;
-  timeoutMs: number;
+  timeoutMs: number | null;
   signal: AbortSignal;
   urlPolicy?: ModelPackUrlPolicy;
 }): Promise<ModelPackManifest> {
   assertModelPackUrlAllowed(opts.manifestUrl, opts.urlPolicy);
   const response = await raceWithAbort(opts.signal, [
     opts.fetchImpl(cacheBustUrl(opts.manifestUrl), { signal: opts.signal }),
-    createTimeoutPromise(opts.timeoutMs),
+    ...(opts.timeoutMs === null ? [] : [createTimeoutPromise(opts.timeoutMs)]),
   ]);
   if (!response.ok) throw new Error(`model_pack_manifest_download_failed:${response.status}`);
-  const json = await raceWithAbort(opts.signal, [response.json(), createTimeoutPromise(opts.timeoutMs)]);
+  const json = await raceWithAbort(opts.signal, [response.json(),
+    ...(opts.timeoutMs === null ? [] : [createTimeoutPromise(opts.timeoutMs)]),
+  ]);
   const manifest = parseModelPackManifest(json);
   assertManifestUrlsAllowed(manifest, opts.urlPolicy);
   return manifest;

@@ -77,6 +77,7 @@ describe('native prompt loop non-admission recovery', () => {
                 metadata: createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
                 overrides: {
                     enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
+                    enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
                     getLastObservedMessageSeq: () => 0,
                     ensureMetadataSnapshot: async () => createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
                 },

@@ -9,7 +9,6 @@ export * from './frames';
 export * from './carrier';
 export * from './capabilities';
 export * from './diagnostics';
-export * from './adaptation';
 export * from './player';
 export * from './webCodecs';
 export * from './inputGesture';

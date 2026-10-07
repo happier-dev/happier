@@ -7,6 +7,8 @@ type EncryptionVariant = 'legacy';
 
 interface CreateEncryptedRpcTestClientOptions {
   scopePrefix: string;
+  /** Models the Home's authenticated ingress stamp, not encrypted caller input. */
+  callerAuthority?: RpcRequest['callerAuthority'];
   registerHandlers: (manager: RpcHandlerManager) => void;
   encryptionKey?: Uint8Array;
   encryptionVariant?: EncryptionVariant;
@@ -53,6 +55,7 @@ export function createEncryptedRpcTestClient(
       method: boundMethod,
       params: encryptedParams,
       requestId: `${options.scopePrefix}:test-request:${requestSequence}`,
+      ...(options.callerAuthority ? { callerAuthority: options.callerAuthority } : {}),
     };
     const encryptedResponse = await manager.handleRequest(rpcRequest);
     return await socketRpcCodec.decodeResult(content, { ok: true, result: encryptedResponse }, callId) as TResponse;

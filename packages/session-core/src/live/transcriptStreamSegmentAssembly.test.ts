@@ -34,6 +34,22 @@ describe('releaseTranscriptStreamSegmentAssemblyForSession', () => {
         expect(isTranscriptStreamSegmentAssemblyReady('same', 'segment')).toBe(true);
     });
 
+    it('retains active delta chains until their segment or session is released', () => {
+        for (let index = 0; index < 40; index++) {
+            noteTranscriptStreamSegmentSnapshot({ sessionId: `session-${index}`, localId: 'segment', record: agentMessageRecord('text'), tick: 1 });
+        }
+
+        expect(applyTranscriptStreamSegmentDelta({ sessionId: 'session-0', localId: 'segment', deltaText: '!', tick: 2, baseLength: 4 })).toBe('text!');
+        noteTranscriptStreamSegmentSnapshot({ sessionId: 'session-0', localId: 'segment', record: {
+            ...agentMessageRecord('text!'),
+            meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'segment', segmentState: 'complete' } },
+        }, tick: 3 });
+        expect(isTranscriptStreamSegmentAssemblyReady('session-0', 'segment')).toBe(false);
+        releaseTranscriptStreamSegmentAssemblyForSession('session-39');
+        expect(isTranscriptStreamSegmentAssemblyReady('session-39', 'segment')).toBe(false);
+        expect(isTranscriptStreamSegmentAssemblyReady('session-1', 'segment')).toBe(true);
+    });
+
     it('drops every tracked segment of the released session and keeps other sessions intact', () => {
         noteTranscriptStreamSegmentSnapshot({ sessionId: 's-evicted', localId: 'seg-1', record: agentMessageRecord('abc'), tick: 1 });
         noteTranscriptStreamSegmentSnapshot({ sessionId: 's-evicted', localId: 'seg-2', record: agentMessageRecord('def'), tick: 1 });

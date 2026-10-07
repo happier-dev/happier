@@ -242,6 +242,23 @@ describe('configured external-session source registry', () => {
     expect(Object.isFrozen(snapshot.refusals)).toBe(true);
   });
 
+  it('isolates a malformed configured source while retaining valid sources of both Agents', async () => {
+    const source = { kind: 'codexHome', home: 'user' } satisfies ExternalSessionsSource;
+    const snapshot = await buildConfiguredExternalSessionSourceSnapshot({
+      basis,
+      candidates: [
+        { agentId: 'codex', source: { kind: 'codexHome', home: 'invalid' } },
+        { agentId: 'codex', source },
+        { agentId: 'antigravity', source },
+      ],
+      resolveProviderOps: () => providerOps(({ source: candidate }) => ({ ok: true, source: candidate })),
+    });
+    expect(snapshot.list(basis).map((entry) => entry.agentId)).toEqual(['codex', 'antigravity']);
+    expect(snapshot.refusals).toEqual([{
+      agentId: 'codex', code: 'malformed_source', message: expect.stringMatching(/malformed/i),
+    }]);
+  });
+
   it('still fails the whole snapshot closed on a host-owned integrity failure beside a healthy Agent', async () => {
     const source = {
       kind: 'codexHome',

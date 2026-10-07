@@ -41,7 +41,7 @@ function loadMetroConfig(uiDir: string, envOverrides: Record<string, string | nu
 }
 
 describe('metro.config.js (web)', () => {
-    it.each(['ios', 'android', 'web'])('resolves React runtime peers from the app on %s despite nested copies', (platform) => {
+    it.each(['ios', 'android', 'web'])('resolves workspace UI sources and React runtime peers on %s despite nested copies', (platform) => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
         const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'happier-metro-peers-')));
@@ -111,6 +111,17 @@ describe('metro.config.js (web)', () => {
                 expect(config.resolver.resolveRequest(context, subpath, platform)).toEqual(
                     resolveMetro({ ...context, originModulePath: join(uiDir, 'index.ts') }, subpath, platform),
                 );
+            }
+            const repoRoot = resolve(uiDir, '..', '..');
+            const publicAuthoringUi = join(repoRoot, 'packages/plugin-sdk/examples/public-authoring/ui');
+            const authoringContext = {
+                ...context,
+                originModulePath: join(publicAuthoringUi, 'reviewPanel.native.tsx'),
+            };
+            for (const name of ['reviewClientActions', 'reviewOpenableContent']) {
+                expect(config.resolver.resolveRequest(authoringContext, `./${name}.js`, platform)).toEqual({
+                    type: 'sourceFile', filePath: join(publicAuthoringUi, `${name}.ts`),
+                });
             }
             expect(config.resolver.resolveRequest(context, 'unrelated-peer', platform)).toEqual({
                 type: 'sourceFile', filePath: join(fixture, 'node_modules', 'unrelated-peer', 'index.js'),

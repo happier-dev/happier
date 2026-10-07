@@ -11,21 +11,25 @@ import {
 
 import { useInboxModelWhen } from '@/hooks/inbox/useInboxModel';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
+import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
 import { buildSessionListFilterQueryHomes } from '@/components/sessions/shell/search/sessionListViewFilters';
-import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
-import { useWorkflowLibrarySummaries } from '@/components/workflows/library/useWorkflowLibrarySummaries';
+import { useWorkflowDefinitionLibrary, useWorkflowRunWindow, type WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
+import { useWorkflowLibrarySummaries, type WorkflowLibraryRunSummary } from '@/components/workflows/library/useWorkflowLibrarySummaries';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { useSessionListQueryHomeStates } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 import { resolveWorkflowRunUnavailableHomes, workflowRunMatchesSessionListFilter } from '@/sync/domains/session/listing/sessionListWorkFilter';
-import { getStorage, useMachineListByServerId, useSessionListRowsByServerId, useWorkflowRunRows } from '@/sync/domains/state/storage';
+import { getStorage, useActiveServerAccountScope, useSessionListRowsByServerId, useWorkflowRunRows } from '@/sync/domains/state/storage';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
+import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
 
 import {
-    buildBoardCards,
+    createBoardCardProjection,
+    createBoardSummaryProjection,
     countSessionsByMachine,
-    reconcileBoardCards,
     type BoardCard,
     type BoardCardFacts,
     type BoardWorkflowFacts,
@@ -47,6 +51,17 @@ export type BoardHomes = Readonly<{
 }>;
 
 const NO_IDS: readonly string[] = Object.freeze([]);
+const NO_MACHINES: Readonly<Record<string, Machine[] | null>> = Object.freeze({});
+
+function useBoardMachineLists(enabled: boolean) {
+    return getStorage()((state) => enabled ? state.machineListByServerId : NO_MACHINES);
+}
+
+type BoardWorkflowEntry = Readonly<{
+    definition: WorkflowLibraryDefinition;
+    summary: WorkflowLibraryRunSummary | null;
+    facts: BoardWorkflowFacts;
+}>;
 
 /** The Homes this device has mounted, from the canonical Home-selection owner. */
 export function useBoardHomes(): BoardHomes {
@@ -199,7 +214,7 @@ function useFilteredWorkRefs(board: WorkBoardV1, homes: BoardHomes): Readonly<{
 /** What is on the board now. Sources a board does not use issue no read. */
 export function useBoardMembership(board: WorkBoardV1, homes: BoardHomes): BoardMembership {
     const sections = new Set(board.source.sections ?? []);
-    const machineLists = useMachineListByServerId();
+    const machineLists = useBoardMachineLists(sections.has('my_machines'));
     const needsYou = useNeedsYouRefs(boardReadsNeedsYou(board), homes.activeServerId);
     const running = useRunningRefs(sections.has('running'), homes.activeServerId);
     const myMachines = useMachineRefs(sections.has('my_machines'), machineLists);
@@ -225,18 +240,23 @@ export function useBoardWidgets(board: WorkBoardV1) {
     }, [board.widgets, board.itemOrder, board.source.picked]);
 }
 
-/** One summary card per member, from the kinds' own stores; identity kept for unchanged cards. */
-export function useBoardCards(membership: BoardMembership, homes: BoardHomes): readonly BoardCard[] {
-    const members = membership.members;
+/** Only demanded kinds subscribe to their existing data owners. Display fields remain lazy so
+ * chrome can use membership/status without joining card titles, triggers or next-run bodies. */
+function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled = true): BoardCardFacts {
+    const members = enabled ? membership.members : NO_MEMBERS;
     const sessionMembers = React.useMemo(() => members.filter((member) => member.ref.kind === 'session'), [members]);
-    const hasMachines = members.some((member) => member.ref.kind === 'machine');
+    const hasMachines = members.some((member) => member.available && member.ref.kind === 'machine');
     const runIds = React.useMemo(
-        () => members.filter((member) => member.ref.kind === 'workflow_run').map((member) => member.ref.qualifiedId.id),
-        [members],
+        () => members.filter((member) => member.available && member.ref.kind === 'workflow_run'
+            && homes.activeServerId !== null && areServerProfileIdentifiersEquivalent(homes.activeServerId, member.ref.qualifiedId.serverId))
+            .map((member) => member.ref.qualifiedId.id),
+        [members, homes.activeServerId],
     );
     const workflowIds = React.useMemo(
-        () => members.filter((member) => member.ref.kind === 'workflow').map((member) => member.ref.qualifiedId.id),
-        [members],
+        () => members.filter((member) => member.available && member.ref.kind === 'workflow'
+            && homes.activeServerId !== null && areServerProfileIdentifiersEquivalent(homes.activeServerId, member.ref.qualifiedId.serverId))
+            .map((member) => member.ref.qualifiedId.id),
+        [members, homes.activeServerId],
     );
     // One narrow selector for the board's Sessions: an unrelated row write keeps this array.
     const sessionRows = getStorage()(useShallow((state) => sessionMembers.map((member) => (
@@ -244,63 +264,118 @@ export function useBoardCards(membership: BoardMembership, homes: BoardHomes): r
     ))));
     // Machine counts read the already-loaded rows of the mounted Homes, only when a machine is on the board.
     const allRows = useSessionListRowsByServerId(hasMachines ? homes.mountedServerIds : NO_IDS);
-    const machineLists = useMachineListByServerId();
+    const machineMembers = React.useMemo(() => members.filter(member => member.available && member.ref.kind === 'machine'), [members]);
+    const machines = getStorage()(useShallow(state => machineMembers.map(member => {
+        for (const [serverId, list] of Object.entries(state.machineListByServerId)) {
+            if (areServerProfileIdentifiersEquivalent(serverId, member.ref.qualifiedId.serverId)) {
+                return list?.find(machine => machine.id === member.ref.qualifiedId.id) ?? null;
+            }
+        }
+        return null;
+    })));
     const runRows = useWorkflowRunRows(runIds);
-    const library = useWorkflowDefinitionLibrary();
+    const library = useWorkflowDefinitionLibrary({ enabled: workflowIds.length > 0 });
     const summaries = useWorkflowLibrarySummaries(workflowIds);
+    const readsRuntimeTime = enabled && (sessionMembers.length > 0 || hasMachines);
+    const runtimeNowMs = useSessionListRuntimeNowMs(readsRuntimeTime);
 
-    const next = React.useMemo(() => {
-        const nowMs = Date.now();
+    const workflowEntries = React.useRef(new Map<string, BoardWorkflowEntry>());
+    const workflowById = React.useMemo(() => {
+        const definitions = new Map(library.definitions.map(definition => [definition.definitionId, definition] as const));
+        const next = new Map<string, BoardWorkflowEntry>();
+        for (const id of workflowIds) {
+            const definition = definitions.get(id);
+            if (!definition) continue;
+            const summary = summaries?.get(id) ?? null;
+            const previous = workflowEntries.current.get(id);
+            next.set(id, previous?.definition === definition && previous.summary === summary ? previous : {
+                definition, summary, facts: {
+                    get title() { return formatWorkflowDefinitionLibraryTitle(definition); },
+                    get unavailableReason() { return definition.contentStatus === 'unavailable'
+                        ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) : undefined; },
+                    get triggers() { return definition.triggers; },
+                    get nextRun() { return definition.nextRunAt === null
+                        ? { kind: 'unscheduled' as const } : { kind: 'scheduled' as const, at: definition.nextRunAt }; },
+                    summary: summary ? { needsYouCount: summary.needsYouCount, lastRun: summary.lastRun } : null,
+                },
+            });
+        }
+        workflowEntries.current = next;
+        return new Map([...next].map(([id, entry]) => [id, entry.facts] as const));
+    }, [library.definitions, summaries, workflowIds]);
+
+    const facts = React.useMemo(() => {
+        // A source update or refocus can arrive after an idle clock observation. Never project
+        // new facts into the past; deadline wakes themselves use the shared owner's instant.
+        const nowMs = Math.max(runtimeNowMs, Date.now());
         const sessionByKey = new Map(sessionMembers.map((member, index) => [member.key, sessionRows[index] ?? null] as const));
         const runById = new Map(runRows.map((row) => [row.id, row] as const));
-        const definitionById = new Map(library.definitions.map((definition) => [definition.definitionId, definition] as const));
+        const machineByKey = new Map(machineMembers.map((member, index) => [member.key, machines[index] ?? null] as const));
         const activeServerId = homes.activeServerId;
         const facts: BoardCardFacts = {
             nowMs,
             accountScopedHome: (serverId) => activeServerId !== null && areServerProfileIdentifiersEquivalent(activeServerId, serverId),
             session: (ref) => sessionByKey.get(buildWorkBoardItemKeyV1(ref)) ?? null,
             workflowRun: (ref) => runById.get(ref.qualifiedId.id) ?? null,
-            machine: (ref) => {
-                for (const [serverId, machines] of Object.entries(machineLists)) {
-                    if (!areServerProfileIdentifiersEquivalent(serverId, ref.qualifiedId.serverId)) continue;
-                    const machine = machines?.find((candidate) => candidate.id === ref.qualifiedId.id);
-                    if (machine) return machine;
-                }
-                return null;
-            },
+            machine: (ref) => machineByKey.get(buildWorkBoardItemKeyV1(ref)) ?? null,
             machineSessionCounts: hasMachines
                 ? countSessionsByMachine(Object.entries(allRows).map(([serverId, rows]) => [
                     resolveServerProfileScopeIdForIdentifier(serverId) || serverId,
                     Object.values(rows ?? {}),
                 ] as const), nowMs)
                 : new Map(),
-            workflow: (ref): BoardWorkflowFacts | null => {
-                const definition = definitionById.get(ref.qualifiedId.id);
-                if (!definition) return null;
-                const summary = summaries?.get(ref.qualifiedId.id) ?? null;
-                return {
-                    title: formatWorkflowDefinitionLibraryTitle(definition),
-                    unavailableReason: definition.contentStatus === 'unavailable'
-                        ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) : undefined,
-                    triggers: definition.triggers,
-                    nextRun: definition.nextRunAt === null
-                        ? { kind: 'unscheduled' }
-                        : { kind: 'scheduled', at: definition.nextRunAt },
-                    summary: summary ? { needsYouCount: summary.needsYouCount, lastRun: summary.lastRun } : null,
-                };
-            },
+            workflow: (ref) => workflowById.get(ref.qualifiedId.id) ?? null,
         };
-        return buildBoardCards(members, facts);
-    }, [allRows, hasMachines, homes.activeServerId, library.definitions, machineLists, members, runRows, sessionMembers, sessionRows, summaries]);
+        return facts;
+    }, [allRows, hasMachines, homes.activeServerId, machineMembers, machines, runRows, runtimeNowMs, sessionMembers, sessionRows, workflowById]);
+    const nextRefreshAtMs = React.useMemo(() => {
+        let next: number | null = null;
+        const take = (at: number | null) => { if (at !== null) next = next === null ? at : Math.min(next, at); };
+        for (const row of sessionRows) {
+            if (row) take(readSessionStatusNextRefreshAtMs(row, facts.nowMs));
+        }
+        // Machine cards also classify the already-loaded Sessions associated with that machine.
+        if (hasMachines) for (const rows of Object.values(allRows)) {
+            for (const row of Object.values(rows ?? {})) take(readSessionStatusNextRefreshAtMs(row, facts.nowMs));
+        }
+        for (const machine of machines) {
+            if (machine) take(readMachineStatusNextRefreshAtMs(machine, facts.nowMs));
+        }
+        return next;
+    }, [allRows, facts.nowMs, hasMachines, machines, sessionRows]);
+    useSessionListRuntimeWake(nextRefreshAtMs, readsRuntimeTime);
+    return facts;
+}
 
-    const previousRef = React.useRef<readonly BoardCard[]>(NO_CARDS);
-    const reconciled = reconcileBoardCards(previousRef.current, next);
-    React.useLayoutEffect(() => { previousRef.current = reconciled; }, [reconciled]);
-    return reconciled;
+const NO_MEMBERS: BoardMembership['members'] = Object.freeze([]);
+
+/** The data-active Board constructs only cards whose canonical source inputs changed. */
+export function useBoardCards(membership: BoardMembership, homes: BoardHomes, options?: Readonly<{ enabled?: boolean }>): readonly BoardCard[] {
+    const enabled = options?.enabled ?? true;
+    const facts = useBoardFacts(membership, homes, enabled);
+    const scope = useActiveServerAccountScope();
+    const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
+    const projection = React.useMemo(() => createBoardCardProjection(), [scopeKey]);
+    const previousRef = React.useRef<Readonly<{ scopeKey: string | null; cards: readonly BoardCard[] }>>({ scopeKey: null, cards: NO_CARDS });
+    const cards = React.useMemo(() => enabled ? projection(membership.members, facts)
+        : previousRef.current.scopeKey === scopeKey ? previousRef.current.cards : NO_CARDS,
+    [enabled, facts, membership.members, projection, scopeKey]);
+    React.useLayoutEffect(() => { previousRef.current = { scopeKey, cards }; }, [cards, scopeKey]);
+    return cards;
+}
+
+/** Count/line chrome shares membership and classification, with no card or widget projections. */
+export function useBoardLiveSummary(board: WorkBoardV1) {
+    const homes = useBoardHomes();
+    const membership = useBoardMembership(board, homes);
+    const facts = useBoardFacts(membership, homes);
+    const project = React.useMemo(() => createBoardSummaryProjection(), []);
+    return React.useMemo(() => project(membership.members, facts, board.widgets?.length ?? 0),
+        [board.widgets?.length, facts, membership.members, project]);
 }
 
 /** The open board's live cards: homes → membership → cards, the one chain every Boards surface mounts. */
-export function useBoardLiveCards(board: WorkBoardV1): Readonly<{
+export function useBoardLiveCards(board: WorkBoardV1, options?: Readonly<{ enabled?: boolean }>): Readonly<{
     homes: BoardHomes;
     membership: BoardMembership;
     cards: readonly BoardCard[];
@@ -308,7 +383,7 @@ export function useBoardLiveCards(board: WorkBoardV1): Readonly<{
 }> {
     const homes = useBoardHomes();
     const membership = useBoardMembership(board, homes);
-    const cards = useBoardCards(membership, homes);
+    const cards = useBoardCards(membership, homes, options);
     const widgets = useBoardWidgets(board);
     return { homes, membership, cards, widgets };
 }

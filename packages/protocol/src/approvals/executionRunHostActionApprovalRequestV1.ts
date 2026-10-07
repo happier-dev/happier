@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {
   ApprovalDecisionV1Schema,
@@ -78,3 +79,4 @@ export const ExecutionRunHostActionApprovalRequestV1Schema = z.object({
 });
 
 export type ExecutionRunHostActionApprovalRequestV1 = z.infer<typeof ExecutionRunHostActionApprovalRequestV1Schema>;
+export const StoredExecutionRunHostActionApprovalRequestV1Schema = createStoredReadSchema(ExecutionRunHostActionApprovalRequestV1Schema);

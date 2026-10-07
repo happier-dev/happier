@@ -17,7 +17,7 @@ import {
     type WidgetSetupCommandResult,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
@@ -71,7 +71,7 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
         return {
             id: `plugin-${candidate.key}`,
             title: candidate.title,
-            subtitle: candidate.sharedPluginName && candidate.surface ? `${candidate.pluginName} (${candidate.surface.pluginId})` : candidate.pluginName,
+            subtitle: describeWidgetCandidatePurpose(candidate),
             icon: candidate.icon,
             ...(configurable
                 ? (copies > 0 ? { count: input.labels.count(copies) } : {})

@@ -27,6 +27,7 @@ import { hasRetainedServerData } from '../utils/dev_targets/retained_server_data
 import { getServerLightDataDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
 import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
+import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -141,9 +142,24 @@ export async function withStackEnv({
   }
   const refreshedRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
-  const runtimeEndpoint = await resolveStackServerEndpoint({ env, stackName,
-    runtimeState: refreshedRuntimeState, defaultPort: null });
-  const runtimeState = reconcileDaemonRuntimeState
+  // Daemon reconciliation does not require repeating the same ingress scan.
+  // The existing scope keys observations by port and candidate process identity.
+  const listenerObservationScope = createListenerOwnershipObservationScope();
+  const observeRuntimeEndpoint = async (runtimeState) => {
+    try {
+      return await resolveStackServerEndpoint({ env, stackName, runtimeState, defaultPort: null,
+        trustOptions: { listenerOwnershipOptions: { observationScope: listenerObservationScope } },
+      });
+    } catch (error) {
+      if (error?.code !== 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
+      // Environment projection is not routing authority. Preserve the scoped
+      // configuration and process state so teardown can proceed; commands that
+      // contact a server still resolve their destination through the strict owner.
+      return null;
+    }
+  };
+  const runtimeEndpoint = await observeRuntimeEndpoint(refreshedRuntimeState);
+  const runtimeState = reconcileDaemonRuntimeState && runtimeEndpoint
     ? await readStackRuntimeStateWithDaemonSync({
         runtimeStatePath,
         cliHomeDir: (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString(),
@@ -156,9 +172,8 @@ export async function withStackEnv({
 
   // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack
   // is still running, even if the original "owner" process is gone (common during dev restarts).
-  const { runtimePort: trustedRuntimeServerPort } = await resolveStackServerEndpoint({
-    env, stackName, runtimeState, defaultPort: null,
-  });
+  const reconciledEndpoint = runtimeEndpoint ? await observeRuntimeEndpoint(runtimeState) : null;
+  const trustedRuntimeServerPort = reconciledEndpoint?.runtimePort ?? null;
 
   if (trustedRuntimeServerPort !== null) {
     const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
@@ -224,27 +239,17 @@ export async function configureSharedDatabasePreset({ stackName, sourceStackName
   const targets = own.config.targets.length
     ? [...own.config.targets.filter(candidate => candidate.name !== target.name), consumerTarget]
     : sourcePlacement.config.targets.map(candidate => candidate.name === target.name ? consumerTarget : candidate);
-  await writeJsonAtomic(own.path, parseDevTargetsConfig({ version: 3,
+  const placementConfig = parseDevTargetsConfig({ version: 3,
     targets,
-    runtimePlacement: { ...own.config.runtimePlacement, server: { mode: 'prefer-target', target: server.target, fallback: 'error' }, daemon: { mode: 'local' } },
+    runtimePlacement: { ...own.config.runtimePlacement, server: { mode: 'prefer-target', target: server.target, fallback: 'error' } },
     commandExecution: own.config.commandExecution ?? sourcePlacement.config.commandExecution,
-  }));
+  });
+  if (!own.daemonExplicitlySet) delete placementConfig.runtimePlacement.daemon;
+  await writeJsonAtomic(own.path, placementConfig);
   await ensureEnvFileUpdated({ envPath: consumerPath.envPath, updates: Object.entries({
     HAPPIER_STACK_SHARED_DB_SOURCE_STACK: sourceStackName,
     HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: resolveRemoteStackStatePaths(target, { stackName: sourceStackName }).stackEnvPath,
     HAPPIER_STACK_RUNTIME_MODE: 'require', HAPPIER_SQLITE_AUTO_MIGRATE: '0', HAPPIER_STACK_MIGRATE_MODE: 'skip', METRICS_ENABLED: 'false',
   }).map(([key, value]) => ({ key, value })) });
   return { ok: true, stackName, sourceStackName, serverTarget: server.target };
-}
-
-export async function getRuntimePortExtraEnv(stackName) {
-  const { runtimePort } = await resolveStackServerEndpoint({ stackName });
-
-  return runtimePort !== null
-    ? {
-        // Ephemeral stacks (PR stacks) store their chosen ports in stack.runtime.json, not the env file.
-        // Ensure stack-scoped commands that compute URLs don't fall back to 3005 (main default).
-        HAPPIER_STACK_SERVER_PORT: String(runtimePort),
-      }
-    : null;
 }

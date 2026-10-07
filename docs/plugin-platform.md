@@ -12,7 +12,7 @@ The canonical manifest schema and normalizer remain Protocol/platform-owned. [`m
 
 The host derives registration rights from the admitted manifest. [`registrationRightsHost.ts`](../apps/cli/src/plugins/runtime/api/registrationRightsHost.ts) wraps the SDK registration scope with occurrence currentness and diagnostics; a retired occurrence cannot register. The reload lifecycle owns the serving occurrence in [`runtimeSlots.ts`](../apps/cli/src/plugins/runtime/runtimeSlots.ts). A consumer does not reconstruct currentness from an id, callback or manifest snapshot.
 
-In 0.3 development source, admitted targeted Actions use the existing contributor-materialization and target-occurrence checks in [`executeContributedAction.ts`](../apps/cli/src/plugins/runtime/invocation/actions/executeContributedAction.ts) before demanding activation, and repeat them after awaited bindings before starting the handler. A stale admitted occurrence returns its retirement result without demanding activation; the later fence still protects retirement during activation or binding.
+In 0.3 development source, admitted targeted Actions use the existing contributor-materialization and target-occurrence checks in [`executeContributedAction.ts`](../apps/cli/src/plugins/runtime/invocation/actions/executeContributedAction.ts) before demanding activation, after activation settles (including failure), and after awaited bindings before starting the handler. A stale admitted occurrence returns its retirement result without demanding activation; retirement during activation takes precedence over activation-failed or handler-missing errors, and no handler starts.
 
 Contribution-family membership and normalization are Protocol-owned. In development source, the CLI's [`projection/families.ts`](../apps/cli/src/plugins/projection/families.ts) asserts its descriptors against that catalog, adds current occurrence facts and validates each projected entry with the existing Protocol schema. The daemon omits an invalid entry and publishes a plugin-attributed diagnostic identifying its family and entry, while retaining healthy entries in the same projection. Agent catalog and UI registries consume that projection; a feature must not scan Actions, invent conventional ids or install a second registry to discover its contributors.
 
@@ -242,6 +242,38 @@ Session sequence number. Protocol owns strict admission of the match shape;
 the host publishes these query-local facts without writing transcript text or
 match snippets into the candidate metadata index.
 
+The External Sessions surface inherits caller cancellation and any caller deadline;
+the host does not add a shorter auxiliary-operation cutoff. Serialized-result
+budgets are optional for source and identity resolution, and required for paged
+candidate/transcript reads. Explicit caller paging budgets are preserved rather
+than clipped to a second host ceiling. Wire and persisted-data schemas still own
+their declared limits.
+
+SDK inventory paging retains one snapshot per live query demand. `list` returns
+an opaque, serializable, single-use `nextCursor`; every successor belongs to
+the same demand. `closeList(cursor)` releases that demand using any cursor it
+issued, including a consumed cursor, and cancels a pending continuation.
+Consumers close abandoned queries in their cleanup path. Exhaustion, caller
+cancellation and source retirement also release retained pages. Opening another
+query does not evict a live continuation. The runner uses the same owner through
+its serializable daemon service operation; no callable continuation crosses RPC.
+This is an approved unreleased 0.3 SDK source-contract cut. Authors must update
+and rebuild list consumers to close pagination they stop before exhaustion.
+
+Configured-source admission isolates malformed source data and malformed
+connected-profile identifiers as typed source refusals. Valid sources, including
+other sources for the same Agent, remain available; the owning plugin receives a
+non-blocking `plugin_external_session_source_refused` diagnostic. Host-integrity
+failures such as an unreadable Account, undeclared source kinds or duplicate
+Agent-scoped source identities still make the whole configured-source service
+unavailable. This is current 0.3 development-source behavior, not loaded-runtime
+or released availability evidence.
+
+This required-to-optional invocation-bound change is an unreleased 0.3 SDK
+source-contract cut. External Session authors must update and rebuild callbacks
+that assumed every request carried a deadline or serialized-result budget;
+no synthetic deadline or byte ceiling is supplied for those older assumptions.
+
 The public External Sessions invocation supplies required
 `ripgrep.run({ args, paths, signal? })`. The generation-bound host wrapper delegates
 to the packaged ripgrep integration, combines cancellation with the invocation,
@@ -454,6 +486,11 @@ synthesis batches only to the selected provider's actual input limits. Local
 Voice's `ttsChunkChars` preference is admitted once as the producer's latency
 target, not a second semantic lookahead or provider ceiling.
 
+Protocol's output-event owner packs those semantic segments into the existing
+speech-event wire envelope without discarding the remaining text. The daemon
+producer and legacy client adapter share that packing policy; only the canonical
+turn-output budget marks the reply incomplete.
+
 Daemon output and the retained legacy-output translator consume the serialized
 byte/event budget in `voice/outputEvents.ts`, reserving the repeated terminal
 text and any incompleteness notice during admission. A clipped reply keeps its
@@ -502,7 +539,43 @@ validated continuations; display projections do not become authority or select
 credentials. Missing backend/model capabilities fail closed rather than enabling
 an id-based host fallback.
 
+### Machine-native GitHub credentials (0.3 development)
+
+GitHub's Connected Service declares `authentication.native: { systemTool: 'gh' }`.
+This is the existing native source, not a new credential kind or account store.
+An authorized consumer requests `materialize(purpose, request, { nativeService })`
+through the ordinary Connected Account purpose owner. Only an unbound purpose
+can use that service: an explicit account selection, including an unavailable
+or invalid selection, takes precedence and never silently falls back to `gh`.
+Resolution reads do not erase that intent; only explicit clear/reselection or
+removal of the declared purpose contracts it. Scope or credential failure still
+refuses disclosure.
+The host validates the qualified service, declared scope and current invocation
+before materialization and rechecks binding intent before disclosure.
+
+The executing daemon resolves `gh` through its canonical dependency owner and
+runs `gh auth token --hostname <host>` with cancellation. GitHub's API origin
+maps to `github.com`; an admitted Enterprise origin retains its host. Tokens are
+ephemeral HTTP authorization material, not Connected Account records or synced
+configuration. They must not enter logs, events, diagnostics or plugin storage.
+Unavailable authentication produces a typed failure with the remedy to sign in
+with the GitHub CLI on that machine.
+
+Action declarations can pair an account selection `path` with
+`nativeServicePath`; the canonical extractor admits exactly one credential
+selection. Triage's shared settings and administration Action persist only the
+native service identity. Source and review metadata retain that identity rather
+than inventing an account id. See [Triage source ownership](triage-sources.md).
+
 ### Connected Account refresh and quota identity (0.3 development)
+
+Native credential resolution, Session authentication switching, daemon bootstrap
+and refresh read through the qualified established credential owner and V4
+transport. That owner validates the exact account reference, revision semantics
+and persisted Account mode before opening content. It still decodes retained
+0.2 credential payloads; that data compatibility does not authorize a current
+client to select scalar V2/V3 HTTP transport. Missing or uncertain V4 capability
+evidence refuses negotiated operations instead of selecting an older wire path.
 
 Manual authentication inputs are admitted against the service contribution's
 field schemas by both the form and the daemon attempt owner, before provider
@@ -515,14 +588,28 @@ terminal refusal opens a fresh editable form. Retained credentials remain
 readable and materializable without imposing these new-input checks. This is
 a development-source admission contract, not release or loaded-runtime proof.
 
-Before a provider callback starts, the canonical Connected Account attempt owner
-may re-admit a retired runtime occurrence through the current daemon registry.
-Recovery requires the same qualified service, source custody, authentication mode
-and configuration target/revision. Initial lazy activation may refresh admission
-once from the published registry when the old occurrence proves it did not start
-provider work. The invoker preserves that typed pre-entry result; retirement after
-provider entry retains the existing uncertain-outcome recovery and never replays
-the callback. UI, CLI and Agent Actions use this same daemon owner.
+The canonical Connected Account attempt owner retains the admitted authentication
+runtime, mode and configuration basis through cleanup. Manual submission, OAuth
+completion and device polling use the runtime and mode selected at attempt admission;
+publishing a replacement afterward cannot send captured inputs to its changed callbacks.
+Initial lazy activation resolves the current daemon registry when the old occurrence
+proves it did not start provider work. Entered callbacks keep their registry lease
+until completion even if local cancellation closes the attempt. Exact configuration and
+credential checks still protect settlement, and uncertain provider effects retain
+their existing reconciliation. UI, CLI and Agent Actions use this same daemon owner.
+Manual attempts have no fixed host count or lifetime ceiling. Waiting OAuth and
+device challenges follow the provider's expiry; entered effects and prepared
+settlements retain their exact recovery custody rather than expiring on a host timer.
+Local cancellation is authoritative immediately; the best-effort provider cancellation
+callback follows the invocation lifetime without a separate host timeout.
+Terminal replies remain readable for lost-reply recovery until the consumer closes
+the attempt through the existing cancellation command. The setup controller closes
+that demand after connection, when retry replaces a finished form, or when the user
+discards the flow. A terminal retry refreshes the daemon's description before
+starting the next attempt, so a changed form is presented rather than reused.
+The interactive CLI journey acknowledges its consumed terminal
+reply too, while lost replies and uncertain effects retain their resumable custody.
+Closure releases terminal retention without a host count or timer.
 
 The Codex and Claude token-exchange owners classify HTTP 429 and unsuccessful
 server responses as `outcomeUnknown`, preserving the host's retryable health
@@ -545,19 +632,50 @@ refresh-bearing fallback. Qualified launch selections and predecessor local
 selections normalize at the same plugin boundary; refresh-wire selections remain
 local. Connected Account ACP launches also return that typed unsupported code:
 the current ACP composer has no host-managed token-refresh bridge. Personal
-native login and API-key ACP launches are unchanged. App-server Execution Runs
-without a refresh callback likewise cannot open a Connected Account thread.
-Claude's native OAuth file already contains access material, expiry and
-scopes only. These are 0.3 development contracts, not a claim about older shipped
+native login and API-key ACP launches are unchanged. The canonical detached
+app-server Run host provides bounded native-home reads and a Run-scoped refresh
+callback through its materialization control channel. It shares the Session
+host's refresh core and daemon authority, but carries no Session identity.
+The daemon settles refresh only after updating the exact native home; Codex
+decodes the access material through its existing host-bounded file reader.
+Callback-less app-server hosts still cannot open a Connected Account thread.
+Claude's native OAuth file contains access material, expiry, scopes and any
+existing nonsecret subscription type/rate-limit tier, never a refresh token.
+Those plan facts survive historical credential normalization and host-managed
+refresh; native and Connected Account quota probes use one Claude plan resolver.
+These are 0.3 development contracts, not a claim about older shipped
 native materializations or already-running sessions.
 
+Connected Account quota results may carry a provider-declared `planLabel`.
+The host snapshots the trusted SDK result and preserves it in the canonical
+usage projection; external wire and persistence readers retain their schemas. An absent
+plan is not inferred from limit sizes. Connected Services identity presentation
+uses an assigned name, provider name or email, then a service-account label;
+provider/internal ids are never automatic primary names. Historical id-valued
+display names stay readable as a short secondary disambiguator when no human
+fact exists. Codex's credential owner projects available name/email claims
+from its existing id token during connect, status and refresh.
+
 Connected Account quota limits carry optional `providerLimitId` separately from
-their window `id`. The strict host result owner validates and preserves that
+their window `id`. The host result snapshot preserves that
 family, and the quota projector uses it for pool allowance selection. Omitting
 it retains id-based selection. Pre-turn pool probes use the same credential
 eligibility predicate as candidate selection. Known-unusable members need no
 quota probe and count as resolved; missing targets and failed probes still make
 the group observation incomplete.
+
+The daemon quota coordinator has no implicit operation deadline.
+`HAPPIER_CONNECTED_SERVICES_QUOTAS_FETCH_TIMEOUT_MS` opts into an explicit deadline;
+operations already carrying a caller signal follow that containing operation's cancellation.
+The daemon quota coordinator retains the latest in-band observation through retryable transport
+failures using the shared scheduler's backoff; it has no implicit pending-age or
+retry-count cutoff. `HAPPIER_CONNECTED_SERVICES_QUOTA_IN_BAND_MAX_CONSECUTIVE_FAILURES`
+opts into a retry budget. Non-retryable failures retain same-material suppression.
+Same-account fanout indexes exact identity by the session binding lifecycle and
+group generation, not a guessed age. Production fanout re-probes live identity;
+an exact account mismatch always vetoes an indexed candidate.
+The persisted-identity fallback uses the canonical session and qualified credential
+readers without a shorter local deadline; unavailable or unfenced proof stays suppressed.
 
 Targeted feature composition uses public `defineContributionProtocol` / `defineContributionPoint` values and typed handles. A feature protocol keeps explicit versioned exports, validator-neutral schemas and source-neutral DTOs; it excludes host runtime, provider clients, credentials and persistence. The SDK's [`featureProtocolPackagePolicy.test.ts`](../packages/plugin-sdk/src/featureProtocolPackagePolicy.test.ts) owns the allowed dependency classification. [Triage sources](triage-sources.md) is one current consumer.
 
@@ -574,16 +692,18 @@ waived that approval for this plugin in the existing Actions settings document.
 A plugin's own declared source needs no additional viewing consent. Viewing
 does not transfer input or takeover authority.
 
-For stored images, the mount retains exact Session-media references returned by
-successful delivered Actions. Public `{sessionId,mediaId}` references resolve
-only against that custody; they are not paths or independent capabilities. The
-daemon rechecks the current plugin occurrence and the selected/required
+For stored images, public `StoredImageRefV1` carries the canonical native
+Session-image reference, including required file facts. References may survive
+surface remounts or be handed to another plugin; Action-result delivery and
+mount-local membership do not grant or restrict image access. The daemon
+rechecks the current caller plugin occurrence and the selected/required
 `sessions` HostAccess read scope through the same canonical Session-scope
 predicate used by the Session service. The Account mode must agree with the
 media representation before bytes are disclosed. The existing linked-Session
 UI scope is intentionally not an image-read authority. Thumbnail ingress
 accepts strict file-backed native image artifact references,
-including those in Session-event and contributed Action results. Producer
+including those in Session-event and contributed Action results. The mounted
+host and component preserve cancellation and reject retired disclosures. Producer
 identity is not another permission gate: the daemon's existing artifact
 verifier confines reads to the authenticated Session's exact bucket and real
 path, then verifies size, digest and image encoding. Generated-media publisher
@@ -684,6 +804,14 @@ In 0.3 development, daemon preparation evaluates a code-defined plugin once and
 passes that canonical manifest to the managed UI compiler through a temporary
 manifest input. The author root needs no emitted `plugin.json`; artifact paths
 still resolve against that root. Cold-manifest builds keep their existing input.
+Selecting a development source enters that preparation directly. The ordinary
+installation review owns approval of the evaluated candidate and its declared
+access; there is no separate permission to evaluate trusted plugin code.
+Pending decisions remain until an explicit decision, handoff or shutdown
+retires them; settled rejoin results remain for the daemon lifetime. Candidate
+cleanup is awaited through that lifecycle and reports failures without a shorter
+phase timeout. Activation and retirement likewise inherit explicit containing
+deadlines when supplied; absent a deadline, trusted asynchronous work is awaited.
 Installed catalog and runtime discovery consume the same validated manifest
 projection committed with each accepted development candidate, rather than
 parsing or re-evaluating its source entrypoint. Until a new candidate is accepted,

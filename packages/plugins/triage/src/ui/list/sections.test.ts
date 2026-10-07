@@ -106,7 +106,10 @@ describe('the PRs & Issues grouping axis', () => {
       rows: [row('a', { attention: 'required' }), row('b')],
       pins: [pin('a'), pin('z', 'Not walked yet')],
       workflowSubjectOf: pullRequests,
-      agentActive: (key) => key !== triageEntryRowKey(row('b').entryRef),
+      agentStatesOf: (key) => (key === triageEntryRowKey(row('b').entryRef) ? [] : [{
+        sessionId: 'session-a', lifecycle: 'active', runtime: 'working', operational: 'working',
+        workStatus: { bucket: 'working', tone: 'neutral', word: 'Working' }, pendingPermissions: [],
+      }]),
     });
     expect(byGroup(items)).toEqual({ pinned: ['a', 'z'], everythingElse: ['b'] });
     const unwalked = items.find((item) => item.row.entryRef.entryId === 'z')!;
@@ -123,6 +126,24 @@ describe('the PRs & Issues grouping axis', () => {
       workflowSubjectOf: pullRequests,
     });
     expect(item!.signal).toEqual({ label: '2 failing', tone: 'danger' });
+  });
+
+  it('states the linked agent of every row, window and pinned alike, from the one Session join', () => {
+    const working = {
+      sessionId: 'session-a', lifecycle: 'active', runtime: 'working', operational: 'working',
+      workStatus: { bucket: 'working', tone: 'neutral', word: 'Working' }, pendingPermissions: [],
+    } as const;
+    const items = planTriageListItemsV1({
+      rows: [row('a'), row('b')],
+      pins: [pin('p')],
+      workflowSubjectOf: pullRequests,
+      agentStatesOf: (key) => (key === triageEntryRowKey(row('a').entryRef) || key === triageEntryRowKey(pin('p').entryRef)
+        ? [working] : []),
+    });
+    const agentOf = (id: string) => items.find((item) => item.row.entryRef.entryId === id)!.agent;
+    expect(agentOf('a')).toMatchObject({ label: 'Working', live: true });
+    expect(agentOf('p')).toMatchObject({ label: 'Working', live: true });
+    expect(agentOf('b')).toBeNull();
   });
 
   it('keeps the source locator beside the qualified identity for a Session link drop', () => {

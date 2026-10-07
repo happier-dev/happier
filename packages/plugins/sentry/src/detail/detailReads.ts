@@ -198,7 +198,30 @@ function readTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * `[DOC]` The issue resource states `stats["24h"]` as `[[unixSeconds, count], ...]`, one
+ * bucket per hour, oldest first. A series with any unreadable bucket is not projected: a
+ * partial one would draw a shape Sentry never stated.
+ */
+function readHourlyEventTrend(stats: unknown): readonly SentryEventTrendPointV1[] | null {
+  if (!isRecord(stats)) return null;
+  const series = stats['24h'];
+  if (!Array.isArray(series) || series.length === 0) return null;
+  const points: SentryEventTrendPointV1[] = [];
+  for (const bucket of series) {
+    if (!Array.isArray(bucket) || bucket.length !== 2) return null;
+    const [seconds, count] = bucket as readonly unknown[];
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds)
+      || typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) return null;
+    points.push(Object.freeze({ atMs: Math.round(seconds * 1000), count }));
+  }
+  return Object.freeze(points);
+}
+
 /* ------------------------------------------------------------ issue read */
+
+/** One hourly bucket of the issue's own event series. */
+export type SentryEventTrendPointV1 = Readonly<{ atMs: number; count: number }>;
 
 /** The Tier-A live summary the detail root holds for every panel that needs it. */
 export type SentryIssueOverviewProjectionV1 = Readonly<{
@@ -211,6 +234,8 @@ export type SentryIssueOverviewProjectionV1 = Readonly<{
   lastSeenAtMs?: number;
   firstRelease?: SentryProjectedReleaseV1;
   lastRelease?: SentryProjectedReleaseV1;
+  /** The last 24 hours of events, hourly, as the issue read states them. */
+  eventTrend?: readonly SentryEventTrendPointV1[];
 }>;
 
 export type SentryIssueTagsProjectionResultV1 = Readonly<{
@@ -253,6 +278,7 @@ function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIs
     body['lastRelease'],
     SENTRY_DETAIL_BOUNDS_V1,
   );
+  const eventTrend = readHourlyEventTrend(body['stats']);
   return Object.freeze({
     kind: 'overview' as const,
     ...(state.nativeLabel === '' ? {} : { nativeStateLabel: state.nativeLabel }),
@@ -263,6 +289,7 @@ function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIs
     ...(lastSeenAtMs === null ? {} : { lastSeenAtMs }),
     ...(firstRelease === null ? {} : { firstRelease }),
     ...(lastRelease === null ? {} : { lastRelease }),
+    ...(eventTrend === null ? {} : { eventTrend }),
   });
 }
 

@@ -38,7 +38,6 @@ import {
 } from './privateContract';
 import type { ExternalSessionHostOperationOwner } from './hostOperationOwner';
 import type { ExternalSessionExecutionSurface } from './providerOps';
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 
 export {
   createCurrentGlobalExternalSessionsRouter,
@@ -200,20 +199,6 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
     const code = readCallerFailureCode(operationSignal);
     if (code) throw failure(code);
   };
-  const readInvocationFailureCode = (
-    operationSignal: AbortSignal | undefined,
-    deadlineSignal: AbortSignal,
-  ): string | null => (
-    readCallerFailureCode(operationSignal)
-    ?? (deadlineSignal.aborted ? 'plugin_operation_deadline_exceeded' : null)
-  );
-  const assertInvocationCurrent = (
-    operationSignal: AbortSignal | undefined,
-    deadlineSignal: AbortSignal,
-  ): void => {
-    const code = readInvocationFailureCode(operationSignal, deadlineSignal);
-    if (code) throw failure(code);
-  };
   /**
    * Ratified public mapping: `capabilities`, `list`, `readTranscript`, and
    * `followTranscript` require Session `read`; `attach` and `takeover` require
@@ -234,21 +219,19 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
   };
   const assertCurrentPublicInvocation = (
     operationSignal: AbortSignal | undefined,
-    deadlineSignal: AbortSignal,
     requiredAccess: 'read' | 'control',
   ): void => {
-    assertInvocationCurrent(operationSignal, deadlineSignal);
+    assertCallerCurrent(operationSignal);
     assertCurrentPublicAccess(requiredAccess);
   };
   const resolveCurrentForInvocation = async (
     agentId: string | undefined,
     operationSignal: AbortSignal | undefined,
-    deadlineSignal: AbortSignal,
     requiredAccess: 'read' | 'control',
   ): Promise<HostExternalSessionsAuthorService | null> => {
-    assertCurrentPublicInvocation(operationSignal, deadlineSignal, requiredAccess);
+    assertCurrentPublicInvocation(operationSignal, requiredAccess);
     await params.activateConfiguredSources(agentId);
-    assertCurrentPublicInvocation(operationSignal, deadlineSignal, requiredAccess);
+    assertCurrentPublicInvocation(operationSignal, requiredAccess);
     return readCurrent();
   };
   const unavailable = (code: string) => Object.freeze({
@@ -271,24 +254,15 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       signal: AbortSignal,
     ): Promise<T>;
   }>): Promise<T> => {
-    const deadline = new AbortController();
-    const timeout = setTimeout(
-      () => deadline.abort(),
-      EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-    );
     const invocationSignal = AbortSignal.any([
       params.signal,
-      deadline.signal,
       ...(input.operationSignal ? [input.operationSignal] : []),
     ]);
     try {
-      assertCurrentPublicInvocation(input.operationSignal, deadline.signal, input.requiredAccess);
+      assertCurrentPublicInvocation(input.operationSignal, input.requiredAccess);
       return await new Promise<T>((resolve, reject) => {
         const onAbort = () => {
-          const code = readInvocationFailureCode(
-            input.operationSignal,
-            deadline.signal,
-          );
+          const code = readCallerFailureCode(input.operationSignal);
           reject(failure(code ?? 'plugin_operation_aborted'));
         };
         if (invocationSignal.aborted) {
@@ -300,7 +274,6 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
           const service = await resolveCurrentForInvocation(
             input.agentId,
             input.operationSignal,
-            deadline.signal,
             input.requiredAccess,
           );
           if (!service && !input.withoutCurrentSourceOwner) {
@@ -311,7 +284,6 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
             : await input.withoutCurrentSourceOwner!(invocationSignal);
           assertCurrentPublicInvocation(
             input.operationSignal,
-            deadline.signal,
             input.requiredAccess,
           );
           return result;
@@ -320,10 +292,8 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
         });
       });
     } catch (error) {
-      assertInvocationCurrent(input.operationSignal, deadline.signal);
+      assertCallerCurrent(input.operationSignal);
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   };
   return Object.freeze<HostExternalSessionsAuthorService>({
@@ -361,6 +331,12 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
         ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
         operation: async (service, signal) => await service.list(query, { signal }),
       });
+    },
+    async closeList(cursor, options) {
+      const parsedOptions = readAuthorCancellationOptions(options);
+      // Cleanup neither activates a new source nor requires new read authority.
+      // A retired owner already released its demands.
+      await readCurrent()?.closeList(cursor, parsedOptions);
     },
     async attach(ref, options) {
       const parsedOptions = readAuthorCancellationOptions(options);

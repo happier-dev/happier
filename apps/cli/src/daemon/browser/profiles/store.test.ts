@@ -27,12 +27,12 @@ describe('browser profile store disk purge', () => {
       .toEqual({ purgedProfileIds: ['sidecar'], failedProfileIds: [] });
     expect(store.listProfiles().map(profile => profile.profileId)).toEqual(['persistent_session']);
   });
-  it('purges a session-owned ephemeral profile after its process settles and retains other sessions', async () => {
+  it('purges a session-owned ephemeral profile once after its process settles despite concurrent runtime cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-browser-profiles-'));
     try {
       let settle: (() => void) | undefined;
       const processSettled = new Promise<void>((resolve) => { settle = resolve; });
-      const removeDirectory = vi.fn(async () => {});
+      const removeDirectory = vi.fn(async (_directory: string) => {});
       const store = createBrowserProfileStore({
         storageRootDirectory: root,
         partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }),
@@ -48,10 +48,13 @@ describe('browser profile store disk purge', () => {
         owner: { kind: 'session', id: 'session_2' }, cleanupOnSessionClose: true,
       });
       const purge = store.purgeForSessionDeleted({ sessionId: 'session_1' });
+      const runtimeCleanup = store.purgeForRuntimeStopped({ profileIds: ['ephemeral_session'] });
       await Promise.resolve();
       expect(removeDirectory).not.toHaveBeenCalled();
       settle?.();
       expect(await purge).toEqual({ purgedProfileIds: ['ephemeral_session'], failedProfileIds: [] });
+      expect(await runtimeCleanup).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+      expect(removeDirectory.mock.calls).toEqual([[store.resolveProfileDirectory('ephemeral_session')]]);
       expect(store.getProfile('ephemeral_other')?.lifecycleState).toBe('active');
     } finally {
       await rm(root, { recursive: true, force: true });

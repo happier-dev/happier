@@ -4,12 +4,13 @@ import { isConditionalPendingSteerClaim } from '@happier-dev/protocol/sessions/m
 import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { readSessionInputCausalPermissionAuthorityV1, readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { ProviderBoundModelRef, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
+import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { logger } from '@/ui/logger';
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
@@ -29,6 +30,8 @@ import type {
   PermissionModeQueuedPrompt,
   PermissionModeQueuedPromptMode,
 } from '@/agent/runtime/permissions/queuedPrompt';
+import { prepareSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type SessionInputDispatchServices } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
+import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 
 /**
@@ -39,17 +42,6 @@ import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/ho
 export type SteerConfigDelta = Readonly<{
   permissionMode: PermissionMode;
 }>;
-
-// Completion metadata is transcript presentation, while its natural-language text is the entire
-// provider input contract. Any additional structured field keeps the ordinary isolated queue path.
-function isCompletionOnlyStructuredInput(
-  structuredInput: PermissionModeQueuedPrompt['structuredInput'],
-): boolean {
-  if (!structuredInput?.executionRunCompletion) return false;
-  return Object.keys(structuredInput).every(
-    (key) => key === 'v' || key === 'executionRunCompletion',
-  );
-}
 
 /**
  * Outcome of an in-flight config-delta application (lane Q):
@@ -83,6 +75,8 @@ export type InFlightSteerController = Readonly<{
    * Whether the runtime/backend combination supports steering input into an active turn.
    */
   supportsInFlightSteer: () => boolean;
+  isProviderNativeCommand?: (prompt: string) => boolean;
+  readStructuredInputDispatchServices?: () => SessionInputDispatchServices;
   /**
    * Whether the current active turn can safely accept steering right now.
    *
@@ -126,13 +120,7 @@ export type InFlightSteerController = Readonly<{
    */
   steerText: (
     text: string,
-    options?: Readonly<{
-      localId?: string | null;
-      localIds?: readonly string[];
-      userMessageSeq?: number | null;
-      userMessageSeqs?: readonly number[];
-      causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
-    }>,
+    options?: RuntimeTurnPromptMeta,
   ) => Promise<void>;
   /**
    * Publish exact rejection evidence into the host's canonical provider-input outcome normalizer.
@@ -142,6 +130,7 @@ export type InFlightSteerController = Readonly<{
     localIds?: readonly string[];
     userMessageSeq: number | null;
     userMessageSeqs?: readonly number[];
+    preparationFailure?: Readonly<{ code: string; retryable: boolean }>;
     reason?: 'unsupported_action' | 'steering_unavailable' | 'conditional_steer_unavailable' | 'model_not_granted' | 'permission_mode_not_granted';
   }>) => void;
   /**
@@ -472,7 +461,6 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     // - the runtime is currently processing a turn,
     // - steering is supported,
     // - the message is not a non-steerable control command like /clear or /compact,
-    // - structured input is absent or contains only execution-run completion presentation metadata,
     // - and the message either does NOT alter permission mode, or the backend exposes the
     //   `applyConfigDeltaInFlight` capability (lane Q) so it can own the mode change mid-turn.
     //   Without the capability, ambient mode changes keep the queue path (handled by the main
@@ -484,7 +472,6 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       (steer.canSteerPrompt?.() ?? steer.isTurnInFlight()) &&
       (steer.isProviderInputAdmitted?.() ?? true) &&
       !isNonSteerablePromptPayload(text) &&
-      (!structuredInput || isCompletionOnlyStructuredInput(structuredInput)) &&
       !modelOverride &&
       (!didChangePermissionMode || typeof steer.applyConfigDeltaInFlight === 'function')
     );
@@ -548,9 +535,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               return;
             }
           }
+          let providerEffectStarted = false;
           let releaseUndispatchedReplaySeed: (() => Promise<void>) | null = null;
           try {
             if (stopForLostBinding()) return;
+            const providerNativeCommand = steer.isProviderNativeCommand?.(text) === true;
             let providerText = text;
             let settleReplaySeedOnProviderAcceptance: ReplaySeedSettlement | null = null;
             if (typeof session.getMetadataSnapshot === 'function') {
@@ -585,7 +574,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                       : {}),
                   },
                   userText: text,
-                  allowSeed: true,
+                  allowSeed: !providerNativeCommand,
                   localId: message.localId ?? null,
                   nowMs: Date.now(),
                   refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
@@ -617,14 +606,19 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               return true;
             };
             if (stopForUnavailableSteer()) return;
-            const requiredDispatchText = renderSessionInputContextPromptV1({
-              provenanceBlock: inputContextBlock,
+            const preparedDispatch = await prepareSessionInputForProviderDispatch({
+              prompt: queuedPrompt,
               transformedUserText: providerText,
+              providerNativeCommand,
+              signal: messageBindingAbortSignal,
+              localId,
+              services: steer.readStructuredInputDispatchServices?.(),
             });
+            if (stopForUnavailableSteer()) return;
             let preparedSessionFollowContext = localId
               ? await opts.inFlightSteer?.prepareHostContext?.({
                   signal: messageBindingAbortSignal,
-                  requiredPrompt: requiredDispatchText,
+                  requiredPrompt: preparedDispatch.requiredProviderContextForBudget,
                 }) ?? null
               : null;
             // Follow reads may outlive the current turn or Session binding. Reuse the same
@@ -635,12 +629,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               preparedSessionFollowContext = null;
             }
             if (stopForUnavailableSteer()) return;
-            const dispatchText = renderSessionInputContextPromptV1({
-              provenanceBlock: inputContextBlock,
+            const dispatchText = preparedDispatch.renderPrompt({
               ...(preparedSessionFollowContext
                 ? { sessionFollowUpdates: preparedSessionFollowContext.updates, workerUpdates: preparedSessionFollowContext.workerUpdates }
                 : {}),
-              transformedUserText: providerText,
             });
             const confirmProviderPromptAccepted = (): void => {
               const settle = settleReplaySeedOnProviderAcceptance;
@@ -672,15 +664,32 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             // Invoking the runtime is the provider-effect boundary. Any failure after this point
             // is ambiguous and must retain the durable association for restart reconciliation.
             releaseUndispatchedReplaySeed = null;
+            providerEffectStarted = true;
             await steer.steerText(dispatchText, {
               localId,
               ...queuedPromptIdentityFields,
               ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
+              ...(preparedDispatch.structuredInput ? { structuredInput: preparedDispatch.structuredInput } : {}),
             });
             if (stopForLostBinding()) return;
             return;
-          } catch {
+          } catch (error) {
             if (!isCurrentBinding(session, messageBindingGeneration)) return;
+            if (!providerEffectStarted) {
+              const preparationFailure = readStructuredInputPreparationFailure(error);
+              if (!preparationFailure || isAbortLikeError(error)) {
+                queueUnavailableSteer();
+                return;
+              }
+              logger.warnLocalFile('[permissionMode] Structured steer preparation rejected before provider input', { code: preparationFailure.code, localId });
+              steer.rejectPromptBeforeProvider?.({
+                ...(localIds.length === 0 ? {} : { localIds }),
+                userMessageSeq,
+                ...(userMessageSeq === null ? {} : { userMessageSeqs: [userMessageSeq] }),
+                preparationFailure: { code: preparationFailure.code, retryable: preparationFailure.retryable },
+              });
+              return;
+            }
             if (isExactClaimedSteer) {
               reportExactSteerEffectMayHaveOccurred();
             } else {

@@ -92,7 +92,7 @@ async function inspectBorrowedIndependentDevTargetSyncProject(
     });
     requireSuccessful(result, `${target.name} independent synchronization status`);
     const status = parseMutagenSyncList(result.out, sessionName);
-    if (status.state !== 'ready' && status.state !== 'synchronizing') {
+    if (status.state !== 'ready' && status.state !== 'synchronizing' && status.state !== 'needs-flush') {
       unhealthyTargets.set(target.name, status.state);
     }
   }

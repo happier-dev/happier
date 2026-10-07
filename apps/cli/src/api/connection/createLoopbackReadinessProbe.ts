@@ -4,7 +4,7 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
-import { observeServerFeaturesSnapshot, SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS } from '@/features/serverFeaturesClient';
+import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 export function createLoopbackHomeIdentityProbe(params: Readonly<{
   serverUrl: string;
@@ -75,10 +75,9 @@ export function createLoopbackReadinessProbe(params: Readonly<{
     try {
       params.signal?.throwIfAborted();
       const authResponse = await axios.get(`${serverUrl}/v1/auth/ping`, {
+        // The caller's signal owns cancellation; no phase-local cutoff that could
+        // reject a healthy, loaded Home.
         signal: params.signal,
-        // Both readiness requests use the feature owner's existing attempt budget.
-        // A shorter authentication phase would reject healthy, loaded Homes.
-        timeout: SERVER_FEATURES_REQUEST_ATTEMPT_TIMEOUT_MS,
         validateStatus: () => true,
         headers: {
           ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),

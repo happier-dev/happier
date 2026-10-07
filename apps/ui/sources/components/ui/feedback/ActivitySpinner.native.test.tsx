@@ -90,25 +90,35 @@ async function renderSpinner(props: Record<string, unknown>) {
 }
 
 describe('ActivitySpinner (native)', () => {
-    it('draws the H with the shared dot owner in core colour', async () => {
+    it('uses the chosen loading indicator for machine setup status and the installing picker marker', async () => {
+        const { MachineAgentStatusLine } = await import('@/components/machines/agents/MachineAgentStatusLine');
+        const { MachineAgentPickerMarker } = await import('@/components/machines/agents/MachineAgentPickerMarker');
+        const screen = await renderScreen(<>
+            <MachineAgentStatusLine status={{ kind: 'checking', tone: 'quiet' }} />
+            <MachineAgentPickerMarker marker="installing" />
+        </>);
+        expect(screen.findAll((node) => node.props?.testID === 'happier-spinner-dot')).toHaveLength(16);
+    });
+
+    it('draws the mark with the shared dot owner in core colour', async () => {
         const { dots, rings } = await renderSpinner({});
 
         expect(rings).toHaveLength(0);
-        expect(dots).toHaveLength(7);
+        expect(dots).toHaveLength(8);
         expect(flattenStyle(dots[0]!.props.style)).toMatchObject({ width: 3, backgroundColor: 'theme-secondary-text' });
     });
 
-    it('holds the full H still when ambient motion is paused', async () => {
+    it('holds the full mark still when ambient motion is paused', async () => {
         const { dots } = await renderSpinner({ animationEnabled: false });
 
-        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
     });
 
-    it('holds the full H still under reduced motion', async () => {
+    it('holds the full mark still under reduced motion', async () => {
         reducedMotionState.current = true;
         const { dots } = await renderSpinner({});
 
-        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
     });
 
     it.each([
@@ -153,8 +163,31 @@ describe('ActivitySpinner (native)', () => {
 
             await act(async () => appState.emit('background'));
             expect(running()).toBe(0);
-            expect(dots).toHaveLength(7);
+            expect(dots).toHaveLength(8);
 
+            await act(async () => appState.emit('active'));
+            expect(running()).toBe(1);
+        } finally {
+            restoreAppState();
+        }
+    });
+
+    it('pauses a pending release mark in the background and preserves the device-local H choice', async () => {
+        vi.resetModules();
+        localSettingValues.loadingIndicatorStyle = 'hWave';
+        const { AppState } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { createReactNativeAppStateEmitter } = await import('@/dev/testkit/mocks/reactNative');
+        const appState = createReactNativeAppStateEmitter();
+        const restoreAppState = appState.install(AppState);
+        const running = () => animatedLoops.filter((loop) => loop.started > loop.stopped).length;
+        try {
+            const { EntityReleaseOutcomePill } = await import('@/components/ui/treeDragDrop/ui/EntityReleasePreview');
+            const screen = await renderScreen(<EntityReleaseOutcomePill outcome={{ tone: 'pending', title: 'Moving Review' }} />);
+            expect(running()).toBe(1);
+            await act(async () => appState.emit('background'));
+            expect(running()).toBe(0);
+            expect(screen.findAll((node) => node.props?.testID === 'happier-spinner-dot')).toHaveLength(7);
             await act(async () => appState.emit('active'));
             expect(running()).toBe(1);
         } finally {

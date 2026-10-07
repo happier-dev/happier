@@ -119,6 +119,16 @@ function createOwner(overrides: Partial<StablePluginConnectedAccountsOwner> = {}
 }
 
 describe('stable plugin Connected Accounts host', () => {
+    it('rejects undeclared native services before disclosing credential material', async () => {
+        const owner = createOwner();
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+        await expect(service.materialize(scope.purpose, {
+            kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+        }, { nativeService: { pluginId: 'acme.accounts', localId: 'undeclared' } })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+        expect(owner.materialize).not.toHaveBeenCalled();
+    });
+
     it('delegates purpose-scoped reads, selection, and point-in-time materialization', async () => {
         const owner = createOwner();
         const { seed } = createSeed();

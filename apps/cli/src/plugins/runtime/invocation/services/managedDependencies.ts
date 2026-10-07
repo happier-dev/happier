@@ -46,7 +46,7 @@ type ResolvedExecutableLease = Readonly<{
 
 export interface StablePluginManagedDependenciesHost {
     bind(pluginId: string): ManagedDependenciesService;
-    resolveExecutable(executable: ManagedExecutableRef, requestingPluginId: string): Promise<ResolvedExecutableLease>;
+    resolveExecutable(executable: ManagedExecutableRef, requestingPluginId: string, options?: Readonly<{ requireReady?: boolean }>): Promise<ResolvedExecutableLease>;
     retireGeneration(generationId: string): Promise<void>;
     snapshotRunnerRetention(
         binding: AgentSessionRunnerBindingV1,
@@ -1031,6 +1031,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     async function resolveExecutable(
         executable: ManagedExecutableRef,
         requestingPluginId: string,
+        options?: Readonly<{ requireReady?: boolean }>,
     ): Promise<ResolvedExecutableLease> {
         if (executable.kind !== 'managedDependency') {
             return fail('plugin_managed_dependency_invalid_ref', 'Executable is not a managed dependency reference');
@@ -1074,6 +1075,9 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             };
             const ready = await tryResolve();
             if (ready) return ready;
+            if (options?.requireReady) {
+                return fail('plugin_managed_dependency_executable_unavailable', 'Managed dependency executable is unavailable');
+            }
             await mutate(owner, ref.localId, 'ensure');
             const installed = await tryResolve();
             if (installed) return installed;

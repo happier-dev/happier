@@ -10,10 +10,11 @@ export const WidgetSnapshotMetadataV1Schema = z.object({
 }).strict();
 export type WidgetSnapshotMetadataV1 = z.infer<typeof WidgetSnapshotMetadataV1Schema>;
 
+const SNAPSHOT_INERT_NODE_KINDS = new Set(['text', 'status', 'stack', 'group', 'list', 'section', 'item', 'metadata', 'state']);
+
 /** A frozen publication has no Action, plugin binding, Markdown fetch, or hidden data. */
 export const WidgetSnapshotDocumentV1Schema = SessionSurfaceDeclarativeDocumentV1Schema.superRefine((document, context) => {
   const pending = [document.root];
-  const inert = new Set(['text', 'status', 'stack', 'group', 'list', 'section', 'item', 'metadata', 'state']);
   while (pending.length > 0) {
     const node = pending.pop()!;
     if (isPluginDeclarativeDataNodeV1(node)) {
@@ -23,7 +24,7 @@ export const WidgetSnapshotDocumentV1Schema = SessionSurfaceDeclarativeDocumentV
           if (!sameStrictJsonValue(node, freezePluginDeclarativeDataNodeV1(node, node.data.value))) context.addIssue({ code: 'custom', message: 'A snapshot contains unprojected data' });
         } catch { context.addIssue({ code: 'custom', message: 'Snapshot data is invalid' }); }
       }
-    } else if (!inert.has(node.kind) || (node.kind === 'item' && (node.action !== undefined || node.input !== undefined))) {
+    } else if (!SNAPSHOT_INERT_NODE_KINDS.has(node.kind) || (node.kind === 'item' && (node.action !== undefined || node.input !== undefined))) {
       context.addIssue({ code: 'custom', message: 'A snapshot cannot retain executable nodes or bindings' });
     }
     if ('children' in node) pending.push(...node.children);
@@ -34,8 +35,6 @@ export type WidgetSnapshotDocumentV1 = z.infer<typeof WidgetSnapshotDocumentV1Sc
 export const WidgetSnapshotPreviewV1Schema = z.object({ v: z.literal(1), document: WidgetSnapshotDocumentV1Schema,
   ...WidgetSnapshotMetadataV1Schema.shape }).strict();
 export type WidgetSnapshotPreviewV1 = z.infer<typeof WidgetSnapshotPreviewV1Schema>;
-
-const SNAPSHOT_INERT_NODE_KINDS = new Set(['text', 'status', 'stack', 'group', 'list', 'section', 'item', 'metadata', 'state']);
 
 /**
  * The output a person previews before posting: every live data node replaced by the exact frozen

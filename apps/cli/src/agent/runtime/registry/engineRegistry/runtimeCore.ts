@@ -701,7 +701,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                                 nativeAgentRuntime.toolExecution?.capability ?? null
                                             ),
                                             accountSettings: options.accountSettings ?? {},
-                                            profileId: options.start?.profileId ?? null,
+                                            readCodingPromptBehavior: () => host.readCodingPromptBehavior?.() ?? null,
                                             sessionMachineId: host.machineId,
                                             ...(sessionOwners.terminalHost
                                                 ? { terminalHost: sessionOwners.terminalHost }
@@ -739,6 +739,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             sessionId,
                                             signal,
                                             services: invocationServices,
+                                            ...(options.connectedServiceRuntimeAuthRefresh
+                                                ? { refreshRuntimeAuthViaDaemon: options.connectedServiceRuntimeAuthRefresh }
+                                                : {}),
                                             sessionServices,
                                             ui,
                                             protocols,

@@ -9,8 +9,8 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ProviderErrorV1, QualifiedConnectedAccountRef, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
@@ -74,6 +74,9 @@ import {
   resolveQualifiedRequestAuthPurposeBindingsFromSnapshot,
   type AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+  resolveFirstPartyConnectedAccountServiceId,
+} from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import {
   scopeConnectedAccountSessionPurposeBindingLease,
   type ConnectedAccountPurposeAuthorizationScope,
@@ -278,18 +281,18 @@ function hasCompleteConnectedServiceProjection(
   >,
   snapshot: AgentSpawnQualifiedPurposeBindingSnapshot,
 ): boolean {
-  const projectedConnectedServiceKeys = new Set<string>(
-    snapshot.bindings.map((binding) => {
+  const projectedConnectedServiceIds = new Set<string>(
+    snapshot.bindings.flatMap((binding) => {
       const service = binding.target.kind === 'account'
         ? binding.target.account.service
         : binding.target.service;
-      return buildQualifiedPluginContributionKey(service);
+      return [buildQualifiedPluginContributionKey(service)];
     }),
   );
   return Object.entries(connectedServices.bindingsByServiceId).every(
-    ([serviceKey, binding]) =>
+    ([serviceId, binding]) =>
       binding.source !== 'connected'
-      || projectedConnectedServiceKeys.has(serviceKey),
+      || projectedConnectedServiceIds.has(serviceId),
   );
 }
 
@@ -874,10 +877,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ...(childEnvironment.unsetEnvKeys ?? []),
       ]);
       if (
-        connectedServiceAuth?.ongoingRuntimeRegistrationAllowed === false
-      ) {
-        sessionPurposeBindingSnapshot = null;
-      } else if (
         connectedServiceAuth
         && !connectedServiceAuth.qualifiedPurposeBindingSnapshot
       ) {
@@ -887,8 +886,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
         ));
       }
       if (
-        connectedServiceAuth?.ongoingRuntimeRegistrationAllowed !== false
-        && connectedServiceAuth?.qualifiedPurposeBindingSnapshot
+        connectedServiceAuth?.qualifiedPurposeBindingSnapshot
       ) {
         sessionPurposeBindingSnapshot =
           connectedServiceAuth.qualifiedPurposeBindingSnapshot;

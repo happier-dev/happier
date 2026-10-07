@@ -1,5 +1,4 @@
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } from 'shiki';
-import { createHighlighter } from 'shiki';
 
 import { resolveShikiLanguageId } from '@/components/ui/code/highlighting/resolveShikiLanguageId';
 import {
@@ -106,6 +105,7 @@ async function getShikiHighlighterForTheme(params: Readonly<{ themeId: string; i
 
     const cacheGeneration = getHighlighterCacheGeneration(cacheKey);
     const promise: Promise<CachedHighlighter> = (async () => {
+        const { createHighlighter } = await import('shiki');
         const theme = getHappierTextMateThemeRegistration({ isDark: params.isDark, colors: params.colors });
         const langs = Array.from(new Set(['text', params.languageId])) as unknown as BundledLanguage[];
         const highlighter = await createHighlighter({

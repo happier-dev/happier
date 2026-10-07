@@ -13,8 +13,9 @@ import type { OpenCodePromptPart } from './promptParts.js';
  * here keeps one dialect's wire details out of the other's, and keeps both
  * surfaces reading the V2 envelope exactly one way.
  *
- * Every route, payload and envelope below is read from the pinned comparator at
- * `10765ff2a9da8c3b88e4de873aa383a49c318912`:
+ * Every route, payload and envelope below follows released OpenCode v2.0.15
+ * (`6f3639d82ed0760091792189b78f8eeb44f699b1`), with native v2.0.20
+ * command/skill catalog envelopes and flat prompt admission observed:
  *
  * - `packages/protocol/src/api.ts` composes the whole standalone inventory, and
  *   it is `/api/*` only — no root `/session`, no `/global/*`, no MCP group;
@@ -149,8 +150,16 @@ export function normalizeOpenCodeV2SessionInfo(raw: unknown): unknown {
   return directory ? { ...record, directory } : record;
 }
 
+export class OpenCodeSkillIdentityError extends Error {
+  readonly code = 'opencode_skill_identity_missing';
+  constructor() {
+    super('OpenCode skill selection has no unique native identity');
+    this.name = 'OpenCodeSkillIdentityError';
+  }
+}
+
 /**
- * `PromptInput.Prompt` — `{ text, files?, agents? }`.
+ * PromptInput.Prompt — { text, files?, agents?, skills? }.
  *
  * V1 accepted an array of typed parts; V2 accepts one prompt with the text
  * flattened and agent mentions as their own attachment list. Text parts are
@@ -163,6 +172,7 @@ export function buildOpenCodeV2Prompt(input: Readonly<{
   text: string;
   files?: readonly Readonly<{ uri: string; name?: string }>[];
   agents?: readonly Readonly<{ name: string }>[];
+  skills?: readonly Readonly<{ id: string }>[];
 }> {
   const parts = input.parts;
   if (!parts || parts.length === 0) return { text: input.text };
@@ -170,6 +180,7 @@ export function buildOpenCodeV2Prompt(input: Readonly<{
   const textChunks: string[] = [];
   const files: Array<Readonly<{ uri: string; name?: string }>> = [];
   const agents: Array<Readonly<{ name: string }>> = [];
+  const skills: Array<Readonly<{ id: string }>> = [];
   for (const part of parts) {
     if (part.type === 'text') textChunks.push(part.text);
     else if (part.type === 'file') {
@@ -177,12 +188,16 @@ export function buildOpenCodeV2Prompt(input: Readonly<{
         uri: part.url,
         ...(part.filename ? { name: part.filename } : {}),
       });
+    } else if (part.type === 'skill') {
+      if (!part.id || !part.id.trim()) throw new OpenCodeSkillIdentityError();
+      skills.push({ id: part.id });
     } else agents.push({ name: part.name });
   }
   return {
     text: textChunks.join('\n'),
     ...(files.length > 0 ? { files } : {}),
     ...(agents.length > 0 ? { agents } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
   };
 }
 

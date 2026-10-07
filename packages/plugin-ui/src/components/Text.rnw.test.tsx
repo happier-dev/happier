@@ -68,6 +68,18 @@ describe('plugin-ui Text renders real React Native semantics', () => {
     mount.unmount();
   });
 
+  it('draws reading prose in its own role, a step above the row-meta body line', () => {
+    const context = createSurfaceContext();
+    const prose = mountSurface(<Text value="Cart totals were rounded on the client." variant="reading" />, context);
+    const rendered = prose.container.firstElementChild as HTMLElement;
+    // The detail's prose (the ask, a summary) is read, not scanned: the snapshot's reading metrics, never
+    // the dense row-meta `body` a list's second line uses.
+    expect(rendered.style.fontSize).toBe(`${context.theme.typography.reading.fontSize}px`);
+    expect(rendered.style.lineHeight).toBe(`${context.theme.typography.reading.lineHeight}px`);
+    expect(context.theme.typography.reading.fontSize).toBeGreaterThan(context.theme.typography.body.fontSize);
+    prose.unmount();
+  });
+
   it('applies the user text scale the host projected', () => {
     const unscaled = createSurfaceContext();
     const scaled = createSurfaceContext({ textScale: 1.5 });

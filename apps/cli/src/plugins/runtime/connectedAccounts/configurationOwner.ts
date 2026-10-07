@@ -1097,19 +1097,15 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         async isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration): Promise<boolean> {
             const metadata = snapshotMetadata.get(snapshot);
             if (!metadata) return false;
-            const service = serviceForTarget(metadata.target);
             try {
-                if (!await params.isRuntimeCurrent({ pluginId: service.pluginId, ...metadata.runtimeIdentity })) {
-                    revokeCurrentnessFence(metadata.target, metadata.revision);
-                    return false;
-                }
+                // Configuration belongs to its exact target and stored revision.
+                // Publishing new plugin code does not replace that record.
+                // This marks a mode with no configuration declaration, not an
+                // absent record. Declared configuration must have a revision
+                // before admission can produce a ready snapshot.
                 if (metadata.unconfigured) return true;
-                const current = await isTargetRevisionCurrent(
-                    service,
-                    metadata.runtimeIdentity,
-                    metadata.target,
-                    metadata.revision,
-                );
+                const record = await params.read(metadata.target);
+                const current = record?.revision === metadata.revision;
                 if (!current) revokeCurrentnessFence(metadata.target, metadata.revision);
                 return current;
             } catch {

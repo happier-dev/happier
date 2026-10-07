@@ -7,8 +7,10 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import {
-  TriageEvidenceDisclosureProvider,
+  TriageDetailPanelNavigationProvider,
+  type TriageDetailPanelNavigationV1,
   type TriageEvidenceCandidateV1,
+  type TriageEvidenceDisclosureOutcomeV1,
 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +19,8 @@ import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceCo
 
 import { renderSurface } from './renderSurface.js';
 import { SENTRY_UI_TRANSLATIONS } from './translations.js';
+import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../triage/src/ui/sourcePanelActions.test-support.js';
+import { createTriageEphemeralSharedScopeFixture } from '../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 
 /**
  * The Sentry detail body, mounted the way the host mounts it.
@@ -235,6 +239,8 @@ function createHarness(options: Readonly<{
 }
 
 const mounted: PluginUiTestkit[] = [];
+/** The Triage frame's panel selection, when a case mounts the source inside one. */
+let frameNavigation: TriageDetailPanelNavigationV1 | null = null;
 
 function SourceHostTabs({ children }: Readonly<{ children: React.ReactNode }>) {
   const [panel, setPanel] = React.useState('source');
@@ -249,36 +255,39 @@ async function mountDetail(
   surfaceContext = createSurfaceContextFixture(),
   disclosure?: Readonly<{
     available: boolean;
-    disclose(resolve: (signal: AbortSignal) => Promise<TriageEvidenceCandidateV1 | null>): Promise<unknown>;
+    disclose(resolve: (signal: AbortSignal) => Promise<TriageEvidenceCandidateV1 | null>): Promise<TriageEvidenceDisclosureOutcomeV1>;
     confirm?: (input: Readonly<{ message: string; title?: string }>) => boolean | Promise<boolean>;
   }>,
   panel?: string | (() => string),
   ancestorTabs = false,
   detailInput?: () => TriageDetailSurfaceInputV1,
 ): Promise<PluginUiTestkit> {
+  const scope = createTriageEphemeralSharedScopeFixture();
   const sourceSurface = defineUiSurface((context) => {
     const source = renderSurface(typeof panel === 'function'
       ? { ...context, launchInput: { ...(detailInput?.() ?? DETAIL_INPUT), panel: panel() } as unknown as JsonValue }
       : detailInput === undefined ? context : { ...context, launchInput: detailInput() as unknown as JsonValue });
-    return ancestorTabs ? <SourceHostTabs>{source}</SourceHostTabs> : source;
+    const actions = <SourcePanelActionsFixture scope={scope} disclosure={disclosure}>{source}</SourcePanelActionsFixture>;
+    const body = frameNavigation === null ? actions
+      : <TriageDetailPanelNavigationProvider navigation={frameNavigation}>{actions}</TriageDetailPanelNavigationProvider>;
+    return ancestorTabs ? <SourceHostTabs>{body}</SourceHostTabs> : body;
   });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-173', mountNonce: 'fixture-mount-173' },
       authorPlugin: { id: SENTRY_PLUGIN_ID, version: '0.0.0' },
-      surface: disclosure === undefined
-        ? sourceSurface
-        : (context) => (
-          <TriageEvidenceDisclosureProvider disclosure={disclosure}>
-            {renderSurface(context)}
-          </TriageEvidenceDisclosureProvider>
-        ),
+      surface: sourceSurface,
       surfaceContext,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: { ...DETAIL_INPUT, ...(typeof panel === 'string' ? { panel } : {}) } as unknown as JsonValue,
       handlers: {
-        executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
+        executeAction: async ({ action, input, signal }) => {
+          const localId = typeof action === 'string' ? action : action.localId;
+          return localId.startsWith('ui/')
+            ? await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal, disclosure?.confirm)
+            : await harness.executeAction({ action, input, signal });
+        },
         ...(disclosure?.confirm === undefined ? {} : { confirm: disclosure.confirm }),
       },
     });
@@ -295,6 +304,7 @@ async function selectTab(page: PluginUiTestkit, name: string): Promise<void> {
 
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
+  frameNavigation = null;
 });
 
 describe('the mounted Sentry issue detail body', () => {
@@ -356,15 +366,25 @@ describe('the mounted Sentry issue detail body', () => {
     await expect(page.queryByText('AbandonedError: stale evidence')).resolves.toBeUndefined();
     await expect(page.queryByText('Abandoned summary')).resolves.toBeUndefined();
   });
-  it('composes host Activity as a story while keeping provider history records', async () => {
+  it('renders provider history records as one chronological Activity timeline', async () => {
     const harness = createHarness({ activity: {
       kind: 'activity', activity: { status: 'available',
-        items: [{ id: 'record-1', type: 'set_resolved', actor: 'Mara' }],
+        // Sentry states its history newest first; the timeline reads oldest first.
+        items: [
+          { id: 'record-2', type: 'set_resolved', actor: 'Mara', atMs: 1_760_000_600_000 },
+          { id: 'record-1', type: 'set_regression', atMs: 1_760_000_100_000 },
+        ],
         malformedItemCount: 0, omittedItemCount: 0, projectionTruncated: false },
     } });
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'activity');
-    await expect(page.getByRole('heading', { name: 'Activity' })).resolves.toBeDefined();
-    await expect(page.getByText('set_resolved · Mara')).resolves.toBeDefined();
+    // The shared timeline is the panel: no numbered "Activity" step above it.
+    await expect(page.queryByRole('heading', { name: 'Activity' })).resolves.toBeUndefined();
+    await expect(page.getByText('Mara')).resolves.toBeDefined();
+    await expect(page.getByText('set_resolved')).resolves.toBeDefined();
+    const text = document.body.textContent ?? '';
+    expect(text.indexOf('set_regression')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('set_regression')).toBeLessThan(text.indexOf('set_resolved'));
+    await expect(page.getByText('2 activity record(s) read. Sentry states this history on the issue itself and does not paginate it.')).resolves.toBeDefined();
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
   });
   it('aborts hidden occurrence paging and resumes from its settled continuation', async () => {
@@ -463,13 +483,65 @@ describe('the mounted Sentry issue detail body', () => {
     expect(harness.countOf(SENTRY_ACTION_IDS.listIssueEvents)).toBe(2);
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
-  it('renders the host Overview as a report with the source-owned representative occurrence', async () => {
+  it('renders the host Overview as what happened with the source-owned representative occurrence', async () => {
     const harness = createHarness();
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
-    await expect(page.getByRole('heading', { name: 'The report' })).resolves.toBeDefined();
+    await expect(page.getByRole('heading', { name: 'What happened' })).resolves.toBeDefined();
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
+  it('states the spread once, from the issue read, and drops the observation chrome', async () => {
+    const harness = createHarness({
+      readSummary: async () => ({
+        ...(ISSUE_BODY as Readonly<Record<string, JsonValue>>),
+        userCount: 112,
+        firstRelease: { version: 'checkout@4.12.0' },
+        eventTrend: [
+          { atMs: 1_760_000_000_000 - 3_600_000, count: 3 },
+          { atMs: 1_760_000_000_000, count: 44 },
+        ],
+      }),
+    });
+    const select = vi.fn();
+    frameNavigation = { panels: ['overview', 'activity', 'stack-trace'], select };
+    const withFacts = (): TriageDetailSurfaceInputV1 => TriageDetailSurfaceInputV1Schema.parse({
+      ...DETAIL_INPUT,
+      observation: {
+        ...DETAIL_INPUT.observation,
+        snapshot: {
+          ...DETAIL_INPUT.observation.snapshot,
+          facts: [
+            { id: 'level', importance: 'primary', value: { kind: 'text', value: 'fatal' } },
+            { id: 'events', importance: 'secondary', value: { kind: 'number', value: 4021, format: 'compact', approximate: true } },
+            { id: 'users', importance: 'secondary', value: { kind: 'number', value: 112, format: 'compact', approximate: true } },
+            { id: 'last-release', importance: 'supplementary', value: { kind: 'detailOnly' } },
+          ],
+        },
+      },
+    });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, () => 'overview', false, withFacts);
+
+    await expect(page.getByRole('heading', { name: 'Spread' })).resolves.toBeDefined();
+    await expect(page.getByText('Users affected')).resolves.toBeDefined();
+    await expect(page.getByText('checkout@4.12.0')).resolves.toBeDefined();
+    await expect(page.getByText('First seen in')).resolves.toBeDefined();
+    await expect(page.getByText('Last 24 hours')).resolves.toBeDefined();
+    // Users and events are read once and shown once: the tile, not a Facts row or a "Sentry now" row too.
+    const bodyText = document.body.textContent ?? '';
+    expect(bodyText.match(/112/gu) ?? []).toHaveLength(1);
+    expect(bodyText.match(/4k|4021|4,021/giu) ?? []).toHaveLength(1);
+    // Facts the spread does not own stay.
+    await expect(page.getByText('fatal')).resolves.toBeDefined();
+    // Chrome the story no longer carries.
+    for (const gone of ['Observation', 'Observed', 'No projected facts', 'Read only in this detail body:']) {
+      await expect(page.queryByText(gone)).resolves.toBeUndefined();
+    }
+
+    // Stack trace is the frame's own panel: the inline control asks the frame for it.
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Open the stack trace' })); });
+    expect(select).toHaveBeenCalledWith('stack-trace');
+  });
+
   it('reads one occurrence because Overview asked, and reads it once', async () => {
     const harness = createHarness();
     const page = await mountDetail(harness);
@@ -640,20 +712,13 @@ describe('the mounted Sentry issue detail body', () => {
     });
     expect(candidate?.candidate.id).not.toContain('https://us.sentry.io');
     expect(candidate).not.toHaveProperty('composer');
-    // The reader is approving evidence, so the confirmation describes the
-    // evidence. The selecting panel shows this occurrence's title and tags while
-    // dispatch also forwards its frames, source context lines and breadcrumbs;
-    // a confirmation that named only the action asked for approval of content it
-    // never mentioned (`SENTRY.md` §8.4).
+    // Approval now names the Action and describes the forwarded evidence;
+    // exact projection counts remain visible beside Add in the source panel.
     const confirmation = String(confirm.mock.calls[0]?.[0]?.message);
-    expect(confirmation).toContain('Add selected occurrence to message');
-    expect(confirmation).toContain('1 stack frame(s)');
-    expect(confirmation).toContain('1 source context line(s)');
-    expect(confirmation).toContain('0 breadcrumb(s)');
+    expect(confirmation).toContain('stack frames');
     expect(confirmation).toContain('frame local variables');
-    expect(confirmation).toContain('event user fields');
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Selected occurrence',
+      title: 'Add selected occurrence to message',
     }));
   });
 

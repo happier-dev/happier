@@ -51,11 +51,11 @@ export async function createGitCheckpointTemporaryIndex(input: {
     | { success: true; tempIndex: GitCheckpointTemporaryIndex }
     | { success: false; reason: GitCheckpointCommandFailure['reason']; error: string }
 > {
-    const head = await runGitCheckpointCommand({ cwd: input.cwd, args: ['rev-parse', '--verify', 'HEAD'], timeoutMs: 5000 });
+    const head = await runGitCheckpointCommand({ cwd: input.cwd, args: ['rev-parse', '--verify', 'HEAD'] });
     const result = await createGitTemporaryIndex({
         cwd: input.cwd,
         seed: head.success ? { kind: 'tree', treeOid: head.stdout.trim() } : { kind: 'empty' },
-        runGit: (command) => runGitCheckpointCommand({ ...command, timeoutMs: 5000 }),
+        runGit: runGitCheckpointCommand,
     });
     if (result.success) return result;
     const failure = result.commandResult

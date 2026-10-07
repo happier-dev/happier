@@ -534,7 +534,7 @@ export async function getOpenCodeExternalSessionVerifiedWorkingDirectory(params:
   source: OpenCodeExternalSessionSource;
   dialect: OpenCodeServerDialect;
   providerSessionId: string;
-  maxBytes: number;
+  maxBytes?: number;
   signal?: AbortSignal;
   env?: Readonly<Record<string, string | undefined>>;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;

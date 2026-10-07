@@ -10,6 +10,80 @@ import test from 'node:test';
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(path.join(uiRoot, 'package.json'));
 
+test('web math consumers share one KaTeX implementation for import and require', async () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-math-'));
+    let server;
+    try {
+        const markdownLoader = require.resolve('react-native-enriched-markdown/lib/module/web/katex.js');
+        writeFileSync(path.join(fixture, 'index.js'), `import katex from 'katex';
+import { loadKaTeX } from ${JSON.stringify(markdownLoader)};
+globalThis.mathResult = loadKaTeX().then(markdownKatex => ({ katex, markdownKatex }));`);
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.watchFolders = [...config.watchFolders, fixture];
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(fixture, 'index.js'), platform: 'web', dev: true, minify: false, lazy: false,
+        });
+        const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+        const implementations = [...graph.dependencies.keys()].filter(file => /[\\/]katex[\\/]dist[\\/]katex\.(?:m?js)$/.test(file));
+        console.log(JSON.stringify({ entry: 'math consumers', implementations, bytes: Buffer.byteLength(result.code) }));
+        assert.equal(implementations.length, 1, 'the same math renderer must not be bundled twice as ESM and CommonJS');
+        const sandbox = { console, setTimeout, clearTimeout };
+        sandbox.global = sandbox;
+        new Script(result.code).runInNewContext(sandbox);
+        const { katex, markdownKatex } = await sandbox.mathResult;
+        assert.equal(markdownKatex, katex, 'markdown and diagram math must share the real renderer');
+        const rendered = markdownKatex.renderToString('x^2', { output: 'mathml' });
+        assert.match(rendered, /<math/);
+        assert.match(rendered, /<msup>/);
+        assert.throws(() => katex.renderToString('\\unknownAuditCommand'), katex.ParseError);
+    } finally {
+        if (server) await server.end();
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
+test('language lookup and tokenization defer the highlighter runtime and themes', async () => {
+    const cache = mkdtempSync(path.join(tmpdir(), 'happier-language-lookup-'));
+    let server;
+    try {
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(cache, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(cache, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        for (const entry of [
+            'sources/components/ui/code/highlighting/resolveShikiLanguageId.ts',
+            'sources/components/ui/code/highlighting/shiki/shikiTokenize.web.ts',
+        ]) {
+            const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+                entryFile: path.join(uiRoot, entry), platform: 'web', dev: true, minify: false, lazy: true,
+            });
+            const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+            const paths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
+            console.log(JSON.stringify({ entry, modules: paths.length, bytes: Buffer.byteLength(result.code) }));
+            assert.deepEqual(paths.filter(file => /\/node_modules\/(?:@shikijs\/(?:themes|core|engine-[^/]+)\/|shiki\/dist\/(?:themes|bundle-full)\.mjs$)/.test(file)), [],
+                'the highlighter runtime must load only when tokenization is requested');
+            assert.equal(paths.some(file => file.endsWith('/shiki/dist/langs.mjs')), true,
+                'use the package-owned complete language and alias inventory');
+        }
+    } finally {
+        if (server) await server.end();
+        rmSync(cache, { recursive: true, force: true });
+    }
+});
+
 test('web development includes dynamic imports in one graph while native keeps lazy bundles', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-single-graph-'));
     let server;

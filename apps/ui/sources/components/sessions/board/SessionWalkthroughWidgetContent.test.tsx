@@ -2,8 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, SPECIMEN_ANALYSIS_COMPLETE } from '@/components/dev/changes/walkthroughSpecimenFixture';
-import { buildWalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH } from '@/components/dev/changes/walkthroughSpecimenFixture';
+import { buildWalkthroughReadingProgress } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import { WalkthroughWidgetContentView } from './SessionWalkthroughWidgetContent';
 
 vi.mock('@/text', async () => {
@@ -11,9 +11,8 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key, params) => params ? `${key}:${JSON.stringify(params)}` : key });
 });
 
-const reading = (refs: string[] = []) => buildWalkthroughReading({
+const reading = (refs: string[] = []) => buildWalkthroughReadingProgress({
     comparison: SPECIMEN_COMPARISON, walkthrough: { state: 'complete', value: SPECIMEN_WALKTHROUGH },
-    analysis: SPECIMEN_ANALYSIS_COMPLETE,
     reviewed: { v: 1, comparisonId: SPECIMEN_COMPARISON.id, reviewedChangeRefs: refs },
 });
 

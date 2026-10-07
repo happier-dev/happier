@@ -1,12 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import axios from 'axios';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  ConnectedServiceCredentialRecordV1Schema,
-  FeaturesResponseSchema,
   MAX_INTERACTION_TRANSIENT_CHOICES_V1,
   PluginConnectedAccountAuthenticationV2Schema,
   sealQualifiedConnectedAccountContentEnvelope,
@@ -31,10 +30,7 @@ import {
   normalizeConnectedAccountConfiguredBase,
 } from '@/plugins/runtime/connectedAccounts/configuredOrigins';
 import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
-import {
-  resolveQualifiedConnectedAccountPeerOperationTransport,
-  type QualifiedConnectedAccountPeerOperationTransport,
-} from '@/api/client/qualifiedConnectedAccountApi';
+import { listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -42,7 +38,6 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 
 import {
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
-  createRevisionedLegacyConnectedAccountMaterializationOwner,
   type QualifiedConnectedAccountEstablishedRuntimeOwner,
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
@@ -65,45 +60,6 @@ const githubService = {
   pluginId: 'happier.scm.forge.github',
   localId: 'github-account',
 } as const;
-const revisionedServerSnapshot = {
-  status: 'ready' as const,
-  features: FeaturesResponseSchema.parse({
-    features: {},
-    capabilities: {
-      connectedServices: {
-        credentialDelete: { revisionGuard: true },
-      },
-    },
-  }),
-};
-const exactOldServerSnapshot = {
-  status: 'ready' as const,
-  features: FeaturesResponseSchema.parse({
-    features: {
-      sharing: {
-        pendingQueueV2: { enabled: true },
-      },
-    },
-    capabilities: {},
-  }),
-};
-const exactOldServerContract = {
-  mode: 'released_server_v0_2_1' as const,
-  runtimeActivity: 'legacy' as const,
-  pendingInput: 'released_server_v0_2_1' as const,
-  publisherAuthority: 'indeterminate' as const,
-  sessionConnectionEpoch: 4,
-  socket: { connected: true },
-};
-const advertisedMaterializationTransport = () => ({ kind: 'v4' as const });
-const unavailableLegacyMaterializationOwner = {
-  async invokeWithReceipt(): Promise<never> {
-    throw new Error('legacy materialization must not be invoked');
-  },
-  async invoke(): Promise<never> {
-    throw new Error('legacy materialization must not be invoked');
-  },
-};
 const unavailableDirectMaterial = async (): Promise<never> => {
   throw new Error('direct Team materialization must not be invoked');
 };
@@ -424,43 +380,13 @@ function createSelectionRuntime(
 ) {
   return createDaemonConnectedAccountPurposeBindingRuntime({
     resolveQualifiedConnectedAccountV4Support: () => v4Support,
-    resolveQualifiedConnectedAccountMaterializationTransport: () =>
-      v4Support === 'advertised'
-        ? advertisedMaterializationTransport()
-        : {
-            kind: 'legacy' as const,
-            peerClass: 'exact_v0_2_1' as const,
-            serviceId: 'openai' as const,
-          },
     establishedRuntimeOwner: {
       async invokeWithReceipt() {
         throw new Error('selection must not materialize a credential');
       },
       invokeDirectMaterial: unavailableDirectMaterial,
     },
-    revisionedLegacyMaterializationOwner:
-      unavailableLegacyMaterializationOwner,
-    qualifiedApi,
-    api: {
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'openai' as const,
-        profiles: [{
-          profileId: 'standard-openai',
-          status: 'connected' as const,
-          kind: 'token' as const,
-          providerAccountId: 'acct-standard',
-          providerEmail: 'user@example.test',
-          expiresAt: null,
-        }, {
-          profileId: 'needs-reauth',
-          status: 'needs_reauth' as const,
-          kind: 'token' as const,
-        }],
-      })),
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    },
+    qualifiedApi: v4Support === 'advertised' ? qualifiedApi : undefined,
     store,
     runtimeRegistry: {
       subscribe: () => () => undefined,
@@ -471,7 +397,6 @@ function createSelectionRuntime(
             && service.localId === openAiService.localId
             ? {
                 service: openAiService,
-                legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
                 authentication,
               }
@@ -522,25 +447,13 @@ function createInventoryRuntime(input: Readonly<{
   });
   const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
     resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-    resolveQualifiedConnectedAccountMaterializationTransport:
-      advertisedMaterializationTransport,
     establishedRuntimeOwner: { invokeWithReceipt, invokeDirectMaterial } as unknown as Pick<
       QualifiedConnectedAccountEstablishedRuntimeOwner,
       'invokeWithReceipt' | 'invokeDirectMaterial'
     >,
     ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
-    revisionedLegacyMaterializationOwner: unavailableLegacyMaterializationOwner,
     qualifiedApi,
     ...(input.omitOriginReader ? {} : { resolveConnectedAccountEndpoints }),
-    api: {
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'openai' as const,
-        profiles: [],
-      })),
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    },
     store: input.store ?? selectedStore(),
     runtimeRegistry: {
       subscribe: () => () => undefined,
@@ -551,7 +464,6 @@ function createInventoryRuntime(input: Readonly<{
             && service.localId === openAiService.localId
             ? {
                 service: openAiService,
-                legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
                 authentication: input.authentication ?? testAuthentication,
               }
@@ -564,38 +476,19 @@ function createInventoryRuntime(input: Readonly<{
   return { runtime, qualifiedApi, invokeWithReceipt, invokeDirectMaterial, resolveConnectedAccountEndpoints };
 }
 
-type ActionFormRuntimeParams = Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0];
-type LegacyActionFormProfiles = Awaited<
-  ReturnType<ActionFormRuntimeParams['api']['listConnectedServiceProfiles']>
->['profiles'];
-
 function createActionFormRuntime(input: Readonly<{
-  transport?: QualifiedConnectedAccountPeerOperationTransport;
   qualifiedApi?: ReturnType<typeof testQualifiedApi>;
   runtimeRegistry?: DaemonConnectedAccountRuntimeRegistry;
-  legacyProfiles?: LegacyActionFormProfiles;
 }> = {}) {
-  const transport = input.transport ?? advertisedMaterializationTransport();
   return createDaemonConnectedAccountPurposeBindingRuntime({
-    resolveQualifiedConnectedAccountV4Support: () => transport.kind === 'v4' ? 'advertised' : 'absent',
-    resolveQualifiedConnectedAccountMaterializationTransport: () => transport,
+    resolveQualifiedConnectedAccountV4Support: () => 'advertised',
     establishedRuntimeOwner: {
       async invokeWithReceipt() {
         throw new Error('Action-form option listing must not materialize a credential');
       },
       invokeDirectMaterial: unavailableDirectMaterial,
     },
-    revisionedLegacyMaterializationOwner: unavailableLegacyMaterializationOwner,
     qualifiedApi: input.qualifiedApi ?? testQualifiedApi(),
-    api: {
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'openai' as const,
-        profiles: input.legacyProfiles ?? [],
-      })),
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    },
     store: emptyStore(),
     runtimeRegistry: input.runtimeRegistry ?? {
       subscribe: () => () => undefined,
@@ -606,7 +499,6 @@ function createActionFormRuntime(input: Readonly<{
             && service.localId === openAiService.localId
             ? {
                 service: openAiService,
-                legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
                 authentication: testAuthentication,
               }
@@ -619,6 +511,47 @@ function createActionFormRuntime(input: Readonly<{
 }
 
 describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
+  it.each([
+    { origin: 'https://api.github.com', hostname: 'github.com' },
+    { origin: 'https://github.example.test', hostname: 'github.example.test' },
+  ])('materializes machine GitHub login for $hostname without reading or writing server credentials', async ({ origin, hostname }) => {
+    const store = emptyStore();
+    const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
+      store,
+      establishedRuntimeOwner: {
+        invokeWithReceipt: async () => { throw new Error('Native login must not materialize a stored account'); },
+        invokeDirectMaterial: unavailableDirectMaterial,
+      },
+      resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      runtimeRegistry: {
+        subscribe: () => () => undefined,
+        acquire: async () => ({
+          isCurrent: () => true,
+          resolveService: () => ({
+            service: githubService, availability: 'available' as const,
+            authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } },
+          }),
+          release: async () => undefined,
+        }),
+      },
+      // Only executable lookup and the OS command are faked; GH selection and purpose logic are real.
+      ghDependencies: {
+        resolveSystemGhBinPath: async () => '/fixture/gh',
+        resolveManagedGhBinPath: async () => null,
+        runGhCommand: async ({ args }) => {
+          expect(args).toEqual(['auth', args[1], '--hostname', hostname]);
+          return { ok: true, stdout: args[1] === 'token' ? 'ephemeral-gh-token\n' : '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+    await expect(runtime.owner.materialize({
+      purpose, serviceRefs: [githubService], nativeService: githubService,
+      request: { kind: 'httpHeaders', origin, headerNames: ['authorization'] },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer ephemeral-gh-token' } });
+    expect(store.current()).toEqual({ v: 1, bindings: [] });
+  });
+
   it('preserves Team authentication operation errors through Connected Service materialization', async () => {
     const { runtime, invokeDirectMaterial } = createInventoryRuntime({
       openTeamDirect: async () => ({
@@ -989,44 +922,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     } satisfies Partial<PluginError>);
   });
 
-  it('admits only revisioned legacy inventory and preserves its exact service binding', async () => {
-    const profiles: LegacyActionFormProfiles = [{
-      profileId: 'legacy-account',
-      status: 'connected',
-      kind: 'token',
-      providerAccountId: 'legacy-account-id',
-      providerEmail: 'legacy@example.test',
-      expiresAt: null,
-    }];
-    const revisionedRuntime = createActionFormRuntime({
-      transport: {
-        kind: 'legacy',
-        peerClass: 'revisioned_v2_v3',
-        serviceId: 'openai',
-      },
-      legacyProfiles: profiles,
-    });
-    const exactLegacyRuntime = createActionFormRuntime({
-      transport: {
-        kind: 'legacy',
-        peerClass: 'exact_v0_2_1',
-        serviceId: 'openai',
-      },
-      legacyProfiles: profiles,
-    });
-    const input = {
-      purpose,
-      serviceRefs: [openAiService],
-      signal: new AbortController().signal,
-    };
-
-    await expect(revisionedRuntime.listActionFormConnectedAccountOptions(input)).resolves.toEqual([{
-      value: { service: openAiService, accountId: 'legacy-account' },
-      label: 'legacy@example.test',
-    }]);
-    await expect(exactLegacyRuntime.listActionFormConnectedAccountOptions(input)).resolves.toEqual([]);
-  });
-
   it('rejects inventory that is no longer current after an account-list await', async () => {
     let current = true;
     const runtimeRegistry: DaemonConnectedAccountRuntimeRegistry = {
@@ -1036,7 +931,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
           isCurrent: () => current,
           resolveService: () => ({
             service: openAiService,
-            legacyServiceId: 'openai',
             availability: 'available',
             authentication: testAuthentication,
           }),
@@ -1224,31 +1118,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     }));
     const runtimeOwner = createDaemonConnectedAccountPurposeBindingRuntime({
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-      resolveQualifiedConnectedAccountMaterializationTransport:
-        advertisedMaterializationTransport,
       // This fixture exercises only environment materialization.
       establishedRuntimeOwner: { invokeWithReceipt, invokeDirectMaterial: unavailableDirectMaterial } as unknown as Pick<
         QualifiedConnectedAccountEstablishedRuntimeOwner,
         'invokeWithReceipt' | 'invokeDirectMaterial'
       >,
-      revisionedLegacyMaterializationOwner:
-        unavailableLegacyMaterializationOwner,
-      api: {
-        listConnectedServiceProfiles: vi.fn(async () => ({
-          serviceId: 'openai' as const,
-          profiles: [{
-            profileId: 'standard-openai',
-            status: 'connected' as const,
-            kind: 'token' as const,
-            providerAccountId: 'acct-standard',
-            providerEmail: null,
-            expiresAt: null,
-          }],
-        })),
-        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain: vi.fn(async () => null),
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      },
       qualifiedApi: testQualifiedApi(),
       store: selectedStore(),
       runtimeRegistry: {
@@ -1263,7 +1137,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
               && service.localId === openAiService.localId
               ? {
                   service: openAiService,
-                  legacyServiceId: 'openai' as const,
                   availability: 'available' as const,
                   authentication: testAuthentication,
                 }
@@ -1364,21 +1237,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     }));
     const runtimeOwner = createDaemonConnectedAccountPurposeBindingRuntime({
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-      resolveQualifiedConnectedAccountMaterializationTransport:
-        advertisedMaterializationTransport,
       // This fixture rejects before any established operation can run.
       establishedRuntimeOwner: { invokeWithReceipt, invokeDirectMaterial: unavailableDirectMaterial } as unknown as Pick<
         QualifiedConnectedAccountEstablishedRuntimeOwner,
         'invokeWithReceipt' | 'invokeDirectMaterial'
       >,
-      revisionedLegacyMaterializationOwner:
-        unavailableLegacyMaterializationOwner,
-      api: {
-        listConnectedServiceProfiles: vi.fn(),
-        getAccountEncryptionMode: vi.fn(),
-        getConnectedServiceCredentialPlain: vi.fn(),
-        getConnectedServiceCredentialSealed: vi.fn(),
-      },
       qualifiedApi: testQualifiedApi({ expiresAt: Date.now() - 1 }),
       store: selectedStore(),
       runtimeRegistry: {
@@ -1390,7 +1253,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
               && service.localId === openAiService.localId
               ? {
                   service: openAiService,
-                  legacyServiceId: 'openai' as const,
                   availability: 'available' as const,
                   authentication: testAuthentication,
                 }
@@ -1413,7 +1275,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     expect(invokeWithReceipt).not.toHaveBeenCalled();
   });
 
-  it('fails qualified public materialization typed without probing raw V4 when atomic capability is absent', async () => {
+  it('fails owned-account materialization closed when the qualified inventory is unavailable', async () => {
     const runtimeOwner = createSelectionRuntime(selectedStore(), 'absent');
 
     await expect(runtimeOwner.owner.materialize({
@@ -1423,12 +1285,12 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
       name: 'PluginError',
-      code: 'connected_account_v4_contract_unavailable',
+      code: 'plugin_host_access_resource_not_selected',
       retryable: false,
     });
   });
 
-  it('translates a revision-fenced GitHub peer through the real purpose owner and registered runtime leaf', async () => {
+  it('reads current qualified GitHub credentials through the real purpose owner and registered runtime leaf', async () => {
     const happyHomeDir = await mkdtemp(
       join(tmpdir(), 'happier-purpose-github-account-'),
     );
@@ -1455,51 +1317,52 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         return () => undefined;
       },
     };
-    const record = ConnectedServiceCredentialRecordV1Schema.parse({
-      v: 1,
-      serviceId: 'github',
-      profileId: 'github-work',
-      createdAt: 1_700_000_000_000,
-      updatedAt: 1_700_000_000_000,
-      expiresAt: null,
+    const account = { service: githubService, accountId: 'github-work' };
+    const profile: QualifiedConnectedAccountProfileV4 = {
+      ref: account,
+      authenticationModeId: 'fine-grained-pat',
+      status: 'connected',
       kind: 'token',
-      token: {
-        token: 'github-token',
-        providerAccountId: 'github-account-id',
-        providerEmail: 'github@example.test',
-        raw: null,
-      },
+      revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      configurationRevision: null,
+      configurationReady: true,
+      expiresAt: null,
+      providerIdentity: { accountId: 'github-account-id' },
+      scopes: [],
+    };
+    const credentialContent = sealQualifiedConnectedAccountContentEnvelope({
+      kind: 'credential',
+      accountMode: 'plain',
+      payload: { v: 1, values: { token: 'github-token' } },
+      randomBytes: (length) => new Uint8Array(length),
     });
     let driftAfterFirstCredentialRead = false;
     let credentialReads = 0;
-    const getConnectedServiceCredentialPlain = vi.fn(async () => {
+    // HTTP is the boundary: keep the qualified parser, persistence reader and runtime real.
+    const credentialHttp = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (url.includes('/v4/connect/qualified/accounts?')) {
+        return { status: 200, data: { service: githubService, accounts: [profile] } };
+      }
+      if (!url.includes('/v4/connect/qualified/credential?')) {
+        throw new Error(`Unexpected Connected Account route: ${url}`);
+      }
       credentialReads += 1;
       return {
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision:
-          driftAfterFirstCredentialRead && credentialReads > 1
+        status: 200,
+        data: {
+          ref: account,
+          authenticationModeId: 'fine-grained-pat',
+          revisionSemantics: 'revisioned',
+          credentialRevision: driftAfterFirstCredentialRead && credentialReads > 1
             ? 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1'
             : 'csr_0123456789ABCDEFGHJKMNPQRS',
-        content: { t: 'plain' as const, v: record },
+          configurationRevision: null,
+          content: credentialContent,
+          metadata: { scopes: [] },
+        },
       };
     });
-    const listConnectedServiceProfiles = vi.fn(async () => ({
-      serviceId: 'github' as const,
-      profiles: [{
-        profileId: 'github-work',
-        status: 'connected' as const,
-        kind: 'token' as const,
-        providerAccountId: 'github-account-id',
-        providerEmail: 'github@example.test',
-        expiresAt: null,
-      }],
-    }));
-    const api = {
-      listConnectedServiceProfiles,
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain,
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
     const configuration = {
       read: vi.fn(async () => null),
       secrets: {
@@ -1515,32 +1378,26 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         secret: new Uint8Array([1, 2, 3]),
       },
     };
-    const revisionedLegacyMaterializationOwner =
-      createRevisionedLegacyConnectedAccountMaterializationOwner({
+    const establishedRuntimeOwner =
+      createQualifiedConnectedAccountEstablishedRuntimeOwner({
         reloadController,
         credentials,
-        api,
-        getAccountEncryptionMode: api.getAccountEncryptionMode,
+        getAccountEncryptionMode: async () => 'plain',
         configuration,
       });
-    const establishedRuntimeOwner = {
-      invokeWithReceipt: vi.fn(async (): Promise<never> => {
-        throw new Error('revisioned GitHub must not use the V4 reader');
-      }),
-      invokeDirectMaterial: unavailableDirectMaterial,
-    };
     const runtimeOwner = createDaemonConnectedAccountPurposeBindingRuntime({
-      api,
       establishedRuntimeOwner,
-      revisionedLegacyMaterializationOwner,
-      resolveQualifiedConnectedAccountMaterializationTransport: () => ({
-        ...resolveQualifiedConnectedAccountPeerOperationTransport({
-          snapshot: revisionedServerSnapshot,
-          service: githubService,
-          operation: 'one_shot_materialization',
-        }),
-      }),
-      resolveQualifiedConnectedAccountV4Support: () => 'absent',
+      resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      qualifiedApi: {
+        ...testQualifiedApi(),
+        async listAccounts(service, signal) {
+          return await listQualifiedConnectedAccountsV4({
+            token: credentials.token,
+            service,
+            signal,
+          });
+        },
+      },
       store: selectedStore({
         service: githubService,
         accountId: 'github-work',
@@ -1563,9 +1420,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         kind: 'httpHeaders',
         headers: { Authorization: 'Bearer github-token' },
       });
-      expect(establishedRuntimeOwner.invokeWithReceipt).not.toHaveBeenCalled();
-      expect(listConnectedServiceProfiles).toHaveBeenCalled();
-      expect(getConnectedServiceCredentialPlain).toHaveBeenCalled();
+      expect(credentialHttp).toHaveBeenCalled();
 
       credentialReads = 0;
       driftAfterFirstCredentialRead = true;
@@ -1578,7 +1433,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
 
       driftAfterFirstCredentialRead = false;
       const profileReadsBeforeRetirement =
-        listConnectedServiceProfiles.mock.calls.length;
+        credentialHttp.mock.calls.length;
       generationCurrent = false;
       await expect(runtimeOwner.owner.materialize({
         purpose,
@@ -1586,135 +1441,15 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         request: materializationRequest,
         signal: new AbortController().signal,
       })).rejects.toThrow('no longer current');
-      expect(listConnectedServiceProfiles).toHaveBeenCalledTimes(
+      expect(credentialHttp).toHaveBeenCalledTimes(
         profileReadsBeforeRetirement,
       );
     } finally {
+      credentialHttp.mockRestore();
       await registry.dispose();
       await rm(happyHomeDir, { recursive: true, force: true });
     }
   });
-
-  it.each([
-    [
-      'exact GitHub',
-      githubService,
-      'github',
-      exactOldServerSnapshot,
-      exactOldServerContract,
-    ],
-    [
-      'revisioned Bitbucket',
-      {
-        pluginId: 'happier.scm.forge.bitbucket',
-        localId: 'bitbucket-account',
-      },
-      'bitbucket',
-      revisionedServerSnapshot,
-      null,
-    ],
-    [
-      'exact Bitbucket',
-      {
-        pluginId: 'happier.scm.forge.bitbucket',
-        localId: 'bitbucket-account',
-      },
-      'bitbucket',
-      exactOldServerSnapshot,
-      exactOldServerContract,
-    ],
-    [
-      'indeterminate GitHub',
-      githubService,
-      'github',
-      { status: 'error' as const, reason: 'network' },
-      null,
-    ],
-  ] as const)(
-    'refuses %s before legacy inventory, credential, or runtime effects',
-    async (
-      _label,
-      service,
-      legacyServiceId,
-      snapshot,
-      serverContract,
-    ) => {
-      const resolveTransport = vi.fn(() =>
-        resolveQualifiedConnectedAccountPeerOperationTransport({
-          snapshot,
-          serverContract,
-          service,
-          operation: 'one_shot_materialization',
-        })
-      );
-      const listConnectedServiceProfiles = vi.fn();
-      const getConnectedServiceCredentialPlain = vi.fn();
-      const establishedInvokeWithReceipt = vi.fn();
-      const revisionedLegacyInvokeWithReceipt = vi.fn();
-      const runtimeOwner =
-        createDaemonConnectedAccountPurposeBindingRuntime({
-          api: {
-            listConnectedServiceProfiles,
-            getAccountEncryptionMode: vi.fn(),
-            getConnectedServiceCredentialPlain,
-            getConnectedServiceCredentialSealed: vi.fn(),
-          },
-          establishedRuntimeOwner: {
-            invokeWithReceipt: establishedInvokeWithReceipt,
-            invokeDirectMaterial: unavailableDirectMaterial,
-          },
-          revisionedLegacyMaterializationOwner: {
-            invokeWithReceipt: revisionedLegacyInvokeWithReceipt,
-            invoke: vi.fn(),
-          },
-          resolveQualifiedConnectedAccountMaterializationTransport:
-            resolveTransport,
-          resolveQualifiedConnectedAccountV4Support: () => 'absent',
-          store: selectedStore({
-            service,
-            accountId: 'scm-account',
-          }),
-          runtimeRegistry: {
-            subscribe: () => () => undefined,
-            async acquire() {
-              return {
-                isCurrent: () => true,
-                resolveService: (candidate) => (
-                  candidate.pluginId === service.pluginId
-                  && candidate.localId === service.localId
-                    ? {
-                        service,
-                        legacyServiceId,
-                        availability: 'available' as const,
-                        authentication: testAuthentication,
-                      }
-                    : null
-                ),
-                release: vi.fn(async () => undefined),
-              };
-            },
-          },
-        });
-
-      await expect(runtimeOwner.owner.materialize({
-        purpose,
-        serviceRefs: [service],
-        request: {
-          kind: 'httpHeaders',
-          origin: 'https://example.test',
-          headerNames: ['authorization'],
-        },
-        signal: new AbortController().signal,
-      })).rejects.toMatchObject({
-        code: 'plugin_host_access_resource_not_selected',
-      });
-      expect(resolveTransport).toHaveBeenCalled();
-      expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
-      expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
-      expect(establishedInvokeWithReceipt).not.toHaveBeenCalled();
-      expect(revisionedLegacyInvokeWithReceipt).not.toHaveBeenCalled();
-    },
-  );
 
   it('materializes the declared OpenAI API-key descriptor through its registered plugin runtime', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-purpose-account-'));
@@ -1784,27 +1519,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       });
     const runtimeOwner = createDaemonConnectedAccountPurposeBindingRuntime({
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-      resolveQualifiedConnectedAccountMaterializationTransport:
-        advertisedMaterializationTransport,
       establishedRuntimeOwner,
-      revisionedLegacyMaterializationOwner:
-        unavailableLegacyMaterializationOwner,
-      api: {
-        listConnectedServiceProfiles: vi.fn(async () => ({
-          serviceId: 'openai' as const,
-          profiles: [{
-            profileId: 'standard-openai',
-            status: 'connected' as const,
-            kind: 'token' as const,
-            providerAccountId: 'acct-standard',
-            providerEmail: null,
-            expiresAt: null,
-          }],
-        })),
-        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain: vi.fn(async () => null),
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      },
       qualifiedApi: testQualifiedApi(),
       store: selectedStore(),
       reloadController,
@@ -2363,21 +2078,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     const store = emptyStore();
     const runtimeOwner = createDaemonConnectedAccountPurposeBindingRuntime({
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-      resolveQualifiedConnectedAccountMaterializationTransport:
-        advertisedMaterializationTransport,
       establishedRuntimeOwner: {
         async invokeWithReceipt() {
           throw new Error('no-session selection must fail before materialization');
         },
         invokeDirectMaterial: unavailableDirectMaterial,
-      },
-      revisionedLegacyMaterializationOwner:
-        unavailableLegacyMaterializationOwner,
-      api: {
-        listConnectedServiceProfiles: vi.fn(),
-        getAccountEncryptionMode: vi.fn(),
-        getConnectedServiceCredentialPlain: vi.fn(),
-        getConnectedServiceCredentialSealed: vi.fn(),
       },
       store,
       runtimeRegistry: {
@@ -2950,24 +2655,12 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-      resolveQualifiedConnectedAccountMaterializationTransport:
-        advertisedMaterializationTransport,
       establishedRuntimeOwner: { invokeWithReceipt, invokeDirectMaterial: unavailableDirectMaterial } as unknown as Pick<
         QualifiedConnectedAccountEstablishedRuntimeOwner,
         'invokeWithReceipt' | 'invokeDirectMaterial'
       >,
-      revisionedLegacyMaterializationOwner: unavailableLegacyMaterializationOwner,
       qualifiedApi,
       resolveConnectedAccountEndpoints: async () => [],
-      api: {
-        listConnectedServiceProfiles: vi.fn(async () => ({
-          serviceId: 'openai' as const,
-          profiles: [],
-        })),
-        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain: vi.fn(async () => null),
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      },
       store: selectedStore(),
       runtimeRegistry: {
         subscribe: () => () => undefined,
@@ -2976,7 +2669,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
             isCurrent: () => true,
             resolveService: () => ({
               service: openAiService,
-              legacyServiceId: 'openai' as const,
               availability: 'available' as const,
               authentication: testAuthentication,
             }),

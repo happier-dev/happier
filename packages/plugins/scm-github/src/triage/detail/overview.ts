@@ -102,6 +102,7 @@ export function projectGithubPullRequestOverview(
   const requestedReviewers = readRequestedReviewers(raw);
   const additions = readCount(raw.additions);
   const deletions = readCount(raw.deletions);
+  const changedFiles = readCount(raw.changed_files);
   const mergeableState = readTrimmed(raw.mergeable_state);
   const mergedAt = readTrimmed(raw.merged_at);
   const merged = typeof raw.merged === 'boolean'
@@ -120,6 +121,7 @@ export function projectGithubPullRequestOverview(
     ...(headRevision === null ? {} : { headRevision }),
     ...(additions === null ? {} : { additions }),
     ...(deletions === null ? {} : { deletions }),
+    ...(changedFiles === null ? {} : { changedFiles }),
     branchUpdateEligibility: mergeableState === 'behind'
       ? 'behind'
       : mergeableState === null || mergeableState === 'unknown'

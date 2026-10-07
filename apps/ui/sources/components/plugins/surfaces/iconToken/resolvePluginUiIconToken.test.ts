@@ -39,6 +39,14 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     failure: 'warning-circle',
     unavailable: 'cloud-slash',
     denied: 'lock',
+    review: 'eye',
+    attention: 'hand',
+    escalating: 'pulse',
+    'merge-ready': 'git-merge',
+    mention: 'chat-circle',
+    assigned: 'crosshair',
+    new: 'sparkle',
+    waiting: 'clock',
 });
 
 describe('resolvePluginUiIconToken', () => {
@@ -46,6 +54,12 @@ describe('resolvePluginUiIconToken', () => {
         expect(iconTokenResolver.resolvePluginUiIconName('failure')).toBe('warning-circle');
         expect(iconTokenResolver.resolvePluginUiIconName('unavailable')).toBe('cloud-slash');
         expect(iconTokenResolver.resolvePluginUiIconName('denied')).toBe('lock');
+    });
+    it('gives each why-it-is-here reason its own glyph (lab c7 chips)', () => {
+        const reasons = ['review', 'attention', 'escalating', 'merge-ready', 'mention', 'assigned', 'new', 'waiting'] as const;
+        const glyphs = reasons.map((reason) => iconTokenResolver.resolvePluginUiIconName(reason));
+        expect(glyphs).not.toContain(iconTokenResolver.PLUGIN_UI_ICON_FALLBACK);
+        expect(new Set(glyphs).size).toBe(reasons.length);
     });
     it('exposes the Protocol-owned semantic icon contract through the plugin-UI seam', () => {
         expect([...HAPPIER_ICON_NAMES]).toEqual([...PluginUiIconTokenV1Schema.options]);
@@ -63,7 +77,7 @@ describe('resolvePluginUiIconToken', () => {
     });
 
     it('falls back for unknown / null / whitespace tokens', () => {
-        for (const token of [null, undefined, '', '  ', 'not-a-token', 'review']) {
+        for (const token of [null, undefined, '', '  ', 'not-a-token', 'reviewer']) {
             const resolvePluginUiIconName = Reflect.get(iconTokenResolver, 'resolvePluginUiIconName');
             expect(resolvePluginUiIconName).toBeTypeOf('function');
             if (typeof resolvePluginUiIconName !== 'function') return;

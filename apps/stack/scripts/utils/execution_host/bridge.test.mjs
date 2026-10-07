@@ -81,6 +81,24 @@ for (const activation of ['candidate', 'active']) {
   });
 }
 
+test('native bridge maps a sibling command repository while retaining the 0.3 executor', async () => {
+  const calls = [];
+  const result = await runNativeExecutionHostBridge({
+    profile: { ...profile, activation: 'active' },
+    launcher: '/Users/example/.happier-stack/workspace-mirror/0.3/apps/stack/bin/hstack-exec',
+    argv: ['--repo=/Users/example/.happier-stack/workspace-mirror/0.2', '--', 'corepack', 'yarn', 'typecheck'],
+    cwd: '/Users/example/.happier-stack/workspace-mirror/0.2/packages/connection-supervisor',
+    env: { PATH: '/usr/bin' }, platform: 'darwin', prepare: async () => {},
+    boundary: boundaryWithExit(0, calls),
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(calls[0].args[2], '/home/example/.happier-stack/workspace/0.2/packages/connection-supervisor');
+  assert.deepEqual(calls[0].args.slice(-7), [
+    '/bin/sh', '/home/example/.happier-stack/workspace/0.3/apps/stack/bin/hstack-exec',
+    '--repo=/home/example/.happier-stack/workspace/0.2', '--', 'corepack', 'yarn', 'typecheck',
+  ]);
+});
+
 test('candidate bridge preserves default local 0.2 execution through a guarded re-entry', async () => {
   const calls = [];
   const result = await runExecutionHostBridge({

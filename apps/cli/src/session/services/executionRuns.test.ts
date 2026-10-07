@@ -1,6 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
+import { createSessionClientExecutionRunService } from '@/api/session/client/executionRuns/createSessionClientExecutionRunService';
+
+it('preserves attention selection through the Session client service used by bound MCP', async () => {
+    const snapshot = { run: { runId: 'client-wait', callId: 'call', sidechainId: 'call', intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1,
+        status: 'running', attention: { kind: 'permission_required', requestIds: ['permission'] } } };
+    callSessionRpc.mockResolvedValueOnce({ ok: true, status: 'running', disposition: 'needs_attention', result: snapshot });
+    const service = createSessionClientExecutionRunService({ token: 'token', sessionId: 'session',
+        serverUrl: 'https://home.example.test', getStoredContentCryptoContext: () => ({ mode: 'plain', ctx: null }) });
+    expect(await service.wait?.({ runId: 'client-wait', condition: 'needs_attention' })).toMatchObject({
+        ok: true, disposition: 'needs_attention', result: snapshot,
+    });
+});
 
 const { callSessionRpc, listExecutionRunMarkers, readRawSessionHistoryRows } = vi.hoisted(() => ({
     callSessionRpc: vi.fn(),

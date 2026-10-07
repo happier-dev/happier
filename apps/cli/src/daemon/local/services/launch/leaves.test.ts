@@ -5,6 +5,11 @@ import {
     createLocalServiceLauncherLeafRoutes,
 } from './leaves';
 import type { BrowserViewTargetV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { createLocalServiceInventoryRegistry } from '../inventory/registry';
+import { createLocalServicePreviewRegistry } from '../preview/registry';
+import { createLocalServicePreviewRoutes } from '../preview/routes';
+import { createLocalServiceLauncherFeed } from './feed';
 
 const MACHINE_ID = 'machine-a';
 
@@ -36,31 +41,6 @@ function inventoryTarget(overrides: Partial<LaunchTarget> = {}): LaunchTarget {
         actions: ['open'],
         browserTarget: EXTERNAL_URL_TARGET,
         ...overrides,
-    };
-}
-
-function previewRow() {
-    return {
-        previewId: 'lsv-preview:inventory:entry-vite',
-        resource: {
-            previewId: 'lsv-preview:inventory:entry-vite',
-            sessionId: 'session-1',
-            machineId: MACHINE_ID,
-            owner: { kind: 'session' as const, id: 'session-1' },
-            target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 },
-            initialPath: { pathname: '/', search: '' },
-            display: { title: 'Vite', addressLabel: 'localhost:5173' },
-            originMode: 'host' as const,
-            browserTarget: {
-                kind: 'localServicePreview' as const,
-                targetId: 'lsv-preview:inventory:entry-vite',
-                sessionId: 'session-1',
-                machineId: MACHINE_ID,
-            },
-        },
-        accessUrl: 'http://127.0.0.1:5173/',
-        expiresAt: null,
-        diagnostics: [],
     };
 }
 
@@ -112,34 +92,61 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         });
     });
 
-    it.each(['opaque-launch-target', 'preview:display-only'])('registerPreview delegates projected inventory authority despite display id %s', async targetId => {
-        const openOrCreate = vi.fn(async () => ({
-            ok: true as const,
-            response: { protocolVersion: 1 as const, status: 'created' as const, preview: previewRow(), snapshot: {
-                v: 1 as const, machineId: MACHINE_ID, generatedAt: 1_000, refreshState: 'idle' as const,
-                resources: [], previews: [], diagnostics: [],
-            } },
-        }));
+    it('registerPreview binds the canonical feed listener and Session through private registration', async () => {
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot({
+            v: 1, machineId: MACHINE_ID, generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
+            entries: [{
+                id: 'entry-vite:authority', machineId: MACHINE_ID,
+                address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
+                endpoint: { scheme: 'http', host: '127.0.0.1', port: 5173, probeState: 'ready', probedAt: 1_000 },
+                port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 1_000,
+                state: 'listening', source: 'detected', labels: [], diagnostics: [],
+                confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
+            }],
+        });
+        const previewRegistry = createLocalServicePreviewRegistry();
+        const previewRoutes = createLocalServicePreviewRoutes({
+            machineId: MACHINE_ID, accountId: 'account-1', inventoryRegistry, registry: previewRegistry,
+            server: {
+                token: 'daemon-token', serverBaseUrl: 'https://home.example.test',
+                // Only the server HTTP boundary is substituted; feed, binding and registration are real.
+                http: {
+                    async post(_url, body) {
+                        const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                        return { data: { resource, accessUrl: 'https://private.example.test/?previewToken=admission', expiresAt: 61_000 } };
+                    },
+                    async delete() { return { data: { ok: true } }; },
+                },
+            },
+        });
+        const feed = createLocalServiceLauncherFeed({ machineId: MACHINE_ID, inventoryRegistry, previewRegistry });
+        const target = (await feed.getSnapshot()).targets.find(candidate => candidate.sourceClass?.kind === 'inventory_entry');
+        if (!target) throw new Error('Expected canonical inventory launch target');
         const routes = createLocalServiceLauncherLeafRoutes({
             machineId: MACHINE_ID,
-            feed: { getSnapshot: vi.fn(async () => snapshotWith([inventoryTarget({ id: targetId, sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-vite' } })])) },
-            previewRoutes: { openOrCreate },
+            feed,
+            previewRoutes,
             history: createLocalServiceLauncherHistoryStore(),
         });
 
         const result = await routes.registerPreview({
             machineId: MACHINE_ID,
-            targetId,
+            targetId: target.id,
             sessionId: 'session-1',
         });
 
-        expect(openOrCreate).toHaveBeenCalledWith({
-            machineId: MACHINE_ID,
-            sessionId: 'session-1',
-            inventoryEntryId: 'entry-vite',
+        const snapshot = await previewRoutes.getSnapshot();
+        expect(snapshot.previews).toHaveLength(1);
+        const preview = snapshot.previews?.[0];
+        if (!preview) throw new Error('Expected private preview registration');
+        expect(preview.resource).toMatchObject({
+            machineId: MACHINE_ID, sessionId: 'session-1', owner: { kind: 'session', id: 'session-1' },
+            target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
         });
-        expect(result.status).toBe('registered');
-        expect(result.previewId).toBe('lsv-preview:inventory:entry-vite');
+        expect(preview.accessUrl).toBe('https://private.example.test/?previewToken=admission');
+        expect(result).toMatchObject({ status: 'registered', targetId: target.id, previewId: preview.previewId });
+        expect(result.browserTarget).toEqual(preview.resource.browserTarget);
     });
 
     it('clearHistory empties the store and returns the cleared count', async () => {

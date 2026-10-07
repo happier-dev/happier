@@ -38,6 +38,8 @@ import {
 } from '@/daemon/processLivenessVerifier';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import { processGenerationProvesReuse, processIdentityMatches } from '@happier-dev/cli-common/processInstance';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import {
   resolveSessionRunnerEntrypointIdentityFromProcessCommand,
 } from '@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
@@ -46,7 +48,7 @@ type PublicReleaseRing = Parameters<typeof resolveReleaseRingScopedBasename>[1];
 
 const AgentRuntimeDaemonServiceAuthorityDocumentV2Schema = z.object({
   v: z.literal(2),
-  sessionId: z.string().trim().min(1).max(512),
+  sessionId: asHostProtocolZod(SessionIdSchema),
   runner: z.object({
     pid: z.number().int().positive(),
     processStartTimeMs: z.number().int().nonnegative(),

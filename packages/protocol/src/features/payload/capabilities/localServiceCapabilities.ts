@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { LocalServiceActionKindV1Schema } from '../../../local/services/actions/v1.js';
@@ -24,7 +25,7 @@ export const DEFAULT_LOCAL_SERVICE_LAUNCHER_RECENT_HISTORY_MAX_ENTRIES = 20;
 export const DEFAULT_LOCAL_SERVICE_ACTION_GRACEFUL_TIMEOUT_MS = 5_000;
 export const DEFAULT_LOCAL_SERVICE_ACTION_VERIFICATION_TIMEOUT_MS = 10_000;
 
-export const LocalServicePreviewDiagnosticsCapabilitiesSchema = z
+export const LocalServicePreviewDiagnosticsCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     available: z.boolean().optional().default(false),
@@ -33,7 +34,7 @@ export const LocalServicePreviewDiagnosticsCapabilitiesSchema = z
     publicPreviewProjection: z.boolean().optional().default(false),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default(['observability_unavailable']),
   })
-  .strict();
+  .strict());
 export type LocalServicePreviewDiagnosticsCapabilities = z.infer<
   typeof LocalServicePreviewDiagnosticsCapabilitiesSchema
 >;
@@ -59,7 +60,7 @@ function normalizePositiveInt(raw: unknown, fallback: number): number {
   return normalized > 0 ? normalized : fallback;
 }
 
-export const LocalServicePreviewCapabilitiesSchema = z
+export const LocalServicePreviewCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     hostOriginAvailable: z.boolean().optional().default(false),
@@ -93,7 +94,7 @@ export const LocalServicePreviewCapabilitiesSchema = z
     ),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
   })
-  .strict();
+  .strict());
 export type LocalServicePreviewCapabilities = z.infer<typeof LocalServicePreviewCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_PREVIEW_CAPABILITIES: LocalServicePreviewCapabilities = {
@@ -113,7 +114,7 @@ export const DEFAULT_LOCAL_SERVICE_PREVIEW_CAPABILITIES: LocalServicePreviewCapa
   disabledReasons: [],
 };
 
-export const LocalServicePublicCapabilitiesSchema = z
+export const LocalServicePublicCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     allowedModes: z.array(LocalServicePublicExposureModeV1Schema).optional().default([]),
@@ -126,7 +127,7 @@ export const LocalServicePublicCapabilitiesSchema = z
     rateLimitProfileIds: z.array(z.string().trim().min(1).max(128)).optional().default([]),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default(['disabled_by_server_policy']),
   })
-  .strict();
+  .strict());
 export type LocalServicePublicCapabilities = z.infer<typeof LocalServicePublicCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_PUBLIC_CAPABILITIES: LocalServicePublicCapabilities = {
@@ -140,7 +141,7 @@ export const DEFAULT_LOCAL_SERVICE_PUBLIC_CAPABILITIES: LocalServicePublicCapabi
   disabledReasons: ['disabled_by_server_policy'],
 };
 
-export const LocalServicePageTitleCapabilitiesSchema = z
+export const LocalServicePageTitleCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     timeoutMs: z
@@ -164,7 +165,7 @@ export const LocalServicePageTitleCapabilitiesSchema = z
       .optional()
       .default(DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS),
   })
-  .strict();
+  .strict());
 export type LocalServicePageTitleCapabilities = z.infer<typeof LocalServicePageTitleCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CAPABILITIES: LocalServicePageTitleCapabilities = {
@@ -176,7 +177,7 @@ export const DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CAPABILITIES: LocalServicePageTitl
   failureTtlMs: DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS,
 };
 
-export const LocalServiceInventoryCapabilitiesSchema = z
+export const LocalServiceInventoryCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     supportedPlatforms: z.array(z.enum(['darwin', 'linux', 'windows'])).optional().default([]),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
@@ -194,7 +195,7 @@ export const LocalServiceInventoryCapabilitiesSchema = z
     pageTitleEnrichment: LocalServicePageTitleCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CAPABILITIES),
     redactsProcessArgs: z.boolean().optional().default(true),
   })
-  .strict();
+  .strict());
 export type LocalServiceInventoryCapabilities = z.infer<typeof LocalServiceInventoryCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_INVENTORY_CAPABILITIES: LocalServiceInventoryCapabilities = {
@@ -209,7 +210,7 @@ export const DEFAULT_LOCAL_SERVICE_INVENTORY_CAPABILITIES: LocalServiceInventory
   redactsProcessArgs: true,
 };
 
-export const LocalServiceManagedCapabilitiesSchema = z
+export const LocalServiceManagedCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().optional().default(false),
     supportedRestartPolicies: z.array(z.enum(['never'])).optional().default(['never']),
@@ -236,7 +237,7 @@ export const LocalServiceManagedCapabilitiesSchema = z
     localNameDomain: z.string().trim().min(1).optional().default('localhost'),
     previewRegistrationAvailable: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict());
 export type LocalServiceManagedCapabilities = z.infer<typeof LocalServiceManagedCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_MANAGED_CAPABILITIES: LocalServiceManagedCapabilities = {
@@ -251,7 +252,7 @@ export const DEFAULT_LOCAL_SERVICE_MANAGED_CAPABILITIES: LocalServiceManagedCapa
   previewRegistrationAvailable: false,
 };
 
-export const LocalServiceLauncherCapabilitiesSchema = z
+export const LocalServiceLauncherCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     supportedSources: z.array(LocalServiceLaunchTargetSourceV1Schema).optional().default([]),
     scriptDiscovery: z
@@ -298,7 +299,7 @@ export const LocalServiceLauncherCapabilitiesSchema = z
       }),
     launchActionsEnabled: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict());
 export type LocalServiceLauncherCapabilities = z.infer<typeof LocalServiceLauncherCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_LAUNCHER_CAPABILITIES: LocalServiceLauncherCapabilities = {
@@ -315,7 +316,7 @@ export const DEFAULT_LOCAL_SERVICE_LAUNCHER_CAPABILITIES: LocalServiceLauncherCa
   launchActionsEnabled: false,
 };
 
-export const LocalServiceActionCapabilitiesSchema = z
+export const LocalServiceActionCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     supportedKinds: z
       .array(LocalServiceActionKindV1Schema)
@@ -343,7 +344,7 @@ export const LocalServiceActionCapabilitiesSchema = z
         forceAllowed: false,
       }),
   })
-  .strict();
+  .strict());
 export type LocalServiceActionCapabilities = z.infer<typeof LocalServiceActionCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_ACTION_CAPABILITIES: LocalServiceActionCapabilities = {
@@ -356,7 +357,7 @@ export const DEFAULT_LOCAL_SERVICE_ACTION_CAPABILITIES: LocalServiceActionCapabi
   },
 };
 
-export const LocalServiceCapabilitiesSchema = z
+export const LocalServiceCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     inventory: LocalServiceInventoryCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_INVENTORY_CAPABILITIES),
     managed: LocalServiceManagedCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_MANAGED_CAPABILITIES),
@@ -365,7 +366,7 @@ export const LocalServiceCapabilitiesSchema = z
     preview: LocalServicePreviewCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_PREVIEW_CAPABILITIES),
     publicPreview: LocalServicePublicCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_PUBLIC_CAPABILITIES),
   })
-  .strict();
+  .strict());
 export type LocalServiceCapabilities = z.infer<typeof LocalServiceCapabilitiesSchema>;
 
 export const DEFAULT_LOCAL_SERVICE_CAPABILITIES: LocalServiceCapabilities = {

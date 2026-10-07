@@ -140,7 +140,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
                     {item.kind === 'destination' ? <AppRailItem entry={item.entry} active={activeId === item.id} onOpen={open}
                         onCustomize={props.onCustomize} /> : null}
                 </React.Fragment>)}
-                {overflow.length > 0 ? (
+                {overflow.length > 0 || (fitted.shown.length === 0 && items.length > 0 && props.onCustomize) ? (
                     <AppRailMore
                         entries={overflow}
                         active={overflow.some((entry) => entry.id === activeId)}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { WorkflowsLibraryHome } from './WorkflowsLibraryHome';
@@ -28,21 +29,22 @@ vi.mock('@/auth/storage/tokenStorage', async (original) => {
     return { ...module, TokenStorage: { ...module.TokenStorage,
         getCredentialsForServerUrl: async () => ({ token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' }) } };
 });
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (original) => ({
-    ...await original<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(), isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 const searchRuntime = { open: () => {}, buildCommands: () => [] };
 function Wrapper({ children }: React.PropsWithChildren) {
     return <InjectedAuthProvider credentials={null}><UniversalSearchRuntimeProvider value={searchRuntime}>{children}</UniversalSearchRuntimeProvider></InjectedAuthProvider>;
 }
 let previous = storage.getState();
+let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 beforeEach(async () => {
     previous = storage.getState();
+    previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+    previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     appliedSnapshot = runtime.getActiveServerSnapshot;
     const home = await runtime.upsertAndActivateServer({ serverUrl: 'http://listsum.test', name: 'Library' });
+    publishAppliedActiveServerSnapshot(appliedSnapshot());
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     storage.setState({ profileScope: { serverId: home.id, accountId: 'account-a' },
         settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } },
@@ -55,9 +57,24 @@ afterEach(async () => {
     execute.mockReset();
     routerPush.mockClear();
     storage.setState(previous);
+    publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable);
 });
 
 describe('workflow library page anatomy', () => {
+    it.each([false, true])('reads history for an empty library and distinguishes a first visit (has history: %s)', async (hasHistory) => {
+        const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: {
+                runs: hasHistory ? [createWorkflowRunSummaryFixture({ id: 'old-run', state: 'succeeded' })] : [], metadataByRunId: {},
+            } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(1);
+        expect(screen.findByTestId('workflows-home:firstVisit') !== null).toBe(!hasHistory);
+        if (hasHistory) expect(screen.findByTestId('workflows-home:empty')).not.toBeNull();
+    });
     it('lays saved rows on one page sheet like the sections below, and marks built-ins by purpose with their step count', async () => {
         execute.mockImplementation(async (actionId: string) => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: ['first', 'second', 'third'].map((definitionId) => (
@@ -69,6 +86,8 @@ describe('workflow library page anatomy', () => {
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        // A populated library needs summaries, not a history-window read just to rule out first visit.
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(0);
         // A sheet's hairline sits between its rows and never after the group's last one.
         const divider = (definitionId: string) => screen.findAll((node) => node.props.testID === `workflows-home:row:${definitionId}`
             && Array.isArray(node.props.secondaryActions))[0]?.props.showDivider;

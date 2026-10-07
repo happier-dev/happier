@@ -11,15 +11,13 @@ import { clearExecutionRunConnectedServicesCleanupReceipt } from '@/daemon/execu
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { parseDaemonAuthBridgeRefreshSettlement } from '../sessionRuntimeAuthRefresh';
 import { deriveConnectedServiceRunMaterializeToken, isValidConnectedServiceRunMaterializeToken } from './capabilityToken';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { reloadConfiguration } from '@/configuration';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
 import { createBuiltInQualifiedNativeRefreshHarness } from '../refresh/ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
-import { createNativeAuthRuntimeRefreshBridge } from '../nativeAuthRuntimeRefresh';
-import { createExecutionRunConnectedServicesBridge, captureTrackedExecutionRunRunnerIdentity } from './executionRunMaterialization';
+import { createExecutionRunConnectedServicesBridge } from './executionRunMaterialization';
 
 const path = '/connected-service-run/refresh-runtime-auth';
 const controlToken = 'master';
@@ -38,7 +36,7 @@ function oauthResponse(accessToken = 'access-new') {
 async function harness() {
     const directory = await mkdtemp(join(tmpdir(), 'happier-run-auth-http-'));
     const home = join(directory, 'home');
-    const baseDir = join(directory, 'materialized');
+    const baseDir = join(home, 'materialized');
     const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'CODEX_HOME']);
     environment.patch({ HAPPIER_HOME_DIR: home, CODEX_HOME: undefined });
     reloadConfiguration();
@@ -63,7 +61,8 @@ async function harness() {
         await rm(directory, { recursive: true, force: true });
     };
     try {
-        const h = await createBuiltInQualifiedNativeRefreshHarness({ controller: pluginReloadController, happyHomeDir: home });
+        const registry = new ConnectedServiceRuntimeRegistry();
+        const h = await createBuiltInQualifiedNativeRefreshHarness({ controller: pluginReloadController, happyHomeDir: home, runtimeRegistry: registry });
         qualified = h;
         // OS/process, qualified-account HTTP/storage and OAuth are the genuine boundaries.
         // Plugin admission, purpose selection, materialization and refresh all remain real.
@@ -72,7 +71,6 @@ async function harness() {
         const runnerPid = runner.pid;
         if (!runnerPid) throw new Error('Run fixture process has no OS identity');
         const tracked = new Map([[runnerPid, { happySessionId: 'runner-session' }]]);
-        const registry = new ConnectedServiceRuntimeRegistry();
         bridge = createExecutionRunConnectedServicesBridge({
             resolveAuthForSpawn: (input) => resolveConnectedServiceAuthForSpawn({ ...input,
                 credentials: h.credentials, api: h.api, baseDir, activeServerDir: join(home, 'server'),
@@ -81,17 +79,31 @@ async function harness() {
             registerRunTargets: (registration) => registry.registerRunTarget({ ...registration, pid: registration.runnerPid }),
             unregisterRunTargets: (runKey) => registry.unregisterRunKey(runKey),
             getRunRuntimeTarget: (runKey) => registry.getRunTargetByRunKey(runKey),
-            resolveDaemonAuthBridge: async (requestedService, context) => {
-                if (!context?.nativeScope) return null;
-                const refresh = createNativeAuthRuntimeRefreshBridge({ serviceId: requestedService,
-                    scope: context.nativeScope, purposeBindingOwner: { materialize: h.purposeRuntime.owner.materialize,
-                        resolveCurrentRequestAuthBinding: h.purposeRuntime.resolveCurrentRequestAuthBinding },
-                    refreshCoordinator: h.coordinator, signal: new AbortController().signal });
-                return { serviceId: requestedService, refresh: refresh.refresh };
-            },
+            adoptRunCredentialRevision: (input) => registry.adoptExactCredentialRevisionForRun(input),
+            resolveRunCredentialRevisionTarget: (input) => registry.resolveExactRunCredentialRevisionTarget(input),
+            resolveDaemonAuthBridge: async (requestedService) => ({ serviceId: requestedService,
+                async refresh(request, context) {
+                    if (!context || !request.expectedCredentialRevision || !request.refreshAttemptId) {
+                        return { status: 'unavailable', reason: 'missing_authority' };
+                    }
+                    const selected = context.target.connectedServiceSelections.find((selection) => selection.serviceId === requestedService);
+                    if (!selected) return { status: 'unavailable', reason: 'missing_selection' };
+                    return await h.coordinator.refreshConnectedServiceCredentialForRuntimeAuthBridge({
+                        target: context.target, authority: context.authority, isCurrent: context.isCurrent,
+                        acceptSettledCredentialRevision: context.acceptSettledCredentialRevision,
+                        serviceId: requestedService, profileId: selected.kind === 'profile' ? selected.profileId : selected.activeProfileId,
+                        refreshAttemptId: request.refreshAttemptId, expectedCredentialRevision: request.expectedCredentialRevision,
+                    });
+                },
+            }),
             resolveRunMaterializedRoot: ({ runKey, agentId }) => resolveConnectedServiceMaterializedRootDir({ baseDir, materializationKey: runKey, agentId }),
             createAdoptedRootCleanup: () => null,
-            captureRunnerIdentity: (input) => captureTrackedExecutionRunRunnerIdentity({ ...input, trackedSessions: tracked }),
+            captureRunnerIdentity: (input) => {
+                const identity = tracked.get(input.runnerPid);
+                if (!identity || input.runnerPid !== runnerPid) return null;
+                return { identity, parentSessionId: identity.happySessionId,
+                    isCurrent: () => tracked.get(input.runnerPid) === identity && runner?.exitCode === null };
+            },
             acquireAgentPurposeContributions: async ({ agentId }) => {
                 const lease = await h.controller.acquireRuntimeRegistry();
                 await lease.registry.acquireAgentCatalogEntry?.(agentId);
@@ -163,14 +175,14 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
         const response = await h.post();
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({ ok: true, result: { status: 'refreshed', result: {
-            accessToken: 'access-new', chatgptAccountId: 'work', chatgptPlanType: null, credentialRevision: h.secondRevision,
+            credentialRevision: h.secondRevision,
         } } });
         expect(response.body).not.toContain('refresh-new');
         // Codex adopts this returned revision and sends it for its next distinct attempt.
         // The unchanged registry environment is a launch projection, not credential authority.
         const next = await h.post({ ...h.request, refreshAttemptId: `${h.request.refreshAttemptId}-next`, expectedCredentialRevision: h.secondRevision });
         expect(next.json()).toEqual({ ok: true, result: { status: 'refreshed', result: {
-            accessToken: 'access-next', chatgptAccountId: 'work', chatgptPlanType: null, credentialRevision: h.thirdRevision,
+            credentialRevision: h.thirdRevision,
         } } });
         expect(next.body).not.toContain('refresh-new');
     });
@@ -190,15 +202,6 @@ describe('execution Run runtime auth refresh HTTP authority', () => {
         }
         expect((await h.post({ ...h.request, sessionId: 'invented-session' })).statusCode).toBe(400);
         expect(fetch).not.toHaveBeenCalled();
-    });
-
-    it('preserves matching pending admission and rejects another refresh attempt acknowledgment', () => {
-        // A transport timeout acknowledges an admitted attempt; the settlement parser owns this
-        // contract. The real qualified coordinator is awaited, not replaced with a fake pending result.
-        expect(parseDaemonAuthBridgeRefreshSettlement({ status: 'pending', refreshAttemptId: 'refresh-1' }, 'refresh-1'))
-            .toEqual({ status: 'pending', refreshAttemptId: 'refresh-1' });
-        expect(parseDaemonAuthBridgeRefreshSettlement({ status: 'pending', refreshAttemptId: 'someone-else' }, 'refresh-1'))
-            .toEqual({ status: 'failed', reason: 'runtime_auth_refresh_attempt_mismatch' });
     });
 
     // Contribution shutdown is terminal for the suite-owned real singleton and runs last.

@@ -730,6 +730,7 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
       const frozenRole = deps.resolveFrozenRole?.(params);
       const initialTitle = params.memberOrdinal === undefined ? null : formatWorkflowStepSessionTitle({
         step: params.step, memberOrdinal: params.memberOrdinal,
+        ...(params.item ? { item: params.item } : {}),
       });
       const conversation = await deps.createFreshConversation({
         selection,

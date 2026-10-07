@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 
 import {
     createAutomationRunFixture,
@@ -68,6 +69,53 @@ function summary(input: Readonly<{
 }
 
 describe('workflow run body store', () => {
+    it('keeps an unrelated list window stable when another Run is removed', () => {
+        const harness = createHarness();
+        const removed = createWorkflowRunSummaryFixture({ id: 'removed' });
+        const retained = createWorkflowRunSummaryFixture({ id: 'retained' });
+        harness.get().applyWorkflowRunListPage({ windowId: 'all', runs: [removed, retained], nextCursor: null, mode: 'replace' });
+        harness.get().applyWorkflowRunListPage({ windowId: 'active', runs: [retained], nextCursor: 'tail', mode: 'replace' });
+        const active = harness.get().workflowRunListWindows.active;
+        harness.get().removeWorkflowRun(removed.id);
+        expect(harness.get().workflowRunListWindows.active).toBe(active);
+        expect(harness.get().workflowRunListWindows.all?.runIds).toEqual([retained.id]);
+        harness.get().removeWorkflowRun(retained.id);
+        expect(harness.get().workflowRunListWindows.active?.runIds).toEqual([]);
+    });
+    it('does not notify real store subscribers for unchanged list, invocation-page or exact-read echoes', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        const run = summary({ id: 'run-1', revision: 4 });
+        const invocation = createWorkflowInvocationIndexFixture({ contentRevision: '4' });
+        const list = { windowId: 'all' as const, runs: [run], nextCursor: null, mode: 'replace' as const };
+        const page = { runId: run.id, invocations: [invocation], nextCursor: null, parentRevision: 4, mode: 'replace' as const };
+        store.getState().applyWorkflowRunListPage(list);
+        store.getState().applyWorkflowRunInvocationPage(page);
+        const before = store.getState();
+        let notifications = 0;
+        const unsubscribe = store.subscribe(() => { notifications += 1; });
+        store.getState().applyWorkflowRunListPage(structuredClone(list));
+        store.getState().applyWorkflowRunInvocationPage(structuredClone(page));
+        store.getState().upsertWorkflowRunInvocation({ runId: run.id, invocation: structuredClone(invocation), parentRevision: 4 });
+        expect(notifications).toBe(0);
+        expect(store.getState()).toBe(before);
+        store.getState().upsertWorkflowRunInvocation({ runId: run.id, invocation: { ...invocation, contentRevision: '5', lifecycle: 'completed' }, parentRevision: 4 });
+        expect(notifications).toBe(1);
+        expect(store.getState().workflowRunInvocationsByRunId[run.id]?.factsById[invocation.id]?.lifecycle).toBe('completed');
+        unsubscribe();
+    });
+
+    it('keeps a window projection stable when only a fact outside that window changes', () => {
+        const harness = createHarness();
+        const held = createWorkflowInvocationIndexFixture({ id: 'held', lifecycle: 'waiting_for_review' });
+        const sibling = createWorkflowInvocationIndexFixture({ id: 'sibling', lifecycle: 'running' });
+        harness.get().applyWorkflowRunInvocationPage({ runId: 'run-1', window: 'attention', invocations: [held], nextCursor: null, parentRevision: 4, mode: 'replace' });
+        const before = selectWorkflowRunWindowInvocations(harness.get().workflowRunInvocationsByRunId['run-1'], 'attention');
+        harness.get().upsertWorkflowRunInvocation({ runId: 'run-1', invocation: sibling, parentRevision: 4 });
+        expect(selectWorkflowRunWindowInvocations(harness.get().workflowRunInvocationsByRunId['run-1'], 'attention')).toBe(before);
+        harness.get().upsertWorkflowRunInvocation({ runId: 'run-1', invocation: { ...held, contentRevision: '2', lifecycle: 'completed' }, parentRevision: 4 });
+        expect(selectWorkflowRunWindowInvocations(harness.get().workflowRunInvocationsByRunId['run-1'], 'attention')).toEqual([]);
+    });
+
     it('holds Automation attention in the shared row owner and removes it on a complete refresh', () => {
         const harness = createHarness();
         const failed = createAutomationRunFixture({ state: 'failed', producedSessionId: null });

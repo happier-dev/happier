@@ -9,7 +9,7 @@ import { createDefaultPluginAccessScopeRegistry } from '@/plugins/store/install/
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 
-import type { ConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 
 import {
   deriveRegistryConnectedAccountPurposeAuthorizations,
@@ -136,6 +136,38 @@ function actionAndHookManifest(options: Readonly<{ omitConnectedAccountOptionsFi
   if (!parsed) throw new Error('Expected canonical manifest fixture');
   return parsed;
 }
+
+it('admits a declared native service only within the Action purpose scope and refuses mixed selections', async () => {
+  const base = actionAndHookManifest({ omitConnectedAccountOptionsField: true });
+  const manifest = {
+    ...base,
+    contributes: { ...base.contributes, actions: base.contributes.actions.map((action) => action.id === 'run' ? {
+      ...action,
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', nativeServicePath: 'nativeService', purpose: 'action-account' }],
+    } : action) },
+  };
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => ({ v: 1, bindings: [] }), update: async (mutate) => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+    selectTarget: async () => { throw new Error('no selection during invocation admission'); },
+    resolveTarget: async (target) => target.kind === 'account' ? { displayName: 'selected', account: target.account } : null,
+    materializeAccount: async () => { throw new Error('no credential disclosure during invocation admission'); },
+    projectTargetAccounts: async () => { throw new Error('no listing during invocation admission'); },
+    assertTargetAccountMaterializable: async () => { throw new Error('no credential disclosure during invocation admission'); },
+  });
+  const admit = (value: unknown) => resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
+    registry: projection({ activationTargets: [{ pluginId: manifest.id, manifest }] }),
+    qualifiedActionId: `${manifest.id}/run`, value, actionFormConnectedAccounts: owner,
+    signal: new AbortController().signal, isCurrent: () => true,
+  });
+  const service = { pluginId: manifest.id, localId: 'account' };
+  await expect(admit({ nativeService: service })).resolves.toEqual({
+    purposes: [{ consumer: { pluginId: manifest.id, localId: 'run' }, purpose: 'action-account' }], bindings: [],
+  });
+  await expect(admit({ nativeService: { ...service, localId: 'undeclared' } })).resolves.toMatchObject({ status: 'unavailable' });
+  await expect(admit({ nativeService: service, credentialRef: { service, accountId: 'selected' } })).resolves.toMatchObject({ status: 'unavailable' });
+  await expect(admit({})).resolves.toMatchObject({ status: 'unavailable' });
+  await expect(admit({ credentialRef: { service, accountId: 'selected' } })).resolves.toMatchObject({ bindings: [{ target: { kind: 'account', account: { service, accountId: 'selected' } } }] });
+});
 
 function backgroundServiceManifest() {
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({

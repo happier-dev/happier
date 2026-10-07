@@ -4,11 +4,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolveCommandPath } from '../proc/commands.mjs';
 import { runCapture } from '../proc/proc.mjs';
 import { terminateProcessPid } from '../proc/terminate.mjs';
+import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
 
-const DEFAULT_TCP_PORT_PROBE_TIMEOUT_MS = 250;
-const DEFAULT_TCP_PORT_ALLOCATION_TIMEOUT_MS = 750;
-
-export async function isTcpPortListening(port, { host = '127.0.0.1', timeoutMs = 250 } = {}) {
+export async function isTcpPortListening(port, { host = '127.0.0.1', timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS } = {}) {
   if (!Number.isFinite(port) || port <= 0) return false;
 
   return await new Promise((resolvePromise) => {
@@ -58,6 +56,25 @@ function parseWindowsNetstatListenPids(raw, port) {
   return Array.from(new Set(pids));
 }
 
+function parseLinuxSocketListenPids(raw, port) {
+  const pids = new Set();
+  for (const line of String(raw ?? '').split('\n')) {
+    const columns = line.trim().split(/\s+/g);
+    if (columns[0] !== 'LISTEN' || !String(columns[3]).endsWith(`:${Number(port)}`)) continue;
+    const owners = line.slice(line.indexOf('users:')).trim();
+    // Validate the complete owner field before extracting numeric identities;
+    // a process name containing pid-like text is not kernel PID evidence.
+    if (!/^users:\(\("[^"\r\n]*",pid=\d+,fd=\d+\)(?:,\("[^"\r\n]*",pid=\d+,fd=\d+\))*\)$/.test(owners)) {
+      return null;
+    }
+    for (const match of owners.matchAll(/",pid=(\d+),fd=\d+\)/g)) {
+      const pid = Number(match[1]);
+      if (Number.isInteger(pid) && pid > 1) pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+
 function listenerObservation(status, pids = [], reason) {
   return { status, supported: status !== 'unsupported', pids, ...(reason ? { reason } : {}) };
 }
@@ -73,7 +90,7 @@ function classifyListenerDiscoveryError(error, { silentExitCodeOneMeansNoMatch =
 }
 
 export async function listListenPidsWithStatus(port, {
-  timeoutMs = 1000,
+  timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
   processGroupId,
   candidatePids,
   platform = process.platform,
@@ -110,6 +127,28 @@ export async function listListenPidsWithStatus(port, {
       );
     } catch (error) {
       return classifyListenerDiscoveryError(error);
+    }
+  }
+
+  // Linux's kernel socket table avoids lsof's process/filesystem scan. Group
+  // filtering remains with lsof, which owns that existing platform contract.
+  if (platform === 'linux' && !hasProcessGroupFilter) {
+    let resolved;
+    try { resolved = await resolveCommandPathImpl('ss', { timeoutMs, env }); }
+    catch (error) { return classifyListenerDiscoveryError(error); }
+    if (resolved) {
+      try {
+        const observedPids = parseLinuxSocketListenPids(
+          await runCaptureImpl(resolved, ['-H', '-ltnp', `sport = :${port}`], { timeoutMs, signal, env }),
+          port,
+        );
+        if (observedPids === null) return listenerObservation('error', [], 'listener-process-identity-unavailable');
+        return listenerObservation('ok', hasCandidatePidFilter
+          ? observedPids.filter((pid) => normalizedCandidatePids.includes(pid))
+          : observedPids);
+      } catch (error) {
+        return classifyListenerDiscoveryError(error);
+      }
     }
   }
 
@@ -167,7 +206,7 @@ export async function killPortListeners(port, {
     return [];
   }
 
-  const pids = await listListenPidsImpl(port, { timeoutMs: 1000, platform });
+  const pids = await listListenPidsImpl(port, { timeoutMs: STACK_LISTENER_OBSERVATION_TIMEOUT_MS, platform });
 
   if (!pids.length) {
     return [];
@@ -188,7 +227,7 @@ export async function isTcpPortFree(
   port,
   {
     host = '127.0.0.1',
-    timeoutMs = DEFAULT_TCP_PORT_PROBE_TIMEOUT_MS,
+    timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     observeTcpPortAvailabilityImpl = observeTcpPortAvailability,
     ...availabilityOptions
   } = {},
@@ -201,7 +240,7 @@ export async function isTcpPortFree(
   return availability.status === 'free';
 }
 
-export async function probeTcpPortBinding(port, { host = '127.0.0.1', timeoutMs = 250, signal } = {}) {
+export async function probeTcpPortBinding(port, { host = '127.0.0.1', timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS, signal } = {}) {
   if (!Number.isFinite(port) || port <= 0) return { status: 'error', reason: 'invalid-port' };
 
   return await new Promise((resolvePromise) => {
@@ -333,7 +372,7 @@ function listLocalInterfaceBindHosts(host, networkInterfacesImpl, platform) {
 async function probeTcpPortBindingWithinDeadline({ port, host, remainingMs, probeTcpPortBindingImpl }) {
   const remaining = remainingMs();
   if (remaining <= 0) return { status: 'timeout', reason: 'port-bind-timeout' };
-  const timeoutMs = Math.max(1, Math.min(DEFAULT_TCP_PORT_PROBE_TIMEOUT_MS, remaining));
+  const timeoutMs = Math.max(1, remaining);
   const controller = new AbortController();
   let timer;
   const timedOut = new Promise((resolvePromise) => {
@@ -360,7 +399,7 @@ export async function observeTcpPortAvailability(
   port,
   {
     host = '127.0.0.1',
-    timeoutMs = DEFAULT_TCP_PORT_PROBE_TIMEOUT_MS,
+    timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     deadline,
     networkInterfacesImpl = observeLocalNetworkInterfaces,
     platform = process.platform,
@@ -418,7 +457,7 @@ export async function waitForTcpPortFree(
   port,
   {
     host = '127.0.0.1',
-    timeoutMs = 5_000,
+    timeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     intervalMs = 100,
     nowImpl = Date.now,
     delayImpl = delay,
@@ -458,7 +497,7 @@ export async function pickNextFreeTcpPort(
     reservedPorts = new Set(),
     host = '127.0.0.1',
     tries = 200,
-    totalTimeoutMs = DEFAULT_TCP_PORT_ALLOCATION_TIMEOUT_MS,
+    totalTimeoutMs = STACK_LISTENER_OBSERVATION_TIMEOUT_MS,
     networkInterfacesImpl = observeLocalNetworkInterfaces,
     platform = process.platform,
     nowImpl = Date.now,

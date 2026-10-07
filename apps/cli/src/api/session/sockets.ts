@@ -38,7 +38,7 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
     return createSessionScopedSocketConnection(opts).socket;
 }
 
-export function createUserScopedSocketConnection(opts: { token: string; serverUrl?: string; connectTimeoutMs?: number }): SessionSocketConnection {
+export function createUserScopedSocketConnection(opts: { token: string; serverUrl?: string; connectTimeoutMs?: number; authorityCeiling?: 'account_automation' }): SessionSocketConnection {
     const serverUrl = opts.serverUrl ? normalizeServerHttpBaseUrl(opts.serverUrl) : resolveServerHttpBaseUrl();
     const transports = resolveServerSocketIoTransports();
     return createHappierSocket({
@@ -48,6 +48,7 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
         authExtras: {
             ...buildCurrentCliClientCompatibilitySocketAuth('session-runner'),
             ...buildTerminalAuthorityCeiling({ token: opts.token, serverHttpBaseUrl: serverUrl }),
+            ...(opts.authorityCeiling === 'account_automation' ? { authorityCeiling: opts.authorityCeiling } : {}),
         },
         ...(transports ? { transports } : null),
         withCredentials: true,

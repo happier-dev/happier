@@ -167,9 +167,13 @@ export function materializeConfiguredExternalSessionSourceCandidates(params: Rea
         (issue) => issue.code === 'malformed_connected_service_profile_id',
       );
       if (malformedProfileIssue) {
-        throw new ConfiguredExternalSessionSourceMaterializationError(
-          `Connected service '${malformedProfileIssue.serviceId}' has a malformed profile identifier`,
-        );
+        appendCandidate(Object.freeze({
+          agentId: agent.id,
+          refusal: Object.freeze({
+            code: 'malformed_profile_id' as const,
+            message: `Connected service '${malformedProfileIssue.serviceId}' has a malformed profile identifier`,
+          }),
+        }));
       }
       for (const instance of materialized.instances) {
         appendCandidate(Object.freeze({
@@ -1056,6 +1060,12 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         })),
       });
     },
+    closeList: async (cursor: string, options?: PluginCancellationOptions) => {
+      if (!isCanonicalAuthorBoundedString(cursor, HOST_ADAPTER_CURSOR_MAX_CODE_UNITS)) {
+        authorInputFailure('plugin_external_cursor_invalid');
+      }
+      await domain.authorService.closeList(cursor, readAuthorCancellationOptions(options));
+    },
     attach: async (ref: AuthorAttachRef, options: AuthorAttachOptions) => (
       await domain.authorService.attach(
         readAuthorRef(ref),
@@ -1759,6 +1769,10 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
     list: async (query: AuthorListQuery, options: AuthorListOptions) => (
       await currentBound().list(query, options)
     ),
+    closeList: async (cursor: string, options?: PluginCancellationOptions) => {
+      synchronizeRevision();
+      if (active) await currentBound().closeList(cursor, options);
+    },
     attach: async (ref: AuthorAttachRef, options: AuthorAttachOptions) => await currentBound().attach(ref, options),
     readTranscript: async (ref: AuthorReadRef, query: AuthorReadQuery, options: AuthorReadOptions) => (
       await currentBound().readTranscript(ref, query, options)

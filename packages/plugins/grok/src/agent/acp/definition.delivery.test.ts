@@ -5,28 +5,21 @@ import { buildGrokAcpRuntimeDefinition } from './definition.js';
 describe('Grok ACP delivery definition', () => {
   it('projects in-flight steer through x.ai/interject with the admitted input identity', () => {
     const definition = buildGrokAcpRuntimeDefinition({});
-    const delivery = Reflect.get(definition, 'delivery') as Readonly<{
-      steer?: Readonly<{
-        method: string;
-        buildParams(input: Readonly<{
-          providerSessionId: string;
-          inputIds: readonly string[];
-          input: Readonly<{ text: string }>;
-        }>): unknown;
-        isAccepted(response: unknown): boolean;
-      }>;
-    }> | undefined;
-    const steer = delivery?.steer;
+    const steer = definition.delivery?.steer;
+    const content = [{ type: 'text', text: 'change direction' },
+      { type: 'image', data: 'verified-pixels', mimeType: 'image/png' }];
 
     expect(steer?.method).toBe('x.ai/interject');
     expect(steer?.buildParams({
       providerSessionId: 'grok-session-1',
       inputIds: ['pending-input-1'],
       input: { text: 'change direction' },
+      content,
     })).toEqual({
       sessionId: 'grok-session-1',
       text: 'change direction',
       interjectionId: 'pending-input-1',
+      content,
     });
     expect(steer?.isAccepted({ status: 'queued' })).toBe(true);
     expect(steer?.isAccepted({ status: 'unknown' })).toBe(false);

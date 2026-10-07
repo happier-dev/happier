@@ -6,10 +6,13 @@ import type {
     ReviewCommentAnchorV1,
     ReviewCommentSnapshotV1,
 } from '@happier-dev/protocol';
-import { buildReviewCommentTextSnapshotHashes, REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1, REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1, reviewCommentTextSnapshotHasBidiControlsV1, reviewCommentTextSnapshotIsLikelyMinifiedV1, reviewCommentTextSnapshotUtf8BytesV1 } from '@happier-dev/protocol/reviews/comments/snapshots';
+import {
+    buildReviewCommentTextSnapshotHashes,
+    reviewCommentTextSnapshotHasBidiControlsV1,
+    reviewCommentTextSnapshotIsLikelyMinifiedV1,
+} from '@happier-dev/protocol/reviews/comments/snapshots';
 
 const DEFAULT_CONTEXT_LINE_COUNT = 5;
-const MAX_TEXT_SNAPSHOT_BYTES = REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1;
 
 function sha256(input: string | Uint8Array): string {
     return createHash('sha256').update(input).digest('hex');
@@ -67,35 +70,6 @@ async function isGitWorkTreeDirectory(directoryPath: string): Promise<boolean> {
     return Boolean(gitMetadata?.isFile() || gitMetadata?.isDirectory());
 }
 
-function capSnapshotLine(line: string): Readonly<{ line: string; truncated: boolean }> {
-    if (reviewCommentTextSnapshotUtf8BytesV1(line) <= REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1) {
-        return { line, truncated: false };
-    }
-
-    let endIndex = 0;
-    let byteLength = 0;
-    for (const character of line) {
-        const characterBytes = reviewCommentTextSnapshotUtf8BytesV1(character);
-        if (byteLength + characterBytes > REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1) break;
-        byteLength += characterBytes;
-        endIndex += character.length;
-    }
-    return { line: line.slice(0, endIndex), truncated: true };
-}
-
-function capSnapshotLines(lines: readonly string[]): Readonly<{
-    lines: readonly string[];
-    truncated: boolean;
-}> {
-    let truncated = false;
-    const cappedLines = lines.map((line) => {
-        const capped = capSnapshotLine(line);
-        truncated ||= capped.truncated;
-        return capped.line;
-    });
-    return { lines: cappedLines, truncated };
-}
-
 function createTextSnapshot(params: Readonly<{
     lines: readonly string[];
     anchor: ReviewCommentAnchorV1;
@@ -105,34 +79,16 @@ function createTextSnapshot(params: Readonly<{
     const lastIndex = Math.max(0, params.lines.length - 1);
     const boundedStart = Math.min(bounds.startIndex, lastIndex);
     const boundedEnd = Math.min(Math.max(bounds.endIndex, boundedStart), lastIndex);
-    const selectedLineResult = capSnapshotLines(
-        params.lines.slice(boundedStart, boundedEnd + 1),
-    );
-    const beforeContextResult = capSnapshotLines(params.lines.slice(
+    const selectedLines = params.lines.slice(boundedStart, boundedEnd + 1);
+    const beforeContext = params.lines.slice(
         Math.max(0, boundedStart - DEFAULT_CONTEXT_LINE_COUNT),
         boundedStart,
-    ));
-    const afterContextResult = capSnapshotLines(params.lines.slice(
+    );
+    const afterContext = params.lines.slice(
         boundedEnd + 1,
         boundedEnd + 1 + DEFAULT_CONTEXT_LINE_COUNT,
-    ));
-    const selectedLines = selectedLineResult.lines;
-    const beforeContext = beforeContextResult.lines;
-    const afterContext = afterContextResult.lines;
-    const contextText = [...beforeContext, ...selectedLines, ...afterContext].join('\n');
+    );
     const allLines = [...beforeContext, ...selectedLines, ...afterContext];
-    const selectedBytes = reviewCommentTextSnapshotUtf8BytesV1(selectedLines.join('\n'));
-    const contextBytes = reviewCommentTextSnapshotUtf8BytesV1(contextText);
-    const linesWereCapped = selectedLineResult.truncated
-        || beforeContextResult.truncated
-        || afterContextResult.truncated;
-    const exceedsSizeCap = selectedBytes > REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1
-        || contextBytes > REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1;
-    const truncationReason = exceedsSizeCap
-        ? 'context_cap'
-        : linesWereCapped
-            ? 'line_too_long'
-            : undefined;
     const hashes = buildReviewCommentTextSnapshotHashes({
         selectedLines,
         beforeContext,
@@ -151,8 +107,7 @@ function createTextSnapshot(params: Readonly<{
         source: 'workingTree',
         isUncommitted: true,
         isUntracked: false,
-        truncated: truncationReason !== undefined,
-        ...(truncationReason ? { truncationReason } : {}),
+        truncated: false,
         hasBidiControls: reviewCommentTextSnapshotHasBidiControlsV1(allLines),
         likelyMinified: reviewCommentTextSnapshotIsLikelyMinifiedV1(allLines),
     };
@@ -200,16 +155,6 @@ export async function resolveReviewCommentSnapshot(params: Readonly<{
     }
 
     if (!fileStat.isFile()) return null;
-    if (fileStat.size > MAX_TEXT_SNAPSHOT_BYTES) {
-        return {
-            kind: 'too_large',
-            filePath,
-            sizeBytes: fileStat.size,
-            capBytes: MAX_TEXT_SNAPSHOT_BYTES,
-            capturedAt,
-        };
-    }
-
     const buffer = await readFile(realScopedPath).catch(() => null);
     if (!buffer) return null;
     if (isLikelyBinary(buffer)) {

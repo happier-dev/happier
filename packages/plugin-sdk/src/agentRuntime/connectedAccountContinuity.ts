@@ -7,7 +7,6 @@ import type {
 } from '@happier-dev/protocol';
 import type { ConnectedServiceCredentialRecordV1 } from '../connectedAccounts.js';
 import type { JsonValue } from '../identity.js';
-import type { ConnectedAccountMaterializationRequest } from '../connectedAccounts.js';
 import type { AgentAccountUsageSnapshot } from './accountUsage.js';
 import type {
   AgentSessionRuntimeAuthApplyResult,
@@ -99,16 +98,6 @@ export type AgentConnectedAccountNativeAuthCodecInspectInputV1 = Readonly<{
  * currentness, replacement, permissions, and cleanup.
  */
 export type AgentConnectedAccountNativeAuthCodecV1 = Readonly<{
-  /** Pure projection of this Agent's already-declared access-only native files after host refresh. */
-  runtimeAuthRefresh?: Readonly<{
-    purpose: string;
-    materialization: Extract<ConnectedAccountMaterializationRequest, { kind: 'files' }>;
-    decode(input: Readonly<{
-      files: Readonly<Record<string, Uint8Array>>;
-      credentialRevision: string;
-      planType?: string | null;
-    }>): AgentSessionAuthRefreshPayloadV1;
-  }>;
   materialize(
     input: AgentConnectedAccountNativeAuthCodecMaterializeInputV1,
   ): Readonly<{ files: Readonly<Record<string, Uint8Array>> }>;

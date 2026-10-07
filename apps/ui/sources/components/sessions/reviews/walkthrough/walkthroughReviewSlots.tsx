@@ -70,7 +70,11 @@ export function buildWalkthroughReviewSlots(input: WalkthroughReviewSlotsInput):
             const explanation = input.explanationsByStopId?.get(stop.id) ?? null;
             const proseCites = stop.explanationMarkdown.includes('(finding:');
             if (!placed && !explanation && !proseCites) return null;
-            const goTo = (view: WalkthroughFindingView) => nav.scrollToStop(cardStopByKey.get(view.key) ?? stop.id);
+            const goTo = (view: WalkthroughFindingView) => {
+                const cardStop = cardStopByKey.get(view.key);
+                if (cardStop) nav.scrollToStop(cardStop);
+                else nav.scrollToFindings();
+            };
             // The narrator's citations sit where it wrote them; any it only listed follow the prose.
             const trailing = (placed?.refs ?? []).filter((view) => !citedInProse(stop.explanationMarkdown, view, viewForReference));
             return {

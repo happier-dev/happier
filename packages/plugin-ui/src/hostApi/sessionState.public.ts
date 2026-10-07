@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 
-import { usePluginHostApi } from './context.js';
+import { usePluginHostApi, usePluginHostApiResourceActive } from './context.js';
 
 /**
  * One mounted read of a Session's live state.
@@ -32,7 +32,9 @@ export type SessionStatesReadV1 = Readonly<{
  * The host's `readSession` stays the one snapshot authority: this hook reads
  * once, observes `watchSession` invalidations, and re-reads on each. It keeps
  * the last snapshot while a re-read is in flight, never polls, persists
- * nothing, and retires its watch on unmount or when `sessionId` changes. A host
+ * nothing, and retires its watch on unmount or when `sessionId` changes. Host
+ * inactivity pauses reads and watches while retaining the snapshot; resuming
+ * activity re-reads it. Providers without an activity fact remain live. A host
  * that serves reads but not watches yields a truthful one-shot snapshot.
  */
 export function useSessionState(sessionId: string | null): SessionStateReadV1 {
@@ -47,6 +49,7 @@ export function useSessionState(sessionId: string | null): SessionStateReadV1 {
  */
 export function useSessionStates(sessionIds: readonly string[]): SessionStatesReadV1 {
   const host = usePluginHostApi();
+  const active = usePluginHostApiResourceActive();
   const methods = host.version().methods;
   const canRead = methods.includes('readSession');
   const canWatch = methods.includes('watchSession');
@@ -65,14 +68,20 @@ export function useSessionStates(sessionIds: readonly string[]): SessionStatesRe
     previousHost.current = host;
     const snapshots = new Map(ids.map((id) => [id, !canRead ? UNSUPPORTED
       : retain && reads.get(id)?.status === 'ready' ? reads.get(id)! : LOADING]));
-    setReads(new Map(snapshots));
+    setReads((previous) => (sameSessionReads(previous, snapshots) ? previous : new Map(snapshots)));
+    if (!active) return;
     const publish = (sessionId: string, read: SessionStateReadV1): void => {
       if (!current) return;
+      // A watch invalidates on any Session change, including fields no consumer reads; an equal re-read keeps
+      // the snapshot every consumer already holds rather than handing them a new map to recompute from.
+      const previous = snapshots.get(sessionId);
+      if (previous !== undefined && sameSessionRead(previous, read)) return;
       snapshots.set(sessionId, read);
       setReads(new Map(snapshots));
     };
     if (canRead) for (const sessionId of ids) {
       const refresh = async (): Promise<void> => {
+        if (!current) return;
         try {
           const state = await host.readSession(sessionId, { signal: cancellation.signal });
           publish(sessionId, state ? Object.freeze({ status: 'ready', state }) : UNAVAILABLE);
@@ -108,10 +117,33 @@ export function useSessionStates(sessionIds: readonly string[]): SessionStatesRe
     };
     // The key encodes the deduplicated set, so equivalent input arrays do not
     // retire and recreate the host subscriptions.
-  }, [canRead, canWatch, demand, host, sessionKey]);
+  }, [active, canRead, canWatch, demand, host, sessionKey]);
 
   const sessions = React.useMemo(() => new Map(ids.map((id) => [
     id, reads.get(id) ?? (canRead ? LOADING : UNSUPPORTED),
   ])), [canRead, reads, sessionKey]);
   return React.useMemo(() => ({ sessions, refresh }), [refresh, sessions]);
+}
+
+/**
+ * Whether two reads say the same thing. A Session state is the host's plain serializable projection, produced
+ * by one serializer per host, so its serialization is a faithful and cheap equality for it.
+ */
+function sameSessionRead(left: SessionStateReadV1, right: SessionStateReadV1): boolean {
+  if (left === right) return true;
+  if (left.status !== right.status) return false;
+  if (left.state === right.state) return true;
+  return left.state !== null && right.state !== null && JSON.stringify(left.state) === JSON.stringify(right.state);
+}
+
+function sameSessionReads(
+  left: ReadonlyMap<string, SessionStateReadV1>,
+  right: ReadonlyMap<string, SessionStateReadV1>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [id, read] of right) {
+    const previous = left.get(id);
+    if (previous === undefined || !sameSessionRead(previous, read)) return false;
+  }
+  return true;
 }

@@ -1,11 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
-import { buildConnectedServiceCredentialRecord, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { buildConnectedServiceCredentialRecord, type ConnectedServiceBindingsV2, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
 import type { TrackedSession } from '@/daemon/types';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
+import { resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+
+function qualifiedApiForRecord(record: ReturnType<typeof buildConnectedServiceCredentialRecord>) {
+  const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(record.serviceId);
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+    ref: { service, accountId: record.profileId },
+    authenticationModeId: record.kind === 'oauth' ? 'oauth' : 'api-key',
+    revisionSemantics: 'revisioned', credentialRevision: CREDENTIAL_REVISION,
+    configurationRevision: null, content: { t: 'plain', v: record }, metadata: { scopes: [] },
+  }) });
+  return {
+    getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+    getConnectedServiceCredentialPlain: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
+    getConnectedServiceCredentialSealed: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
+  };
+}
 
 const CREDENTIAL_REVISION = 'csr_0123456789ABCDEFGHJKMNPQRS';
 const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
@@ -13,23 +30,9 @@ const ANTHROPIC_SERVICE_KEY = 'happier.agent.claude/anthropic';
 const CLAUDE_SUBSCRIPTION_SERVICE_KEY = 'happier.agent.claude/claude-subscription';
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
-  it('carries the exact server credential revision into the provider auth generation', async () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each(['device', 'oauth', 'manual'])('preserves the exact native credential contract for %s mode', async (authenticationModeId) => {
     const credentialRevision = CREDENTIAL_REVISION;
-    const record = buildConnectedServiceCredentialRecord({
-      now: 1_000,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      oauth: {
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: 'acct-work',
-        providerEmail: null,
-      },
-    });
     const bindings: ConnectedServiceBindingsV2 = {
       v: 2,
       bindingsByServiceId: {
@@ -47,14 +50,19 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         environmentVariables: {},
       },
     } as TrackedSession;
+    const credential = { v: 1 as const, values: { accessToken: 'access', refreshToken: 'refresh', providerAccountId: 'acct-work' } };
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      expect(new URL(String(url)).pathname).toBe('/v4/connect/qualified/credential');
+      return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+        authenticationModeId, revisionSemantics: 'revisioned', credentialRevision,
+        configurationRevision: null, content: { t: 'plain', v: credential }, metadata: { scopes: [] },
+      }) };
+    });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
+      getConnectedServiceCredentialSealed: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
     };
 
     const credentials = {
@@ -62,7 +70,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       encryption: null,
     } satisfies StoredCredentials;
 
-    const selection = await materializeSessionConnectedServiceRuntimeAuthSelection({
+    const pendingSelection = materializeSessionConnectedServiceRuntimeAuthSelection({
       credentials,
       api: api as unknown as ApiClient,
       input: {
@@ -78,7 +86,19 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     });
 
-    expect(selection).toMatchObject({ credential: record, credentialRevision });
+    if (authenticationModeId === 'manual') {
+      await expect(pendingSelection).rejects.toThrow('authentication mode has no native credential projection');
+      return;
+    }
+    const selection = await pendingSelection;
+    expect(selection).toMatchObject({ credential: {
+      kind: 'oauth', serviceId: 'openai-codex', profileId: 'work',
+      oauth: { accessToken: 'access', refreshToken: 'refresh', raw: {
+        happierQualifiedConnectedAccountCredentialV1: {
+          authenticationModeId, payload: credential,
+        },
+      } },
+    }, credentialRevision });
     expect(selection).not.toHaveProperty('targetMaterializedRoot');
   });
 
@@ -94,15 +114,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: null,
       },
     });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: CREDENTIAL_REVISION,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
+    const api = qualifiedApiForRecord(record);
     const credentials: Credentials = {
       token: 'token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -176,7 +188,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 7,
-      credential: record,
+      credential: expect.objectContaining({ serviceId: record.serviceId, profileId: record.profileId, kind: record.kind }),
     });
   });
 
@@ -192,15 +204,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: null,
       },
     });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: CREDENTIAL_REVISION,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
+    const api = qualifiedApiForRecord(record);
     const credentials: Credentials = {
       token: 'token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -268,12 +272,9 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 8,
-      credential: record,
+      credential: expect.objectContaining({ serviceId: record.serviceId, profileId: record.profileId, kind: record.kind }),
     });
-    expect(api.getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
-      serviceId: 'anthropic',
-      profileId: 'backup',
-    });
+    expect(api.getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
   it('uses the previous child group active profile when unchanged group rematerialization omits profileId', async () => {
@@ -288,15 +289,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: null,
       },
     });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: CREDENTIAL_REVISION,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
+    const api = qualifiedApiForRecord(record);
     const credentials: Credentials = {
       token: 'token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -369,7 +362,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'primary',
       fallbackProfileId: 'fallback',
       generation: 7,
-      credential: record,
+      credential: expect.objectContaining({ serviceId: record.serviceId, profileId: record.profileId, kind: record.kind }),
     });
   });
 
@@ -385,15 +378,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: null,
       },
     });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: CREDENTIAL_REVISION,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
+    const api = qualifiedApiForRecord(record);
     const credentials: Credentials = {
       token: 'token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -472,7 +457,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fresh-fallback',
       generation: 8,
-      credential: record,
+      credential: expect.objectContaining({ serviceId: record.serviceId, profileId: record.profileId, kind: record.kind }),
     });
   });
 
@@ -493,15 +478,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         providerEmail: null,
       },
     });
-    const api = {
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-      getConnectedServiceCredentialPlain: vi.fn(async () => ({
-        revisionSemantics: 'revisioned' as const,
-        credentialRevision: CREDENTIAL_REVISION,
-        content: { t: 'plain' as const, v: record },
-      })),
-      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-    };
+    const api = qualifiedApiForRecord(record);
     const credentials: Credentials = {
       token: 'token',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -595,7 +572,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 3,
-      credential: record,
+      credential: expect.objectContaining({ serviceId: record.serviceId, profileId: record.profileId, kind: record.kind }),
     });
     expect(result).not.toHaveProperty('targetMaterializedRoot');
     expect(result).not.toHaveProperty('targetMaterializedEnv');

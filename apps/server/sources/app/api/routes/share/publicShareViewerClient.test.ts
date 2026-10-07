@@ -154,6 +154,17 @@ describe("isolated public viewer browser boundary", () => {
         expect(await loadPublicShareViewerContent({ location, fetch })).toMatchObject({ status: "invalid_content" });
     });
 
+    it.each([404, 429])('the served browser client renders denied content (%s) as the canonical unavailable state', async status => {
+        const { elements, document } = createBrowserBoundary();
+        const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('{"error":"public_share_unavailable"}', { status }));
+        runInNewContext(PUBLIC_SHARE_VIEWER_SCRIPT, { document, location, fetch, TextEncoder, TextDecoder, URL, URLSearchParams, crypto: globalThis.crypto, Uint8Array,
+            addEventListener() {} });
+        await vi.waitFor(() => expect(elements.find(element => element.tag === 'p')?.textContent).toContain('revoked'));
+        expect(elements.find(element => element.tag === 'h1')?.textContent).toBe('Shared content');
+        expect(elements.some(element => element.tag === 'pre')).toBe(false);
+        expect(fetch.mock.calls[0]?.[1]).toMatchObject({ credentials: 'omit', redirect: 'error' });
+    });
+
     it('offers the existing retry state for temporarily unavailable public blob bytes', async () => {
         const result = await loadPublicShareViewerContent({ location,
             fetch: async () => new Response(JSON.stringify({ error: 'public_share_unavailable' }), { status: 503 }) });

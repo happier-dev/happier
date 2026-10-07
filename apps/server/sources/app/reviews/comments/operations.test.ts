@@ -1012,7 +1012,7 @@ describe("review comment operations", () => {
     it("returns a stable error code for invalid snapshot metadata", async () => {
         const { operations } = createHarness();
         const lines = {
-            selectedLines: ["x".repeat(5000)],
+            selectedLines: ["captured text"],
             beforeContext: [],
             afterContext: [],
         };
@@ -1029,6 +1029,7 @@ describe("review comment operations", () => {
                     kind: "text",
                     ...lines,
                     ...hashes,
+                    selectedLinesHash: "sha256:forged",
                     capturedAt: 1,
                     fileLength: 1,
                     source: "workingTree",
@@ -1036,7 +1037,7 @@ describe("review comment operations", () => {
                     isUntracked: false,
                     truncated: false,
                     hasBidiControls: false,
-                    likelyMinified: true,
+                    likelyMinified: false,
                 },
                 body: "Track invalid snapshot metadata.",
                 authorIntent: "open",

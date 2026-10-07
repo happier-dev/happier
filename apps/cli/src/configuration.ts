@@ -17,7 +17,7 @@ import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './serve
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
-import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol/sessions/replay-seed-budget';
+import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol/sessions/replay-seed-budget';
 import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'
 import {
   readActiveServerFromSettingsFile,
@@ -775,19 +775,13 @@ class Configuration {
     this.replaySynopsisScanPageSize = resolveIntEnvWithBounds('HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE', {
       min: 1, max: 500, default: 500,
     });
-    // Default: 120k chars. Hard bounds protect providers from oversized replay
-    // seeds, and they come from the one Replay-budget owner in the Protocol so
-    // this clamp, the account setting and the settings screen cannot drift:
-    // below the measured frame floor the builder correctly returns NO seed
-    // rather than a frame with no transcript under it, so a clamp beneath the
-    // floor would promise an operator a prompt it cannot deliver. If the frame
-    // text grows past the floor, `happierReplayPrompt.spec.ts` fails first and
-    // names that constant. Caller-supplied `maxSeedChars` on the wire is NOT
-    // clamped here and may be lower; the builder owns its contract at every
-    // budget.
-    this.replaySeedMaxChars = resolveIntEnvWithBounds('HAPPIER_REPLAY_MAX_SEED_CHARS', {
-      min: HAPPIER_REPLAY_SEED_MIN_CHARS, max: HAPPIER_REPLAY_SEED_MAX_CHARS, default: 120_000,
-    });
+    // The operator's total cap remains authoritative at dispatch, including
+    // for an already-sealed seed. A positive configured total is kept exactly;
+    // the actual frame and reservation determine whether context can fit.
+    const replaySeedMaxChars = HappierReplayWritableMaxSeedCharsSchema.safeParse(
+      Number(process.env.HAPPIER_REPLAY_MAX_SEED_CHARS),
+    );
+    this.replaySeedMaxChars = replaySeedMaxChars.success ? replaySeedMaxChars.data : 120_000;
     // Default: 500 (server max). Min 50 ensures meaningful context; max 500 matches server enforcement.
     this.replaySeedCandidateLimit = resolveIntEnvWithBounds('HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT', {
       min: 50, max: 500, default: 500,

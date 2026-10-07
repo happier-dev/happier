@@ -51,15 +51,18 @@ export function createAuthoringMemoryDomain<S extends AuthoringMemoryDomain>(dep
             const pathsUnchanged = areAccountSettingsJsonValuesEqual(previous.recentMachinePaths, recentMachinePaths);
             const selectionsUnchanged = areAccountSettingsJsonValuesEqual(previous.lastEngineSelectionsByScopeV1, lastEngineSelectionsByScopeV1);
             if (pathsUnchanged && selectionsUnchanged && previous.lastUsedProfile === lastUsedProfile) return state;
+            const currentSelections = selectionsUnchanged
+                ? previous.currentRememberedEngineSelectionsByScopeV1
+                : RememberedEngineSelectionsByScopeV1Schema.parse(lastEngineSelectionsByScopeV1);
             return {
                 ...state,
                 authoringMemory: {
                     recentMachinePaths: pathsUnchanged ? previous.recentMachinePaths : recentMachinePaths,
                     lastUsedProfile,
                     lastEngineSelectionsByScopeV1: selectionsUnchanged ? previous.lastEngineSelectionsByScopeV1 : lastEngineSelectionsByScopeV1,
-                    currentRememberedEngineSelectionsByScopeV1: selectionsUnchanged
+                    currentRememberedEngineSelectionsByScopeV1: areAccountSettingsJsonValuesEqual(previous.currentRememberedEngineSelectionsByScopeV1, currentSelections)
                         ? previous.currentRememberedEngineSelectionsByScopeV1
-                        : RememberedEngineSelectionsByScopeV1Schema.parse(lastEngineSelectionsByScopeV1),
+                        : currentSelections,
                 },
             };
         }),

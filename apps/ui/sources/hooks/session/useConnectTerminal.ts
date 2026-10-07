@@ -1,30 +1,15 @@
 import * as React from 'react';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAuth } from '@/auth/context/AuthContext';
-import {
-    TokenStorage,
-    type AuthCredentials,
-} from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { approveTerminalPairing, resolveTerminalPairingStorageMode } from '@/auth/terminal/approveTerminalPairing';
 import { focusTerminalConnectHome } from '@/auth/terminal/focusTerminalConnectHome';
-import {
-    buildEstablishedHomeTransportDescriptor,
-    resolveHomeEnrollmentTransport,
-} from '@/auth/enrollment/homeEnrollmentTransport';
+import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
+import { resolveTerminalApprovalTarget } from '@/auth/terminal/resolveTerminalApprovalTarget';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import {
-    buildHomeConnectionDescriptorForProfile,
-    getActiveServerUrl,
-    listServerProfiles,
-    resolveServerProfileForPortableIdentity,
-    type ServerProfile,
-} from '@/sync/domains/server/serverProfiles';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
-import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
-import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
 import {
@@ -48,114 +33,6 @@ type TerminalConnectApprovalDetails =
     | Readonly<{ kind: 'loading' | 'error' }>
     | Readonly<{ kind: 'needs_sign_in'; homeUrl: string }>
     | Readonly<{ kind: 'ready'; homeUrl: string; storageMode: 'plain' | 'e2ee' }>;
-
-type TerminalApprovalTarget = Readonly<{
-    endpointUrl: string;
-    serverId?: string;
-    descriptor?: HomeConnectionDescriptorV1;
-    transportOptions?: Parameters<typeof resolveHomeEnrollmentTransport>[1];
-    credentials: AuthCredentials | null;
-}>;
-
-/**
- * A Home is identified by its stable `serverIdentityId`; hostnames and ports are only
- * routing facts. A daemon pairing on this machine therefore advertises its own loopback
- * address for a Home this device may already know under a different host, so the link's
- * identity — not its URL — selects the signed-in profile.
- *
- * URL comparison survives only for a link that carries no identity at all, and then only
- * across profiles with no pinned identity of their own: an anonymous URL must never unlock
- * an identity-bound Home's credentials.
- */
-function findSignedInProfileForTerminalLink(params: Readonly<{
-    expectedServerIdentityId: string;
-    endpointUrl: string;
-}>): ServerProfile | null {
-    const expectedServerIdentityId = params.expectedServerIdentityId.trim();
-    if (expectedServerIdentityId) {
-        const resolution = resolveServerProfileForPortableIdentity(expectedServerIdentityId);
-        return resolution.kind === 'resolved' ? resolution.profile : null;
-    }
-    const targetKey = createServerUrlComparableKey(params.endpointUrl);
-    if (!targetKey) return null;
-    const matches = listServerProfiles().filter((profile) => (
-        !profile.serverIdentityId
-        && (
-            createServerUrlComparableKey(profile.serverUrl) === targetKey
-            || createServerUrlComparableKey(profile.canonicalServerUrl ?? '') === targetKey
-            || createServerUrlComparableKey(profile.publicServerUrl ?? '') === targetKey
-        )
-    ));
-    return matches.length === 1 ? matches[0]! : null;
-}
-
-async function resolveTerminalApprovalTarget(params: Readonly<{
-    parsed: ParsedTerminalConnectUrl;
-    allowLoopbackServerOverride: boolean;
-}>): Promise<TerminalApprovalTarget> {
-    const focusedEndpointUrl = normalizeServerUrl(getActiveServerUrl());
-    const expectedServerIdentityId = params.parsed.serverIdentityId ?? '';
-    const suppliedDescriptor = params.parsed.homeConnectionDescriptor;
-    const effectiveRequestedEndpointUrl = resolveEffectiveServerUrlOverride({
-        requestedServerUrl: params.parsed.serverUrl ?? suppliedDescriptor?.canonicalServerUrl,
-        activeServerUrl: focusedEndpointUrl,
-        allowLoopbackOverride: params.allowLoopbackServerOverride,
-    });
-    if (suppliedDescriptor && suppliedDescriptor.homeServerIdentityId !== expectedServerIdentityId) {
-        throw new Error('Terminal pairing descriptor identity does not match the link destination');
-    }
-    const requestedEndpointUrl = suppliedDescriptor?.canonicalServerUrl
-        || effectiveRequestedEndpointUrl
-        || focusedEndpointUrl;
-    if (!requestedEndpointUrl) throw new Error('Terminal pairing requires an explicit target server');
-
-    const profile = findSignedInProfileForTerminalLink({
-        expectedServerIdentityId,
-        endpointUrl: requestedEndpointUrl,
-    });
-    const endpointUrl = profile ? profile.canonicalServerUrl ?? profile.serverUrl : requestedEndpointUrl;
-    // A link is discovery advice, not authority to reroute a saved Home's bearer.
-    // Known credentials use that profile's published or established transport.
-    // Loopback Homes publish no descriptor, so their established connection remains
-    // the local-only fallback for identity-bearing URL-only pairing links.
-    const publishedDescriptor = profile ? buildHomeConnectionDescriptorForProfile(profile) : null;
-    const descriptor = profile
-        ? publishedDescriptor
-            ?? (profile.serverIdentityId
-                ? buildEstablishedHomeTransportDescriptor({
-                    canonicalServerUrl: profile.canonicalServerUrl ?? profile.serverUrl,
-                    homeServerIdentityId: profile.serverIdentityId,
-                })
-                : null)
-        : suppliedDescriptor;
-    if (!profile || !descriptor) {
-        return { endpointUrl, ...(descriptor ? { descriptor } : {}), credentials: null };
-    }
-    const serverId = expectedServerIdentityId.trim();
-    const credentials = await TokenStorage.getCredentialsForServerUrl(
-        profile.serverUrl,
-        serverId ? { serverId } : {},
-    );
-    if (credentials && !publishedDescriptor) {
-        const active = getActiveServerSnapshot();
-        const isExactActiveHome = active.serverId === profile.serverIdentityId
-            && createServerUrlComparableKey(active.serverUrl) === createServerUrlComparableKey(endpointUrl);
-        const homeCarrier = isExactActiveHome ? getActiveServerHomeCarrier() : null;
-        if (isExactActiveHome && (active.runtimeOrigin || homeCarrier)) {
-            // The connection owner has already authenticated this transport. Borrow it
-            // while exact descriptor reconciliation is pending; never use QR advice.
-            return { endpointUrl, serverId, descriptor, credentials, transportOptions: {
-                runtimeOrigin: active.runtimeOrigin,
-                runtimeCarrier: active.carrier,
-                homeCarrier,
-            } };
-        }
-        if (profile.descriptorProvenance === 'advisory-only') {
-            throw new Error('Terminal pairing requires the saved Home\'s verified transport');
-        }
-    }
-    return { endpointUrl, ...(serverId ? { serverId } : {}), descriptor, credentials };
-}
 
 export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     const router = useDestinationRouter();
@@ -189,7 +66,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 target: resolution.transport,
                 targetCredentials: target.credentials,
             });
-            return { homeUrl: resolution.transport.canonicalServerUrl, storageMode, needsSignIn: false };
+            return { homeUrl: target.endpointUrl, storageMode, needsSignIn: false };
         } finally {
             await resolution.transport.close();
         }

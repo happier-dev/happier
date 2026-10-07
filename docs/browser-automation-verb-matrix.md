@@ -141,6 +141,15 @@ writing media and uses the same Protocol privacy decision as UI context.
 closed. Linux sandbox setup and recovery are described in
 [managed browser acquisition](./binary-runtime.md#managed-browser-acquisition-03-development).
 
+Native desktop annotation and recording captures use the same source-owned,
+presence-only password-field probe before reading pixels. Only an explicit
+`false` probe result permits capture; missing, malformed or failed results deny
+capture without registering media. The native view's existing navigation
+generation and actual source lifetime are checked across asynchronous capture,
+and annotation completion reconciles against the current context and upload
+policy rather than restoring an old editor state. This does not introduce an
+origin classifier: established privacy facts still use the Protocol export floor.
+
 Selected browser context is normalized once from `happierBrowserContext` into the Session's
 canonical structured input. Admission rejects stale selections, unavailable or owner-only context,
 inline bytes and unsafe fields before persistence. The daemon still owns annotation grouping and

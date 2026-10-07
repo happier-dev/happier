@@ -25,12 +25,13 @@ import {
     sanitizeConnectedServiceDiagnosticError,
 } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, readConnectedServiceChildSelectionsFromEnv, type ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
-import { ConnectedServiceRunRejectedStartRequestSchema, type ConnectedServiceRunRejectedStartHandler } from './materializeContract';
-import { ConnectedServiceRunRuntimeAuthRefreshRequestSchema, type ConnectedServiceRunRuntimeAuthRefreshHandler } from './materializeContract';
-import { parseDaemonAuthBridgeRefreshSettlement, readBridgeRegistration, type ResolveDaemonAuthBridge } from '../sessionRuntimeAuthRefresh';
+import { ConnectedServiceRunRejectedStartRequestSchema, ConnectedServiceRunRuntimeAuthRefreshRequestSchema,
+    type ConnectedServiceRunRuntimeAuthRefreshHandler, type ConnectedServiceRunRejectedStartHandler } from './materializeContract';
+import { refreshConnectedServiceRuntimeAuthForTarget, resolveCurrentRefreshSelection, type ResolveDaemonAuthBridge } from '../sessionRuntimeAuthRefresh';
 import { runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection } from '../runtimeAuthRefreshAuthorization';
 import type { ConnectedServiceRuntimeTarget } from '../runtimeRegistry/target';
-import type { NativeAuthRuntimeRefreshScope } from '../nativeAuthRuntimeRefresh';
+import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import {
@@ -92,7 +93,7 @@ type ExecutionRunAgentPurposeContributions =
     & Readonly<{
         catalogEntriesById?: Readonly<Record<
             string,
-            Pick<AgentCatalogEntry, 'connectedServiceIds' | 'getConnectedAccountNativeAuthRefreshCodec'>
+            Pick<AgentCatalogEntry, 'connectedServiceIds'>
         >>;
     }>;
 
@@ -105,24 +106,13 @@ export type ExecutionRunTargetRegistration = Readonly<{
     connectedServiceSelectionsEnv: Readonly<Record<string, string>>;
     sessionId?: string | null;
     sessionDirectory?: string | null;
+    exactPurposeBindingSubjectId?: string;
 }>;
-
-/** The existing daemon-local tracked object is the runner identity; a parent Session is only a witness. */
-export function captureTrackedExecutionRunRunnerIdentity(input: Readonly<{
-    trackedSessions: ReadonlyMap<number, Readonly<{ happySessionId?: string | null }>>;
-    runnerPid: number;
-    expectedParentSessionId?: string;
-}>): ReturnType<CreateExecutionRunConnectedServicesBridgeDeps['captureRunnerIdentity']> {
-    const tracked = input.trackedSessions.get(input.runnerPid);
-    const parentSessionId = typeof tracked?.happySessionId === 'string' ? tracked.happySessionId.trim() : '';
-    if (!tracked || !parentSessionId
-        || (input.expectedParentSessionId !== undefined && parentSessionId !== input.expectedParentSessionId)) return null;
-    return Object.freeze({ identity: tracked, parentSessionId,
-        isCurrent: () => input.trackedSessions.get(input.runnerPid) === tracked });
-}
 
 export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     getRunRuntimeTarget?: (runKey: string) => ConnectedServiceRuntimeTarget | null;
+    adoptRunCredentialRevision?: ConnectedServiceRuntimeRegistry['adoptExactCredentialRevisionForRun'];
+    resolveRunCredentialRevisionTarget?: ConnectedServiceRuntimeRegistry['resolveExactRunCredentialRevisionTarget'];
     resolveDaemonAuthBridge?: ResolveDaemonAuthBridge;
     recoverRejectedStart?: (input: Readonly<{
         selection: Extract<ConnectedServiceChildSelection, { kind: 'group' }>;
@@ -205,8 +195,6 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
 }>;
 
 type RunReleaseEntry = {
-    nativeRefreshScope?: Omit<NativeAuthRuntimeRefreshScope, 'codec'>;
-    resolveNativeRefreshCodec?: NonNullable<AgentCatalogEntry['getConnectedAccountNativeAuthRefreshCodec']>;
     modelId: string | null;
     selections: ReadonlyMap<string, ConnectedServiceChildSelection> | null;
     isCurrent(): boolean;
@@ -475,7 +463,6 @@ export function createExecutionRunConnectedServicesBridge(
                     bindings: input.connectedServicesBindings,
                     contributions: contributionLease.contributions,
                 });
-            const contributionIdentity = await contributionLease.resolveAgentContributionIdentity();
             const requestAuthPurposeBindings =
                 resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
                     purposeSnapshot,
@@ -563,16 +550,6 @@ export function createExecutionRunConnectedServicesBridge(
                 throw new Error('execution_run_authority_not_current');
             }
             entry = {
-                ...(purposeBindingLease && contributionIdentity && purposeSnapshot?.fileMaterializationPurposes ? {
-                    nativeRefreshScope: {
-                        subjectId: purposeBindingLease.subjectId,
-                        fileMaterializationPurposes: purposeSnapshot.fileMaterializationPurposes,
-                        bindings: purposeSnapshot.bindings,
-                        isCurrent: () => subjectIsCurrent() && purposeBindingLease!.isCurrent(),
-                    },
-                    resolveNativeRefreshCodec: contributionLease.contributions.catalogEntriesById?.[input.agentId]
-                        ?.getConnectedAccountNativeAuthRefreshCodec,
-                } : {}),
                 modelId: input.modelId ?? null,
                 selections: readConnectedServiceChildSelectionsFromEnv(input.env),
                 isCurrent: subjectIsCurrent,
@@ -820,6 +797,7 @@ export function createExecutionRunConnectedServicesBridge(
                         registration.connectedServicesBindings,
                     connectedServiceSelectionsEnv:
                         registration.connectedServiceSelectionsEnv,
+                    ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                     sessionId: runner.parentSessionId,
                     sessionDirectory: registration.sessionDirectory,
                 });
@@ -1029,15 +1007,13 @@ export function createExecutionRunConnectedServicesBridge(
                             ? deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot })
                             : null);
                     cleanupOnFailure ??= cleanupOnExit;
-                    if (resolved.ongoingRuntimeRegistrationAllowed === false) {
-                        throw new Error(
-                            'Legacy unfenced connected service materialization cannot be registered as an execution-run runtime target',
-                        );
-                    }
                     const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
                     const activationId = randomUUID();
                     const agentContribution = await contributionLease
                         .resolveAgentContributionIdentity();
+                    // Resolution's launch-only subject has finished materializing. Retire it
+                    // before the retained activation takes custody of the same real Run subject.
+                    await resolved.materializationPurposeLease?.dispose();
                     entry = await prepareEntry({
                         activationId,
                         ...(input.modelId ? { modelId: input.modelId } : {}),
@@ -1054,7 +1030,6 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupOnExit,
                         contributionLease,
                     });
-                    await resolved.materializationPurposeLease?.dispose();
                     const registration: ExecutionRunConnectedServicesRegistrationV1 = {
                         v: 1,
                         activationId,
@@ -1076,6 +1051,7 @@ export function createExecutionRunConnectedServicesBridge(
                         connectedServicesBindingsRaw: connectedServicesBindings,
                         connectedServiceSelectionsEnv:
                             registration.connectedServiceSelectionsEnv,
+                        ...(entry.purposeBindingLease ? { exactPurposeBindingSubjectId: entry.purposeBindingLease.subjectId } : {}),
                         sessionId: runner.parentSessionId,
                         sessionDirectory: input.cwd,
                     });
@@ -1112,6 +1088,62 @@ export function createExecutionRunConnectedServicesBridge(
                 }
             }
         });
+    };
+
+    const refreshRuntimeAuth: ConnectedServiceRunRuntimeAuthRefreshHandler = async (raw) => {
+        const refused = { status: 'unavailable' as const, reason: 'connected_service_run_refresh_forbidden' };
+        const parsed = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.safeParse(raw);
+        if (!parsed.success) return refused;
+        const request = parsed.data;
+        const entry = retainedCleanupByRunKey.get(request.runId);
+        const runner = deps.captureRunnerIdentity({ runnerPid: request.runnerPid });
+        let target = deps.getRunRuntimeTarget?.(request.runId);
+        const hasCurrentAuthority = () => Boolean(entry && entry.authorityActive && !entry.retiring
+            && retainedCleanupByRunKey.get(request.runId) === entry
+            && entry.activationId === request.activationId && entry.runnerPid === request.runnerPid
+            && runner?.identity === entry.runnerIdentity && runner.isCurrent() && entry.isCurrent());
+        const isCurrent = () => Boolean(entry && hasCurrentAuthority() && target
+            && target.pid === request.runnerPid && target.agentId === entry.agentId && target.materializationKey === request.runId
+            && deps.getRunRuntimeTarget?.(request.runId) === target);
+        const current = target ? resolveCurrentRefreshSelection({ target, serviceId: request.serviceId }) : null;
+        if (!isCurrent() || !entry || !target || !current || request.serviceId !== request.selection.serviceId
+            || !runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({ target, selection: request.selection })
+            || (request.selection.kind === 'profile' && (current.selection.kind !== 'profile'
+                || current.selection.profileId !== request.selection.profileId))) return refused;
+        if (!deps.resolveDaemonAuthBridge) return { status: 'unavailable', reason: 'connected_service_daemon_auth_bridge_unavailable' };
+        // Do not hold the materialization mutex across provider I/O: release revokes this exact
+        // activation while the shared core rechecks authority before disclosing its settlement.
+        try {
+            const result = await refreshConnectedServiceRuntimeAuthForTarget({ target, request,
+                scope: { runId: request.runId }, authority: entry, isCurrent, resolveDaemonAuthBridge: deps.resolveDaemonAuthBridge,
+                acceptSettledCredentialRevision: (revision) => {
+                    if (!hasCurrentAuthority() || !target) return null;
+                    const accepted = deps.resolveRunCredentialRevisionTarget?.({ runKey: request.runId, target,
+                        serviceId: request.serviceId, expectedCredentialRevision: current.credentialRevision,
+                        credentialRevision: revision });
+                    if (!hasCurrentAuthority() || !accepted) return null;
+                    target = accepted;
+                    return accepted;
+                } });
+            if (result.ok && result.result.status === 'refreshed'
+                && Object.prototype.hasOwnProperty.call(result.result.result, 'credentialRevision')) {
+                const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.result.result.credentialRevision);
+                if (!revision.success) return { status: 'failed', reason: 'runtime_auth_refresh_invalid_bridge_result' };
+                if (!isCurrent()) return refused;
+                const updated = deps.adoptRunCredentialRevision?.({ runKey: request.runId, target,
+                    serviceId: request.serviceId, expectedCredentialRevision: resolveCurrentRefreshSelection({ target,
+                        serviceId: request.serviceId })?.credentialRevision ?? current.credentialRevision,
+                    credentialRevision: revision.data });
+                if (!updated) return refused;
+                target = updated;
+                entry.selections = new Map(updated.connectedServiceSelections.map((selection) => [selection.serviceId, selection]));
+                if (!isCurrent()) return refused;
+            }
+            return result.ok ? result.result : { status: 'unavailable', reason: result.errorCode === 'connected_service_session_refresh_forbidden'
+                ? refused.reason : result.errorCode };
+        } catch {
+            return isCurrent() ? { status: 'failed', reason: 'runtime_auth_refresh_failed' } : refused;
+        }
     };
 
     const recoverRejectedStart: ConnectedServiceRunRejectedStartHandler = async (raw) => {
@@ -1153,55 +1185,6 @@ export function createExecutionRunConnectedServicesBridge(
             };
             return blocked(`Rejected-start pool recovery refused (${result.status})`);
         });
-    };
-
-    const refreshRuntimeAuth: ConnectedServiceRunRuntimeAuthRefreshHandler = async (raw) => {
-        const unavailable = (reason: string) => ({ ok: true as const,
-            result: { status: 'unavailable' as const, reason } });
-        const parsed = ConnectedServiceRunRuntimeAuthRefreshRequestSchema.safeParse(raw);
-        if (!parsed.success) return unavailable('connected_service_run_refresh_forbidden');
-        const request = parsed.data;
-        const entry = retainedCleanupByRunKey.get(request.runId);
-        const runner = deps.captureRunnerIdentity({ runnerPid: request.runnerPid });
-        const target = deps.getRunRuntimeTarget?.(request.runId);
-        const isCurrent = () => {
-            const currentTarget = deps.getRunRuntimeTarget?.(request.runId);
-            return Boolean(entry && entry.authorityActive && !entry.retiring
-            && retainedCleanupByRunKey.get(request.runId) === entry
-            && entry.activationId === request.activationId && entry.runnerPid === request.runnerPid
-            && runner?.identity === entry.runnerIdentity && runner.isCurrent() && entry.isCurrent()
-            && (entry.purposeBindingLease === null || entry.purposeBindingLease.isCurrent())
-            && currentTarget && currentTarget.pid === request.runnerPid && currentTarget.agentId === entry.agentId
-            && runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection({ target: currentTarget, selection: request.selection }));
-        };
-        const currentSelection = target?.connectedServiceSelections.find((selection) => selection.serviceId === request.serviceId);
-        if (!isCurrent() || !target || request.serviceId !== request.selection.serviceId
-            || !currentSelection?.credentialRevision || currentSelection.kind !== request.selection.kind
-            ) {
-            return unavailable('connected_service_run_refresh_forbidden');
-        }
-        if (!deps.resolveDaemonAuthBridge) return unavailable('connected_service_daemon_auth_bridge_unavailable');
-        // Refresh is not a Run mutation lock: release must retire authority while OAuth is pending.
-        const codec = await entry?.resolveNativeRefreshCodec?.();
-        if (!isCurrent()) return unavailable('connected_service_run_activation_stale');
-        const bridge = readBridgeRegistration(await deps.resolveDaemonAuthBridge(request.serviceId, {
-            agentId: entry!.agentId, isCurrent,
-            ...(codec && entry?.nativeRefreshScope ? { nativeScope: { ...entry.nativeRefreshScope, codec } } : {}),
-        }));
-        if (!bridge) return unavailable('connected_service_daemon_auth_bridge_unavailable');
-        try {
-        if (!isCurrent()) return unavailable('connected_service_run_activation_stale');
-        const result = await bridge.refresh({ runId: request.runId, refreshAttemptId: request.refreshAttemptId,
-            selection: request.selection, expectedCredentialRevision: request.expectedCredentialRevision, forceRefresh: true,
-            ...(request.planType === undefined ? {} : { planType: request.planType }),
-            ...(request.failingAccessTokenFingerprint === undefined ? {} : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
-            ...(request.reason === undefined ? {} : { reason: request.reason }),
-        });
-        return isCurrent() ? { ok: true, result: parseDaemonAuthBridgeRefreshSettlement(result, request.refreshAttemptId) }
-            : unavailable('connected_service_run_activation_stale');
-        } finally {
-            await bridge.release?.();
-        }
     };
 
     const cleanupTerminalMaterialization: ExecutionRunConnectedServicesBridge[

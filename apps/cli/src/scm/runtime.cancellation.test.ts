@@ -18,6 +18,8 @@ vi.mock('@/agent/runtime/process/killProcessTree', () => ({
 }));
 
 import { runScmCommand } from './runtime';
+import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from './checkpoints/gitCheckpointAdapter';
+import { buildRepositoryCheckpointRefs } from './checkpoints/refs';
 
 type FakeChild = EventEmitter & Readonly<{
   pid: number;
@@ -46,6 +48,45 @@ function createFakeChild(pid: number): FakeChild {
 }
 
 describe('runScmCommand cancellation', () => {
+  it('captures checkpoints when Git phases finish within the canonical command budget', async () => {
+    // Git processes and clocks are system boundaries; checkpoint capture,
+    // private-index setup and the SCM process-budget owner remain real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    mocks.spawn.mockReset();
+    const treeOid = 'a'.repeat(40);
+    const commitOid = 'b'.repeat(40);
+    mocks.spawn.mockImplementation((_command: string, args: readonly string[]) => {
+      const child = createFakeChild(41005);
+      const delayed = setTimeout(() => {
+        const output = args.includes('--show-toplevel') ? process.cwd()
+          : args[0] === 'rev-parse' || args[0] === 'commit-tree' ? commitOid
+          : args[0] === 'write-tree' ? treeOid : '';
+        if (output) child.stdout.emit('data', Buffer.from(`${output}\n`));
+        child.emit('close', 0);
+      }, 11000);
+      Object.assign(child, { kill: () => { clearTimeout(delayed); child.emit('close', 1); return true; } });
+      return child;
+    });
+    try {
+      const cwd = process.cwd();
+      const refs = buildRepositoryCheckpointRefs({ scopeId: `budget:${cwd}`, messageId: 'message', turnId: 'turn' });
+      if (!refs.messageStart || !refs.turnStart) throw new Error('Missing checkpoint refs');
+      const checkpointRef = refs.messageStart;
+      const operation = resolveGitCheckpointBackendContext({ cwd }).then(async (context) => ({
+        context,
+        capture: context ? await gitCheckpointAdapter.capture({ context, checkpointRef }) : null,
+        alias: context ? await gitCheckpointAdapter.alias({ context, sourceRef: checkpointRef, targetRef: refs.turnStart! }) : null,
+      }));
+      await vi.runAllTimersAsync();
+      expect(await operation).toMatchObject({ context: { detection: { rootPath: cwd } },
+        capture: { success: true, checkpointRef, treeSha: treeOid, commitSha: commitOid },
+        alias: { success: true, sourceRef: checkpointRef, targetRef: refs.turnStart, commitSha: commitOid } });
+    } finally {
+      vi.useRealTimers();
+      mocks.spawn.mockReset();
+    }
+  });
+
   it('does not spawn when the operation was already aborted', async () => {
     mocks.spawn.mockReset();
     mocks.killProcessTree.mockReset();

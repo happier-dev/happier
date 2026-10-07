@@ -1,5 +1,6 @@
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import type { QualifiedConnectedAccountPresentationAccount } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import type { ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 
 import type {
@@ -11,7 +12,7 @@ import type {
 export type ConnectedServicesIndexAccountPresentation = Readonly<{
     /** The account's name (the label someone gave it, else its identity). */
     title: string;
-    /** Who it is beside the name (email or provider account id), when that is not the name itself. */
+    /** Human identity or a short disambiguator beside the name. */
     identityLabel: string | null;
     /** Raw provider account id, for the detail header. */
     accountIdLabel: string | null;
@@ -28,44 +29,37 @@ export function presentConnectedServicesIndexAccount(
     labelsByKey: Readonly<Record<string, string | undefined>>,
     present: ConnectedAccountIdentityPresenter,
 ): ConnectedServicesIndexAccountPresentation {
-    if (account.kind === 'legacy') {
-        const label = resolveConnectedServiceProfileLabel({
+    const legacyLabel = account.kind === 'legacy'
+        ? resolveConnectedServiceProfileLabel({
             labelsByKey,
             serviceId: account.legacyServiceId,
             profileId: account.accountId,
-        });
-        // Preserve the released producer field rather than guessing from how its text looks.
-        const shown = present({
-            label,
+        }) : null;
+    // Released V2 is an input adapter to the same identity owner, not a second
+    // rule for whether provider/internal ids may become a name.
+    const profile: QualifiedConnectedAccountPresentationAccount = account.kind === 'qualified' ? account.profile : {
+        ref: { service: sheet.service, accountId: account.accountId },
+        providerIdentity: {
             email: account.identityLabelKind === 'email' ? account.identityLabel : null,
-            accountId: account.identityLabelKind === 'accountId' ? account.identityLabel
-                : account.identityLabelKind === null ? account.accountId : null,
-        });
-        return {
-            title: shown.label ?? shown.email ?? shown.accountId ?? sheet.label,
-            identityLabel: label && account.identityLabel ? shown.email ?? shown.accountId : null,
-            accountIdLabel: null,
-        };
-    }
-    const profiles = sheet.accounts.flatMap((candidate) => candidate.kind === 'qualified' ? [candidate.profile] : []);
+            accountId: account.identityLabelKind === 'accountId' ? account.identityLabel : null,
+        },
+    };
     const presentation = presentQualifiedConnectedAccountTarget({
-        target: { kind: 'account', account: account.profile.ref },
-        accounts: profiles,
+        target: { kind: 'account', account: profile.ref },
+        accounts: [profile],
         groups: [],
         labelsByKey,
+        accountLabel: legacyLabel,
         legacyServiceId: sheet.legacyServiceId,
         serviceTitle: sheet.label,
+        presentIdentity: present,
     });
-    const email = account.profile.providerIdentity?.email?.trim() || null;
-    const providerAccountId = account.profile.providerIdentity?.accountId?.trim() || null;
-    const shown = present({ label: presentation.primaryLabel, labelKind: presentation.primaryLabelKind, email, accountId: providerAccountId });
-    const identity = email
-        ? email !== presentation.primaryLabel ? shown.email : null
-        : providerAccountId && providerAccountId !== presentation.primaryLabel ? shown.accountId : null;
+    const providerAccountId = profile.providerIdentity?.accountId?.trim() || null;
+    const shown = present({ accountId: providerAccountId });
     return {
-        title: shown.label ?? presentation.primaryLabel,
-        identityLabel: identity,
-        accountIdLabel: shown.accountId,
+        title: presentation.primaryLabel,
+        identityLabel: presentation.identityLabel ?? null,
+        accountIdLabel: account.kind === 'qualified' ? shown.accountId : null,
     };
 }
 

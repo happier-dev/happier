@@ -65,6 +65,7 @@ import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
 import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -149,6 +150,11 @@ const SessionWorkingScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     }, [scmCommitStrategySetting]);
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const reviewScope = useWorkspaceScopeForSession(props.sessionId, props.serverId);
+    const workspaceRefs = useSetting('workspaceRefsV1');
+    const reviewWorkspaceRef = React.useMemo(
+        () => reviewScope ? findWorkspaceRefByScope(workspaceRefs, reviewScope) : null,
+        [workspaceRefs, reviewScope],
+    );
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
@@ -169,12 +175,12 @@ const SessionWorkingScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         [frontDoorActionExecutor],
     );
     const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope | null>(() => {
-        if (!project?.id) return null;
+        if (!reviewWorkspaceRef) return null;
         return {
             kind: 'project',
-            projectId: project.id,
+            projectId: reviewWorkspaceRef.id,
         };
-    }, [project?.id]);
+    }, [reviewWorkspaceRef?.id]);
     const pluginPermissionGrantListInput = React.useMemo<PluginPermissionGrantListInput | null>(() => (
         directWriteGrantScope
             ? {
@@ -774,7 +780,6 @@ const SessionWorkingScmReviewDetailsView = React.memo((props: SessionScmReviewDe
             {reviewCommentsEnabled && reviewScope ? (
                 <ReviewCommentsSessionSurface
                     scope={accountScope}
-                    projectId={project?.id}
                     workspace={{ machineId: reviewScope.machineId, path: reviewScope.rootPath }}
                     sessionId={props.sessionId}
                     execute={frontDoorActionExecutor}

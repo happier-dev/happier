@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol';
+import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol';
 import { StyleSheet } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -21,22 +21,10 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SESSION_RESUME_SETTINGS } from '@/components/settings/session/sessionResumeSettings';
 
-/**
- * Bounds come from the one Replay-budget owner in the Protocol. Below the floor
- * the seed builder correctly produces nothing, so a screen that let a smaller
- * number be typed was offering a setting that silently turned Replay off.
- */
-const SESSION_REPLAY_MAX_SEED_CHARS_MIN = HAPPIER_REPLAY_SEED_MIN_CHARS;
-const SESSION_REPLAY_MAX_SEED_CHARS_MAX = HAPPIER_REPLAY_SEED_MAX_CHARS;
-
 type ReplayStrategy = 'recent_messages' | 'summary_plus_recent';
 
 function formatIntegerSettingValue(value: unknown): string {
     return typeof value === 'number' && Number.isFinite(value) ? String(Math.trunc(value)) : '';
-}
-
-function clampInteger(value: number, bounds: Readonly<{ min: number; max: number }>): number {
-    return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(value)));
 }
 
 export const SessionResumeSettingsView = React.memo(function SessionResumeSettingsView() {
@@ -75,20 +63,12 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                 : t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
         },
     ];
-    const maxSeedCharsRangeNotice = t('settingsSession.replayResume.maxSeedCharsRange', {
-        min: SESSION_REPLAY_MAX_SEED_CHARS_MIN,
-        max: SESSION_REPLAY_MAX_SEED_CHARS_MAX,
-    });
-    // Below the floor the seed builder produces nothing, so a typed number is moved to the nearest bound.
+    const maxSeedCharsDescription = t('settingsSession.replayResume.maxSeedCharsDescription');
     const commitSessionReplayMaxSeedChars = React.useCallback((draft: string) => {
-        const next = Number(draft);
-        if (!Number.isFinite(next)) return formatIntegerSettingValue(sessionReplayMaxSeedChars);
-        const clamped = clampInteger(next, {
-            min: SESSION_REPLAY_MAX_SEED_CHARS_MIN,
-            max: SESSION_REPLAY_MAX_SEED_CHARS_MAX,
-        });
-        if (clamped !== sessionReplayMaxSeedChars) setSessionReplayMaxSeedChars(clamped);
-        return String(clamped);
+        const parsed = HappierReplayWritableMaxSeedCharsSchema.safeParse(Number(draft));
+        if (!parsed.success) return formatIntegerSettingValue(sessionReplayMaxSeedChars);
+        if (parsed.data !== sessionReplayMaxSeedChars) setSessionReplayMaxSeedChars(parsed.data);
+        return String(parsed.data);
     }, [sessionReplayMaxSeedChars, setSessionReplayMaxSeedChars]);
 
     return (
@@ -128,7 +108,7 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                         <SettingAnchor setting={SESSION_RESUME_SETTINGS.settings.maxSeedChars}>
                             <FieldValueItem
                                 title={t(SESSION_RESUME_SETTINGS.settings.maxSeedChars.titleKey)}
-                                subtitle={maxSeedCharsRangeNotice}
+                                subtitle={maxSeedCharsDescription}
                                 subtitleLines={0}
                                 kind="integer"
                                 fieldTestID="settings-session-replay-maxSeedChars-input"

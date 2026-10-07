@@ -301,7 +301,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
     expect(prose).toBeGreaterThan(attachment);
   });
 
-  it('delivers resolved structured input with a provider-native command without altering its text', async () => {
+  it('keeps native command syntax before resolved structured input and provenance', async () => {
     const runtime = {
       ...createRuntime(),
       isProviderNativeCommand: vi.fn((prompt: string) => prompt.startsWith('/goal')),
@@ -317,6 +317,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
     const result = await runOneStructuredInputPrompt({
       text: '/goal fix authentication',
       localId: 'local-native-with-attachment',
+      inputContextBlock: 'PROVENANCE_MARKER',
       runtime,
       resolveComposerAttachmentForDispatch,
       structuredInput: {
@@ -334,7 +335,10 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
 
     // The provider parses this text with its own command grammar, so the host
     // must not prepend a context block to it...
-    expect(result.runtime.sendTurnPrompt.mock.calls[0]?.[0]).toBe('/goal fix authentication');
+    const nativePrompt = result.runtime.sendTurnPrompt.mock.calls[0]?.[0] ?? '';
+    expect(nativePrompt.startsWith('/goal fix authentication')).toBe(true);
+    expect(nativePrompt).toContain('PROVENANCE_MARKER');
+    expect(nativePrompt).toContain('ATTACHMENT_MARKER');
     // ...but the message was durably accepted with an attachment, so the
     // resolved envelope still has to reach the Agent input contract.
     const meta = result.runtime.sendTurnPrompt.mock.calls[0]?.[1];

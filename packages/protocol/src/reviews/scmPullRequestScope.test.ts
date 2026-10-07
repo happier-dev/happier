@@ -106,9 +106,10 @@ describe('ScmPullRequestReviewScopeV1Schema', () => {
   it('projects the canonical account constraints into the portable JSON Schema', () => {
     const projected = zodSchemaToJsonSchemaObject(ScmPullRequestReviewScopeV1Schema) as Record<string, any>;
 
-    expect(projected.additionalProperties).toBe(false);
-    expect(projected.properties.account.properties.accountId).toMatchObject({ type: 'string' });
-    expect(projected.properties.account.additionalProperties).toBe(false);
+    const accountArm = projected.anyOf.find((arm: { properties: Record<string, unknown> }) => 'account' in arm.properties);
+    expect(accountArm.additionalProperties).toBe(false);
+    expect(accountArm.properties.account.properties.accountId).toMatchObject({ type: 'string' });
+    expect(accountArm.properties.account.additionalProperties).toBe(false);
   });
 });
 
@@ -149,6 +150,20 @@ describe('resolveScmPullRequestReviewScope', () => {
 });
 
 describe('produceScmPullRequestReviewScope', () => {
+  it('produces native service metadata and rejects account or service drift', () => {
+    const nativeService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
+    const authoritative = { nativeService, pullRequest: { number: 42 }, observed: OBSERVED };
+    const expected = { nativeService, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha };
+    expect(produceScmPullRequestReviewScope({ authoritative, expected })).toEqual({
+      status: 'produced', scope: { kind: SCOPE.kind, nativeService, pullRequest: { number: 42 }, observed: OBSERVED },
+    });
+    expect(produceScmPullRequestReviewScope({ authoritative, expected: { account: ACCOUNT, baseSha: OBSERVED.baseSha, headSha: OBSERVED.headSha } }))
+      .toEqual({ status: 'refused', reason: 'accountMismatch' });
+    expect(produceScmPullRequestReviewScope({ authoritative, expected: { ...expected, nativeService: { ...nativeService, localId: 'other' } } }))
+      .toEqual({ status: 'refused', reason: 'accountMismatch' });
+    expect(ScmPullRequestReviewScopeV1Schema.safeParse({ kind: SCOPE.kind, ...authoritative, account: ACCOUNT }).success).toBe(false);
+  });
+
   const authoritative = {
     account: ACCOUNT,
     pullRequest: { number: 42 },

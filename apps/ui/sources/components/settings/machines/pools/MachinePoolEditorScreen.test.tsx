@@ -21,6 +21,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resetMachinePoolSyncRuntimeForTests } from '@/sync/engine/machines/machinePoolSyncRuntime';
 import { FocusReturnProvider } from '@/keyboard/focusReturn';
 import { machinePoolSettingsRowTestId } from '../sections/MachinePoolsSection';
+import { t } from '@/text';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -307,6 +308,14 @@ describe('MachinePoolEditorScreen', () => {
             </NavigationTitleChromeProvider>,
         );
 
+        const headingTexts = () => screen.root.findAll((node) =>
+            typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+        ).map((node) => node.props.children);
+        expect(headingTexts()).not.toContain(t('machinePools.newPoolTitle'));
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Build farm'));
+        expect(headingTexts()).toContain('Build farm');
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', ''));
+
         const published = boundaries.navigation.setOptions.mock.calls
             .map(([options]) => options as { headerRight?: () => React.ReactElement; headerLeft?: () => React.ReactElement })
             .filter((options) => options.headerRight || options.headerLeft);
@@ -519,9 +528,10 @@ describe('MachinePoolEditorScreen', () => {
         expect(boundaries.remove).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
         await act(async () => {
-            await createDefaultActionExecutor().execute('approval.request.decide', {
+            const rejected = await createDefaultActionExecutor().execute('approval.request.decide', {
                 artifactId: rejectedApprovalId, decision: 'reject',
             }, { serverId: boundaries.serverId, surface: 'ui' });
+            expect(rejected).toMatchObject({ ok: true, result: { status: 'rejected' } });
         });
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(false));
         expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Unsaved change');
@@ -1078,9 +1088,21 @@ describe('MachinePoolEditorScreen', () => {
     it('asks for an exact Home when the searchable create route has no Home parameter', async () => {
         boundaries.pools = [];
         await act(async () => publishBoundaryState());
-        const { MachinePoolEditorRoute } = await import('./MachinePoolEditorScreen');
+        const [{ MachinePoolEditorRoute }, { NavigationTitleChromeProvider }] = await Promise.all([
+            import('./MachinePoolEditorScreen'),
+            import('@/components/ui/layout/PageHeader'),
+        ]);
 
-        const screen = await renderScreen(<MachinePoolEditorRoute params={{}} />);
+        const screen = await renderScreen(
+            <NavigationTitleChromeProvider showsTitle>
+                <MachinePoolEditorRoute params={{}} />
+            </NavigationTitleChromeProvider>,
+        );
+
+        const headings = screen.root.findAll((node) =>
+            typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+        ).map((node) => node.props.children);
+        expect(headings).not.toContain(t('machinePools.newPoolTitle'));
 
         expect(screen.findByTestId(`settings.machinePools.home.${boundaries.serverId}`)).not.toBeNull();
         expect(screen.findByTestId('settings.machinePools.editor.name')).toBeNull();

@@ -156,14 +156,6 @@ export async function fetchTodos(
     opts: Readonly<{ retry?: 'default' | 'none'; request?: ServerFetch }> = {},
 ): Promise<TodoState> {
     const context = await resolveTodoAccountStorageContext(credentials, { request: opts.request });
-    // Fetch all KV items with todo prefix
-    const response = await kvList(credentials, {
-        prefix: TODO_PREFIX,
-        limit: 1000,  // Should be enough for todos
-        ...(opts.retry ? { retry: opts.retry } : {}),
-        ...(opts.request ? { request: opts.request } : {}),
-    });
-
     const state: TodoState = {
         todos: {},
         undoneOrder: [],
@@ -171,22 +163,35 @@ export async function fetchTodos(
         versions: {}
     };
 
-    // Process each item
-    for (const item of response.items) {
-        state.versions[item.key] = item.version;
-
-        const content = await decodeTodoStoredContent({
-            key: item.key,
-            encoded: item.value,
-            expectedMode: context.mode,
-            encryption: context.encryption,
+    // The KV server owns a 1,000-row request maximum, not an Account Task cap.
+    const pageSize = 1000;
+    let afterKey: string | undefined;
+    for (;;) {
+        const response = await kvList(credentials, {
+            prefix: TODO_PREFIX,
+            limit: pageSize,
+            ...(afterKey === undefined ? {} : { afterKey }),
+            ...(opts.retry ? { retry: opts.retry } : {}),
+            ...(opts.request ? { request: opts.request } : {}),
         });
-        if (content.kind === 'index') {
-            state.undoneOrder = content.value.undoneOrder;
-            state.doneOrder = content.value.completedOrder;
-        } else {
-            state.todos[content.todoId] = content.value;
+        for (const item of response.items) {
+            state.versions[item.key] = item.version;
+
+            const content = await decodeTodoStoredContent({
+                key: item.key,
+                encoded: item.value,
+                expectedMode: context.mode,
+                encryption: context.encryption,
+            });
+            if (content.kind === 'index') {
+                state.undoneOrder = content.value.undoneOrder;
+                state.doneOrder = content.value.completedOrder;
+            } else {
+                state.todos[content.todoId] = content.value;
+            }
         }
+        if (response.items.length < pageSize) break;
+        afterKey = response.items[response.items.length - 1]!.key;
     }
 
     // Clean up orders - remove IDs that don't exist in todos
@@ -213,22 +218,8 @@ export async function fetchTodos(
  * Initialize todo sync and load initial data
  */
 export async function initializeTodoSync(credentials: AuthCredentials): Promise<void> {
-    try {
-        const todoState = await fetchTodos(credentials);
-        storage.getState().applyTodos(todoState);
-    } catch (error) {
-        if (isTodoStoredContentUnavailableError(error)) {
-            throw error;
-        }
-        console.error('Failed to initialize todo sync:', error);
-        // Initialize with empty state on error
-        storage.getState().applyTodos({
-            todos: {},
-            undoneOrder: [],
-            doneOrder: [],
-            versions: {}
-        });
-    }
+    const todoState = await fetchTodos(credentials);
+    storage.getState().applyTodos(todoState);
 }
 
 //

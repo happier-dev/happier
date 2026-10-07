@@ -48,6 +48,8 @@ export type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
 
 export type AgentExternalSessionTakeoverResolveLaunchRequest =
     AgentExternalSessionsInvocationBounds & Readonly<{
+        deadlineAtMs: number;
+        maxSerializedBytes: number;
         linkedSessionId: string;
         source: AgentExternalSessionSource;
         remoteSessionId: string;
@@ -134,7 +136,7 @@ function safeInteger(value: unknown, minimum: number, label: string): number {
 
 function snapshotInvocation(
     record: Readonly<Record<string, unknown>>,
-): AgentExternalSessionsInvocationBounds {
+) {
     if (!(record.signal instanceof AbortSignal)) {
         return invalid('resolveLaunch request signal', 'must be an AbortSignal');
     }

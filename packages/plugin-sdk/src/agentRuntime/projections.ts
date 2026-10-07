@@ -278,6 +278,7 @@ export type {
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
   AgentConnectedAccountStateSharingDescriptorV1,
+  AgentPreflightExecutableSelectorV1,
   AgentPreflightJsonRpcRequestClientV1,
   AgentPreflightSessionControlsCommandResultV1,
   AgentPreflightSessionControlsCommandV1,

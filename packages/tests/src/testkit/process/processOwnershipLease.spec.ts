@@ -7,14 +7,63 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     resolveProcessOwnershipLeasesDir,
     sweepProcessOwnershipLeases,
+    writeProcessOwnershipLease,
 } from './processOwnershipLease';
 
 afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
 });
 
 describe('process ownership leases', () => {
+    it('isolates lease writes and stale-process sweeps beneath the configured scratch root', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-owned-process-isolation-'));
+        try {
+            const defaultLeaseDir = join(rootDir, '.project', 'tmp', 'generic-worker-processes');
+            await mkdir(defaultLeaseDir, { recursive: true });
+            const existingMarker = join(defaultLeaseDir, 'pid-8123.json');
+            const marker = JSON.stringify({
+                childPid: 8123, childStartTime: 'child-start', ownerPid: 9001,
+                ownerStartTime: 'owner-start', createdAtMs: 123,
+            });
+            await writeFile(existingMarker, marker);
+            const scratchLeaseRoot = join(rootDir, 'isolated-leases');
+            vi.stubEnv('HAPPIER_E2E_PROCESS_LEASES_DIR', ` ${scratchLeaseRoot} `);
+
+            // OS process inspection/termination are genuine boundaries; the lease selection and sweep stay real.
+            const terminate = vi.fn(async () => {});
+            await sweepProcessOwnershipLeases({
+                rootDir, leaseKind: 'generic-worker', currentOwnerPid: 1337,
+                currentOwnerStartTime: 'current-start',
+                inspectProcess: (pid) => pid === 8123
+                    ? { ok: true, command: 'generic-worker', startTime: 'child-start' }
+                    : { ok: false, reason: 'not_found' },
+                terminateProcessTreeByPid: terminate,
+                isOwnedProcessCommand: (command) => command === 'generic-worker',
+            });
+            expect(terminate).not.toHaveBeenCalled();
+            expect(await readFile(existingMarker, 'utf8')).toBe(marker);
+            const isolatedMarker = await writeProcessOwnershipLease({
+                rootDir, leaseKind: 'generic-worker', childPid: 8124, childStartTime: 'child-start',
+                ownerPid: 1337, ownerStartTime: 'current-start',
+            });
+            expect(isolatedMarker).toBe(join(scratchLeaseRoot, 'generic-worker-processes', 'pid-8124.json'));
+            expect(JSON.parse(await readFile(isolatedMarker, 'utf8'))).toMatchObject({ childPid: 8124, ownerPid: 1337 });
+        } finally {
+            await rm(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves the explicit repository-root default when the scratch override is absent or blank', () => {
+        vi.stubEnv('HAPPIER_E2E_PROCESS_LEASES_DIR', undefined);
+        const rootDir = tmpdir();
+        const expected = join(rootDir, '.project', 'tmp', 'generic-worker-processes');
+        expect(resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'generic-worker' })).toBe(expected);
+        vi.stubEnv('HAPPIER_E2E_PROCESS_LEASES_DIR', '   ');
+        expect(resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'generic-worker' })).toBe(expected);
+    });
+
     it('reclaims a stale owned process lease when the owner is gone and the child start time still matches', async () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-owned-process-lease-'));
         try {

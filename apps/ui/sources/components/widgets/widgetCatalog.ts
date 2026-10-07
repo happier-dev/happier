@@ -2,7 +2,7 @@ import type { ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1,
 import { WidgetConnectedAccountPurposeBindingV1Schema, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
 import { buildQualifiedPluginContributionKey, PluginJsonSchemaV2Schema, PluginContributionIdentityV1Schema } from '@happier-dev/protocol';
 import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev/protocol/inputs';
-import { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, type WidgetDefinitionV1, type WidgetDefinitionRefV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, type BuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetDefinitionRefV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { t } from '@/text';
 
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -38,6 +38,8 @@ export type WidgetCandidate = WidgetCandidateIdentityV1 & Readonly<{
     key: string;
     /** The contribution's own localized title. */
     title: string;
+    /** Purpose/scope copy for Gallery and setup, separate from provenance. */
+    description?: string;
     /** The installed plugin's display name. */
     pluginName: string;
     /** True when another installed plugin presents the same display name. */
@@ -100,8 +102,19 @@ export function selectWidgetCandidates(
 }
 
 export function selectBuiltinWidgetCandidates(): readonly WidgetCandidate[] {
-    return BUILTIN_WIDGET_DESCRIPTORS_V1.map(descriptor => Object.freeze({ ...descriptor, title: t(descriptor.titleKey),
-        pluginName: t('widgetAdd.builtIn'), sharedPluginName: false }));
+    return BUILTIN_WIDGET_DESCRIPTORS_V1.map(describeBuiltinWidgetCandidate);
+}
+
+function describeBuiltinWidgetCandidate(descriptor: BuiltinWidgetDescriptorV1): WidgetCandidate {
+    return Object.freeze({ ...descriptor, title: t(descriptor.titleKey),
+        description: t(`widgetAdd.nativeDescriptions.${descriptor.definition.id}`),
+        pluginName: t('widgetAdd.builtIn'), sharedPluginName: false });
+}
+
+/** All Gallery/setup surfaces share descriptive copy; provenance remains available for About. */
+export function describeWidgetCandidatePurpose(candidate: WidgetCandidate): string {
+    return candidate.description ?? (candidate.sharedPluginName && candidate.surface
+        ? `${candidate.pluginName} (${candidate.surface.pluginId})` : candidate.pluginName);
 }
 
 /** Retained declaration metadata is not admission to execute or create an instance. */
@@ -112,7 +125,7 @@ export function readWidgetDescriptor(
     if ('kind' in identity) {
         if (identity.kind === 'builtin') {
             const descriptor = readBuiltinWidgetDescriptorV1(identity);
-            return descriptor ? { ...descriptor, title: t(descriptor.titleKey), pluginName: t('widgetAdd.builtIn'), sharedPluginName: false } : null;
+            return descriptor ? describeBuiltinWidgetCandidate(descriptor) : null;
         }
         if (identity.kind !== 'installed') return null;
         return readWidgetDescriptor(projection, identity.surface);

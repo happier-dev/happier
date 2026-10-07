@@ -106,6 +106,7 @@ export type WalkthroughReading = Readonly<{
         changeCount: number;
         added: number;
         removed: number;
+        linesKnown: boolean;
         unavailableCount: number;
         inventoryState: ScmComparison['inventory']['state'];
     }>;
@@ -122,6 +123,13 @@ export type WalkthroughReading = Readonly<{
     explainNotesByHunk: ReadonlyMap<string, readonly (readonly WalkthroughExplainNote[])[]>;
     /** The overview strip's miniatures; above {@link CODE_MAP_FOLDER_THRESHOLD} files they group by folder. */
     codeMap: readonly WalkthroughCodeMapFile[];
+}>;
+
+export type WalkthroughReadingProgress = Readonly<{
+    phase: WalkthroughPhase;
+    title: string | null;
+    stops: readonly Pick<WalkthroughStop, 'id' | 'title' | 'changeRefs' | 'reviewed'>[];
+    reviewedCount: number;
 }>;
 
 /** Past this many files a miniature per file stops being readable (lab WT1-A3: group by folder). */
@@ -170,6 +178,17 @@ function fileDiffHeader(file: ScmComparisonFile): string {
     ].join('\n');
 }
 
+/** The same complete-patch boundary for a whole file and a still-usable subset of its hunks. */
+function completeFilePatch(file: ScmComparisonFile, hunks: readonly string[]): string | null {
+    const patch = [fileDiffHeader(file), ...hunks].join('\n') + '\n';
+    try {
+        const parsed = parsePatch(patch);
+        return parsed.length === 1 && parsed[0]!.hunks.length === hunks.length ? patch : null;
+    } catch {
+        return null;
+    }
+}
+
 function resolvePhase(walkthrough: WalkthroughReadingInput['walkthrough']): WalkthroughPhase {
     if (!walkthrough) return 'none';
     switch (walkthrough.state) {
@@ -182,20 +201,51 @@ function resolvePhase(walkthrough: WalkthroughReadingInput['walkthrough']): Walk
     }
 }
 
+/** Shared reading progress; Board consumes it without parsing captured code or building reading-view detail. */
+export function buildWalkthroughReadingProgress(input: Readonly<{
+    comparison: Pick<ScmComparison, 'id'>;
+    walkthrough: WalkthroughReadingInput['walkthrough'];
+    reviewed: WalkthroughReadingInput['reviewed'];
+}>): WalkthroughReadingProgress {
+    const value = input.walkthrough?.value ?? null;
+    const stops = (value?.stops ?? []).map((stop) => ({
+        id: stop.id,
+        title: stop.title,
+        changeRefs: stop.changeRefs,
+        reviewed: isScmSelectionReviewed(input.reviewed, input.comparison.id, stop.changeRefs),
+    }));
+    return {
+        phase: resolvePhase(input.walkthrough),
+        title: value?.title ?? null,
+        stops,
+        reviewedCount: stops.filter((stop) => stop.reviewed).length,
+    };
+}
+
 export function buildWalkthroughReading(input: WalkthroughReadingInput): WalkthroughReading {
     const { comparison } = input;
+    const progress = buildWalkthroughReadingProgress(input);
     const { located, hunksByPath } = locateComparisonOccurrences(comparison);
     let added = 0;
     let removed = 0;
     let unavailableCount = 0;
+    const evidenceByPath = new Map<string, Readonly<{ declaredAvailable: boolean; unavailableReason: string | null }>>();
     const changeCount = located.size;
     for (const file of comparison.inventory.files) {
-        for (const hunk of hunksByPath.get(file.path) ?? []) {
+        const hunks = hunksByPath.get(file.path) ?? [];
+        const evidence = file.evidence;
+        const unavailableReason = evidence.state === 'unavailable' ? evidence.reason : null;
+        const declaredAvailable = unavailableReason === null;
+        const textualCount = file.occurrences.filter((occurrence) => !isMetadataOccurrence(occurrence)).length;
+        const fullReason = declaredAvailable && (textualCount > hunks.length
+            || (hunks.length > 0 && completeFilePatch(file, hunks) === null)) ? 'invalid_diff' : unavailableReason;
+        evidenceByPath.set(file.path, { declaredAvailable, unavailableReason: fullReason });
+        for (const hunk of hunks) {
             const lines = countHunkLines(hunk);
             added += lines.added;
             removed += lines.removed;
         }
-        if (file.evidence.state === 'unavailable') unavailableCount += 1;
+        if (fullReason !== null) unavailableCount += 1;
     }
 
     const value = input.walkthrough?.value ?? null;
@@ -230,19 +280,17 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
             const numbers = stopNumbersByPath.get(file.path) ?? [];
             if (!numbers.includes(number)) stopNumbersByPath.set(file.path, [...numbers, number]);
             let unifiedDiff = '';
-            let unavailableReason = file.evidence.state === 'unavailable' ? file.evidence.reason : null;
-            if (file.evidence.state === 'available' && selected.length > 0) {
-                const patch = [fileDiffHeader(file), ...selected].join('\n') + '\n';
-                try {
-                    // A partial hunk is not usable evidence. Validate the selected patch before
-                    // a renderer can log malformed rows or silently produce an empty card.
-                    const parsed = parsePatch(patch);
-                    if (parsed.length === 1 && parsed[0]!.hunks.length === selected.length) unifiedDiff = patch;
-                    else unavailableReason = 'invalid_diff';
-                } catch {
-                    unavailableReason = 'invalid_diff';
-                }
-            } else if (file.evidence.state === 'available' && entries.some((entry) => !isMetadataOccurrence(entry.occurrence))) {
+            const evidence = evidenceByPath.get(file.path)!;
+            let unavailableReason = evidence.unavailableReason;
+            if (evidence.declaredAvailable && selected.length > 0) {
+                // Fully valid files need no repeated parsing per stop. If another hunk is
+                // malformed, retain this complete selected subset rather than hide useful code.
+                const patch = evidence.unavailableReason === null
+                    ? [fileDiffHeader(file), ...selected].join('\n') + '\n'
+                    : completeFilePatch(file, selected);
+                if (patch !== null) { unifiedDiff = patch; unavailableReason = null; }
+                else unavailableReason = 'invalid_diff';
+            } else if (evidence.declaredAvailable && entries.some((entry) => !isMetadataOccurrence(entry.occurrence))) {
                 unavailableReason = 'invalid_diff';
             }
             return {
@@ -257,16 +305,13 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
             };
         });
         return {
-            id: stop.id,
+            ...progress.stops[index]!,
             number,
-            title: stop.title,
             explanationMarkdown: stop.explanationMarkdown,
             reviewExplanations: stop.reviewExplanations,
             importance: stop.importance ?? null,
-            changeRefs: stop.changeRefs,
             files,
             fileCue: files.map((file) => fileName(file.path)).join(' · '),
-            reviewed: isScmSelectionReviewed(input.reviewed, comparison.id, stop.changeRefs),
             ...(provenanceById.has(stop.id) ? { provenance: provenanceById.get(stop.id) } : {}),
         };
     });
@@ -306,7 +351,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
             lockfile: file.lockfile,
             generated: file.generated,
             binary: file.binary,
-            unavailableReason: file.evidence.state === 'unavailable' ? file.evidence.reason : null,
+            unavailableReason: evidenceByPath.get(file.path)!.unavailableReason,
         };
     });
 
@@ -317,7 +362,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
         ...fileLines(file),
         lockfile: file.lockfile,
         generated: file.generated,
-        reading: file.evidence.state === 'unavailable'
+        reading: evidenceByPath.get(file.path)!.unavailableReason !== null
             ? 'unavailable'
             : file.occurrences.every((occurrence) => analysed.has(occurrence.id)) ? 'read' : 'reading',
     }));
@@ -351,8 +396,8 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
 
     return {
         codeMap,
-        phase: resolvePhase(input.walkthrough),
-        title: value?.title ?? null,
+        phase: progress.phase,
+        title: progress.title,
         ...(input.provenance ? { titleEdited: input.provenance.titleEdited } : {}),
         intro: value?.intro && value.intro.trim().length > 0 ? value.intro : null,
         readingHint: value?.readingHint ?? null,
@@ -362,13 +407,14 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
             changeCount,
             added,
             removed,
+            linesKnown: comparison.inventory.state === 'complete' && unavailableCount === 0,
             unavailableCount,
             inventoryState: comparison.inventory.state,
         },
         analysis: input.analysis ? { analysed: input.analysis.analysedChangeRefs.length, total: changeCount,
             ...(input.analysis.parts ? { parts: input.analysis.parts } : {}) } : null,
         stops,
-        reviewedCount: stops.filter((stop) => stop.reviewed).length,
+        reviewedCount: progress.reviewedCount,
         others,
         inventory,
         stopNumbersByPath,
@@ -384,7 +430,7 @@ export const EMPTY_WALKTHROUGH_READING: WalkthroughReading = {
     intro: null,
     readingHint: null,
     failureReason: null,
-    source: { fileCount: 0, changeCount: 0, added: 0, removed: 0, unavailableCount: 0, inventoryState: 'complete' },
+    source: { fileCount: 0, changeCount: 0, added: 0, removed: 0, linesKnown: true, unavailableCount: 0, inventoryState: 'complete' },
     analysis: null,
     stops: [],
     reviewedCount: 0,

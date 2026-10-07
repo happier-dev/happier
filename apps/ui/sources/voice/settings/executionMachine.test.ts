@@ -104,6 +104,29 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('sticky');
   });
 
+  it('does not traverse unrelated voice settings while selecting a canonical automatic target', () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(settingsScope, 'sticky');
+    let dictationReads = 0;
+    const state = {
+      settingsScope,
+      machines: { sticky: machine('sticky', true) },
+      settings: {
+        voice: {
+          executionMachine: { mode: 'auto', machineId: null },
+          // Instrument the real settings input: machine selection must be independent
+          // of provider/dictation normalization on every machine-activity update.
+          get dictation() {
+            dictationReads += 1;
+            return {};
+          },
+        },
+      },
+    };
+
+    expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('sticky');
+    expect(dictationReads).toBe(0);
+  });
+
   it('follows a replacement only when the canonical daemon is active', () => {
     const state = {
       machines: {

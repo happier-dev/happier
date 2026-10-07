@@ -174,9 +174,18 @@ export const WorkflowStepSelectionV1Schema = WorkflowStepExecutionSelectionSchem
 });
 export type WorkflowStepSelectionV1 = z.infer<typeof WorkflowStepSelectionV1Schema>;
 
+/** An authored block title; blank input restores the derived presentation label. */
+export const WorkflowBlockNameV1Schema = z.string().trim().transform((name) => name || undefined).optional();
+
+function omitEmptyWorkflowBlockName<T extends { name?: string }>(block: T): T {
+  if (block.name === undefined) delete block.name;
+  return block;
+}
+
 export const WorkflowStepSchema = z.object({
   kind: z.literal('step'),
   id: WorkflowBlockIdSchema,
+  name: WorkflowBlockNameV1Schema,
   document: WorkflowStepComposerDocumentSchema,
   execution: WorkflowStepSelectionV1Schema.optional(),
   input: z.array(WorkflowValueReferenceSchema).default([]),
@@ -184,7 +193,7 @@ export const WorkflowStepSchema = z.object({
   timeoutMs: z.number().int().positive().safe().optional(),
   pauseForReview: z.boolean().optional(),
   onlyWhen: WorkflowConditionSchema.optional(),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
 
 export const WorkflowAgentLeafV1Schema = WorkflowStepSchema;
@@ -199,24 +208,24 @@ export const WorkflowActionFieldBindingV1Schema = z.union([
   z.object({ kind: z.literal('list'), items: z.array(WorkflowActionValueReferenceV1Schema) }).strict(),
 ]);
 export type WorkflowActionFieldBindingV1 = z.infer<typeof WorkflowActionFieldBindingV1Schema>;
-const workflowLeafFields = { id: WorkflowBlockIdSchema, execution: WorkflowStepSelectionV1Schema.optional(), onlyWhen: WorkflowConditionSchema.optional() };
+const workflowLeafFields = { id: WorkflowBlockIdSchema, name: WorkflowBlockNameV1Schema, execution: WorkflowStepSelectionV1Schema.optional(), onlyWhen: WorkflowConditionSchema.optional() };
 export const WorkflowActionLeafV1Schema = z.object({
   ...workflowLeafFields, kind: z.literal('action'),
   actionId: z.string().min(1).refine((id) => !id.startsWith('workflow.run.'), 'Workflow composition uses a Workflow leaf'),
   input: z.record(z.string().min(1), WorkflowActionFieldBindingV1Schema).default({}),
   timeoutMs: z.number().int().positive().safe().optional(),
   pauseForReview: z.boolean().optional(),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export type WorkflowActionLeafV1 = z.infer<typeof WorkflowActionLeafV1Schema>;
 export const WorkflowNestedLeafV1Schema = z.object({
   ...workflowLeafFields, kind: z.literal('workflow'), workflowRef: WorkflowDefinitionRefV1StringSchema,
   input: z.record(WorkflowInputNameSchema, WorkflowValueReferenceSchema).default({}),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export type WorkflowNestedLeafV1 = z.infer<typeof WorkflowNestedLeafV1Schema>;
 export const WorkflowWaitLeafV1Schema = z.object({
   ...workflowLeafFields, kind: z.literal('wait'), document: WorkflowStepComposerDocumentSchema,
   result: WorkflowResultContractSchema.optional(),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export type WorkflowWaitLeafV1 = z.infer<typeof WorkflowWaitLeafV1Schema>;
 export const WorkflowLeafV1Schema = z.discriminatedUnion('kind', [WorkflowAgentLeafV1Schema, WorkflowActionLeafV1Schema, WorkflowNestedLeafV1Schema, WorkflowWaitLeafV1Schema]);
 export type WorkflowLeafV1 = z.infer<typeof WorkflowLeafV1Schema>;
@@ -262,6 +271,7 @@ export type WorkflowBlock =
   | Readonly<{
     kind: 'parallel';
     id: string;
+    name?: string;
     branches: readonly WorkflowParallelBranch[];
     failurePolicy: WorkflowFailurePolicy;
     maxConcurrent?: number;
@@ -270,6 +280,7 @@ export type WorkflowBlock =
   | Readonly<{
     kind: 'loop';
     id: string;
+    name?: string;
     body: readonly WorkflowBlock[];
     repetition: WorkflowRepetition;
     onlyWhen?: WorkflowCondition;
@@ -277,6 +288,7 @@ export type WorkflowBlock =
   | Readonly<{
     kind: 'if';
     id: string;
+    name?: string;
     when: WorkflowCondition;
     then: readonly WorkflowBlock[];
     otherwise: readonly WorkflowBlock[];
@@ -330,19 +342,22 @@ export type WorkflowInsertBlockV1 =
 // Canonical non-recursive fields, also used by insertion's optional-id dialect.
 export const WorkflowParallelBlockFieldsSchema = z.object({
   kind: z.literal('parallel'), id: WorkflowBlockIdSchema,
+  name: WorkflowBlockNameV1Schema,
   failurePolicy: z.enum(WORKFLOW_FAILURE_POLICIES),
   maxConcurrent: z.number().int().positive().safe().optional(),
   onlyWhen: WorkflowConditionSchema.optional(),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export const WorkflowLoopBlockFieldsSchema = z.object({
   kind: z.literal('loop'), id: WorkflowBlockIdSchema,
+  name: WorkflowBlockNameV1Schema,
   repetition: WorkflowRepetitionSchema,
   onlyWhen: WorkflowConditionSchema.optional(),
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 export const WorkflowIfBlockFieldsSchema = z.object({
   kind: z.literal('if'), id: WorkflowBlockIdSchema,
+  name: WorkflowBlockNameV1Schema,
   when: WorkflowConditionSchema,
-}).strict();
+}).strict().overwrite(omitEmptyWorkflowBlockName);
 
 const WorkflowParallelBranchFieldsSchema = z.object({ id: WorkflowBlockIdSchema }).strict();
 function isBlockRecord(value: unknown): value is Record<string, unknown> {
@@ -360,20 +375,26 @@ function workflowChildLists(value: unknown): { blocks: unknown[]; path: (string 
   return keys.flatMap((key) => Array.isArray(value[key]) ? [{ blocks: value[key], path: [key] }] : []);
 }
 
+function workflowFieldsWithOptionalId<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  // Rebuild the same strict field shape before changing id: Zod's partial()
+  // rejects object overwrite checks. The variant retains the canonical fields.
+  return z.object(schema.shape).strict().extend({ id: WorkflowBlockIdSchema.optional() });
+}
+
 /** One structural engine for canonical parsing, ingress and normalization. */
 function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInsertBlockV1>(dialect: 'canonical' | 'ingress' | 'insert' | 'stored'): z.ZodType<T> {
   const allowShorthand = dialect === 'ingress';
   const optionalIds = dialect === 'insert';
-  const step = optionalIds ? WorkflowStepSchema.partial({ id: true }) : WorkflowStepSchema;
-  const action = optionalIds ? WorkflowActionLeafV1Schema.partial({ id: true }) : WorkflowActionLeafV1Schema;
-  const workflow = optionalIds ? WorkflowNestedLeafV1Schema.partial({ id: true }) : WorkflowNestedLeafV1Schema;
-  const wait = optionalIds ? WorkflowWaitLeafV1Schema.partial({ id: true }) : WorkflowWaitLeafV1Schema;
-  const parallel = optionalIds ? WorkflowParallelBlockFieldsSchema.partial({ id: true }) : WorkflowParallelBlockFieldsSchema;
+  const step = optionalIds ? workflowFieldsWithOptionalId(WorkflowStepSchema).overwrite(omitEmptyWorkflowBlockName) : WorkflowStepSchema;
+  const action = optionalIds ? workflowFieldsWithOptionalId(WorkflowActionLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowActionLeafV1Schema;
+  const workflow = optionalIds ? workflowFieldsWithOptionalId(WorkflowNestedLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowNestedLeafV1Schema;
+  const wait = optionalIds ? workflowFieldsWithOptionalId(WorkflowWaitLeafV1Schema).overwrite(omitEmptyWorkflowBlockName) : WorkflowWaitLeafV1Schema;
+  const parallel = optionalIds ? workflowFieldsWithOptionalId(WorkflowParallelBlockFieldsSchema).overwrite(omitEmptyWorkflowBlockName) : WorkflowParallelBlockFieldsSchema;
   const branch = optionalIds ? WorkflowParallelBranchFieldsSchema.partial({ id: true }) : WorkflowParallelBranchFieldsSchema;
-  const loop = optionalIds ? WorkflowLoopBlockFieldsSchema.partial({ id: true }).extend({
+  const loop = optionalIds ? workflowFieldsWithOptionalId(WorkflowLoopBlockFieldsSchema).extend({
     repetition: createWorkflowRepetitionSchema(z.discriminatedUnion('kind', [step, action])),
-  }) : WorkflowLoopBlockFieldsSchema;
-  const conditional = optionalIds ? WorkflowIfBlockFieldsSchema.partial({ id: true }) : WorkflowIfBlockFieldsSchema;
+  }).overwrite(omitEmptyWorkflowBlockName) : WorkflowLoopBlockFieldsSchema;
+  const conditional = optionalIds ? workflowFieldsWithOptionalId(WorkflowIfBlockFieldsSchema).overwrite(omitEmptyWorkflowBlockName) : WorkflowIfBlockFieldsSchema;
   const canonicalShallow = z.discriminatedUnion('kind', [step, action, workflow, wait,
     parallel.extend({ branches: z.array(branch.extend({ blocks: z.array(z.unknown()).min(1) })).min(1) }),
     loop.extend({ body: z.array(z.unknown()).min(1) }),

@@ -19,6 +19,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import {
   describeTriageSourceFailureV1 as failureDescription,
+  isTriageSourceConnectedAccountInstanceV1,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
@@ -388,7 +389,8 @@ function reviewPublicationBanner(
 function bitbucketReviewPublicationTarget(
   input: TriageDetailSurfaceInputV1,
   subtarget: ReviewCommentPublicationPlanV1['target']['subtarget'],
-): ReviewCommentPublicationPlanV1['target'] {
+): ReviewCommentPublicationPlanV1['target'] | null {
+  if (!isTriageSourceConnectedAccountInstanceV1(input.instance)) return null;
   return {
     providerId: 'bitbucket',
     configuredAccountId: input.instance.binding.account.accountId,
@@ -435,17 +437,18 @@ function BitbucketReviewPublicationControls({
     body: proposal.body,
   }]);
   const trimmedSummary = summary.trim();
-  const plan: ReviewCommentPublicationPlanV1 | null = revision === undefined || trimmedSummary === ''
+  const target = bitbucketReviewPublicationTarget(input, null);
+  const plan: ReviewCommentPublicationPlanV1 | null = target === null || revision === undefined || trimmedSummary === ''
     ? null
     : {
-      target: bitbucketReviewPublicationTarget(input, null),
+      target,
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
       entries,
       verdict: { kind: verdict, body: trimmedSummary },
     };
-  const single = revision === undefined || entries.length !== 1 ? null : {
-    target: bitbucketReviewPublicationTarget(input, null),
+  const single = target === null || revision === undefined || entries.length !== 1 ? null : {
+    target,
     baseRevision: revision.baseSha,
     headRevision: revision.headSha,
     entries,
@@ -536,13 +539,14 @@ export function BitbucketReviewCommentReplyControls({
     snapshot: proposal.snapshot,
     body: proposal.body,
   };
-  const plan: ReviewCommentPublicationPlanV1 | null = entry === null || parentCommentId === null
+  const target = parentCommentId === null ? null : bitbucketReviewPublicationTarget(input, {
+    kindId: 'review-comment',
+    targetId: parentCommentId,
+  });
+  const plan: ReviewCommentPublicationPlanV1 | null = target === null || entry === null || parentCommentId === null
     ? null
     : {
-      target: bitbucketReviewPublicationTarget(input, {
-        kindId: 'review-comment',
-        targetId: parentCommentId,
-      }),
+      target,
       baseRevision: null,
       headRevision: null,
       entries: [entry],

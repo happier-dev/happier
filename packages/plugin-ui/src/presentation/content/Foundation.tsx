@@ -195,8 +195,13 @@ export function HappierProgress(props: Readonly<{
   style?: HappierStyleProp;
   pointerEvents?: 'auto' | 'box-none' | 'box-only' | 'none';
   renderFill?: (percentage: number) => ReactNode;
-  /** Capacity visuals have no progress announcement; their enclosing row supplies meaning. */
-  semantics?: 'progress' | 'none';
+  /**
+   * Capacity visuals have no progress announcement; their enclosing row supplies meaning. A stack of
+   * shares (`segments`) is one picture named by `label`, never a progress value.
+   */
+  semantics?: 'progress' | 'none' | 'image';
+  /** Shares of one whole (0–1 each), drawn left to right on the one track; `value` is not drawn. */
+  segments?: readonly Readonly<{ value: number; color: string }>[];
   height?: number;
   fillColor?: string;
   trackColor?: string;
@@ -220,7 +225,11 @@ export function HappierProgress(props: Readonly<{
   };
   return (
     <View
-      {...(props.semantics === 'none' ? {} : {
+      {...(props.semantics === 'none' ? {} : props.semantics === 'image' ? {
+        role: 'img' as const,
+        'aria-label': props.label,
+        accessibilityLabel: props.label,
+      } : {
         role: 'progressbar' as const,
         accessibilityRole: 'progressbar' as const,
         'aria-label': props.label,
@@ -239,7 +248,14 @@ export function HappierProgress(props: Readonly<{
           backgroundColor: props.trackColor ?? props.theme.colors.controlDisabled,
         }, props.style, webPointerEventsStyle]}
     >
-      {props.renderFill ? props.renderFill(percentage) : <View testID={props.fillTestID} style={fillStyle} />}
+      {props.segments !== undefined
+        ? <View style={{ flexDirection: 'row', height: '100%' }}>
+          {props.segments.map((segment, index) => (
+            <View key={index} testID={props.testID === undefined ? undefined : `${props.testID}-segment-${index}`}
+              style={{ height: '100%', width: `${resolveHappierProgressPercentage(segment.value, { indeterminate: 0 })}%`, backgroundColor: segment.color }} />
+          ))}
+        </View>
+        : props.renderFill ? props.renderFill(percentage) : <View testID={props.fillTestID} style={fillStyle} />}
     </View>
   );
 }

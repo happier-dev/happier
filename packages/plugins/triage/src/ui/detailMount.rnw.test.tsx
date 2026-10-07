@@ -669,6 +669,7 @@ function createHarness(options: Readonly<{
         publishNewerObservation(): void {
             observationRevision.current += 1;
         },
+
         blockNextDetailRead(entryId?: string): () => void {
             let release!: () => void;
             const promise = new Promise<void>((resolve) => { release = resolve; });
@@ -870,7 +871,8 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
         await expect(shell.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.findByRole('button', { name: 'Retry: Fix pull request' })); });
-        await expect(shell.getByText('Unprojected fix')).resolves.toBeDefined();
+        // The retried read lands as the fix step, named after the pull request.
+        expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Unprojected fix');
     });
     it('lets an agent switch the mounted Collection to Board through the UI owner', async () => {
         let published: PluginUiContextEnrichmentV1 | null = null;
@@ -922,6 +924,8 @@ describe('opening a row into the source detail', () => {
         await act(async () => { expect(await invoke('peekRow')).toEqual({ status: 'applied' }); });
         await act(async () => { expect(await invoke('peekRow')).toEqual({ status: 'applied' }); });
         await expect(shell.getByRole('button', { name: 'Open' })).resolves.toBeDefined();
+        // The peek reaches the entry where it lives, as the detail header does, without opening the detail.
+        await expect(shell.getByRole('button', { name: 'Open at the source' })).resolves.toBeDefined();
         expect(queryDetailBodyNode()).toBeNull();
         await act(async () => { expect(await invoke('peekRow', { expanded: false })).toEqual({ status: 'applied' }); });
         await expect(shell.queryByRole('button', { name: 'Open' })).resolves.toBeUndefined();
@@ -1126,6 +1130,28 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText(OTHER_DETAIL_BODY_TEXT)).resolves.toBeUndefined();
     });
 
+    it('keeps the linked-Session pages the reader loaded when the same entry rereads after a real refresh', async () => {
+        const shell = await mountShell({ linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 });
+        await openTheRow(shell);
+        await act(async () => {
+            pressDetailButton('Load more');
+        });
+        await expect(shell.getByRole('button', { name: 'Linked Session 201' })).resolves.toBeDefined();
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+
+        harness.publishNewerObservation();
+        await act(async () => {
+            await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+        });
+        for (let turn = 0; turn < 4; turn += 1) await act(async () => { await Promise.resolve(); });
+
+        // The entry was re-read, so its first page is current again; the page the reader loaded after it is
+        // still theirs, and still continues where it left off.
+        await expect(shell.getByRole('button', { name: 'Linked Session 201' })).resolves.toBeDefined();
+        expect(queryDetailButton('Load more')).toBeUndefined();
+    });
+
     it('keeps the ready source detail mounted while the same entry rereads', async () => {
         const shell = await mountShell();
         await openTheRow(shell);
@@ -1299,7 +1325,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         // Source, kind, scope, state and observing connection are composed in
         // one context line, not five independently labelled header fields.
-        await expect(shell.getByText('Example forge · Pull request · example/repository · Open · via Example account'))
+        await expect(shell.getByText('Example forge · example/repository · Open · via Example account'))
             .resolves.toBeDefined();
     });
 
@@ -1524,13 +1550,13 @@ describe('opening a row into the source detail', () => {
         // This page can name the launched connection from configured-source
         // facts, but it must not hand the first connection's observation to
         // the second connection's detail renderer.
-        await expect(shell.getByText('Example forge · Pull request · example/repository · Open · via Second account'))
+        await expect(shell.getByText('Example forge · example/repository · Open · via Second account'))
             .resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         expect(harness.readDetailInstanceIds).toEqual([]);
         // The header and refusal both stay on the launched connection; neither
         // silently falls through to the window's qualified account.
-        await expect(shell.queryByText('Example forge · Pull request · example/repository · Open · via Example account'))
+        await expect(shell.queryByText('Example forge · example/repository · Open · via Example account'))
             .resolves.toBeUndefined();
     });
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -144,27 +144,19 @@ describe('discoverLocalServiceRunTargets', () => {
         await expect(discoverLocalServiceRunTargets({ roots: [root] })).resolves.toHaveLength(1);
     });
 
-    it('honors the directory traversal budget to keep discovery bounded', async () => {
+    it('discovers scripts beyond the former directory cutoff and in subsequent roots', async () => {
         const root = await makeRepo();
-        await mkdir(join(root, 'apps', 'web'), { recursive: true });
-        await writeJson(join(root, 'package.json'), {
-            name: 'repo-root',
-            scripts: {
-                dev: 'vite',
-            },
-        });
-        await writeJson(join(root, 'apps', 'web', 'package.json'), {
-            name: 'web',
-            scripts: {
-                dev: 'vite --host 127.0.0.1',
-            },
-        });
-
-        const targets = await discoverLocalServiceRunTargets({
-            roots: [root],
-            maxVisitedDirectories: 1,
-        });
-
-        expect(targets.map((target) => target.id)).toEqual(['repo-root:dev']);
+        const secondRoot = await makeRepo();
+        try {
+            for (let index = 0; index < 5_001; index += 1) {
+                await mkdir(join(root, `folder-${String(index).padStart(5, '0')}`));
+            }
+            await writeJson(join(root, 'folder-05000', 'package.json'), { name: 'late', scripts: { dev: 'vite' } });
+            await writeJson(join(secondRoot, 'package.json'), { name: 'second', scripts: { dev: 'vite' } });
+            const targets = await discoverLocalServiceRunTargets({ roots: [root, secondRoot] });
+            expect(targets.map((target) => target.id)).toEqual(['late:dev', 'second:dev']);
+        } finally {
+            await Promise.all([root, secondRoot].map((directory) => rm(directory, { recursive: true, force: true })));
+        }
     });
 });

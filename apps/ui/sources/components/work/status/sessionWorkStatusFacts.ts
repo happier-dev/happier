@@ -35,7 +35,7 @@ export function readSessionWorkStatusFacts(
     session: Parameters<typeof getSessionStatus>[0] & SessionReportCounts,
     nowMs: number,
 ): SessionWorkStatusFacts {
-    return sessionWorkStatusFactsFromStatus(session, getSessionStatus(session, nowMs, { workingTextMode: 'static' }));
+    return sessionWorkStatusFactsFromStatus(session, getSessionStatus(session, nowMs, { workingTextMode: 'static', includeTitle: false }));
 }
 
 /**

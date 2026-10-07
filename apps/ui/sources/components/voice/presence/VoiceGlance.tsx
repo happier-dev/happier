@@ -22,7 +22,7 @@ import { VoiceNeedsYouPrompts } from './VoiceNeedsYouPrompts';
 import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
 import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNotePresentation';
 import { VoiceStatusCell } from './VoiceStatusCell';
-import { formatVoiceElapsed, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
+import { formatVoiceElapsed, readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
 
 /** How many of the latest turns the glance reads back; the full history is the conversation itself. */
 const GLANCE_TURNS = 3;
@@ -48,6 +48,7 @@ export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
 }>): React.ReactElement {
     const { model } = props;
     const voice = model.attemptControl;
+    const startedAt = readVoiceElapsedStartedAt(voice);
     const testID = props.testID ?? 'voice-glance';
     const target = model.targetLabel ?? t('voicePresence.globalVoice');
     const source = model.providerLabel ? `${target} · ${model.providerLabel}` : target;
@@ -60,7 +61,7 @@ export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
             source={source}
             menu={props.menu}
             // The call's clock reads with its title ("Voice 2:14"), not across the header.
-            titleMeta={voice.live && voice.elapsedStartedAt ? <VoiceElapsed startedAt={voice.elapsedStartedAt} /> : undefined}
+            titleMeta={startedAt !== null ? <VoiceElapsed startedAt={startedAt} /> : undefined}
             fresh={props.fresh}
             body={{
                 kind: 'content',

@@ -2,7 +2,7 @@ import { MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS } from '@happier-dev/protoco
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
-import type { ActionId, ActionsSettingsV1, FeatureId } from '@happier-dev/protocol';
+import type { ActionId, ActionsSettingsV1, FeatureId, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionNativeToolDescriptor } from '@happier-dev/plugin-sdk/agents/runtime';
 import { z } from 'zod';
@@ -21,12 +21,13 @@ function projectJsonSchema(schema: unknown) {
 function isSessionAgentChangeTitleToolAvailableWithSettings(params: Readonly<{
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
+  codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   actionsSettings: ActionsSettingsV1;
 }>): boolean {
-  if (resolveEffectiveCodingPromptBehaviorV1({
+  if (params.codingPromptBehavior === null || (params.codingPromptBehavior ?? resolveEffectiveCodingPromptBehaviorV1({
     settings: params.accountSettings,
     profileId: params.profileId ?? null,
-  }).sessionTitleUpdates === 'disabled') {
+  })).sessionTitleUpdates === 'disabled') {
     return false;
   }
   const actionsSettings = params.actionsSettings;
@@ -45,6 +46,7 @@ function isSessionAgentChangeTitleToolAvailableWithSettings(params: Readonly<{
 export function isSessionAgentChangeTitleToolAvailable(params: Readonly<{
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
+  codingPromptBehavior?: CodingPromptBehaviorV1 | null;
 }>): boolean {
   return isSessionAgentChangeTitleToolAvailableWithSettings({
     ...params,
@@ -55,6 +57,7 @@ export function isSessionAgentChangeTitleToolAvailable(params: Readonly<{
 export function resolveSessionNativeToolDescriptors(params: Readonly<{
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
+  codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   sessionId: string;
   sessionMachineId?: string | null;
   memoryRecallGuidanceEnabled: boolean;
@@ -70,6 +73,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   const titleUpdatesEnabled = isSessionAgentChangeTitleToolAvailableWithSettings({
     accountSettings: params.accountSettings,
     profileId: params.profileId,
+    codingPromptBehavior: params.codingPromptBehavior,
     actionsSettings,
   });
   const tools = listBuiltInHappierTools({

@@ -1,6 +1,7 @@
 import {
     AuthoringMemoryValueV1Schema,
     AuthoringMemoryPrivatePayloadV1Schema,
+    StoredAuthoringMemoryPrivatePayloadV1Schema,
     assertAuthoringMemoryContentForModeV1,
     AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
     openAccountScopedBlobCiphertext,
@@ -46,7 +47,7 @@ export function createAuthoringMemoryCipher(options: Readonly<{
                 kind: AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
                 material: material(), ciphertext: content.c,
             });
-            const parsed = AuthoringMemoryPrivatePayloadV1Schema.safeParse(opened?.value);
+            const parsed = StoredAuthoringMemoryPrivatePayloadV1Schema.safeParse(opened?.value);
             if (!parsed.success || parsed.data.key !== key) {
                 throw new AuthoringMemoryUnavailableError('Account authoring memory row cannot be opened');
             }

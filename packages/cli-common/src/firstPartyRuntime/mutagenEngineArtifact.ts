@@ -2,9 +2,9 @@ import {
   createHash,
 } from 'node:crypto';
 import {
-  lstatSync,
-  readFileSync,
+  createReadStream,
 } from 'node:fs';
+import { lstat, readFile } from 'node:fs/promises';
 import {
   join,
   resolve,
@@ -451,13 +451,13 @@ export function assertMutagenEngineArtifactManifest(
 }
 
 /** Validate the complete extracted payload before it enters managed install. */
-export function assertMutagenEngineArtifactPayload(params: Readonly<{
+export async function assertMutagenEngineArtifactPayload(params: Readonly<{
   payloadRoot: string;
   targetTriple: MutagenEngineArtifactTarget;
   engineVersion?: string;
   /** Repository build tooling may supply its already-validated release policy; runtime callers omit this. */
   trustedForkReleaseCommit?: string | null;
-}>): MutagenEngineArtifactManifest {
+}>): Promise<MutagenEngineArtifactManifest> {
   const root = String(params.payloadRoot ?? '').trim();
   if (!root) rejectPayload('Mutagen engine payload root is required');
   const paths = resolveMutagenEngineArtifactPaths(root, params.targetTriple);
@@ -470,29 +470,29 @@ export function assertMutagenEngineArtifactPayload(params: Readonly<{
     ['checksums', paths.checksumsPath],
     ['artifact manifest', paths.manifestPath],
   ] as const) {
-    assertRegularFile(path, label);
+    await assertRegularFile(path, label);
   }
   if (params.targetTriple !== 'windows-amd64') {
-    assertExecutable(paths.managerPath, 'manager binary');
-    assertExecutable(paths.agentPath, 'agent binary');
+    await assertExecutable(paths.managerPath, 'manager binary');
+    await assertExecutable(paths.agentPath, 'agent binary');
   }
-  const license = readFileSync(paths.mutagenLicensePath, 'utf8');
+  const license = await readFile(paths.mutagenLicensePath, 'utf8');
   if (!/\bMIT License\b/iu.test(license) || !/Server Side Public License/iu.test(license)) {
     rejectPayload('Mutagen umbrella license is empty or does not describe the mixed MIT and SSPL source license boundary');
   }
-  const ssplLicense = readFileSync(paths.ssplLicensePath, 'utf8');
+  const ssplLicense = await readFile(paths.ssplLicensePath, 'utf8');
   if (!/server\s+side\s+public\s+license/iu.test(ssplLicense) || !/version\s+1\b/iu.test(ssplLicense)) {
     rejectPayload('SSPL license is empty or not recognizable as Server Side Public License Version 1');
   }
-  if (!readFileSync(paths.thirdPartyNoticesPath, 'utf8').trim()) rejectPayload('third-party notice closure is empty');
+  if (!(await readFile(paths.thirdPartyNoticesPath, 'utf8')).trim()) rejectPayload('third-party notice closure is empty');
   const checksums = parseMutagenEngineChecksums(
-    readFileSync(paths.checksumsPath, 'utf8'),
+    await readFile(paths.checksumsPath, 'utf8'),
     params.targetTriple,
   );
 
   let rawManifest: unknown;
   try {
-    rawManifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8')) as unknown;
+    rawManifest = JSON.parse(await readFile(paths.manifestPath, 'utf8')) as unknown;
   } catch (error) {
     rejectPayload(`artifact manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -512,10 +512,10 @@ export function assertMutagenEngineArtifactPayload(params: Readonly<{
     || checksums.get(manifest.agentPath) !== manifest.agentSha256) {
     rejectPayload('checksums.txt does not match the signed artifact manifest');
   }
-  if (sha256File(paths.managerPath) !== manifest.managerSha256) {
+  if (await sha256File(paths.managerPath) !== manifest.managerSha256) {
     rejectPayload('manager binary checksum does not match the artifact manifest');
   }
-  if (sha256File(paths.agentPath) !== manifest.agentSha256) {
+  if (await sha256File(paths.agentPath) !== manifest.agentSha256) {
     rejectPayload('agent binary checksum does not match the artifact manifest');
   }
   for (const [relativePath, absolutePath] of [
@@ -524,7 +524,7 @@ export function assertMutagenEngineArtifactPayload(params: Readonly<{
     ['licenses/THIRD-PARTY-NOTICES', paths.thirdPartyNoticesPath],
     ['.happier-mutagen-engine.json', paths.manifestPath],
   ] as const) {
-    if (sha256File(absolutePath) !== checksums.get(relativePath)) {
+    if (await sha256File(absolutePath) !== checksums.get(relativePath)) {
       rejectPayload(`${relativePath} checksum does not match checksums.txt`);
     }
   }
@@ -656,28 +656,30 @@ function rejectPayload(message: string): never {
   throw new MutagenEngineArtifactError('mutagen_engine_artifact_incomplete', message);
 }
 
-function assertRegularFile(path: string, label: string): void {
+async function assertRegularFile(path: string, label: string): Promise<void> {
   let stats;
   try {
-    stats = lstatSync(path);
+    stats = await lstat(path);
   } catch {
     rejectPayload(`${label} is missing: ${path}`);
   }
   if (!stats.isFile()) rejectPayload(`${label} must be a regular file: ${path}`);
 }
 
-function assertExecutable(path: string, label: string): void {
+async function assertExecutable(path: string, label: string): Promise<void> {
   let mode = 0;
   try {
-    mode = lstatSync(path).mode;
+    mode = (await lstat(path)).mode;
   } catch {
     rejectPayload(`${label} is missing: ${path}`);
   }
   if ((mode & 0o111) === 0) rejectPayload(`${label} is not executable: ${path}`);
 }
 
-function sha256File(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest('hex');
 }
 
 function isWindowsPathLike(path: string): boolean {

@@ -15,6 +15,9 @@ import {
 } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
+import { loadAccountLaunchProfileArtifacts } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import { isSessionAgentChangeTitleToolAvailable } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 
 type FetchPromptArtifactRecord = (artifactId: string) => Promise<PromptArtifactRecord | null>;
 export type { PromptArtifactRecord };
@@ -66,6 +69,7 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   promptAssetBlocks?: readonly PromptBlockV1[];
   cache?: Map<string, string | null>;
   fetchPromptArtifactRecord?: FetchPromptArtifactRecord;
+  signal?: AbortSignal;
 }>;
 
 /**
@@ -256,6 +260,7 @@ export async function resolveEffectiveCodingPromptPlan(
   plan: PromptPlanV1;
   text: string;
   diagnostics: ReturnType<typeof buildPromptPlanDiagnosticsV1>;
+  codingPromptBehavior: CodingPromptBehaviorV1;
 }>> {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
@@ -265,9 +270,16 @@ export async function resolveEffectiveCodingPromptPlan(
   // resolved exactly once here, for the whole prompt. Both the base plan and
   // the tool-delivery appendix are composed from this one fact, so a profile
   // can never be honored on one and silently ignored on the other.
+  const profileId = args.profileId?.trim() ?? '';
+  const inlineSelectedProfile = readAiLaunchProfileCollection(settings.profiles).entries
+    .some(entry => entry.kind !== 'opaque' && entry.profile.id === profileId);
+  const artifactsById = args.credentials && profileId && Object.hasOwn(settings, 'profiles') && !inlineSelectedProfile
+    ? await loadAccountLaunchProfileArtifacts(settings, args.credentials, args.signal) : undefined;
+  args.signal?.throwIfAborted();
   const codingPromptBehavior = resolveEffectiveCodingPromptBehaviorV1({
     settings,
     profileId: args.profileId,
+    artifactsById,
   });
   const promptSettings: Record<string, unknown> = {
     ...settings,
@@ -289,7 +301,9 @@ export async function resolveEffectiveCodingPromptPlan(
     base: args.baseOverride === null ? '' : args.baseOverride,
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
-    sessionTitleToolAvailable: args.sessionTitleToolAvailable,
+    sessionTitleToolAvailable: args.sessionTitleToolAvailable ?? isSessionAgentChangeTitleToolAvailable({
+      accountSettings: settings, codingPromptBehavior,
+    }),
   });
   const stackBlocks = await resolveCliPromptStackSystemAppendBlocks({
     surface: 'coding',
@@ -346,6 +360,7 @@ export async function resolveEffectiveCodingPromptPlan(
 
   return {
     plan,
+    codingPromptBehavior,
     text: renderPromptPlanV1(plan),
     diagnostics: buildPromptPlanDiagnosticsV1(plan),
   };

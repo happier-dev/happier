@@ -102,6 +102,29 @@ function scanAction(inputSchema: PluginJsonSchemaV2) {
 }
 
 describe('Connected Account purpose bindings across union-shaped Action inputs', () => {
+  it('admits one explicit account or native service path per configured-source input arm', () => {
+    const serviceRef = qualifiedAccountRef.properties?.service;
+    if (!serviceRef) throw new Error('expected qualified service schema');
+    const selection = {
+      anyOf: [{
+        type: 'object' as const, properties: { account: qualifiedAccountRef },
+        required: ['account'], additionalProperties: false as const,
+      }, {
+        type: 'object' as const, properties: { source: { const: 'native' }, service: serviceRef },
+        required: ['source', 'service'], additionalProperties: false as const,
+      }],
+    };
+    const action = {
+      ...scanAction({ type: 'object', properties: { binding: selection }, required: ['binding'], additionalProperties: false }),
+      connectedAccountPurposeBindings: [{ path: 'binding.account', nativeServicePath: 'binding.service', purpose: 'account-use' }],
+    };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      inputSchema: { type: 'object', properties: { binding: { type: 'object', properties: { account: qualifiedAccountRef, service: serviceRef }, required: ['account', 'service'], additionalProperties: false } }, required: ['binding'], additionalProperties: false },
+    }).success).toBe(false);
+  });
+
   it('accepts a bound credential-ref path declared identically in every union arm', () => {
     const parsed = PluginActionContributionV2Schema.safeParse(
       scanAction(scanInputSchema(qualifiedAccountRef)),

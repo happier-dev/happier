@@ -42,6 +42,8 @@ export type PaneColumnsHostProps = Readonly<{
     /** The owner's open state. A pane can be open but hidden by the layout (narrow overlay stacks). */
     rightOpen?: boolean;
     detailsOpen?: boolean;
+    /** A destination's selected content survives losing the optional side-panel presentation. */
+    destinationOwnsDetails?: boolean;
     bottomOpen?: boolean;
     /** Pane focus mode: the open panes take the main column's place. */
     paneFocusModeActive?: boolean;
@@ -104,13 +106,13 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const rightOpen = props.rightOpen ?? rightPane !== null;
     const detailsOpen = props.detailsOpen ?? detailsPane !== null;
     const bottomOpen = props.bottomOpen ?? bottomPane !== null;
-    const paneFocusModeActive = props.paneFocusModeActive === true && (rightOpen || detailsOpen);
-    const showActionRail = props.actionRail != null;
-    const containerWidthPx = Math.max(0, hostWidthPx - (showActionRail ? PANE_ACTION_RAIL_WIDTH : 0));
-    const mainMinPx = paneFocusModeActive ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
+    const requestedPaneFocusMode = props.paneFocusModeActive === true && (rightOpen || detailsOpen);
+    // Resolve the optional rail's layout first; destination-only content takes the whole host.
+    const panelContainerWidthPx = Math.max(0, hostWidthPx - (props.actionRail != null ? PANE_ACTION_RAIL_WIDTH : 0));
+    const mainMinPx = requestedPaneFocusMode ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
     // With both side panes docked the canonical main column may run a little narrower; a caller's
     // own minimum is the content's real floor and holds in every layout.
-    const mainMinPxThreePane = paneFocusModeActive
+    const mainMinPxThreePane = requestedPaneFocusMode
         ? 0
         : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinThreePanePx);
     const right = PANE_SIZING_DEFAULTS.right;
@@ -119,26 +121,26 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const scaledRightPreferredPx = resolveScaledPaneWidthPxUncapped({
         preferredWidthPx: rightPaneWidthPx,
         basisContainerWidthPx: rightPaneWidthBasisPx,
-        containerWidthPx,
+        containerWidthPx: panelContainerWidthPx,
         minPx: right.minPx,
     });
     const scaledDetailsPreferredPx = resolveScaledPaneWidthPxUncapped({
         preferredWidthPx: detailsPaneWidthPx,
         basisContainerWidthPx: detailsPaneWidthBasisPx,
-        containerWidthPx,
+        containerWidthPx: panelContainerWidthPx,
         minPx: details.minPx,
     });
     const storedEffectiveRightDockWidthPx = resolveScaledPaneWidthPx({
         preferredWidthPx: rightPaneWidthPx,
         basisContainerWidthPx: rightPaneWidthBasisPx,
-        containerWidthPx,
+        containerWidthPx: panelContainerWidthPx,
         minPx: right.minPx,
         maxPx: right.maxPx,
     });
     const storedEffectiveDetailsDockWidthPx = resolveScaledPaneWidthPx({
         preferredWidthPx: detailsPaneWidthPx,
         basisContainerWidthPx: detailsPaneWidthBasisPx,
-        containerWidthPx,
+        containerWidthPx: panelContainerWidthPx,
         minPx: details.minPx,
         maxPx: details.maxPx,
     });
@@ -161,8 +163,53 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         bottomMinHeightPx: PANE_SIZING_DEFAULTS.bottom.minPx,
         preferredHeightPx: bottomPreferredPxForLayout,
     });
+    // A pane that opts into the overlay-at-threshold behavior becomes an overlay once its preferred
+    // width (stored or mid-drag) would leave the main content narrower than its minimum. A pane
+    // that does not opt in stays docked and is clamped at that budget instead.
+    const singlePaneBudgetMaxPx = React.useMemo(() => {
+        const clamp = (value: number, minPx: number, maxPx: number) => Math.min(maxPx, Math.max(minPx, value));
+        return {
+            rightMax: clamp(panelContainerWidthPx - mainMinPx, right.minPx, right.maxPx),
+            detailsMax: clamp(panelContainerWidthPx - mainMinPx, details.minPx, details.maxPx),
+        };
+    }, [panelContainerWidthPx, details.maxPx, details.minPx, mainMinPx, right.maxPx, right.minPx]);
+    const rightPrefersOverlay = right.overlayWhenWiderThanBudget
+        && (rightDragWidthPx != null || storedEffectiveRightDockWidthPx > singlePaneBudgetMaxPx.rightMax + 1);
+    const detailsPrefersOverlay = details.overlayWhenWiderThanBudget
+        && (detailsDragWidthPx != null || storedEffectiveDetailsDockWidthPx > singlePaneBudgetMaxPx.detailsMax + 1);
+
+    const paneLayoutInput = {
+        containerWidthPx: panelContainerWidthPx,
+        deviceType: multiPaneDeviceType,
+        multiPaneEnabled,
+        rightOpen,
+        detailsOpen,
+        destinationOwnsDetails: props.destinationOwnsDetails,
+        rightPreferOverlayWhenPreferredDoesNotFit: rightPrefersOverlay,
+        detailsPreferOverlayWhenPreferredDoesNotFit: detailsPrefersOverlay,
+        detailsOpenedFrom: props.detailsOpenedFrom ?? null,
+        mainMinPx,
+        mainMinPxThreePane,
+        rightMinPx: right.minPx,
+        detailsMinPx: details.minPx,
+        rightPreferredPx: rightPreferredPxForLayout,
+        detailsPreferredPx: detailsPreferredPxForLayout,
+    } satisfies ResolvePaneLayoutInput;
+    const baseLayout = resolvePaneLayout(paneLayoutInput);
+    const destinationDetailOnly = baseLayout.kind === 'single' && baseLayout.details === 'overlay';
+    const paneFocusModeActive = requestedPaneFocusMode && !destinationDetailOnly;
+    const resolvedLayout = applyPaneFocusModeLayoutOverride({
+        paneFocusModeActive,
+        rightOpen,
+        detailsOpen,
+        baseLayout,
+    });
+    const showActionRail = props.actionRail != null && !destinationDetailOnly;
+    const containerWidthPx = destinationDetailOnly ? Math.max(0, hostWidthPx) : panelContainerWidthPx;
+    const effectiveBottomPresentation = destinationDetailOnly ? 'hidden' : resolvedBottomLayout.presentation;
+
     const bottomStoredMaxHeightPxForSizing =
-        resolvedBottomLayout.presentation === 'docked'
+        effectiveBottomPresentation === 'docked'
             ? resolvedBottomLayout.dockMaxHeightPx
             : resolvedBottomLayout.overlayMaxHeightPx;
     const storedEffectiveBottomDockHeightPx = resolveScaledPaneHeightPx({
@@ -176,7 +223,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const mainRegionHeightPx = Math.max(
         0,
         containerHeightPx - (
-            bottomOpen && Boolean(bottomPane) && resolvedBottomLayout.presentation === 'docked'
+            bottomOpen && Boolean(bottomPane) && effectiveBottomPresentation === 'docked'
                 ? effectiveBottomDockHeightPx
                 : 0
         ),
@@ -185,44 +232,6 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         bottomDragHeightPx != null
             ? resolvedBottomLayout.overlayMaxHeightPx
             : bottomStoredMaxHeightPxForSizing;
-
-    // A pane that opts into the overlay-at-threshold behavior becomes an overlay once its preferred
-    // width (stored or mid-drag) would leave the main content narrower than its minimum. A pane
-    // that does not opt in stays docked and is clamped at that budget instead.
-    const singlePaneBudgetMaxPx = React.useMemo(() => {
-        const clamp = (value: number, minPx: number, maxPx: number) => Math.min(maxPx, Math.max(minPx, value));
-        return {
-            rightMax: clamp(containerWidthPx - mainMinPx, right.minPx, right.maxPx),
-            detailsMax: clamp(containerWidthPx - mainMinPx, details.minPx, details.maxPx),
-        };
-    }, [containerWidthPx, details.maxPx, details.minPx, mainMinPx, right.maxPx, right.minPx]);
-    const rightPrefersOverlay = right.overlayWhenWiderThanBudget
-        && (rightDragWidthPx != null || storedEffectiveRightDockWidthPx > singlePaneBudgetMaxPx.rightMax + 1);
-    const detailsPrefersOverlay = details.overlayWhenWiderThanBudget
-        && (detailsDragWidthPx != null || storedEffectiveDetailsDockWidthPx > singlePaneBudgetMaxPx.detailsMax + 1);
-
-    const paneLayoutInput = {
-        containerWidthPx,
-        deviceType: multiPaneDeviceType,
-        multiPaneEnabled,
-        rightOpen,
-        detailsOpen,
-        rightPreferOverlayWhenPreferredDoesNotFit: rightPrefersOverlay,
-        detailsPreferOverlayWhenPreferredDoesNotFit: detailsPrefersOverlay,
-        detailsOpenedFrom: props.detailsOpenedFrom ?? null,
-        mainMinPx,
-        mainMinPxThreePane,
-        rightMinPx: right.minPx,
-        detailsMinPx: details.minPx,
-        rightPreferredPx: rightPreferredPxForLayout,
-        detailsPreferredPx: detailsPreferredPxForLayout,
-    } satisfies ResolvePaneLayoutInput;
-    const resolvedLayout = applyPaneFocusModeLayoutOverride({
-        paneFocusModeActive,
-        rightOpen,
-        detailsOpen,
-        baseLayout: resolvePaneLayout(paneLayoutInput),
-    });
 
     // NOTE: When both panes are open on narrow widths, `resolvePaneLayout` can return `overlayStack`
     // with `right: 'hidden'` + `details: 'overlay'`. We intentionally keep the right pane "open"
@@ -254,6 +263,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const baseSizing = React.useMemo(() => {
         const prefersFullScreenOverlay = deviceType === 'phone';
         const clampOverlayWidth = (value: number, minPx: number) => {
+            if (destinationDetailOnly) return containerWidthPx;
             if (prefersFullScreenOverlay) return Math.max(minPx, mainRegionWidthPx);
             if (!Number.isFinite(value)) return minPx;
             return Math.min(mainRegionWidthPx, Math.max(minPx, value));
@@ -281,6 +291,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         return { rightWidthPx, detailsWidthPx, rightMaxWidthPx, detailsMaxWidthPx };
     }, [
         deviceType,
+        destinationDetailOnly,
+        containerWidthPx,
         details.maxPx,
         details.minPx,
         detailsPreferredPxForLayout,
@@ -339,6 +351,11 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 rightMinWidthPx = available;
             }
         }
+        if (destinationDetailOnly) {
+            detailsWidthPx = containerWidthPx;
+            detailsMinWidthPx = containerWidthPx;
+            detailsMaxWidthPx = containerWidthPx;
+        }
         return { rightWidthPx, detailsWidthPx, rightMaxWidthPx, detailsMaxWidthPx, rightMinWidthPx, detailsMinWidthPx };
     }, [
         baseSizing.detailsMaxWidthPx,
@@ -348,6 +365,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         containerWidthPx,
         details.minPx,
         detailsPane,
+        destinationDetailOnly,
         paneFocusModeActive,
         resolvedLayout.details,
         resolvedLayout.right,
@@ -416,7 +434,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         multiPaneEnabled,
         deviceType: multiPaneDeviceType,
         layout: resolvedLayout,
-        bottomPresentation: resolvedBottomLayout.presentation,
+        bottomPresentation: effectiveBottomPresentation,
     }), [
         containerHeightPx,
         containerWidthPx,
@@ -424,7 +442,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         mainRegionWidthPx,
         multiPaneDeviceType,
         multiPaneEnabled,
-        resolvedBottomLayout.presentation,
+        effectiveBottomPresentation,
         resolvedLayout,
     ]);
 
@@ -465,7 +483,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 onDragRightDockWidthPx={setRightDragWidthPx}
                 onDragDetailsDockWidthPx={onDragDetailsDockWidthPx}
                 bottomPane={bottomPane}
-                bottomPresentation={resolvedBottomLayout.presentation}
+                bottomPresentation={effectiveBottomPresentation}
                 bottomDockHeightPx={effectiveBottomDockHeightPx}
                 bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}
                 bottomDockMaxHeightPx={bottomResizeMaxHeightPx}

@@ -16,9 +16,6 @@ import {
     reviewCommentEventSensitiveBindingMatchesV1,
 } from "@happier-dev/protocol";
 
-export const REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS = 200;
-export const REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS = 2_000;
-
 export type ReviewCommentAccountEncryptionMigrationStoredEvent = Readonly<{
     event: ReviewCommentEventV1;
     sensitiveEnvelope: BoundReviewCommentEventSensitiveEnvelopeV1;
@@ -58,8 +55,7 @@ export type ReviewCommentAccountEncryptionMigrationDirective =
 export type ReviewCommentAccountEncryptionMigrationFailureStatus =
     | "not_empty"
     | "migration_incomplete"
-    | "invalid_content"
-    | "migration_too_large";
+    | "invalid_content";
 
 export function classifyReviewCommentAccountEncryptionMigrationError(
     error: unknown,
@@ -68,9 +64,6 @@ export function classifyReviewCommentAccountEncryptionMigrationError(
     if (!(error instanceof Error)) return null;
     if (error.message === "review_comment_migration_inventory_not_empty") {
         return "not_empty";
-    }
-    if (error.message === "review_comment_migration_inventory_too_large") {
-        return "migration_too_large";
     }
     if (
         error.message === "review_comment_migration_inventory_mismatch"
@@ -184,7 +177,6 @@ export async function reviewCommentAccountEncryptionPostStateMatches(_params: Re
     }
     try {
         const items = params.directive.items;
-        validateBounds(items);
         const itemByCommentId = uniqueBy(
             items,
             (item) => item.commentId,
@@ -313,10 +305,6 @@ async function readValidatedInventory(
     accountId: string,
 ): Promise<readonly ReviewCommentAccountEncryptionMigrationStoredComment[]> {
     const inventory = await persistence.readInventory(accountId);
-    if (inventory.length > REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS) {
-        throw new Error("review_comment_migration_inventory_too_large");
-    }
-    let eventCount = 0;
     const commentIds = new Set<string>();
     const eventIds = new Set<string>();
     for (const row of inventory) {
@@ -334,7 +322,6 @@ async function readValidatedInventory(
         }
         ReviewCommentSensitiveMigrationSourceV1Schema.parse(row.sensitiveSource);
         for (const eventRow of row.events) {
-            eventCount += 1;
             const event = ReviewCommentEventV1Schema.parse(eventRow.event);
             if (
                 event.accountId !== accountId
@@ -347,20 +334,7 @@ async function readValidatedInventory(
             eventIds.add(event.eventId);
         }
     }
-    if (eventCount > REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS) {
-        throw new Error("review_comment_migration_inventory_too_large");
-    }
     return inventory;
-}
-
-function validateBounds(items: readonly ReviewCommentAccountEncryptionMigrationItem[]): void {
-    if (items.length > REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_COMMENTS) {
-        throw new Error("review_comment_migration_inventory_too_large");
-    }
-    const eventCount = items.reduce((sum, item) => sum + item.events.length, 0);
-    if (eventCount > REVIEW_COMMENT_ACCOUNT_ENCRYPTION_MIGRATION_MAX_EVENTS) {
-        throw new Error("review_comment_migration_inventory_too_large");
-    }
 }
 
 function prepareMigration(params: Readonly<{
@@ -369,7 +343,6 @@ function prepareMigration(params: Readonly<{
     inventory: readonly ReviewCommentAccountEncryptionMigrationStoredComment[];
     items: readonly ReviewCommentAccountEncryptionMigrationItem[];
 }>): readonly ReviewCommentAccountEncryptionMigrationItem[] {
-    validateBounds(params.items);
     const itemByCommentId = uniqueBy(
         params.items,
         (item) => item.commentId,

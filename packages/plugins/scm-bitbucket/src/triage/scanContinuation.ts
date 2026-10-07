@@ -1,5 +1,5 @@
 import {
-  type TriageConfiguredSourceInstanceV1,
+  type TriageConfiguredSourceConnectedAccountInstanceV1,
   type TriageScanContinuationV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -38,7 +38,7 @@ const CONTINUATION_VERSION = 1;
 
 /** The exact configured source route a scan continuation may resume through. */
 export function buildBitbucketScanContinuationScope(
-  instance: TriageConfiguredSourceInstanceV1,
+  instance: TriageConfiguredSourceConnectedAccountInstanceV1,
   workspaceUuid: string,
 ): string {
   return JSON.stringify([

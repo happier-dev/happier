@@ -88,6 +88,25 @@ function RuntimeProbe(): React.ReactElement {
 }
 
 describe('session browser context runtime', () => {
+    it('exposes committed state immediately to consecutive actions before a React render', async () => {
+        function ConsecutiveActionProbe(): React.ReactElement {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true });
+            return <View>
+                <Pressable testID="consecutive-actions" onPress={() => {
+                    if (!runtime) return;
+                    const context = runtime.browserShellContext;
+                    const read = () => context.readState?.() ?? context.state;
+                    context.onStateChange({ ...read(), navigationGenerationByViewId: { view_1: 1 } });
+                    context.onStateChange({ ...read(), navigationGenerationByViewId: { ...read().navigationGenerationByViewId, view_2: 2 } });
+                }} />
+                <Text testID="generations">{JSON.stringify(runtime?.state.navigationGenerationByViewId)}</Text>
+            </View>;
+        }
+        const screen = await renderScreen(<ConsecutiveActionProbe />);
+        await screen.pressByTestIdAsync('consecutive-actions');
+        expect(screen.findByTestId('generations')?.props.children).toBe(JSON.stringify({ view_1: 1, view_2: 2 }));
+    });
+
     it('shares one context state between browser attachment and composer removal', async () => {
         const screen = await renderScreen(<RuntimeProbe />);
 

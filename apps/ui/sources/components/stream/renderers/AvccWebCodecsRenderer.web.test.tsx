@@ -83,7 +83,6 @@ describe('AvccWebCodecsRenderer web', () => {
                     avccEnvelope(0x01, [1, 0x64, 0, 0x2a]),
                     avccEnvelope(0x02, [0x65, 3]),
                 ]}
-                maxBufferedBytes={256}
                 onReconfigured={(event) => reconfigured.push(event)}
                 testID="avcc"
             />,
@@ -136,7 +135,7 @@ describe('AvccWebCodecsRenderer web', () => {
         expect(adapter.decode).not.toHaveBeenCalled();
     });
 
-    it('emits startup timeout when decode is enqueued but no output frame arrives', async () => {
+    it('reports an actual decoder rejection through the sanitized boundary', async () => {
         const mod = await import('./AvccWebCodecsRenderer.web').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('AvccWebCodecsRenderer');
@@ -146,7 +145,7 @@ describe('AvccWebCodecsRenderer web', () => {
         const adapter = {
             isSupported: () => ({ ok: true as const }),
             configure: vi.fn(async () => ({})),
-            decode: vi.fn(() => new Promise<void>(() => undefined)),
+            decode: vi.fn(async () => { throw new Error('private decoder details'); }),
             close: vi.fn(),
         };
 
@@ -158,16 +157,10 @@ describe('AvccWebCodecsRenderer web', () => {
                     avccEnvelope(0x02, [0x65, 1]),
                 ]}
                 onDiagnostic={(diagnostic) => diagnostics.push(diagnostic)}
-                onStartupTimeout={(diagnostic) => diagnostics.push({ startup: diagnostic })}
-                startupTimeoutMs={1}
                 testID="avcc"
             />,
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(diagnostics).toContainEqual({ reasonCode: 'decoder_startup_timeout' });
-        expect(diagnostics).toContainEqual({ startup: { reasonCode: 'decoder_startup_timeout' } });
+        expect(diagnostics).toEqual([{ reasonCode: 'webcodecs_decode_failed' }]);
     });
 });

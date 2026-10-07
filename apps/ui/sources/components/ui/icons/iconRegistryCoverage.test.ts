@@ -17,7 +17,7 @@ const NAME_PATTERNS = [
     /<Icon\s+name="([a-z][a-z0-9-]*)"/g,
     /\biconName="([a-z][a-z0-9-]{2,})"/g,
     /\bicon="([a-z][a-z0-9-]{2,})"/g,
-    /\b(?:iconName|menuIcon|icon)\s*:\s*'([a-z][a-z0-9-]{2,})'/g,
+    /\b(?:iconName|agentPickerIconName|iconIonName|menuIcon|icon)\s*:\s*['"]([a-z][a-z0-9-]{2,})['"]/g,
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

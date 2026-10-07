@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizeTurnEndpointPolicy } from './TurnEndpointDetector';
+import { VoiceHandsFreeSchema } from '@/voice/adapters/local/settings';
 
 import { createTurnEndpointController } from './TurnEndpointController';
 
@@ -53,6 +54,24 @@ describe('createTurnEndpointController', () => {
             sessionId: 'session-1', transcript: 'Are we done?', source: 'heuristic',
             endpoint: { reason: 'structural_fallback', confidence: null },
         }));
+    });
+
+    it('honors a saved silence preference beyond five seconds without a shorter heuristic deadline', async () => {
+        vi.useFakeTimers();
+        const onSignal = vi.fn();
+        const controller = createTurnEndpointController({ onSignal, now: () => Date.now() });
+        const saved = VoiceHandsFreeSchema.parse({
+            enabled: true, endpointing: { silenceMs: 6_000, minSpeechMs: 0 },
+        });
+        controller.startSession('session-1');
+        controller.signalHeuristicTranscriptFinalized({
+            sessionId: 'session-1', transcript: 'Please update the server',
+            policy: normalizeTurnEndpointPolicy(saved.endpointing),
+        });
+        await vi.advanceTimersByTimeAsync(5_999);
+        expect(onSignal).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({ transcript: 'Please update the server' }));
     });
 
     it('extends structurally incomplete utterances instead of firing at the acoustic delay', async () => {

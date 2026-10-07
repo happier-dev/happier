@@ -437,9 +437,10 @@ interface AgentInputProps {
     inputPresentation?: 'full' | 'controlsOnly';
     /**
      * `none` mounts no voice affordance or dictation, whatever the account enables (the embedded
-     * presentation). Default `auto`.
+     * presentation). `dictation` retains the field microphone without mounting conversational
+     * Voice (a Workflow step authors a document, not a live conversation). Default `auto`.
      */
-    voiceAffordance?: 'auto' | 'none';
+    voiceAffordance?: 'auto' | 'dictation' | 'none';
     /**
      * `none`: ArrowUp/ArrowDown never recall the person's agent prompts into this field (a human
      * discussion's composer, where those prompts are not what is being written). Default `auto`.
@@ -793,6 +794,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         readOnlyText: {
             color: theme.colors.text.primary,
             textAlign: 'left',
+        },
+        /** A reading card's own chips (Step options): content-sized, wrapping under the engine when narrow. */
+        readOnlyExtraChips: {
+            flexGrow: 0,
+            flexShrink: 1,
+            flexBasis: 'auto',
+            minWidth: 0,
+        },
+        readOnlyActionRow: {
+            flexWrap: 'wrap',
         },
         /** The same hairline card in a document, editable or read-only. */
         documentPanel: resolveAgentInputPanelLayoutStyle(theme, true),
@@ -1826,7 +1837,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
      * own Composer reference and never fabricate a Session. Conversational Voice remains separately
      * Session-targeted by `VoiceComposerPlanetMount` below.
      */
-    const mountsVoiceComposerPlanet = Boolean(voiceEnabled);
+    const mountsVoiceComposerPlanet = voiceEnabled && props.voiceAffordance !== 'dictation';
     const ownsFieldDictation = Boolean(voiceEnabled && composerRef)
         && props.fieldAccessory == null
         && props.submitDictation !== false;
@@ -3257,9 +3268,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             ))}
                         </View>
                         {readOnlyEngineNodes.length > 0 || renderedExtraChipNodes.length > 0 ? (
-                            <View style={styles.actionButtonsRow}>
+                            <View style={[styles.actionButtonsRow, styles.readOnlyActionRow]}>
                                 <View style={styles.actionButtonsLeft}>{readOnlyEngineNodes}</View>
-                                <View style={[styles.actionButtonsLeft, styles.actionButtonsLeftNoFlex, { flexShrink: 1, minWidth: 0 }]}>{renderedExtraChipNodes}</View>
+                                {/* Sized to its chips (never a zero basis that clips them at the card edge). */}
+                                <View style={[styles.actionButtonsLeft, styles.readOnlyExtraChips]}>{renderedExtraChipNodes}</View>
                             </View>
                         ) : null}
                     </GlassSurface>

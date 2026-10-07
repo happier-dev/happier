@@ -49,6 +49,31 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => {}) }));
  * silently lose its action by gaining a right accessory.
  */
 describe('Item (row accessibility actions)', () => {
+    it('announces controlled disclosure expansion from the standard native header props', async () => {
+        const { Item } = await import('./Item');
+        const { ExpandableItem } = await import('./ExpandableItem');
+        function Disclosure() {
+            const [expanded, setExpanded] = React.useState(false);
+            return <ExpandableItem expanded={expanded} onExpandedChange={setExpanded}
+                header={({ headerProps }) => <Item {...headerProps} testID="disclosure-header" title="Details" />}>
+                <Item title="Provider disclosure" mode="info" />
+            </ExpandableItem>;
+        }
+        const screen = await renderScreen(<Disclosure />);
+        expect(screen.findHostByTestId('disclosure-header')?.props.accessibilityState?.expanded).toBe(false);
+        await screen.pressByTestIdAsync('disclosure-header');
+        expect(screen.findHostByTestId('disclosure-header')?.props.accessibilityState?.expanded).toBe(true);
+        await screen.pressByTestIdAsync('disclosure-header');
+        expect(screen.findHostByTestId('disclosure-header')?.props.accessibilityState?.expanded).toBe(false);
+    });
+
+    it('keeps an explicit expanded override ahead of the standard native header state', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(<Item title="Details" testID="expanded-override" onPress={() => {}}
+            accessibilityState={{ expanded: true }} accessibilityExpanded={false} />);
+        expect(screen.findHostByTestId('expanded-override')?.props.accessibilityState.expanded).toBe(false);
+    });
+
     it('forwards row accessibility actions to the activation owner', async () => {
         const onAccessibilityAction = vi.fn();
         const { Item } = await import('./Item');

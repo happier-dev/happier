@@ -148,6 +148,9 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     const purgedProfileIds: string[] = [];
     const failedProfileIds: string[] = [];
     for (const profile of targets) {
+      // An admitted purge owns process settlement and deletion. Subordinate runtime
+      // cleanup must not re-enter it or wait back on the lifecycle cancelling it.
+      if (profilesById.get(profile.profileId)?.lifecycleState !== 'active') continue;
       const purged = await purgeProfile(profile, reason);
       if (purged) {
         purgedProfileIds.push(profile.profileId);

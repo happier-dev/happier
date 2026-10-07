@@ -27,6 +27,7 @@ import {
 import {
     guardAccountEncryptionFirstKeyCredentialMutation,
 } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 async function guardStackAuthIngress(
 ): Promise<AuthCredentialLifecycleResult> {
@@ -69,10 +70,29 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
     const auth = useAuth();
     const router = useRouter();
     const mountedRef = React.useRef(true);
+    const authenticationControllerRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         mountedRef.current = true;
-        return () => { mountedRef.current = false; };
+        return () => {
+            mountedRef.current = false;
+            authenticationControllerRef.current?.abort();
+        };
     }, []);
+    // Callers compose target props inline. Only a real target/contract change
+    // retires the attempt; a fresh object describing the same Home does not.
+    React.useEffect(() => () => authenticationControllerRef.current?.abort(), [
+        props.target?.endpointUrl,
+        props.target?.canonicalServerUrl,
+        props.target?.serverId,
+        props.target?.serverIdentityId,
+        props.target?.runtimeOrigin,
+        props.target?.homeCarrier,
+        props.target?.expectedAccountId,
+        props.target?.requireKeyChallengeV2,
+        props.target?.admission?.kind,
+        props.target?.admission?.token,
+        props.target?.signal,
+    ]);
 
     const handleSuccess = React.useCallback(() => {
         if (props.onSuccess) {
@@ -87,13 +107,16 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
         secret: Uint8Array;
     }>): Promise<SecretKeyEntrySubmitResult> => {
         let home = props.target?.canonicalServerUrl;
+        const controller = new AbortController();
+        authenticationControllerRef.current = controller;
+        const cancellation = mergeAbortSignals([controller.signal, props.target?.signal]);
+        const isCurrent = () => mountedRef.current && !cancellation.signal.aborted;
         try {
+            if (!isCurrent()) return { kind: 'cancelled' };
             const target = props.target;
             if (target) {
                 const onAuthenticated = props.onAuthenticated;
                 if (!onAuthenticated) return { kind: 'failed' };
-                const isCurrent = () => mountedRef.current && !target.signal?.aborted;
-                if (!isCurrent()) return { kind: 'cancelled' };
                 const persistenceTarget = { serverUrl: target.canonicalServerUrl, serverId: target.serverId ?? target.serverIdentityId };
                 let allowed = false;
                 await presentFirstKeyCredentialLifecycle({
@@ -104,11 +127,11 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
                     onCompleted: () => { allowed = true; },
                 });
                 if (!allowed || !isCurrent()) return { kind: 'cancelled' };
-                const authenticated = await authGetTokenAtEndpoint({ ...target, secret: input.secret });
+                const authenticated = await authGetTokenAtEndpoint({ ...target, secret: input.secret, signal: cancellation.signal, isCurrent });
                 if (!isCurrent()) return { kind: 'cancelled' };
                 const request = createServerFetchAtEndpoint({ ...target, credentials: authenticated });
                 const { mode } = await fetchAccountEncryptionMode(authenticated, {
-                    request: (path, init) => request(path, { ...init, signal: target.signal }, { includeAuth: false, retry: 'none' }),
+                    request: (path, init) => request(path, { ...init, signal: cancellation.signal }, { includeAuth: false, retry: 'none' }),
                 });
                 const credentials: AuthCredentials = mode === 'plain'
                     ? { token: authenticated.token }
@@ -134,31 +157,37 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
                     mayActivateStack = true;
                 },
             });
-            if (!mayActivateStack) return { kind: 'cancelled' };
+            if (!mayActivateStack || !isCurrent()) return { kind: 'cancelled' };
 
             await activateStackRuntimeServer({ scope: 'device' });
+            if (!isCurrent()) return { kind: 'cancelled' };
             home = getActiveServerSnapshot().serverUrl;
 
-            const token = await authGetToken(input.secret);
+            const token = await authGetToken(input.secret, { signal: cancellation.signal });
+            if (!isCurrent()) return { kind: 'cancelled' };
             if (!token) {
                 return { kind: 'invalid_key' };
             }
 
             let completed = false;
             await presentFirstKeyCredentialLifecycle({
-                run: async () =>
-                    await auth.login(token, input.normalizedKey),
+                run: async () => isCurrent()
+                    ? await auth.login(token, input.normalizedKey)
+                    : { kind: 'recovery_failed' },
                 onCompleted: () => {
                     completed = true;
                 },
             });
-            if (!completed) return { kind: 'cancelled' };
+            if (!completed || !isCurrent()) return { kind: 'cancelled' };
             trackAccountRestored();
             handleSuccess();
             return { kind: 'completed' };
         } catch (error) {
-            if (!mountedRef.current || props.target?.signal?.aborted) return { kind: 'cancelled' };
+            if (!isCurrent()) return { kind: 'cancelled' };
             return { kind: 'failed', error, home };
+        } finally {
+            cancellation.dispose();
+            if (authenticationControllerRef.current === controller) authenticationControllerRef.current = null;
         }
     }, [auth, handleSuccess, props]);
 

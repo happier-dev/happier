@@ -128,12 +128,12 @@ export function VoiceAgentMemorySection(props: Readonly<{
               : t('settingsVoice.pages.privacy.restoreUnavailable')}
             fieldTestID="settings.voice.local.replay.recentMessagesCount.field"
             kind="integer"
-            stepper={{ min: 1, max: 100, step: 1 }}
+            stepper={{ min: 1, step: 1 }}
             unit={t('settingsVoice.pages.privacy.messagesUnit')}
             disabled={!remembers}
             value={String(agent.replay.recentMessagesCount)}
             onCommit={(draft) => {
-              const next = Math.max(1, Math.min(100, Math.floor(Number(draft))));
+              const next = Math.max(1, Math.floor(Number(draft)));
               if (!Number.isFinite(next)) return String(agent.replay.recentMessagesCount);
               setAgent({ replay: { ...agent.replay, recentMessagesCount: next } });
               return String(next);

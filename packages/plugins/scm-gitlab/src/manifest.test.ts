@@ -203,8 +203,7 @@ describe('GitLab plugin manifest', () => {
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
         code: 'plugin_manifest_invalid',
-        message: 'Connected Account purpose bindings must target one exact qualified'
-          + ' credential-ref input leaf in every declared input arm.',
+        path: expect.arrayContaining(['connectedAccountPurposeBindings']),
       })]),
     });
     // The same substitution with the real leaf is admitted, so the rejection is the

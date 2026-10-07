@@ -6,7 +6,8 @@ import { createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTP
 describe('createLegacyVoiceOutputAdapter', () => {
   it.each([
     { text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
-    { text: 'word '.repeat(9_000), actionCount: 230, incomplete: true },
+    { text: 'word '.repeat(9_000), actionCount: 230, incomplete: false },
+    { text: 'word '.repeat(9_000), actionCount: 300, incomplete: true },
     { text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
   ])('keeps predecessor speech, actions and final within the receiving Protocol budget ($actionCount actions)', ({ text, actionCount, incomplete }) => {
     const adapter = createLegacyVoiceOutputAdapter({ streamId: 'stream-budget' });
@@ -28,7 +29,10 @@ describe('createLegacyVoiceOutputAdapter', () => {
     expect(final.text.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(incomplete);
     expect(speech.length).toBeGreaterThan(text.length / 4);
     expect(text.startsWith(speech)).toBe(true);
-    if (!incomplete) expect(speech).toBe(text);
+    if (!incomplete) {
+      expect(speech).toBe(text);
+      expect(events.filter((event) => event.kind === 'side_effect')).toHaveLength(actionCount);
+    }
   });
 
   it('uses the same early semantic first-sentence boundary as the daemon producer', () => {

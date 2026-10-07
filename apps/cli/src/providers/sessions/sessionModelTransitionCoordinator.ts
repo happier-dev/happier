@@ -26,13 +26,6 @@ export type SessionModelTransitionApplyResult =
     }>;
 
 /**
- * The Protocol transition result caps `reason` at 512 characters, so the
- * canonical projector is fitted to that ceiling here rather than letting an
- * overlong plugin string turn a typed refusal into a schema failure.
- */
-const SESSION_MODEL_TRANSITION_REASON_MAX_UTF8_BYTES = 512;
-
-/**
  * Plugin- and runtime-authored transition prose crosses the daemon boundary
  * into the Session transition result, Action details, and `--json` stdout, so
  * it enters through the canonical plugin-failure projector. Host-owned closed
@@ -43,9 +36,7 @@ function projectSessionModelTransitionReason(
   fallback: string,
 ): string {
   if (typeof value !== 'string' || value.trim().length === 0) return fallback;
-  return projectPluginFailureMessage(value, {
-    maxUtf8Bytes: SESSION_MODEL_TRANSITION_REASON_MAX_UTF8_BYTES,
-  });
+  return projectPluginFailureMessage(value);
 }
 
 export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult(

@@ -3,11 +3,10 @@ import { z } from 'zod';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ExecutionRunConnectedServicesLaunchV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { ExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol';
-import { ConnectedAccountServiceKeyIngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { ConnectedServiceRuntimeAuthRefreshSelectionSchema } from '../runtimeAuthRefreshAuthorization';
-import { ConnectedServiceDaemonAuthBridgeRefreshResultSchema } from '../sessionRuntimeAuthRefresh';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '../runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceRuntimeAuthRefreshSelectionSchema, ConnectedServiceRuntimeAuthRefreshServiceIdSchema } from '../runtimeAuthRefreshAuthorization';
+import type { ConnectedServiceDaemonAuthBridgeRefreshResult } from '../daemonAuthBridgeTypes';
 
 export const ExecutionRunConnectedServicesRegistrationV1Schema = ExecutionRunConnectedServicesLaunchV1Schema;
 export type ExecutionRunConnectedServicesRegistrationV1 = ExecutionRunConnectedServicesLaunchV1;
@@ -25,23 +24,7 @@ export const CONNECTED_SERVICE_RUN_MATERIALIZE_PATH = '/connected-service-run/ma
 export const CONNECTED_SERVICE_RUN_RELEASE_PATH = '/connected-service-run/release';
 export const CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH = '/connected-service-run/generation-current';
 export const CONNECTED_SERVICE_RUN_REJECTED_START_PATH = '/connected-service-run/rejected-start';
-export const CONNECTED_SERVICE_RUN_RUNTIME_AUTH_REFRESH_PATH = '/connected-service-run/refresh-runtime-auth';
-
-export const ConnectedServiceRunRuntimeAuthRefreshRequestSchema = z.object({
-    runId: z.string().trim().min(1), runnerPid: z.number().int().positive(), activationId: z.string().uuid(),
-    serviceId: ConnectedAccountServiceKeyIngressSchema,
-    refreshAttemptId: z.string().trim().min(1), selection: ConnectedServiceRuntimeAuthRefreshSelectionSchema,
-    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-    planType: z.string().nullable().optional(), failingAccessTokenFingerprint: z.string().nullable().optional(),
-    reason: z.string().nullable().optional(),
-}).strict();
-export const ConnectedServiceRunRuntimeAuthRefreshResultSchema = z.object({
-    ok: z.literal(true), result: ConnectedServiceDaemonAuthBridgeRefreshResultSchema,
-}).strict();
-export type ConnectedServiceRunRuntimeAuthRefreshRequest = z.infer<typeof ConnectedServiceRunRuntimeAuthRefreshRequestSchema>;
-export type ConnectedServiceRunRuntimeAuthRefreshHandler = (
-    input: ConnectedServiceRunRuntimeAuthRefreshRequest,
-) => Promise<z.infer<typeof ConnectedServiceRunRuntimeAuthRefreshResultSchema>>;
+export const CONNECTED_SERVICE_RUN_REFRESH_RUNTIME_AUTH_PATH = '/connected-service-run/refresh-runtime-auth';
 
 export const ConnectedServiceRunMaterializeRequestSchema = z.object({
     runId: z.string().trim().min(1),
@@ -59,6 +42,20 @@ export const ConnectedServiceRunReleaseRequestSchema = z.object({
     activationId: z.string().uuid(),
 });
 export type ConnectedServiceRunReleaseRequest = z.infer<typeof ConnectedServiceRunReleaseRequestSchema>;
+
+export const ConnectedServiceRunRuntimeAuthRefreshRequestSchema = ConnectedServiceRunReleaseRequestSchema.extend({
+    serviceId: ConnectedServiceRuntimeAuthRefreshServiceIdSchema,
+    refreshAttemptId: z.string().trim().min(1),
+    selection: ConnectedServiceRuntimeAuthRefreshSelectionSchema,
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
+    planType: z.string().trim().min(1).nullable().optional(),
+    failingAccessTokenFingerprint: z.string().trim().min(1).nullable().optional(),
+    reason: z.string().trim().min(1).nullable().optional(),
+}).strict();
+export type ConnectedServiceRunRuntimeAuthRefreshRequest = z.infer<typeof ConnectedServiceRunRuntimeAuthRefreshRequestSchema>;
+export type ConnectedServiceRunRuntimeAuthRefreshHandler = (
+    input: ConnectedServiceRunRuntimeAuthRefreshRequest,
+) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult>;
 export const ConnectedServiceRunGenerationCurrentRequestSchema = z.object({
     runId: z.string().trim().min(1),
     runnerPid: z.number().int().positive(),

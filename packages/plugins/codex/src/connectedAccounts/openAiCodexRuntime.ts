@@ -9,6 +9,7 @@ import { buildCodexCloudAuthFile } from '../agent/auth/services/openai/cloud/aut
 import {
   buildCodexAuthorizationUrl,
   extractOpenAiAccountIdFromIdToken,
+  readOpenAiIdentityFromIdToken,
 } from '../agent/auth/services/openai/cloud/oauth.js';
 import {
   beginCodexDeviceAuthorization,
@@ -199,15 +200,21 @@ async function exchangeTokens(
 }
 
 function connectedResult(tokens: CodexTokens) {
+  const identity = readOpenAiIdentityFromIdToken(tokens.idToken);
   return {
     status: 'connected' as const,
     ...(tokens.providerAccountId
       ? {
           accountId: tokens.providerAccountId,
-          providerIdentity: { accountId: tokens.providerAccountId },
         }
       : {}),
-    displayName: tokens.providerAccountId || 'ChatGPT',
+    ...((tokens.providerAccountId || identity.email) ? {
+      providerIdentity: {
+        ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}),
+        ...(identity.email ? { email: identity.email } : {}),
+      },
+    } : {}),
+    displayName: identity.name ?? identity.email ?? 'ChatGPT',
     scopes: CODEX_SCOPES,
   };
 }
@@ -227,10 +234,12 @@ async function readHealth(
       ),
     };
   }
+  const identity = readOpenAiIdentityFromIdToken(await readCredential(credentials, ID_TOKEN_KEY, options));
+  const displayName = identity.name ?? identity.email ?? 'ChatGPT';
   if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now()) {
     return {
       status: 'expired',
-      displayName: 'ChatGPT',
+      displayName,
       scopes: CODEX_SCOPES,
       diagnostic: diagnostic(
         'openai_codex_access_token_expired',
@@ -238,10 +247,9 @@ async function readHealth(
       ),
     };
   }
-  const providerAccountId = await readCredential(credentials, PROVIDER_ACCOUNT_ID_KEY, options);
   return {
     status: 'connected',
-    displayName: providerAccountId || 'ChatGPT',
+    displayName,
     scopes: CODEX_SCOPES,
   };
 }
@@ -409,7 +417,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     await writeTokens(context.stagedCredentials, exchanged.tokens, options);
     return {
       status: 'connected',
-      displayName: exchanged.tokens.providerAccountId,
+      displayName: connectedResult(exchanged.tokens).displayName,
       scopes: CODEX_SCOPES,
     };
   },

@@ -85,17 +85,17 @@ function runningLoops() {
 }
 
 describe('HappierSpinner on native (dot styles)', () => {
-  it('draws the H with seven native-driven dots whose opacity interpolates the frame table', () => {
+  it('draws the mark with eight native-driven dots whose opacity interpolates the frame table', () => {
     const root = render(<HappierSpinner size={18} color="red" />);
     const drawn = dots(root);
     const frames = getDotSpinnerFrames('wave', DEFAULT_HAPPIER_SPINNER_TIMING);
 
     expect(root.root.findAllByType('ActivityIndicator' as never)).toHaveLength(0);
-    expect(drawn).toHaveLength(7);
+    expect(drawn).toHaveLength(8);
     expect(flatten(drawn[0]!.props.style)).toMatchObject({ width: 3, height: 3, backgroundColor: 'red' });
 
     const opacity = flatten(drawn[2]!.props.style).opacity as RecordedInterpolation;
-    const series = readDotSeries(frames.opacity, 2, frames.frameCount);
+    const series = readDotSeries(frames, frames.opacity, 2);
     expect(opacity.config.outputRange).toEqual([...series, series[0]]);
     expect(opacity.config.inputRange).toHaveLength(frames.frameCount + 1);
     expect(opacity.config.inputRange[0]).toBe(0);
@@ -119,6 +119,14 @@ describe('HappierSpinner on native (dot styles)', () => {
     expect(durations.sort((a, b) => a - b)).toEqual([Math.round(804 / 1.5 + 500), Math.round(804 / 0.75)]);
   });
 
+  it('keeps the seven-dot H selectable and shares its wave clock with the mark', () => {
+    const h = resolveHappierSpinnerPresentation({ platform: 'native', indicatorStyle: 'hWave', size: 18 });
+    if (!h) throw new Error('Expected a visible H spinner');
+    const root = render(<><HappierSpinner size={18} /><HappierSpinnerHost presentation={h} hostProps={{ size: 18 }} /></>);
+    expect(dots(root)).toHaveLength(15);
+    expect(runningLoops()).toHaveLength(1);
+  });
+
   it('runs one shared clock for every spinner of a cycle and stops it when the last one leaves', () => {
     const three = (count: number) => (
       <>
@@ -140,17 +148,17 @@ describe('HappierSpinner on native (dot styles)', () => {
     expect(animated.loops[0]!.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('holds the full H still with no clock when ambient motion is paused', () => {
+  it('holds the full mark still with no clock when ambient motion is paused', () => {
     const root = render(<HappierSpinner size={18} animationEnabled={false} />);
 
     expect(animated.loops).toHaveLength(0);
-    expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+    expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
   });
 
   it('breathes the still H with a native-driven fade under reduced motion', () => {
     const root = render(<HappierSpinner size={18} reducedMotion />);
 
-    expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+    expect(dots(root).map((dot) => flatten(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
     expect(runningLoops()).toHaveLength(1);
     expect(JSON.stringify(runningLoops()[0]!.animation)).toContain('"useNativeDriver":true');
     const layer = root.root.find((node) => node.type === 'AnimatedView' && node.props.testID === 'happier-spinner-dots');
@@ -172,6 +180,6 @@ describe('HappierSpinner on native (dot styles)', () => {
     expect(root.root.findByType('View' as never)).toBe(host);
     expect(host.props.accessibilityElementsHidden).not.toBe(true);
     expect(host.props.importantForAccessibility).not.toBe('no-hide-descendants');
-    expect(dots(root)).toHaveLength(7);
+    expect(dots(root)).toHaveLength(8);
   });
 });

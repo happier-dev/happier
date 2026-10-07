@@ -9,10 +9,10 @@ export const PLAN_WITH_A_PANEL_WORKFLOW_V1: WorkflowDefinitionV1 = {
   ],
   blocks: [
     {
-      kind: 'loop', id: 'planners', onlyWhen: { kind: 'exists', value: input('engines') },
+      kind: 'loop', id: 'planners', name: 'Plan with a panel', onlyWhen: { kind: 'exists', value: input('engines') },
       repetition: { kind: 'items', items: input('engines'), execution: 'parallel', failurePolicy: 'collect_outcomes' },
       body: [{
-        kind: 'action', id: 'plan', actionId: 'subagents.plan.start',
+        kind: 'action', id: 'plan', name: 'Draft a plan', actionId: 'subagents.plan.start',
         input: {
           target: literal({ kind: 'detached' }),
           backendTargetKeys: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
@@ -21,7 +21,7 @@ export const PLAN_WITH_A_PANEL_WORKFLOW_V1: WorkflowDefinitionV1 = {
       }],
     },
     {
-      ...agent('synthesis', 'planner',
+      ...agent('synthesis', 'Synthesize the plan', 'planner',
         'Produce the requested plan. Treat planner results as evidence, preserve failed or missing coverage, and resolve disagreements or list them as open questions. Return a document explaining why, risks and open questions, plus a proposed workflow only if valid.',
         [input('request'), { ...result('planners'), optional: true }], true),
       execution: { engine: { role: 'planner' }, executionTarget: { kind: 'detached_run' }, permissionMode: 'read-only' },

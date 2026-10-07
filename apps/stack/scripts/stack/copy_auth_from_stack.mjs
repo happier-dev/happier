@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
-import { resolveServerPortFromEnv } from '../utils/server/urls.mjs';
+import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { resolveHandyMasterSecretFromStack } from '../utils/auth/handy_master_secret.mjs';
@@ -54,8 +54,12 @@ export async function copyAuthFromStackIntoNewStack({
   const sourceEnv = parseEnvToObject(sourceEnvRaw);
   const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
   const targetCli = stackEnv.HAPPIER_STACK_CLI_HOME_DIR;
-  const sourceInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: sourceEnv, defaultPort: 3005 })}`;
-  const targetInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: stackEnv, defaultPort: 3005 })}`;
+  const { internalServerUrl: sourceInternalServerUrl } = await resolveStackServerEndpoint({
+    env: { HAPPIER_STACK_STORAGE_DIR: process.env.HAPPIER_STACK_STORAGE_DIR, ...sourceEnv }, stackName: fromStackName,
+  });
+  const { internalServerUrl: targetInternalServerUrl } = await resolveStackServerEndpoint({
+    env: { HAPPIER_STACK_STORAGE_DIR: process.env.HAPPIER_STACK_STORAGE_DIR, ...stackEnv }, stackName,
+  });
   const sourceScopeEnv = { ...process.env, ...sourceEnv };
   delete sourceScopeEnv.HAPPIER_STACK_DISABLE_STABLE_SCOPE;
   const sourceEnvScoped = applyStackActiveServerScopeEnv({ env: sourceScopeEnv, stackName: fromStackName, cliIdentity: 'default' });

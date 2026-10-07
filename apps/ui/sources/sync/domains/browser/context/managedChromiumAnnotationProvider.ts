@@ -88,6 +88,8 @@ export function createManagedChromiumBrowserAnnotationCaptureProvider(input: Rea
             if (!available || request.adapterKind !== 'chromiumSidecar') {
                 return unavailable('browser_context_annotation_capture_unavailable');
             }
+            const initialDenial = request.resolveAdmission?.();
+            if (initialDenial) return { status: 'unavailable', reason: initialDenial };
 
             const contextId = buildContextId(request);
             const cropViewportRect = request.cropClip?.cssViewportRect;
@@ -115,6 +117,8 @@ export function createManagedChromiumBrowserAnnotationCaptureProvider(input: Rea
                         : {}),
                 },
             });
+            const resultDenial = request.resolveAdmission?.();
+            if (resultDenial) return { status: 'unavailable', reason: resultDenial };
             if (!result.ok) {
                 return unavailable(
                     result.reason === 'invalid_response'

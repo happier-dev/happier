@@ -64,6 +64,7 @@ function reclaimAbandonedCliBuildDirs(packageRoot, activeOutputDir) {
 }
 
 async function runNodeScript(scriptPath, args, options = {}) {
+  const command = options.command ?? process.execPath;
   const processOptions = {
     ownedProcessGroup: true,
     cwd: options.cwd,
@@ -73,7 +74,7 @@ async function runNodeScript(scriptPath, args, options = {}) {
   const diagnosticStreams = ['', ''];
   const result = options.captureTypeScriptDiagnostics
     ? await new Promise((done) => {
-        const child = spawnForegroundCommand(process.execPath, [scriptPath, ...args], {
+        const child = spawnForegroundCommand(command, [scriptPath, ...args], {
           ...processOptions, stdio: ['ignore', 'pipe', 'pipe'],
         });
         for (const [index, [source, target]] of [[child.stdout, process.stdout], [child.stderr, process.stderr]].entries()) {
@@ -82,7 +83,7 @@ async function runNodeScript(scriptPath, args, options = {}) {
         child.once('error', (error) => done({ status: null, signal: null, error }));
         child.once('close', (status, signal) => done({ status, signal }));
       })
-    : await runCommand(process.execPath, [scriptPath, ...args], processOptions);
+    : await runCommand(command, [scriptPath, ...args], processOptions);
   if (result.error) throw result.error;
   if (result.signal) {
     const error = new Error(`${scriptPath} terminated by signal ${result.signal}`);
@@ -230,7 +231,8 @@ async function buildCliDistUnlocked(options = {}) {
       try { return await operation(); }
       finally { process.stderr.write(`[cli-build] phase=${phase} elapsedMs=${Math.round(performance.now() - start)}\n`); }
     };
-    const typecheck = () => measure('typecheck', () => (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], ['-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'], {
+    const typecheck = () => measure('typecheck', () => (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], [...typeScriptInvocation.argsPrefix.slice(1), '-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'], {
+      command: typeScriptInvocation.command,
       cwd: immutableSource.packageRoot,
       env,
       captureTypeScriptDiagnostics: true,

@@ -4,6 +4,7 @@ import { WorkflowRunWaitResultV1Schema } from '../../workflows/actionsV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
 
 export type WaitOwnerOptionsV1 = Readonly<{
+  condition: WaitActionInputV1['condition'];
   timeoutMs: number | null;
   deadlineMs: number | null;
   signal?: AbortSignal;
@@ -41,7 +42,7 @@ export async function executeWaitActionV1(
       deadlineAbort?.abort();
     }, Math.min(Math.max(0, deadlineMs - Date.now()), 2_147_483_647));
   };
-  const ownerOptions = { ...options, timeoutMs, deadlineMs,
+  const ownerOptions = { ...options, condition: input.condition, timeoutMs, deadlineMs,
     ...(deadlineAbort ? { signal: options.signal
       ? AbortSignal.any([options.signal, deadlineAbort.signal]) : deadlineAbort.signal } : {}),
   };
@@ -52,9 +53,8 @@ export async function executeWaitActionV1(
       return complete(await ports.session(input, ownerOptions));
     }
     if (input.target.kind === 'execution_run') {
-      // The public execution owner exposes terminal observation, not permission
-      // observation or a passive state feed. Never substitute terminal for attention.
-      if (input.condition.kind !== 'terminal' || options.onSnapshot) return complete({ disposition: 'unsupported_condition' });
+      if (input.condition.kind !== 'terminal' && input.condition.kind !== 'needs_attention'
+        && input.condition.kind !== 'terminal_or_needs_attention') return complete({ disposition: 'unsupported_condition' });
       if (!ports.execution) return complete({ disposition: 'target_unavailable' });
       const raw = await ports.execution(input.target, ownerOptions);
       const parsed = ExecutionRunWaitResultSchema.safeParse(raw);
@@ -66,14 +66,13 @@ export async function executeWaitActionV1(
       const waited = parsed.data;
       if (!waited.ok) return complete({ disposition: waitFailureDispositionV1(waited) ?? 'target_unavailable' });
       return complete({
-        disposition: waited.status === 'running' ? 'observation_timeout' : 'matched',
+        disposition: 'disposition' in waited && waited.disposition === 'observation_timeout' ? 'observation_timeout' : 'matched',
         snapshot: normalizeStrictJsonValue(waited),
       });
     }
     if (input.target.kind === 'workflow_run') {
-      // FIN owns the attention predicate. Its current wait returns terminal,
-      // paused or attention; selector-only waits need that owner contract first.
-      if (input.condition.kind !== 'terminal_or_needs_attention' || options.onSnapshot) return complete({ disposition: 'unsupported_condition' });
+      if (input.condition.kind !== 'terminal' && input.condition.kind !== 'needs_attention'
+        && input.condition.kind !== 'terminal_or_needs_attention') return complete({ disposition: 'unsupported_condition' });
       if (!ports.workflow) return complete({ disposition: 'target_unavailable' });
       const raw = await ports.workflow(input.target, ownerOptions);
       const parsed = WorkflowRunWaitResultV1Schema.safeParse(raw);
@@ -84,7 +83,8 @@ export async function executeWaitActionV1(
       }
       const waited = parsed.data;
       return complete({ disposition: waited.observation === 'timeout' ? 'observation_timeout'
-        : waited.observation === 'paused' ? 'unsupported_condition' : 'matched', snapshot: normalizeStrictJsonValue(waited) });
+        : waited.observation === 'paused' ? 'unsupported_condition'
+        : waited.observation === 'not_matched_terminal' ? 'target_unavailable' : 'matched', snapshot: normalizeStrictJsonValue(waited) });
     }
     if (input.condition.kind !== 'plugin' || options.onSnapshot) return complete({ disposition: 'unsupported_condition' });
     if (!ports.plugin) return complete({ disposition: 'target_unavailable' });

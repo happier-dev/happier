@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CommitProposal } from '@/components/sessions/files/commits/commitProposal';
@@ -7,6 +8,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { isEditableKeyboardTarget } from '@/components/ui/keyboard/isEditableKeyboardTarget';
@@ -87,44 +89,45 @@ export const GitProposedCommitsCard = React.memo(function GitProposedCommitsCard
                 const selected = props.selectedGroupId === group.id;
                 const dimmed = props.selectedGroupId !== null && !selected;
                 return (
-                    <Pressable
-                        key={group.id}
-                        testID={`git-proposed-commit:${group.id}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected }}
-                        accessibilityLabel={t('commitProposal.group.a11y', { number: group.number, message: group.message })}
-                        accessibilityHint={selected ? t('commitProposal.gitPane.selectedHint') : t('commitProposal.gitPane.tapHint')}
-                        onPress={() => props.onSelectGroup(group.id)}
-                        style={(state) => [
-                            styles.row,
-                            selected ? styles.rowSelected : null,
-                            dimmed ? styles.rowDimmed : null,
-                            Platform.OS === 'web' && (state as { hovered?: boolean }).hovered && !selected ? styles.rowHover : null,
-                        ]}
-                    >
-                        <View style={[styles.number, selected ? styles.numberSelected : null, group.state === 'landed' ? styles.numberLanded : null]}>
-                            {group.state === 'landed'
-                                ? <Icon name="check" size={11} weight="bold" color={theme.colors.surface.base} />
-                                : <Text style={[styles.numberText, selected ? styles.numberTextSelected : null]}>{String(group.number)}</Text>}
-                        </View>
-                        <View style={styles.rowText}>
-                            <Text style={styles.message} numberOfLines={2}>{group.message}</Text>
-                            <Text style={styles.sub} numberOfLines={1}>
-                                {[t('commitProposal.fileCount', { count: group.changes.length }), group.rationale || null].filter(Boolean).join(' · ')}
-                            </Text>
-                        </View>
+                    <View key={group.id} style={[styles.row, selected ? styles.rowSelected : null, dimmed ? styles.rowDimmed : null]}>
+                        <HappierPressable
+                            testID={`git-proposed-commit:${group.id}`}
+                            accessibilityRole="button"
+                            selected={selected}
+                            accessibilityLabel={t('commitProposal.group.a11y', { number: group.number, message: group.message })}
+                            accessibilityHint={selected ? t('commitProposal.gitPane.selectedHint') : t('commitProposal.gitPane.tapHint')}
+                            onPress={() => props.onSelectGroup(group.id)}
+                            style={(state) => [
+                                styles.rowSelect,
+                                Platform.OS === 'web' && state.hovered && !selected ? styles.rowHover : null,
+                                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                            ]}
+                        >
+                            <View style={[styles.number, selected ? styles.numberSelected : null, group.state === 'landed' ? styles.numberLanded : null]}>
+                                {group.state === 'landed'
+                                    ? <Icon name="check" size={11} weight="bold" color={theme.colors.surface.base} />
+                                    : <Text style={[styles.numberText, selected ? styles.numberTextSelected : null]}>{String(group.number)}</Text>}
+                            </View>
+                            <View style={styles.rowText}>
+                                <Text style={styles.message} numberOfLines={2}>{group.message}</Text>
+                                <Text style={styles.sub} numberOfLines={1}>
+                                    {[t('commitProposal.fileCount', { count: group.changes.length }), group.rationale || null].filter(Boolean).join(' · ')}
+                                </Text>
+                            </View>
+                        </HappierPressable>
                         {selected ? (
-                            <Pressable
+                            <HappierPressable
                                 testID="git-proposed-commit-open"
                                 accessibilityRole="button"
                                 onPress={() => props.onOpenGroup(group.id)}
-                                style={({ pressed }) => [styles.open, pressed ? styles.openPressed : null]}
+                                style={({ pressed, focused }) => [styles.open, pressed ? styles.openPressed : null,
+                                    focusRingStyle({ focused, color: theme.colors.border.focus })]}
                             >
                                 <Text style={styles.openText}>{t('commitProposal.gitPane.open')}</Text>
                                 <Icon name="caret-right" size={12} color={theme.colors.text.secondary} />
-                            </Pressable>
+                            </HappierPressable>
                         ) : null}
-                    </Pressable>
+                    </View>
                 );
             })}
             <View style={styles.actions}>
@@ -169,7 +172,9 @@ const styles = StyleSheet.create((theme) => ({
     title: { fontSize: 14, color: theme.colors.text.primary, ...Typography.default('semiBold') },
     meta: { fontSize: 13, color: theme.colors.text.tertiary, fontVariant: ['tabular-nums'], ...Typography.default() },
     grow: { flex: 1 },
-    row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 10 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, borderRadius: 10 },
+    rowSelect: { flex: 1, minWidth: 0, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 10,
+        borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: 'transparent' },
     rowSelected: { backgroundColor: theme.colors.state.active.background },
     rowDimmed: { opacity: 0.55 },
     rowHover: { backgroundColor: theme.colors.surface.inset },

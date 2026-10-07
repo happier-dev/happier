@@ -61,7 +61,7 @@ describe('opened transcript follow projection', () => {
                     currentMetadataVersion: versions.sharedMetadataVersion, currentAgentStateVersion: versions.agentStateVersion });
             },
         });
-        const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 600_000 });
+        const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 600_000 });
         try {
             const follow = (agentStateVersion: number) => runWithServerHttpBaseUrl('https://example.invalid', () => followSessionTranscript({
                 store, registry, sessionId: 'session-1',
@@ -90,7 +90,7 @@ describe('opened transcript follow projection', () => {
         } });
         const store = createServerBackedSessionTranscriptStore({ token: 'token', sessionId: 'session-1', mode: 'e2ee',
             ctx, readOpenedSessionState: async () => ({ agentState: null, sharedMetadata: null }) });
-        const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 600_000 });
+        const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 600_000 });
         try {
             const follow = (cursor: string) => runWithServerHttpBaseUrl('https://example.invalid', () => followSessionTranscript({ store, registry,
                 sessionId: 'session-1', input: { cursor, leaseId: 'opened', projection: 'openedMessagesV1' },
@@ -177,7 +177,7 @@ describe('opened transcript follow projection', () => {
                 currentMetadataLayoutVersion: 1, currentMetadataVersion: versions.sharedMetadataVersion, currentAgentStateVersion: versions.agentStateVersion,
             }),
         });
-        const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 600_000 });
+        const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 600_000 });
         try {
             const read = (cursor: string, sharedMetadataVersion: number) => runWithServerHttpBaseUrl('https://example.invalid', () => followSessionTranscript({
                 store, registry, sessionId: 'session-1',

@@ -98,6 +98,12 @@ const PluginUiHostApiSurfaceThemeTypographyV1Schema = z.object({
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
     fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
   }).strict(),
+  /** Reading prose (a detail's body, a story step): a step above `body`, the dense row meta line. */
+  reading: z.object({
+    fontSize: PluginUiHostApiSurfaceMetricV1Schema,
+    lineHeight: PluginUiHostApiSurfaceMetricV1Schema,
+    fontWeight: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+  }).strict(),
   label: z.object({
     fontSize: PluginUiHostApiSurfaceMetricV1Schema,
     lineHeight: PluginUiHostApiSurfaceMetricV1Schema,

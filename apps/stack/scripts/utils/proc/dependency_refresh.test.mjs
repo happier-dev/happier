@@ -7,6 +7,35 @@ import test from 'node:test';
 
 import { inspectDependencyRefresh, withDependencyRefresh } from './dependency_refresh.mjs';
 
+test('UI password codec source changes invalidate remote install readiness', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-password-source-freshness-'));
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  for (const component of ['ui', 'cli', 'server']) {
+    const dir = join(root, 'apps', component);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: `fixture-${component}` }));
+  }
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'src', 'auth'), { recursive: true });
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify({
+    name: 'fixture', private: true, workspaces: ['apps/*', 'packages/*'],
+  }));
+  await writeFile(join(root, 'yarn.lock'), '# fixture\n');
+  // Real package metadata is the production boundary: the freshness owner must
+  // observe this asset dependency, not a test-only declaration of its inputs.
+  await cp(new URL('../../../../../packages/protocol/package.json', import.meta.url), join(protocolDir, 'package.json'));
+  const codecPath = join(protocolDir, 'src', 'auth', 'accountPasswordCredential.ts');
+  await writeFile(codecPath, 'export const codecRevision = 1;\n');
+  await withDependencyRefresh({ installDir: root }, async () => {});
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+  await writeFile(codecPath, 'export const codecRevision = 2;\n');
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'the generated password worker consumes this source even without Protocol dist');
+  await withDependencyRefresh({ installDir: root }, async () => {});
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+});
+
 test('dependency refresh reclaims a stale lock after its pid is reused', async (t) => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-dependency-lock-reused-pid-'));
   t.after(async () => {

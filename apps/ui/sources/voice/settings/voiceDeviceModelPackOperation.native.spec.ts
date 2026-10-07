@@ -34,7 +34,7 @@ const manifest = {
     files: [{ path: 'model.onnx', url: 'https://example.test/model.onnx', sizeBytes: 1,
         sha256: '4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a' }],
 };
-const input = { packId, role: 'stt_sherpa' as const, networkTimeoutMs: 1000, isCurrent: () => true };
+const input = { packId, role: 'stt_sherpa' as const, isCurrent: () => true };
 
 describe('native device model operations through the real installer', () => {
     beforeEach(() => {
@@ -45,6 +45,41 @@ describe('native device model operations through the real installer', () => {
             : new Response(JSON.stringify(manifest), { headers: { 'content-type': 'application/json' } })));
     });
     afterEach(() => vi.unstubAllGlobals());
+
+    it.each(['prepare', 'update'] as const)('keeps a slow %s pending for its caller instead of imposing a local deadline', async (operation) => {
+        vi.useFakeTimers();
+        try {
+            if (operation === 'update') {
+                filesystem.files.set(modelUri(), new Uint8Array([9]));
+                filesystem.files.set(`${filesystem.root}/${packId}/pack.json`, new TextEncoder().encode(JSON.stringify({
+                    manifest: { ...manifest, version: 'v1', files: [{ ...manifest.files[0], sha256: 'a'.repeat(64) }] },
+                })));
+            }
+            let finishManifest: ((response: Response) => void) | undefined;
+            let delayed = false;
+            const fetchImpl: typeof fetch = async (url) => {
+                if (String(url).endsWith('model.onnx')) {
+                    return new Response(new Uint8Array([1]), { headers: { 'content-length': '1' } });
+                }
+                if (!delayed) {
+                    delayed = true;
+                    return await new Promise<Response>((resolve) => { finishManifest = resolve; });
+                }
+                return Response.json(manifest);
+            };
+            vi.stubGlobal('fetch', fetchImpl);
+            const result = invokeVoiceDeviceModelPackOperation({ ...input, operation,
+                manifestUrl: 'https://example.test/manifest.json' });
+            const outcome = result.then((value) => value.status,
+                (error: unknown) => error instanceof Error ? error.message : String(error));
+            await vi.advanceTimersByTimeAsync(300_000);
+            finishManifest?.(Response.json(manifest));
+            expect(await outcome).toBe('completed');
+            expect(filesystem.files.get(modelUri())).toEqual(new Uint8Array([1]));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 
     it('reports download admission and real progress before publishing the installed pack', async () => {
         const events: string[] = [];
@@ -87,7 +122,7 @@ describe('native device model operations through the real installer', () => {
         filesystem.files.set(modelUri(), new Uint8Array([9]));
         let answer!: (confirmed: boolean) => void;
         confirm.mockImplementationOnce(() => new Promise<boolean>((resolve) => { answer = resolve; }));
-        const props = { packId, manifestUrl: 'https://example.test/manifest.json', networkTimeoutMs: 1000,
+        const props = { packId, manifestUrl: 'https://example.test/manifest.json',
             role: 'stt_sherpa' as const };
         const hook = await renderHook(useLocalNeuralModelPackState, { initialProps: props });
         await act(async () => { hook.getCurrent().clearAssets(); });

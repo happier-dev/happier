@@ -7,9 +7,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
-import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
-import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
-import { storage } from '@/sync/domains/state/storage';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Text } from '@/components/ui/text/Text';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -23,26 +21,20 @@ vi.mock('expo-router', async () => {
     const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module;
     return { ...module, useRouter: () => { throw new Error('Worker card has no Expo navigator'); } };
 });
-// Substitute HTTP and machine transport only; the Session, workspace and Artifact readers stay real.
+// Substitute HTTP and machine transport only; inline Artifact reads stay real.
 const readerBoundaries = vi.hoisted(() => ({ fetch: vi.fn(), machineRpc: vi.fn() }));
 vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => readerBoundaries.fetch(...args) }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
     (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(readerBoundaries.machineRpc));
 
-const initialMachineLists = storage.getState().machineListByServerId;
-afterEach(async () => { await standardCleanup(); storage.setState({ machineListByServerId: initialMachineLists }); readerBoundaries.fetch.mockReset(); readerBoundaries.machineRpc.mockReset(); vi.restoreAllMocks(); });
+afterEach(async () => { await standardCleanup(); readerBoundaries.fetch.mockReset(); readerBoundaries.machineRpc.mockReset(); vi.restoreAllMocks(); });
 
 describe('WorkerUpdateCard deliverable readers', () => {
-    it.each([{ denied: false, denyMachine: false }, { denied: true, denyMachine: false }, { denied: false, denyMachine: true }])('opens source-scoped files and Artifacts; denied=$denied, machine denied=$denyMachine', async ({ denied, denyMachine }) => {
-        const home = await upsertAndActivateServer({ serverUrl: `https://worker-deliverables-${denied}-${denyMachine}.test`, scope: 'tab' });
+    it.each([false, true])('opens source-scoped inline Artifacts; denied=%s', async (denied) => {
+        const home = await upsertAndActivateServer({ serverUrl: `https://worker-deliverables-${denied}.test`, scope: 'tab' });
         await upsertAndActivateServer({ serverUrl: 'https://focused-deliverables.test', scope: 'tab' });
-        storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId, [home.id]: [createMachineFixture({ id: 'worker-machine', active: true })] } });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'viewer' })), 'base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
-        // Exercise credential capture outside the card's deliberately redacted error surface.
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const captured = await captureLazyActionAccountContext(home.id);
-        captured.dispose();
         const reads: string[] = [];
         const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
         readerBoundaries.fetch.mockImplementation(async (url: unknown) => {
@@ -77,12 +69,11 @@ describe('WorkerUpdateCard deliverable readers', () => {
             });
             return json({ error: 'unexpected' }, 404);
         });
-        readerBoundaries.machineRpc.mockResolvedValue(denyMachine ? { success: false, error: 'PRIVATE_CONTENT', errorCode: 'permission_denied' } : { success: true, exists: true, kind: 'file', sizeBytes: 10 });
         const push = vi.fn();
         const update: WorkerUpdateV1 = {
             v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'published', wake: 'published',
             headline: 'Worker report', result: 'Ready for review', canInspect: true,
-            deliverables: [{ kind: 'workspace_file', sessionId: 'worker', path: 'docs/result.md' }, { kind: 'artifact', artifactId: 'report' }],
+            deliverables: [{ kind: 'artifact', artifactId: 'report' }],
         };
         const screen = await renderScreen(
             <DestinationInstanceHost tabId="deliverables" ref={{ kind: 'session', params: { id: 'lead' } }}
@@ -93,50 +84,54 @@ describe('WorkerUpdateCard deliverable readers', () => {
             </DestinationInstanceHost>,
         );
         expect(reads).toEqual([]);
-        expect(screen.getTextContent()).toContain('docs/result.md');
         await act(async () => { await screen.findHostByTestId('worker-deliverable:0')?.props.onPress(); });
         await act(async () => { await vi.waitFor(() => {
-            if (denied || denyMachine) expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
-            else expect(push).toHaveBeenCalled();
-        }); });
-        await act(async () => { await screen.findHostByTestId('worker-deliverable:1')?.props.onPress(); });
-        await act(async () => { await vi.waitFor(() => {
-            if (denied) expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(2);
+            if (denied) expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
             else expect(screen.getTextContent()).toContain('Artifact preview content');
         }); });
-        expect(reads).toContain('/v2/sessions/worker');
         expect(reads).toContain('/v1/artifacts/report');
+        expect(push).not.toHaveBeenCalled();
+        expect(readerBoundaries.machineRpc).not.toHaveBeenCalled();
         if (denied) {
-            expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(2);
+            expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
             expect(screen.getTextContent()).not.toContain('PRIVATE_CONTENT');
-            expect(push).not.toHaveBeenCalled();
-            expect(readerBoundaries.machineRpc).not.toHaveBeenCalled();
         } else {
-            if (denyMachine) {
-                expect(push).not.toHaveBeenCalled();
-                expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
-                expect(screen.getTextContent()).not.toContain('PRIVATE_CONTENT');
-            } else {
-                expect(push).toHaveBeenCalledWith(buildScopedSessionRouteHref({ sessionId: 'worker', serverId: home.id, suffix: '/file', query: { path: 'docs/result.md' } }));
-                // The existing file route must resolve the same fresh workspace as the access check.
-                expect(resolveWorkspaceTargetForSessionFromState(storage.getState(), { sessionId: 'worker', serverId: home.id })).toMatchObject({
-                    serverId: home.id, machineId: 'worker-machine', rootPath: '/worker-workspace',
-                });
-            }
-            expect(readerBoundaries.machineRpc).toHaveBeenCalledWith(expect.objectContaining({ serverId: home.id, machineId: 'worker-machine', payload: { path: '/worker-workspace/docs/result.md' } }));
             expect(screen.getTextContent()).toContain('Artifact preview content');
-            if (!denyMachine) {
-                await act(async () => {
-                    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'retired-account' });
-                });
-                expect(screen.getTextContent()).not.toContain('Artifact preview content');
-                expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
-            }
+            await act(async () => {
+                await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'retired-account' });
+            });
+            expect(screen.getTextContent()).not.toContain('Artifact preview content');
+            expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
         }
     });
 });
 
 describe('WorkerUpdateCard hosted navigation', () => {
+    it('opens a workspace reference through the source Home file route without a separate card read', async () => {
+        const push = vi.fn();
+        const update: WorkerUpdateV1 = {
+            v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'published',
+            wake: 'published', headline: 'Worker report', canInspect: false,
+            deliverables: [{ kind: 'workspace_file', sessionId: 'worker', path: 'docs/result.md' }],
+        };
+        const screen = await renderScreen(
+            <DestinationInstanceHost tabId="file-reference" ref={{ kind: 'session', params: { id: 'lead' } }}
+                pathname="/session/lead" focused visible navigation={{ push, replace: () => {}, back: () => {} }}>
+                <AppSessionTranscriptSourceProvider sessionId="lead" serverId="source-home">
+                    <WorkerUpdateCard update={update} serverId="source-home" />
+                </AppSessionTranscriptSourceProvider>
+            </DestinationInstanceHost>,
+        );
+
+        await act(async () => { await screen.findHostByTestId('worker-deliverable:0')?.props.onPress(); });
+
+        expect(push).toHaveBeenCalledWith(buildScopedSessionRouteHref({
+            sessionId: 'worker', serverId: 'source-home', suffix: '/file', query: { path: 'docs/result.md' },
+        }));
+        expect(readerBoundaries.fetch).not.toHaveBeenCalled();
+        expect(readerBoundaries.machineRpc).not.toHaveBeenCalled();
+    });
+
     it('replaces only the default result with supplied findings while retaining the card and inspection', async () => {
         const update: WorkerUpdateV1 = {
             v: 1, workerKind: 'session', workerId: 'review-worker', ownerState: 'settled',

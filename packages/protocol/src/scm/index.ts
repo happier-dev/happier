@@ -301,8 +301,10 @@ export const ScmCommitPatchSchema = z.object({
 }).strict();
 export type ScmCommitPatch = z.infer<typeof ScmCommitPatchSchema>;
 
+const scmOrdinaryCommitMessageSchema = z.string().max(SCM_COMMIT_MESSAGE_MAX_LENGTH);
+
 export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
-  message: z.string().max(SCM_COMMIT_MESSAGE_MAX_LENGTH),
+  message: z.string(),
   mode: z.enum(['commit', 'amend']).optional(),
   signOff: z.boolean().optional(),
   allowPublishedAmend: z.boolean().optional(),
@@ -326,6 +328,16 @@ export const ScmCommitCreateRequestSchema = ScmRequestBaseSchema.extend({
     .optional(),
   patches: z.array(ScmCommitPatchSchema).min(1).max(SCM_COMMIT_PATCH_MAX_COUNT).optional(),
 }).strict().superRefine((request, context) => {
+  if (request.preparedTreeOid !== undefined) {
+    if (!request.message.trim()) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['message'], message: 'A prepared-plan commit requires a nonblank message' });
+    }
+  } else {
+    const message = scmOrdinaryCommitMessageSchema.safeParse(request.message);
+    if (!message.success) {
+      for (const issue of message.error.issues) context.addIssue({ ...issue, path: ['message', ...issue.path] });
+    }
+  }
   if (request.expectedIndexTreeOid !== undefined && request.preparedTreeOid === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedIndexTreeOid'], message: 'Expected index authority requires a host-prepared safe-plan tree' });
   }

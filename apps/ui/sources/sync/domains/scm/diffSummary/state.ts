@@ -13,6 +13,7 @@ import type {
     ScmDiffSummaryResult,
 } from '@happier-dev/protocol';
 import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
 
@@ -122,6 +123,7 @@ export type ScmDiffSummaryEvent =
 
 export type ScmDiffSummaryViewModel = Readonly<{
     requestKey: string;
+    observedAtMs: number | null;
     status: ScmDiffSummaryRequestStatus;
     actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
     executionRunId: string | null;
@@ -317,6 +319,13 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
             || (current.revision ?? -1) > event.result.revision
             || current.comparison?.id !== event.result.output.comparison?.id) return state;
         const output = { ...event.result.output, resultId: event.result.resultId, revision: event.result.revision };
+        // Machine reads can echo unchanged results while commit progress is polled.
+        // Equal revisions alone are insufficient: apply progress and Undo availability
+        // can change independently, and a successful reread must clear a read error.
+        if (output.success && previous.error === null
+            && previous.status === statusFromOutput(output, previous.input)
+            && pluginJsonValuesEqual(previous.savedResult, event.result)
+            && pluginJsonValuesEqual(previous.latestOutput, output)) return state;
         const payload = readPayload(output);
         const nextRunId = output.runId ?? previous.executionRunId;
         return writeEntry(state, {
@@ -400,6 +409,7 @@ export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: s
     const isShowingLastKnownSummary = Boolean(entry && !entry.finalSummary && entry.lastKnownSummary);
     return {
         requestKey: key,
+        observedAtMs: entry?.observedAtMs ?? null,
         status: entry?.status ?? 'idle',
         actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
         executionRunId: entry?.executionRunId ?? null,

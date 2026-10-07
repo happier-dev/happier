@@ -145,7 +145,6 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS: 800,
     getCachedServerFeaturesSnapshot: () => ({
         status: 'ready',
         serverIdentityId: 'srv_test',

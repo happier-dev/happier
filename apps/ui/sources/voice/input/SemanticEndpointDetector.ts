@@ -1,4 +1,4 @@
-import { computeTurnEndpointDelayMs, type TurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
+import { computeTurnEndpointDelayMs, MAX_VOICE_TIMER_DELAY_MS, type TurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
 
 /**
  * Optional semantic end-of-utterance (EOU) enhancement seam (L3.T5).
@@ -112,22 +112,19 @@ export function createStructuralEndpointHeuristic(): SemanticEndpointDetector {
     };
 }
 
-/** Default hard-max ceiling for the endpoint wait (research P0: ~3 s catch-all). */
-export const DEFAULT_SEMANTIC_ENDPOINT_MAX_DELAY_MS = 3_000;
-
-function clampDelay(value: number, maxDelayMs: number): number {
+function clampDelay(value: number): number {
     if (!Number.isFinite(value) || value <= 0) {
         return 0;
     }
-    return Math.min(value, maxDelayMs);
+    return Math.min(value, MAX_VOICE_TIMER_DELAY_MS);
 }
 
 /**
  * Blend the semantic verdict with the silence-policy delay into a final
- * endpoint wait, bounded by `maxDelayMs`.
+ * endpoint wait, preserving the user's timing within the JS timer range.
  *
  *  - `complete`   → fire fast: collapse to the confident floor (0 ms).
- *  - `incomplete` → be patient: extend toward the hard-max ceiling.
+ *  - `incomplete` → be patient: extend by the user's silence period.
  *  - `undecided`  → fall back to the supplied `baseDelayMs` (pure-silence path).
  *
  * `baseDelayMs` is the acoustic delay from `computeTurnEndpointDelayMs`; pass it
@@ -140,12 +137,7 @@ export function resolveSemanticEndpointDelayMs(args: Readonly<{
     transcript: string | null | undefined;
     speechElapsedMs: number;
     confidence?: number | null;
-    maxDelayMs?: number;
 }>): number {
-    const maxDelayMs = typeof args.maxDelayMs === 'number' && Number.isFinite(args.maxDelayMs) && args.maxDelayMs >= 0
-        ? args.maxDelayMs
-        : DEFAULT_SEMANTIC_ENDPOINT_MAX_DELAY_MS;
-
     const verdict = args.detector.evaluate({
         transcript: args.transcript,
         speechElapsedMs: args.speechElapsedMs,
@@ -158,10 +150,10 @@ export function resolveSemanticEndpointDelayMs(args: Readonly<{
 
     if (verdict.kind === 'incomplete') {
         // Patient: never fire before the policy's own minimum, and push the wait
-        // out toward the ceiling so a clearly-unfinished thought is not clipped.
+        // by the configured silence period so an unfinished thought is not clipped.
         const policyFloor = computeTurnEndpointDelayMs(args.policy, args.speechElapsedMs);
-        return clampDelay(Math.max(args.baseDelayMs, policyFloor) + args.policy.silenceMs, maxDelayMs);
+        return clampDelay(Math.max(args.baseDelayMs, policyFloor) + args.policy.silenceMs);
     }
 
-    return clampDelay(args.baseDelayMs, maxDelayMs);
+    return clampDelay(args.baseDelayMs);
 }

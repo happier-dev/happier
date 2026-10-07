@@ -8,6 +8,8 @@ import {
   requiresExactDaemonApprovalReplay,
 } from './approvalRequestV1.js';
 import { readApprovalExecutionFailure } from './approvalExecutionFailure.js';
+import { parseSessionBoardActionPortResultV1 } from '../sessions/board/actions.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 
 describe('ApprovalRequestV1Schema', () => {
   it('exposes only strict request-bound Board failure details from current approval artifacts', () => {
@@ -61,10 +63,15 @@ describe('ApprovalRequestV1Schema', () => {
         details: { currentLayoutRevision: currentRevision, bearer: 'must-not-persist' },
       },
     });
+    expect(parseSessionBoardActionPortResultV1('session.board.layout.update', base.actionArgs, {
+      ok: false, errorCode: base.execution.errorCode, error: base.execution.error,
+      details: unsafe.execution?.ok === false ? unsafe.execution.details : undefined,
+    }).success).toBe(false);
     expect(readApprovalExecutionFailure(unsafe)).toEqual({
       ok: false,
       errorCode: 'session_board_revision_conflict',
       error: 'session_board_revision_conflict',
+      details: { currentLayoutRevision: currentRevision },
     });
     const otherAction = ApprovalRequestV2Schema.parse({
       ...base,
@@ -324,6 +331,7 @@ describe('ApprovalRequestV1Schema', () => {
             requestId: 'request-1',
             requestEnvelopeDigest: 'a'.repeat(43),
             target: bindingTarget,
+            grant: API_TOKEN_FULL_GRANT_V1,
           },
         },
       },
@@ -371,6 +379,7 @@ describe('ApprovalRequestV1Schema', () => {
             requestId: 'request-1',
             requestEnvelopeDigest: 'a'.repeat(43),
             target: { kind: 'machine', machineId: 'machine-1' },
+            grant: API_TOKEN_FULL_GRANT_V1,
           },
         },
       },

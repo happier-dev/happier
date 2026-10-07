@@ -349,6 +349,10 @@ test('source-test bootstrap admits installed tools without requiring a compiled 
   await assert.rejects(stat(join(repoDir, 'packages/emitted/dist/index.js')), { code: 'ENOENT' });
   await bootstrapRemoteDependencies(options);
   assert.equal(installs, 1);
+  await bootstrapRemoteDependencies({ ...options, validationKind: 'typecheck', toolsOnly: true });
+  assert.equal(installs, 1, 'sibling typechecks reuse their own dependency freshness without a compiled Stack');
+  assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
+    'tools-only bootstrap must not attest the sibling runtime lifecycle as a full install');
   await writeFile(join(repoDir, 'yarn.lock'), '# second\n');
   await bootstrapRemoteDependencies(options);
   assert.equal(installs, 2);

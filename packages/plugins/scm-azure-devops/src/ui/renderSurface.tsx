@@ -55,7 +55,15 @@ import {
   type MetadataEntry,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageDetailChanges, TriageDetailChecks, TriageDetailActivity } from '@happier-dev/triage-sources/ui';
+import {
+  TriageActivityTimeline,
+  TriageDetailInstance,
+  TriageDetailPanel,
+  TriageDetailStory,
+  TriageDetailChangeSummary,
+  TriageDetailChecks,
+  type TriageActivityEventV1,
+} from '@happier-dev/triage-sources/ui';
 import {
   TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1,
@@ -79,8 +87,6 @@ import {
 } from '../triage/detail.js';
 import type {
   AzureProjectedChangedFileRowV1,
-  AzureProjectedCommitRowV1,
-  AzureProjectedIterationRowV1,
   AzureProjectedThreadRowV1,
 } from '../triage/detail/projection.js';
 
@@ -190,8 +196,9 @@ function PagedFooter({
   summaryValues,
 }: Readonly<{
   state: AzurePagedStateV1<unknown>;
-  loadMoreTitle: string;
-  onLoadMore: () => void;
+  /** Absent where the Activity stream owns this collection's continuation. */
+  loadMoreTitle?: string;
+  onLoadMore?: () => void;
   onRefresh: () => void;
   refreshLabel: string;
   refreshLabelKey: string;
@@ -213,7 +220,7 @@ function PagedFooter({
             values={{ count: state.omittedRowCount }}
           />
         )}
-      {state.canLoadMore
+      {state.canLoadMore && loadMoreTitle !== undefined && onLoadMore !== undefined
         ? (
           <Button
             title={loadMoreTitle}
@@ -263,24 +270,41 @@ function AzureActionsPanel({
   );
 }
 
+/**
+ * Azure's policy evaluation status vocabulary (`PolicyEvaluationStatus`), as the checks step
+ * counts it: `notApplicable` blocks nothing and counts in none of the three, `broken` (the
+ * policy could not be evaluated) fails like `rejected`.
+ */
+const AZURE_POLICY_ROLLUP_V1: Readonly<Record<string, 'passing' | 'failing' | 'running' | 'none'>> = Object.freeze({
+  approved: 'passing',
+  rejected: 'failing',
+  broken: 'failing',
+  running: 'running',
+  queued: 'running',
+  notApplicable: 'none',
+});
+
 function AzureStoryChecks({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement | null {
   const { state } = useAzurePolicies(input);
-  if (state.kind !== 'ready' || state.pending || state.failure !== null) return null;
+  if (state.kind !== 'ready' || state.failure !== null) return null;
   const view = state.value;
-  if (view.evaluationsPartial || view.omittedRowCount > 0 || view.projectionTruncated) return null;
+  // Counts need every evaluation: an unread or unparsed row could be the failing one. A shortened
+  // display name is not such a row; its status was read whole.
+  if (view.evaluationsPartial || view.omittedRowCount > 0) return null;
   const rollup = { failingCount: 0, runningCount: 0, passingCount: 0 };
+  const failing: { id: string; name: string }[] = [];
   for (const row of view.evaluations) {
-    if (row.truncated) return null;
-    switch (row.status) {
-      case 'approved': rollup.passingCount += 1; break;
-      case 'rejected': rollup.failingCount += 1; break;
-      case 'running':
-      case 'queued': rollup.runningCount += 1; break;
-      // No authoritative aggregate meaning for an unknown provider status.
-      default: return null;
+    const counted = Object.hasOwn(AZURE_POLICY_ROLLUP_V1, row.status) ? AZURE_POLICY_ROLLUP_V1[row.status] : undefined;
+    // A status outside Azure's documented vocabulary has no aggregate meaning.
+    if (counted === undefined) return null;
+    if (counted === 'passing') rollup.passingCount += 1;
+    else if (counted === 'running') rollup.runningCount += 1;
+    else if (counted === 'failing') {
+      rollup.failingCount += 1;
+      failing.push({ id: row.evaluationId, name: row.displayName ?? row.evaluationId });
     }
   }
-  return <TriageDetailChecks title="Policies" titleKey="plugins.azureDevops.ui.tab.policies" rollup={rollup} />;
+  return <TriageDetailChecks title="Policies" titleKey="plugins.azureDevops.ui.tab.policies" rollup={rollup} failing={failing} />;
 }
 
 function AzureStoryChanges({ input, iterations, onRefreshIterations }: Readonly<{
@@ -291,18 +315,21 @@ function AzureStoryChanges({ input, iterations, onRefreshIterations }: Readonly<
   const text = usePluginTranslation();
   const controller = useAzureIterationChanges(input, iterations.kind === 'ready' ? iterations.value.currentIterationId : undefined);
   const { state } = controller;
-  return <TriageDetailChanges>
+  // Azure's iteration changes carry a change type, never line counts: the shared step lists
+  // the files with Azure's own word for each change and says the counts are not reported.
+  const rows = React.useMemo(() => state.rows.map((row) => ({ path: row.path, note: changedFileSubtitle(row) })), [state.rows]);
+  return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
+    more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.azureDevops.ui.readingFiles" />
       : state.kind === 'unavailable' ? <ErrorState title="The changed files are unavailable" titleKey="plugins.azureDevops.ui.filesUnavailable"
         description={failureDescription(state.failure, text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'))} />
-      : <><PageFailureBanner state={state} />
-        <Metadata title="Changed files" titleKey="plugins.azureDevops.ui.tab.files" entries={state.rows.map((row) => ({ label: row.path, value: changedFileSubtitle(row) }))} />
-        <PagedFooter state={state} onLoadMore={controller.loadMore} onRefresh={() => { onRefreshIterations(); controller.refresh(); }}
-          loadMoreTitle="Show more files"
-          refreshLabel="Re-read the changed files from Azure DevOps" refreshLabelKey="plugins.azureDevops.ui.rereadFiles"
-          summary={`${state.rows.length} file(s) read.`} summaryKey="plugins.azureDevops.ui.filesRead" summaryValues={{ count: state.rows.length }} />
-      </>}
-  </TriageDetailChanges>;
+      : <PageFailureBanner state={state} />}
+    {iterations.kind !== 'unavailable' ? null : <Row gap="small">
+      <Action.Refresh onRefresh={onRefreshIterations} variant="plain"
+        accessibilityLabel="Re-read the pull request iterations from Azure DevOps"
+        accessibilityLabelKey="plugins.azureDevops.ui.rereadIterations" />
+    </Row>}
+  </TriageDetailChangeSummary>;
 }
 
 function OverviewPanel({
@@ -324,6 +351,9 @@ function OverviewPanel({
   withWrites?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  // The story rail (r0.42) draws the facts only: no observation block or empty-state stand-ins.
+  // The current iteration lives in Files, its source commit and iterations in Activity.
+  const story = !withWrites;
   const statusFields = overview.fields.filter(
     (field): field is Extract<AzureDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
@@ -368,9 +398,9 @@ function OverviewPanel({
           </Row>
         )}
         {entries.length === 0
-          ? <EmptyState title="No projected facts" titleKey="plugins.azureDevops.ui.noFacts" description="This observation carried no displayable facts." descriptionKey="plugins.azureDevops.ui.noFacts.description" />
+          ? story ? null : <EmptyState title="No projected facts" titleKey="plugins.azureDevops.ui.noFacts" description="This observation carried no displayable facts." descriptionKey="plugins.azureDevops.ui.noFacts.description" />
           : <Metadata title="Facts" titleKey="plugins.azureDevops.ui.facts" entries={entries} />}
-        {pendingFields.length === 0 ? null : (
+        {story || pendingFields.length === 0 ? null : (
           <Stack gap="small">
             <Text
               variant="caption"
@@ -389,252 +419,48 @@ function OverviewPanel({
           * destructive control behind a click that says nothing about what is behind it.
           */}
         {withWrites ? <AzureActionsPanel input={input} overview={overview} /> : null}
-        <Divider />
-        <Metadata
-          title="Observation"
-          titleKey="plugins.azureDevops.ui.observation"
-          entries={[
-            {
-              label: text('plugins.azureDevops.ui.metadata.observed', 'Observed'),
-              value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
-            },
-            ...(overview.sourceUpdatedAtMs === null
-              ? []
-              : [{
-                label: text('plugins.azureDevops.ui.metadata.lastChanged', 'Azure DevOps last changed'),
-                value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
-              }]),
-            ...(overview.nativeRevision === null
-              ? []
-              : [{ label: text('plugins.azureDevops.ui.metadata.sourceCommit', 'Source commit'), value: overview.nativeRevision }]),
-            // The one iteration fact the root already knows, shown once. It is
-            // read here and in no tab.
-            ...(iterations.kind === 'ready' && iterations.value.currentIterationId !== undefined
-              ? [{ label: text('plugins.azureDevops.ui.metadata.currentIteration', 'Current iteration'), value: String(iterations.value.currentIterationId) }]
-              : []),
-          ]}
-        />
-        <Row gap="small">
-          <Action.Refresh
-            onRefresh={onRefreshIterations}
-            disabled={iterations.kind === 'loading'
-              || (iterations.kind === 'ready' && iterations.pending)}
-            variant="plain"
-            accessibilityLabel="Re-read the pull request iterations from Azure DevOps"
-            accessibilityLabelKey="plugins.azureDevops.ui.rereadIterations"
+        {story ? null : <>
+          <Divider />
+          <Metadata
+            title="Observation"
+            titleKey="plugins.azureDevops.ui.observation"
+            entries={[
+              {
+                label: text('plugins.azureDevops.ui.metadata.observed', 'Observed'),
+                value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
+              },
+              ...(overview.sourceUpdatedAtMs === null
+                ? []
+                : [{
+                  label: text('plugins.azureDevops.ui.metadata.lastChanged', 'Azure DevOps last changed'),
+                  value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
+                }]),
+              ...(overview.nativeRevision === null
+                ? []
+                : [{ label: text('plugins.azureDevops.ui.metadata.sourceCommit', 'Source commit'), value: overview.nativeRevision }]),
+              // The one iteration fact the root already knows, shown once. It is
+              // read here and in no tab.
+              ...(iterations.kind === 'ready' && iterations.value.currentIterationId !== undefined
+                ? [{ label: text('plugins.azureDevops.ui.metadata.currentIteration', 'Current iteration'), value: String(iterations.value.currentIterationId) }]
+                : []),
+            ]}
           />
-        </Row>
+          <Row gap="small">
+            <Action.Refresh
+              onRefresh={onRefreshIterations}
+              disabled={iterations.kind === 'loading'
+                || (iterations.kind === 'ready' && iterations.pending)}
+              variant="plain"
+              accessibilityLabel="Re-read the pull request iterations from Azure DevOps"
+              accessibilityLabelKey="plugins.azureDevops.ui.rereadIterations"
+            />
+          </Row>
+        </>}
       </TriageDetailStory>
   );
 }
 
 /* -------------------------------------------------------------------- Activity */
-
-function commitHeadline(row: AzureProjectedCommitRowV1): string {
-  const short = row.commitId.slice(0, 8);
-  return row.author === undefined ? short : `${short} · ${row.author}`;
-}
-
-export type AzureActivityChronologyRowV1 =
-  | Readonly<{ kind: 'iteration'; row: AzureProjectedIterationRowV1 }>
-  | Readonly<{ kind: 'commit'; row: AzureProjectedCommitRowV1 }>;
-
-/**
- * Merge Azure's two native activity resources without reordering either one.
- * Their provider order wins within each resource; timestamps decide only which
- * resource contributes the next row. An unknown timestamp never becomes zero.
- */
-export function projectAzureActivityChronology(
-  iterations: readonly AzureProjectedIterationRowV1[],
-  commits: readonly AzureProjectedCommitRowV1[],
-): readonly AzureActivityChronologyRowV1[] {
-  const timestampDirection = (values: readonly (number | undefined)[]): 'ascending' | 'descending' | null => {
-    const known = values.filter((value): value is number => value !== undefined);
-    const first = known[0];
-    const last = known[known.length - 1];
-    if (first === undefined || last === undefined || first === last) return null;
-    return first < last ? 'ascending' : 'descending';
-  };
-  const direction = timestampDirection(iterations.map((row) => row.createdAtMs))
-    ?? timestampDirection(commits.map((row) => row.authoredAtMs))
-    ?? 'descending';
-  const chronology: AzureActivityChronologyRowV1[] = [];
-  let iterationIndex = 0;
-  let commitIndex = 0;
-  while (iterationIndex < iterations.length || commitIndex < commits.length) {
-    const iteration = iterations[iterationIndex];
-    const commit = commits[commitIndex];
-    if (iteration === undefined) {
-      if (commit === undefined) break;
-      chronology.push({ kind: 'commit', row: commit });
-      commitIndex += 1;
-      continue;
-    }
-    if (commit === undefined) {
-      chronology.push({ kind: 'iteration', row: iteration });
-      iterationIndex += 1;
-      continue;
-    }
-    const iterationAt = iteration.createdAtMs;
-    const commitAt = commit.authoredAtMs;
-    const commitComesFirst = commitAt !== undefined && (
-      iterationAt === undefined
-      || (direction === 'descending' ? commitAt > iterationAt : commitAt < iterationAt)
-    );
-    if (commitComesFirst) {
-      chronology.push({ kind: 'commit', row: commit });
-      commitIndex += 1;
-    } else {
-      chronology.push({ kind: 'iteration', row: iteration });
-      iterationIndex += 1;
-    }
-  }
-  return Object.freeze(chronology);
-}
-
-/**
- * The iteration and commit chronology, from the shared iteration projection plus this tab's own
- * paged commit read.
- *
- * It reads no threads. Azure's review discussion is a different resource with its own tab, and
- * folding it in here would give the reader the same conversation twice.
- */
-function ActivityPanel({
-  input,
-  iterations,
-  locale,
-  nowMs,
-  onRefreshIterations,
-}: Readonly<{
-  input: TriageDetailSurfaceInputV1;
-  iterations: AzureReadStateV1<AzureIterationsViewV1>;
-  locale: string;
-  nowMs: number;
-  onRefreshIterations: () => void;
-}>): React.ReactElement {
-  const text = usePluginTranslation();
-  const controller = useAzureCommits(input);
-  const { state } = controller;
-
-  if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading the commits from Azure DevOps" titleKey="plugins.azureDevops.ui.readingCommits" />;
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The activity is unavailable"
-        titleKey="plugins.azureDevops.ui.activityUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
-        )}
-      />
-    );
-  }
-
-  const chronology = projectAzureActivityChronology(
-    iterations.kind === 'ready' ? iterations.value.rows : [],
-    state.rows,
-  );
-
-  return (
-    <List
-      accessibilityLabel="Commits and iterations of this Azure DevOps pull request"
-      accessibilityLabelKey="plugins.azureDevops.ui.activityLabel"
-      items={chronology}
-      keyForItem={(event) => event.kind === 'iteration'
-        ? `iteration:${String(event.row.id)}`
-        : `commit:${event.row.commitId}`}
-      header={(
-        <Stack gap="small">
-          <PageFailureBanner state={state} />
-          <SettledReadEvidence state={iterations} />
-          {iterations.kind === 'unavailable'
-            ? (
-              <Banner
-                tone="warning"
-                title="The iterations could not be read"
-                titleKey="plugins.azureDevops.ui.iterationsUnavailable"
-        description={failureDescription(
-          iterations.failure,
-          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
-        )}
-              />
-            )
-            : null}
-        </Stack>
-      )}
-      empty={(
-        <EmptyState
-          title="No commits"
-          titleKey="plugins.azureDevops.ui.noCommits"
-          description="Azure DevOps reports no commit on this pull request yet."
-          descriptionKey="plugins.azureDevops.ui.noCommits.description"
-        />
-      )}
-      footer={(
-        <PagedFooter
-          state={state}
-          loadMoreTitle="Show 30 more commits"
-          onLoadMore={controller.loadMore}
-          onRefresh={() => {
-            onRefreshIterations();
-            controller.refresh();
-          }}
-          refreshLabel="Re-read the commits from Azure DevOps"
-          refreshLabelKey="plugins.azureDevops.ui.rereadCommits"
-          summary={`${String(state.rows.length)} commit(s) read.`}
-          summaryKey="plugins.azureDevops.ui.commitsRead"
-          summaryValues={{ count: state.rows.length }}
-        />
-      )}
-      renderItem={(event) => {
-        if (event.kind === 'iteration') {
-          const row = event.row;
-          const iterationLabel = text(
-            'plugins.azureDevops.ui.iterationTitle',
-            'Iteration {id}',
-            { id: String(row.id) },
-          );
-          return (
-            <Item
-              title={row.author === undefined ? iterationLabel : `${iterationLabel} · ${row.author}`}
-              subtitle={row.reason ?? row.description ?? text('plugins.azureDevops.ui.iterationUpdated', 'Updated')}
-              {...(row.createdAtMs === undefined
-                ? {}
-                : { detail: formatTimestamp(locale, row.createdAtMs, 'relative', nowMs) })}
-            />
-          );
-        }
-        const row = event.row;
-        return (
-          <Item
-            title={commitHeadline(row)}
-            {...(row.comment === '' ? {} : { subtitle: row.comment })}
-            {...(row.authoredAtMs === undefined
-              ? {}
-              : { detail: formatTimestamp(locale, row.authoredAtMs, 'relative', nowMs) })}
-            {...(row.url === undefined
-              ? {}
-              : {
-                accessory: (
-                  <Action.OpenExternal
-                    url={row.url}
-                    variant="plain"
-                    accessibilityLabel={text(
-                      'plugins.azureDevops.ui.openValue',
-                      'Open {item}',
-                      { item: row.commitId.slice(0, 8) },
-                    )}
-                  />
-                ),
-              })}
-          />
-        );
-      }}
-    />
-  );
-}
 
 /* ----------------------------------------------------------------------- Files */
 
@@ -930,7 +756,8 @@ export function advanceAzureThreadReplyWindow(current: number, commentCount: num
   return Math.min(commentCount, current + AZURE_THREAD_REPLY_WINDOW_V1);
 }
 
-function ThreadItem({
+/** A thread's row controls: widen its reply window, and open its reply or status write. */
+function ThreadControls({
   onOpenStatus,
   onOpenReply,
   onExpandReplies,
@@ -946,73 +773,81 @@ function ThreadItem({
   const text = usePluginTranslation();
   const earlier = Math.max(0, row.comments.length - replyWindow);
   const expansion = Math.min(earlier, AZURE_THREAD_REPLY_WINDOW_V1);
-
   return (
-    <Item
-      title={threadHeadline(row)}
-      subtitle={projectAzureThreadSubtitle(row, replyWindow)}
-      accessoryOutsidePressable
-      accessory={(
-        <Row gap="small">
-          {earlier === 0 ? null : (
-            <Button
-              title={text(
-                'plugins.azureDevops.ui.showEarlierReplies',
-                'Show {count} earlier replies',
-                { count: expansion },
-              )}
-              variant="plain"
-              onPress={() => onExpandReplies(
-                row.id,
-                advanceAzureThreadReplyWindow(replyWindow, row.comments.length),
-              )}
-            />
+    <Row gap="small">
+      {earlier === 0 ? null : (
+        <Button
+          title={text(
+            'plugins.azureDevops.ui.showEarlierReplies',
+            'Show {count} earlier replies',
+            { count: expansion },
           )}
-          <Button
-            title={text('plugins.azureDevops.ui.threadReplyRow', 'Reply')}
-            titleKey="plugins.azureDevops.ui.threadReplyRow"
-            variant="plain"
-            accessibilityLabel={text(
-              'plugins.azureDevops.ui.replyToThread',
-              'Reply to thread {thread}',
-              { thread: row.id },
-            )}
-            onPress={() => onOpenReply(row.id)}
-          />
-          <Button
-            title={text('plugins.azureDevops.ui.threadStatusRow', 'Status')}
-            titleKey="plugins.azureDevops.ui.threadStatusRow"
-            variant="plain"
-            accessibilityLabel={text(
-              'plugins.azureDevops.ui.setThreadStatus',
-              'Set the status of thread {thread}',
-              { thread: row.id },
-            )}
-            onPress={() => onOpenStatus(row.id)}
-          />
-        </Row>
+          variant="plain"
+          onPress={() => onExpandReplies(
+            row.id,
+            advanceAzureThreadReplyWindow(replyWindow, row.comments.length),
+          )}
+        />
       )}
-    />
+      <Button
+        title={text('plugins.azureDevops.ui.threadReplyRow', 'Reply')}
+        titleKey="plugins.azureDevops.ui.threadReplyRow"
+        variant="plain"
+        accessibilityLabel={text(
+          'plugins.azureDevops.ui.replyToThread',
+          'Reply to thread {thread}',
+          { thread: row.id },
+        )}
+        onPress={() => onOpenReply(row.id)}
+      />
+      <Button
+        title={text('plugins.azureDevops.ui.threadStatusRow', 'Status')}
+        titleKey="plugins.azureDevops.ui.threadStatusRow"
+        variant="plain"
+        accessibilityLabel={text(
+          'plugins.azureDevops.ui.setThreadStatus',
+          'Set the status of thread {thread}',
+          { thread: row.id },
+        )}
+        onPress={() => onOpenStatus(row.id)}
+      />
+    </Row>
   );
 }
 
-function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+/* -------------------------------------------------------------------- Activity */
+
+/**
+ * Activity: the shared iteration projection, this panel's paged commit read and the review
+ * threads as one chronological stream.
+ *
+ * A thread stands at the instant its first comment was published; its latest replies are quoted
+ * under it, and its reply and status writes open beside it.
+ */
+function ActivityStreamPanel({
+  input,
+  iterations,
+  locale,
+  nowMs,
+  onRefreshIterations,
+}: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  iterations: AzureReadStateV1<AzureIterationsViewV1>;
+  locale: string;
+  nowMs: number;
+  onRefreshIterations: () => void;
+}>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useAzureThreads(input);
-  const state: AzureReadStateV1<AzureThreadsViewV1> = controller.state;
+  const commits = useAzureCommits(input);
+  const threads = useAzureThreads(input);
+  const threadState: AzureReadStateV1<AzureThreadsViewV1> = threads.state;
   const [window, setWindow] = React.useState(AZURE_THREAD_WINDOW_V1);
   const [replyWindows, setReplyWindows] = React.useState<Readonly<Record<string, number>>>({});
-  const [insertAnchor, setInsertAnchor] = React.useState<Readonly<{
-    anchorKey: string;
-    revision: number;
-  }> | null>(null);
-  // Which thread's status control is open, and never more than one. Every row carrying its own
-  // status picker would put six radio buttons on every line of a review conversation; opening one
-  // from the row it belongs to keeps the write beside its thread without burying the thread.
+  // Which thread's status or reply control is open, and never more than one: every row carrying
+  // its own picker would put six radio buttons on every line of a review conversation.
   const [openThreadId, setOpenThreadId] = React.useState<string | null>(null);
   const [openReplyThreadId, setOpenReplyThreadId] = React.useState<string | null>(null);
   const expandReplies = React.useCallback((threadId: string, nextWindow: number) => {
-    setInsertAnchor({ anchorKey: threadId, revision: nextWindow });
     setReplyWindows((current) => ({ ...current, [threadId]: nextWindow }));
   }, []);
   const openStatus = React.useCallback((threadId: string) => {
@@ -1024,108 +859,171 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
     setOpenReplyThreadId(threadId);
   }, []);
 
-  if (state.kind === 'loading') {
-    return <LoadingState title="Reading the threads from Azure DevOps" titleKey="plugins.azureDevops.ui.readingThreads" />;
+  const threadRows = threadState.kind === 'ready' ? threadState.value.rows : [];
+  const shownThreads = threadRows.slice(0, window);
+  const remainingThreads = threadRows.length - shownThreads.length;
+  const iterationRows = iterations.kind === 'ready' ? iterations.value.rows : [];
+
+  const events: readonly TriageActivityEventV1[] = [
+    ...iterationRows.map((row): TriageActivityEventV1 => ({
+      id: `iteration:${String(row.id)}`,
+      atMs: row.createdAtMs ?? null,
+      kind: 'change',
+      actor: row.author ?? null,
+      summary: text('plugins.azureDevops.ui.iterationTitle', 'Iteration {id}', { id: String(row.id) }),
+      detail: row.reason ?? row.description ?? text('plugins.azureDevops.ui.iterationUpdated', 'Updated'),
+    })),
+    ...commits.state.rows.map((row): TriageActivityEventV1 => ({
+      id: `commit:${row.commitId}`,
+      atMs: row.authoredAtMs ?? null,
+      kind: 'change',
+      actor: row.author ?? null,
+      summary: row.commitId.slice(0, 8),
+      detail: row.comment === '' ? null : row.comment,
+      ...(row.url === undefined ? {} : {
+        href: row.url,
+        hrefLabel: text('plugins.azureDevops.ui.openValue', 'Open {item}', { item: row.commitId.slice(0, 8) }),
+      }),
+    })),
+    ...shownThreads.map((row): TriageActivityEventV1 => ({
+      id: `thread:${row.id}`,
+      atMs: row.comments[0]?.publishedAtMs ?? null,
+      kind: 'comment',
+      actor: row.comments[0]?.author ?? null,
+      summary: threadHeadline(row),
+      quote: projectAzureThreadSubtitle(row, replyWindows[row.id] ?? AZURE_THREAD_REPLY_WINDOW_V1),
+      inset: (
+        <Stack gap="small">
+          <ThreadControls
+            row={row}
+            replyWindow={replyWindows[row.id] ?? AZURE_THREAD_REPLY_WINDOW_V1}
+            onExpandReplies={expandReplies}
+            onOpenStatus={openStatus}
+            onOpenReply={openReply}
+          />
+          {openThreadId !== row.id ? null : (
+            <AzureThreadStatusControl input={input} thread={row} onClose={() => setOpenThreadId(null)} />
+          )}
+          {openReplyThreadId !== row.id ? null : (
+            <AzureThreadReplyPublicationControl input={input} thread={row} />
+          )}
+        </Stack>
+      ),
+    })),
+  ];
+
+  if (commits.state.kind === 'idle' || commits.state.kind === 'loading' || threadState.kind === 'loading') {
+    return <LoadingState title="Reading the commits from Azure DevOps" titleKey="plugins.azureDevops.ui.readingCommits" />;
   }
-  if (state.kind === 'unavailable') {
+  const readFailed = text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.');
+  if (commits.state.kind === 'unavailable' && threadState.kind === 'unavailable') {
     return (
       <ErrorState
-        title="The threads are unavailable"
-        titleKey="plugins.azureDevops.ui.threadsUnavailable"
-        description={failureDescription(
-          state.failure,
-          text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),
-        )}
+        title="The activity is unavailable"
+        titleKey="plugins.azureDevops.ui.activityUnavailable"
+        description={failureDescription(commits.state.failure, readFailed)}
       />
     );
   }
 
-  const { rows } = state.value;
-  const shown = rows.slice(0, window);
-  const remaining = rows.length - shown.length;
-  // A thread that scrolled out of the shown window takes its open control with it, rather than
-  // leaving a status picker addressing a thread the reader can no longer see.
-  const openThread = shown.find((row) => row.id === openThreadId) ?? null;
-  const openReplyThread = shown.find((row) => row.id === openReplyThreadId) ?? null;
-
   return (
-    <List
-      accessibilityLabel="Review threads on this Azure DevOps pull request"
-      accessibilityLabelKey="plugins.azureDevops.ui.threadsLabel"
-      {...(insertAnchor === null
-        ? {}
-        : { preserveVisibleContentPositionOnInsert: insertAnchor })}
-      items={shown}
-      keyForItem={(row) => row.id}
+    <TriageActivityTimeline
+      events={events}
+      locale={locale}
+      nowMs={nowMs}
+      accessibilityLabel="Commits, iterations and review threads of this Azure DevOps pull request"
+      accessibilityLabelKey="plugins.azureDevops.ui.activityLabel"
       header={(
         <Stack gap="small">
-          <SettledReadEvidence state={state} />
-          {openThread === null ? null : (
-            <AzureThreadStatusControl
-              input={input}
-              thread={openThread}
-              onClose={() => setOpenThreadId(null)}
+          {commits.state.kind === 'unavailable' ? (
+            <Banner
+              tone="warning"
+              title="The activity is unavailable"
+              titleKey="plugins.azureDevops.ui.activityUnavailable"
+              description={failureDescription(commits.state.failure, readFailed)}
             />
-          )}
-          {openReplyThread === null ? null : (
-            <AzureThreadReplyPublicationControl
-              input={input}
-              thread={openReplyThread}
+          ) : <PageFailureBanner state={commits.state} />}
+          <SettledReadEvidence state={iterations} />
+          {iterations.kind === 'unavailable' ? (
+            <Banner
+              tone="warning"
+              title="The iterations could not be read"
+              titleKey="plugins.azureDevops.ui.iterationsUnavailable"
+              description={failureDescription(iterations.failure, readFailed)}
             />
-          )}
+          ) : null}
+          {threadState.kind === 'unavailable' ? (
+            <Banner
+              tone="warning"
+              title="The threads are unavailable"
+              titleKey="plugins.azureDevops.ui.threadsUnavailable"
+              description={failureDescription(threadState.failure, readFailed)}
+            />
+          ) : <SettledReadEvidence state={threadState} />}
         </Stack>
       )}
       empty={(
         <EmptyState
-          title="No threads"
-          titleKey="plugins.azureDevops.ui.noThreads"
-          description="Nobody has opened a review thread on this pull request yet."
-          descriptionKey="plugins.azureDevops.ui.noThreads.description"
+          title="No commits"
+          titleKey="plugins.azureDevops.ui.noCommits"
+          description="Azure DevOps reports no commit on this pull request yet."
+          descriptionKey="plugins.azureDevops.ui.noCommits.description"
         />
       )}
+      continuations={[
+        // Azure lists a pull request's commits newest first, so the next page is older.
+        ...(commits.state.kind === 'ready' && commits.state.canLoadMore ? [{
+          key: 'commits',
+          title: 'Show 30 more commits',
+          pending: commits.state.pending,
+          onLoadMore: commits.loadMore,
+          reads: 'earlier' as const,
+        }] : []),
+        // No request: the threads are already here, and this only widens the slice shown.
+        ...(remainingThreads > 0 ? [{
+          key: 'threads',
+          title: text(
+            'plugins.azureDevops.ui.showMoreThreads',
+            'Show {count} more threads',
+            { count: Math.min(remainingThreads, AZURE_THREAD_WINDOW_V1) },
+          ),
+          pending: false,
+          onLoadMore: () => setWindow((current) => current + AZURE_THREAD_WINDOW_V1),
+        }] : []),
+      ]}
       footer={(
         <Stack gap="small">
+          {commits.state.kind === 'unavailable' ? null : (
+            <PagedFooter
+              state={commits.state}
+              onRefresh={() => {
+                onRefreshIterations();
+                commits.refresh();
+              }}
+              refreshLabel="Re-read the commits from Azure DevOps"
+              refreshLabelKey="plugins.azureDevops.ui.rereadCommits"
+              summary={`${String(commits.state.rows.length)} commit(s) read.`}
+              summaryKey="plugins.azureDevops.ui.commitsRead"
+              summaryValues={{ count: commits.state.rows.length }}
+            />
+          )}
           <Text
             variant="caption"
             tone="neutral"
             valueKey="plugins.azureDevops.ui.threadsShown"
             fallback="{shown} of {total} thread(s) shown."
-            values={{ shown: shown.length, total: rows.length }}
+            values={{ shown: shownThreads.length, total: threadRows.length }}
           />
-          {remaining > 0
-            ? (
-              <Button
-              title={text(
-                'plugins.azureDevops.ui.showMoreThreads',
-                'Show {count} more threads',
-                { count: Math.min(remaining, AZURE_THREAD_WINDOW_V1) },
-              )}
-                variant="secondary"
-                // No request: the rows are already here, and this only widens
-                // the slice the panel renders.
-                onPress={() => setWindow((current) => current + AZURE_THREAD_WINDOW_V1)}
-              />
-            )
-            : null}
           <Row gap="small">
             <Action.Refresh
-              onRefresh={controller.refresh}
-              disabled={state.pending}
+              onRefresh={threads.refresh}
+              disabled={threadState.kind === 'ready' && threadState.pending}
               variant="plain"
               accessibilityLabel="Re-read the threads from Azure DevOps"
               accessibilityLabelKey="plugins.azureDevops.ui.rereadThreads"
             />
           </Row>
         </Stack>
-      )}
-      renderItem={(row) => (
-        <ThreadItem
-          row={row}
-          replyWindow={replyWindows[row.id] ?? AZURE_THREAD_REPLY_WINDOW_V1}
-          onExpandReplies={expandReplies}
-          onOpenStatus={openStatus}
-          onOpenReply={openReply}
-        />
       )}
     />
   );
@@ -1157,7 +1055,7 @@ function AzureDetailBody({
       />
     ),
     activity: (
-      <ActivityPanel
+      <ActivityStreamPanel
         input={input}
         iterations={iterations.state}
         locale={locale}
@@ -1173,11 +1071,10 @@ function AzureDetailBody({
       />
     ),
     policies: <PoliciesPanel input={input} />,
-    threads: <ThreadsPanel input={input} />,
   };
 
   // The Triage detail asked for one panel (r0.42): its frame draws the tabs.
-  // Threads fold into Activity; branch policies are this source's Checks.
+  // Branch policies are this source's Checks.
   if (input.panel !== undefined) {
     return (
       <Screen safeArea>
@@ -1185,7 +1082,6 @@ function AzureDetailBody({
           panel={input.panel}
           ariaLabel={text('plugins.azureDevops.ui.tabsLabel', 'Azure DevOps pull request detail')}
           retention={Object.fromEntries(AZURE_DETAIL_TABS_V1
-            .filter((declaration) => declaration.id !== 'threads')
             .map((declaration) => [declaration.id === 'policies' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
             overview: (
@@ -1199,12 +1095,7 @@ function AzureDetailBody({
                 withWrites={false}
               />
             ),
-            activity: (
-              <TriageDetailActivity>
-                <Stack style={{ flex: 1, minHeight: 0 }}>{panels.threads}</Stack>
-                <Stack style={{ flex: 1, minHeight: 0 }}>{panels.activity}</Stack>
-              </TriageDetailActivity>
-            ),
+            activity: panels.activity,
             files: panels.files,
             checks: panels.policies,
             actions: <AzureActionsPanel input={input} overview={overview} />,

@@ -7,10 +7,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
-import type {
-    LocalServiceInventoryAnnotationStore,
-    LocalServiceInventoryAnnotationsV1,
-} from './registry';
+import type { LocalServiceInventoryAnnotationStore } from './registry';
 
 export const LOCAL_SERVICE_INVENTORY_ANNOTATIONS_FILE = 'local-service-inventory-annotations-v1.json';
 
@@ -19,7 +16,7 @@ const StoredLabelSchema = z.object({
     text: z.string().min(1),
     source: z.enum(['user', 'plugin']),
     updatedAt: z.number().int().nonnegative(),
-}).strict();
+}).strip();
 
 const ForgottenSuppressionSchema = z.object({
     forgottenAt: z.number().int().nonnegative(),
@@ -28,16 +25,16 @@ const ForgottenSuppressionSchema = z.object({
             kind: z.literal('process'),
             pid: z.number().int(),
             processStartTimeMs: z.number().int().nonnegative().nullable(),
-        }).strict(),
-        z.object({ kind: z.literal('unattributed') }).strict(),
+        }).strip(),
+        z.object({ kind: z.literal('unattributed') }).strip(),
     ]),
-}).strict();
+}).strip();
 
 const AnnotationsSchema = z.object({
     v: z.literal(1),
     labelsByFallbackKey: z.array(z.tuple([z.string().min(1), z.array(StoredLabelSchema)])),
     forgottenFallbackKeys: z.array(z.tuple([z.string().min(1), ForgottenSuppressionSchema])),
-}).strict();
+}).strip();
 
 export function resolveLocalServiceInventoryAnnotationsPath(happyHomeDir?: string): string {
     return join(happyHomeDir ?? configuration.happyHomeDir, LOCAL_SERVICE_INVENTORY_ANNOTATIONS_FILE);
@@ -75,14 +72,14 @@ export function createLocalServiceInventoryAnnotationsFileStore(input: Readonly<
                     logger.debug('[DAEMON RUN] Local-service inventory annotations file is invalid; ignoring it');
                     return null;
                 }
-                return parsed.data as LocalServiceInventoryAnnotationsV1;
+                return parsed.data;
             } catch {
                 logger.debug('[DAEMON RUN] Local-service inventory annotations file is corrupt; ignoring it');
                 return null;
             }
         },
         write(annotations) {
-            writeJsonAtomicSync(path, annotations);
+            writeJsonAtomicSync(path, AnnotationsSchema.parse(annotations));
         },
     };
 }

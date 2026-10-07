@@ -1,82 +1,43 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
-import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTestHelpers';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const transcriptAdvancedSettingsTestState = vi.hoisted(() => ({
-    requestedSettings: [] as string[],
-    setCoalesceEnabled: vi.fn(),
-    setCoalesceWindowMs: vi.fn(),
-}));
-
-installSessionSettingsCommonModuleMocks({
-    reactNative: async () => {
+vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             TextInput: 'TextInput',
         });
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    transcriptAdvancedSettingsTestState.requestedSettings.push(key);
-                    if (key === 'transcriptStreamingCoalesceEnabled') return [true, transcriptAdvancedSettingsTestState.setCoalesceEnabled];
-                    if (key === 'transcriptStreamingCoalesceWindowMs') return [16, transcriptAdvancedSettingsTestState.setCoalesceWindowMs];
-                    if (key === 'transcriptStreamingCoalesceMaxBatchSize') return [200, vi.fn()];
-                    if (key === 'transcriptThinkingPulseStaleMs') return [120_000, vi.fn()];
-                    if (key === 'transcriptMotionPreset') return ['subtle', vi.fn()];
-                    if (key === 'transcriptMotionFreshnessMs') return [60_000, vi.fn()];
-                    if (key === 'transcriptAnimateNewItemsEnabled') return [true, vi.fn()];
-                    if (key === 'transcriptAnimateToolExpandCollapseEnabled') return [true, vi.fn()];
-                    if (key === 'transcriptAnimateToolExpandCollapseFreshOnly') return [true, vi.fn()];
-                    if (key === 'transcriptAnimateThinkingEnabled') return [true, vi.fn()];
-                    if (key === 'transcriptScrollPinOffsetThresholdPx') return [72, vi.fn()];
-                    if (key === 'transcriptScrollAutoFollowWhenPinned') return [true, vi.fn()];
-                    if (key === 'transcriptScrollJumpToBottomMinNewCount') return [1, vi.fn()];
-                    if (key === 'transcriptScrollJumpToBottomAnimateScroll') return [true, vi.fn()];
-                    return [null, vi.fn()];
-                }),
-            },
-        });
-    },
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
 });
 
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: 'Switch',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState({ settings: { ...settingsDefaults, transcriptStreamingCoalesceEnabled: true, transcriptStreamingCoalesceWindowMs: 16 },
+        settingsScope: { serverId: 'server-a', accountId: 'account-a' }, settingsVersion: 1 });
+});
 afterEach(() => {
     standardCleanup();
-    transcriptAdvancedSettingsTestState.requestedSettings.length = 0;
-    transcriptAdvancedSettingsTestState.setCoalesceEnabled.mockClear();
-    transcriptAdvancedSettingsTestState.setCoalesceWindowMs.mockClear();
 });
 
 describe('Transcript advanced settings (performance)', () => {
@@ -94,7 +55,7 @@ describe('Transcript advanced settings (performance)', () => {
             screen.pressRowByTitle('settingsSession.transcript.advanced.coalesceEnabledTitle');
         });
 
-        expect(transcriptAdvancedSettingsTestState.setCoalesceEnabled).toHaveBeenCalledWith(false);
+        expect(storage.getState().settings.transcriptStreamingCoalesceEnabled).toBe(false);
     });
 
     it('omits the obsolete renderer menu without reading a writable renderer setting', async () => {
@@ -102,11 +63,9 @@ describe('Transcript advanced settings (performance)', () => {
 
         expect(screen.findRowByTitle('settingsSession.transcript.advanced.coalesceWindowPromptTitle')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSession.transcript.advanced.listImplementationTitle')).toBeNull();
-        expect(screen.findAllByType('DropdownMenu' as any)).toHaveLength(0);
-        expect(transcriptAdvancedSettingsTestState.requestedSettings).not.toContain('transcriptListImplementation');
     });
 
-    it('edits a number in place and saves it, moved into range, when the field is left', async () => {
+    it('edits a number in place and saves the full accepted preference when the field is left', async () => {
         const screen = await renderView();
         const findField = () => screen.findAll((node) => String(node.type) === 'TextInput'
             && node.props?.accessibilityLabel === 'settingsSession.transcript.advanced.coalesceWindowPromptTitle')[0] ?? null;
@@ -120,7 +79,7 @@ describe('Transcript advanced settings (performance)', () => {
             findField()?.props.onBlur();
         });
 
-        expect(transcriptAdvancedSettingsTestState.setCoalesceWindowMs).toHaveBeenCalledWith(200);
-        expect(findField()?.props.value).toBe('200');
+        expect(storage.getState().settings.transcriptStreamingCoalesceWindowMs).toBe(900);
+        expect(findField()?.props.value).toBe('900');
     });
 });

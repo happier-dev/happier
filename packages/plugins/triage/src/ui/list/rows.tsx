@@ -1,5 +1,7 @@
 import * as React from 'react';
 import {
+  Badge,
+  BrandMark,
   Button,
   DragSource,
   DropTarget,
@@ -8,6 +10,8 @@ import {
   Stack,
   Text,
   useListMultiSelectionRow,
+  usePluginHostApi,
+  usePluginTheme,
   usePluginTranslation,
   useSurfaceContext,
   type CollectionAnatomy,
@@ -16,6 +20,11 @@ import {
   type ListItemProps,
   type TextTone,
 } from '@happier-dev/plugin-ui';
+import {
+  HAPPIER_TONE_COLOR_TOKEN,
+  HAPPIER_WORK_STATUS_SEMANTIC_TONE,
+  HappierStatusDot,
+} from '@happier-dev/plugin-ui/presentation';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
@@ -218,6 +227,8 @@ export function triageListRowItemProps(
     text?: TriageEntryDisplayTextV1;
     descriptor?: TriageSourceDescriptorV1 | null;
     source?: TriageListDisplayRowV1['entryRef']['source'];
+    /** The words of the row's own Signal and Agent cells, so the description says what those cells show. */
+    cells?: Readonly<{ signalLabel?: string; agentLabel?: string }>;
   }>,
 ): Pick<
   ListItemProps,
@@ -263,6 +274,7 @@ export function triageListRowItemProps(
       ...row,
       contextDescription: context.description,
       ...(activityLabel === undefined ? {} : { activityLabel }),
+      ...announcement.cells,
     }, announcement),
   };
 }
@@ -360,11 +372,13 @@ export function useTriageListRowActions(item: TriageListItemV1): CollectionRowAc
   };
 }
 
-/** The peek: the source's own summary, what the row already knows, and the two things a reader does next. */
+/** The peek: the source's own summary, what the row already knows, and what a reader does next. */
 function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.ReactElement {
   const { row, summary } = props.item;
   const { handlers, onOpen } = useTriageListRowEnvironment();
   const text = usePluginTranslation();
+  const hostApi = usePluginHostApi();
+  const webUrl = props.item.locator?.webUrl ?? null;
   const surfaceContext = useSurfaceContext();
   const descriptor = readTriageSourceDescriptorV1(surfaceContext, row.entryRef.source);
   const context = readTriageEntryRowContextV1(row, descriptor, row.entryRef.source);
@@ -377,6 +391,7 @@ function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.Reac
           <Button
             title={text('plugins.triage.surface.peek.open', 'Open')}
             variant="primary"
+            size="small"
             onPress={() => { onOpen(row.key); }}
           />
         )}
@@ -386,10 +401,20 @@ function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.Reac
             : text('plugins.triage.surface.peek.pin', 'Pin')}
           accessibilityLabel={readTriagePinActionLabelV1(row, text)}
           variant="secondary"
+          size="small"
           busy={handlers.busyKey === row.key}
           disabled={handlers.unavailableReason !== null}
           onPress={() => { handlers.onSetPinned(row); }}
         />
+        {webUrl === null ? null : (
+          <Button
+            // The same destination and words as the detail header's Open at the source.
+            title={text('plugins.triage.surface.detail.openAtSource', 'Open at the source')}
+            variant="plain"
+            size="small"
+            onPress={() => { void hostApi.openExternalLink(webUrl); }}
+          />
+        )}
       </Row>
     </Stack>
   );
@@ -402,6 +427,41 @@ const SIGNAL_TONES: Readonly<Record<NonNullable<TriageListItemV1['signal']>['ton
   info: 'info',
   neutral: 'secondary',
 });
+
+/**
+ * A cell's state as a small tone mark beside a quiet word ("Checks passed", "Working"): the colour is
+ * the glance, the word is the meaning. It is not a `Status` because a row cell is not a notice — it is
+ * one line that truncates inside a fixed cell, and it is never a live region: the row's own description
+ * says the same words (`cells` in `triageListRowItemProps`), so thirty announcing cells would only be noise.
+ * A secondary tone has no mark: healthy facts stay quiet.
+ */
+function TriageCellState(props: Readonly<{ tone: TextTone; label: string; live?: boolean }>): React.ReactElement {
+  const theme = usePluginTheme();
+  const marked = props.tone !== 'secondary' && props.tone !== 'muted';
+  return (
+    <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
+      {marked ? <HappierStatusDot color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.tone]]} isPulsing={props.live === true} /> : null}
+      <Stack style={TRIAGE_CELL_STATE_WORD_STYLE_V1}>
+        <Text variant="body" tone="secondary" value={props.label} numberOfLines={1} />
+      </Stack>
+    </Row>
+  );
+}
+
+const TRIAGE_CELL_STATE_STYLE_V1 = Object.freeze({ minWidth: 0, maxWidth: '100%' as const });
+const TRIAGE_CELL_STATE_WORD_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
+
+/** Where an entry lives, led by its source's own mark so GitHub, GitLab and Sentry rows tell apart at a glance. */
+function TriageRowWhere(props: Readonly<{ pluginId: string; label: string }>): React.ReactElement {
+  return (
+    <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
+      <BrandMark pluginId={props.pluginId} size="small" externallyLabelled />
+      <Stack style={TRIAGE_CELL_STATE_WORD_STYLE_V1}>
+        <Text variant="body" tone="secondary" value={props.label} numberOfLines={1} />
+      </Stack>
+    </Row>
+  );
+}
 
 /**
  * The PRs & Issues row anatomy: which already-projected word goes in which Collection slot. The entry is the
@@ -459,20 +519,35 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
         return <Icon name={mark.name} size="small" tone={mark.tone} />;
       },
       title: (item) => item.row.title,
-      where: (item) => item.row.identifierLabel ?? item.row.scopeLabel,
+      where: (item) => (
+        <TriageRowWhere pluginId={item.row.entryRef.source.pluginId} label={item.row.identifierLabel ?? item.row.scopeLabel} />
+      ),
       reason: (item) => {
         const { row } = item;
         if (row.detail === null || row.detailKind === 'summary') return null;
         const tone: TextTone = row.detailKind === 'attention'
           ? 'accent'
           : row.detailKind === 'presence' && row.tone !== 'neutral' ? row.tone : 'secondary';
-        return <Text variant="caption" tone={tone} value={row.detail} numberOfLines={1} />;
+        // The row's one loud fact is a tinted chip; a quiet note ("Waiting on Priya") stays plain words.
+        return tone === 'secondary'
+          ? <Text variant="body" tone={tone} value={row.detail} numberOfLines={1} />
+          : <Badge variant="tinted" tone={tone} value={row.detail} />;
       },
       ...(withSignal ? {
         signal: (item: TriageListItemV1) => (item.signal === null ? null : (
-          <Text variant="caption" tone={SIGNAL_TONES[item.signal.tone]} value={item.signal.label} numberOfLines={1} />
+          <TriageCellState tone={SIGNAL_TONES[item.signal.tone]} label={item.signal.label} />
         )),
       } : {}),
+      agent: (item) => (item.agent === null ? null : (
+        <TriageCellState
+          // A working agent gets the one live mark; a finished or idle one stays a quiet word.
+          tone={item.agent.tone !== 'neutral'
+            ? HAPPIER_WORK_STATUS_SEMANTIC_TONE[item.agent.tone]
+            : item.agent.live ? 'info' : 'secondary'}
+          label={text(item.agent.labelKey, item.agent.label)}
+          live={item.agent.live}
+        />
+      )),
       age: (item) => (item.row.activityAtMs === null
         ? null
         : formatTriageCompactAgeV1(surfaceContext.locale, item.row.activityAtMs, Date.now())),
@@ -484,6 +559,10 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
         descriptor: descriptorOf(item),
         source: item.row.entryRef.source,
         text,
+        cells: {
+          ...(withSignal && item.signal !== null ? { signalLabel: item.signal.label } : {}),
+          ...(item.agent === null ? {} : { agentLabel: text(item.agent.labelKey, item.agent.label) }),
+        },
       }).accessibilityHint,
       testID: (item) => triageListRowTestId(item.row.key),
       columnTitles: {
@@ -491,6 +570,7 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
         where: text('plugins.triage.surface.column.where', 'Where'),
         reason: text('plugins.triage.surface.column.reason', 'Why it’s here'),
         signal: text('plugins.triage.surface.column.signal', 'Signal'),
+        agent: text('plugins.triage.surface.column.agent', 'Agent'),
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };

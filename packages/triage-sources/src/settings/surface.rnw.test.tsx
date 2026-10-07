@@ -241,6 +241,24 @@ afterEach(async () => {
 });
 
 describe('the mounted PRs & Issues source settings page', () => {
+  it('configures the native login with source-owned translated copy and no connected-account editor', async () => {
+    const nativeBinding = { purpose: PURPOSE, source: 'native', service: { pluginId: PLUGIN_ID, localId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID } };
+    const nativeDraft = { v: 1, binding: nativeBinding, localInstanceKey: 'native-scope', keyStability: 'stable', configuration: { v: 1, token: 'scope:native' }, locator: { v: 1, displayLabel: 'local-user' } };
+    const surface = createTriageSourceSettingsSurface({
+      pluginId: PLUGIN_ID, listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID, sourceDisplayName: SOURCE_DISPLAY_NAME,
+      nativeLoginLabel: { key: 'example.nativeLogin', fallback: 'Use this machine’s CLI login' },
+      nativeAuthenticationFailureLabel: { key: 'example.nativeRepair', fallback: 'Sign in on this machine.' },
+    });
+    const harness = createHarness({ discovery: { kind: 'complete', candidates: [nativeDraft], failures: [{ binding: nativeBinding, failure: { class: 'authentication', code: 'native-login-unavailable' } }] } });
+    const page = await mountSettings(harness, { 'example.nativeLogin': 'Translated machine login', 'example.nativeRepair': 'Translated native repair' }, surface);
+    await expect(page.getByText('Translated native repair')).resolves.toBeDefined();
+    await pressControl(page, 'Add Translated machine login to PRs & Issues');
+    expect(harness.administrations()).toEqual([{ v: 1, kind: 'create', draft: nativeDraft }]);
+    await expect(page.queryByRole('button', { name: 'Reconnect' })).resolves.toBeUndefined();
+    expect(harness.connectedAccountsRequests).toEqual([]);
+  });
+
   it('opens the canonical Connected Accounts destination for this source', async () => {
     const harness = createHarness({ discovery: { kind: 'complete', candidates: [], failures: [] } });
     const page = await mountSettings(harness);

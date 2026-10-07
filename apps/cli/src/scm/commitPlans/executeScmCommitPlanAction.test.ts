@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -225,6 +226,48 @@ describe('accepted commit plan through registered canonical writer', () => {
     expect(recovered.application).toMatchObject({ status: 'stopped', nextGroupIndex: 2, steps: [{ state: 'published' }, { state: 'published', commitSha: last.commitSha }] });
     expect(git(cwd, ['rev-list', '--count', 'HEAD'])).toBe('3');
     expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(last.commitSha);
+  });
+  it.skipIf(process.platform === 'win32')('retains the canonical published outcome when a post-commit hook replaces displayed history', async () => {
+    const { cwd, store, saved, registry, result, acceptance } = await setup();
+    const first = acceptance.groups[0]!;
+    const plan = { groups: [first], leftOutChangeRefs: [...acceptance.leftOutChangeRefs, ...acceptance.groups[1]!.changeRefs] };
+    const edited = result(await store.edit({ cwd, resultId: saved.resultId, expectedRevision: 0,
+      edit: { kind: 'replaceCommitPlan', value: plan } }));
+    const hook = join(cwd, '.git', 'hooks', 'post-commit');
+    writeFileSync(hook, '#!/bin/sh\nlanded=$(git rev-parse HEAD)\nreplacement=$(git commit-tree HEAD^{tree} -m displayed-root)\ngit replace "$landed" "$replacement"\n');
+    chmodSync(hook, 0o755);
+    const applied = result(await executeScmCommitPlanAction({ cwd, store, registry,
+      actionId: 'scm.diffSummary.commitPlan.accept', input: { cwd, resultId: saved.resultId,
+        expectedRevision: edited.revision, acceptance: { ...acceptance, ...plan } } }));
+    const sha = git(cwd, ['rev-parse', 'HEAD']);
+    expect(git(cwd, ['rev-list', '--parents', '-n', '1', sha])).toBe(sha);
+    expect(git(cwd, ['--no-replace-objects', 'rev-list', '--parents', '-n', '1', sha])).toBe(`${sha} ${acceptance.expectedHeadOid}`);
+    expect(applied.application).toMatchObject({ status: 'complete', nextGroupIndex: 1,
+      steps: [{ state: 'published', commitSha: sha, publication: { state: 'published', candidateOid: sha } }] });
+    expect(git(cwd, ['--no-replace-objects', 'show', `${sha}:b.txt`])).toBe('base');
+    expect(git(cwd, ['diff', '--cached', '--name-only'])).toBe('left.txt');
+  });
+  it.skipIf(process.platform === 'win32')('continues accepted groups against the actual parent tree after a display replacement', async () => {
+    const { cwd, accept, result, acceptance } = await setup();
+    const index = join(cwd, '.git', 'replacement-index');
+    const withReplacementIndex = (args: string[]) => execFileSync('git', args,
+      { cwd, encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: index } }).trim();
+    withReplacementIndex(['read-tree', 'HEAD']);
+    withReplacementIndex(['add', 'a.txt', 'b.txt']);
+    const finalTree = withReplacementIndex(['write-tree']);
+    const hook = join(cwd, '.git', 'hooks', 'post-commit');
+    writeFileSync(hook, `#!/bin/sh\nlanded=$(git rev-parse HEAD)\nreplacement=$(git commit-tree ${finalTree} -m displayed-root)\ngit replace "$landed" "$replacement"\n`);
+    chmodSync(hook, 0o755);
+    const applied = result(await accept());
+    expect(applied.application).toMatchObject({ status: 'complete', nextGroupIndex: 2,
+      steps: [{ state: 'published' }, { state: 'published' }] });
+    const [first, second] = applied.application!.steps;
+    expect(git(cwd, ['--no-replace-objects', 'rev-list', '--parents', '-n', '1', second!.commitSha!]))
+      .toBe(`${second!.commitSha} ${first!.commitSha}`);
+    expect(git(cwd, ['--no-replace-objects', 'rev-parse', `${first!.commitSha}^`])).toBe(acceptance.expectedHeadOid);
+    expect(git(cwd, ['--no-replace-objects', 'show', `${first!.commitSha}:b.txt`])).toBe('base');
+    expect(git(cwd, ['--no-replace-objects', 'show', `${second!.commitSha}:b.txt`])).toBe('b.txt');
+    expect(git(cwd, ['diff', '--cached', '--name-only'])).toBe('left.txt');
   });
   it('creates exact sequential trees, preserves excluded staged intent and records actual hook-rewritten messages', async () => {
     const { cwd, accept, acceptance, result } = await setup();

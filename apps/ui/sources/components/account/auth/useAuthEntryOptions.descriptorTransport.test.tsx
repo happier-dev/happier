@@ -2,12 +2,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
+import { authGetToken, authGetTokenAtEndpoint } from '@/auth/flows/getToken';
+import { WelcomeDecisionPanel } from '@/components/onboarding/preAuth/WelcomeDecisionPanel';
 import { adoptHomeProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
-import { setActiveServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { useAuthEntryOptions } from './useAuthEntryOptions';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
@@ -22,6 +23,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
 }));
 // The native bridge is the IO boundary; carrier policy and enrollment resolution stay real.
 vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({ acquireIrohHomeRuntimeOrigin: boundary.acquire }));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 function signedOut({ children }: React.PropsWithChildren) {
     return <InjectedAuthProvider credentials={null}>{children}</InjectedAuthProvider>;
@@ -56,10 +58,133 @@ function network(home: HomeConnectionDescriptorV1, origin: string) {
     });
 }
 afterEach(() => {
+    vi.useRealTimers();
     standardCleanup();
     resetServerProfilesRuntimeForTests();
     boundary.fetch.mockReset();
     boundary.acquire.mockReset();
+});
+
+it('offers Retry while Welcome discovery is pending and replaces its abandoned observation', async () => {
+    resetServerProfilesRuntimeForTests();
+    const origin = 'https://welcome-retry.example.test';
+    await upsertAndActivateServer({ serverUrl: origin, name: 'Retry Home' });
+    const firstFeatures = createDeferred<Response>();
+    const featureSignals: Array<AbortSignal | null | undefined> = [];
+    boundary.fetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+        if (String(url).endsWith('/v1/auth/entry')) return new Response('', { status: 404 });
+        if (String(url).endsWith('/v1/features')) {
+            featureSignals.push(init?.signal);
+            if (featureSignals.length === 1) return await firstFeatures.promise;
+            return Response.json(createRootLayoutFeaturesResponse());
+        }
+        return new Response('', { status: 404 });
+    });
+    function Welcome() {
+        return <WelcomeDecisionPanel authEntryOptions={useAuthEntryOptions()}
+            onOpenRestore={() => {}} onChangeRelay={() => {}} />;
+    }
+    const screen = await renderScreen(<Welcome />, { wrapper: signedOut });
+    try {
+        await vi.waitFor(() => expect(featureSignals).toHaveLength(1));
+        expect(screen.findHostByTestId('welcome-auth-loading')).not.toBeNull();
+        const retry = screen.findByTestId('welcome-auth-loading-retry');
+        expect(retry).not.toBeNull();
+        await screen.pressByTestIdAsync('welcome-auth-loading-retry');
+        await vi.waitFor(() => expect(featureSignals).toHaveLength(2));
+        expect(featureSignals[0]?.aborted).toBe(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId('welcome-auth-loading')).toBeNull());
+    } finally {
+        firstFeatures.resolve(new Response('', { status: 503 }));
+        await screen.unmount();
+    }
+});
+
+it('keeps released v1 focused-Home login available when options only carry cancellation', async () => {
+    resetServerProfilesRuntimeForTests();
+    const origin = 'https://focused-v1.example.test';
+    await upsertAndActivateServer({ serverUrl: origin, name: 'Released Home' });
+    network(descriptor('srv_focused_v1', 'https'), origin);
+    const controller = new AbortController();
+    await expect(authGetToken(new Uint8Array(32).fill(3), { signal: controller.signal }))
+        .resolves.toBe('signed-in-target-token');
+});
+
+it.each(['features', 'auth'] as const)('cancels focused key authentication during %s without accepting a late response', async (phase) => {
+    resetServerProfilesRuntimeForTests();
+    const origin = `https://focused-cancel-${phase}.example.test`;
+    await upsertAndActivateServer({ serverUrl: origin, name: 'Cancelled Home' });
+    const held = createDeferred<Response>();
+    const features = createRootLayoutFeaturesResponse({ capabilities: {
+        auth: { keyChallenge: { v2: true } },
+        serverIdentity: { serverIdentityId: `srv_focused_cancel_${phase}` },
+        server: { canonicalServerUrl: origin },
+    } });
+    let heldSignal: AbortSignal | null | undefined;
+    let arrived = false;
+    boundary.fetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+        if (String(url).endsWith(`/v1/${phase === 'features' ? 'features' : 'auth'}`)) {
+            heldSignal = init?.signal;
+            arrived = true;
+            return await held.promise;
+        }
+        if (String(url).endsWith('/v1/auth/challenge')) return Response.json({
+            challengeId: 'cancellation-challenge', nonce: 'cancellation-nonce',
+            issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            audience: { origin, serverIdentityId: `srv_focused_cancel_${phase}` },
+        });
+        return Response.json(features);
+    });
+    const controller = new AbortController();
+    const result = authGetToken(new Uint8Array(32).fill(3), { signal: controller.signal })
+        .then((token) => ({ token }), (error: unknown) => ({ error }));
+    try {
+        await vi.waitFor(() => expect(arrived).toBe(true));
+        controller.abort();
+        expect(heldSignal?.aborted).toBe(true);
+    } finally {
+        held.resolve(Response.json(phase === 'features' ? features : { token: 'late-token' }));
+    }
+    expect(await result).toMatchObject({ error: { name: 'AbortError' } });
+    if (phase === 'features') expect(boundary.fetch.mock.calls.some(([url]) => String(url).endsWith('/v1/auth'))).toBe(false);
+});
+
+it.each(['saved-descriptor', 'identity-publication'] as const)('keeps one slow anonymous Home entry observation through %s', async (target) => {
+    resetServerProfilesRuntimeForTests();
+    const home = descriptor('srv_entry_slow', 'https');
+    const origin = 'https://srv_entry_slow.example.test';
+    if (target === 'saved-descriptor') await focus(home);
+    else await upsertAndActivateServer({ serverUrl: origin, name: 'Slow Home' });
+    const initialGeneration = getActiveServerSnapshot().generation;
+    const entry = createDeferred<Response>();
+    const signals: (AbortSignal | null | undefined)[] = [];
+    boundary.fetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+        if (String(url).endsWith('/v1/auth/entry')) {
+            signals.push(init?.signal);
+            return await new Promise<Response>((resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('Retired', 'AbortError')), { once: true });
+                void entry.promise.then(resolve, reject);
+            });
+        }
+        return Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+            server: { canonicalServerUrl: target === 'saved-descriptor' ? home.canonicalServerUrl : origin },
+            serverIdentity: { serverIdentityId: home.homeServerIdentityId },
+            auth: { keyChallenge: { v2: false } },
+        } }));
+    });
+    vi.useFakeTimers();
+    const hook = await renderHook(() => useAuthEntryOptions(), { wrapper: signedOut });
+    await flushHookEffects({ cycles: 3, turns: 4 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(7_000); });
+    await flushHookEffects({ cycles: 3, turns: 4 });
+    if (target === 'identity-publication') expect(getActiveServerSnapshot().generation).toBeGreaterThan(initialGeneration);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    entry.resolve(new Response('', { status: 404 }));
+    await flushHookEffects({ cycles: 3, turns: 4 });
+    expect(hook.getCurrent().serverAvailability).toBe('ready');
+    expect(hook.getCurrent().authEntryUnavailable).toBe(false);
+    await hook.unmount();
 });
 
 it('uses the descriptor carrier for exact Home discovery and the actual sign-in request', async () => {

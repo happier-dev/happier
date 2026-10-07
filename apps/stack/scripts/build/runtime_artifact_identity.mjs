@@ -18,9 +18,11 @@ import { runCapture } from '../utils/proc/proc.mjs';
 import {
   readHappyCliRuntimeInputFreshness,
   resolveHappyCliRuntimeInputPaths,
+  collectHappyCliRuntimePackageDirs,
+  createHappyCliRuntimeInputIgnorePath,
 } from '../utils/proc/cli_runtime_inputs.mjs';
 import { readDevReloadWatchChangeSignatureAsync } from '../utils/dev/watchSignature.mjs';
-import { resolveWorkspaceBuildInputWatchPaths } from '../utils/fs/workspaceBuildInputs.mjs';
+import { createWorkspaceBuildInputIgnorePath, resolveWorkspaceBuildInputWatchPaths } from '../utils/fs/workspaceBuildInputs.mjs';
 import { resolveBundledPluginGeneratorInputPaths } from '../../../cli/scripts/build-owned/bundledPlugins/authoringInputs.mjs';
 
 const RUNTIME_COMPONENTS = Object.freeze(['web', 'server', 'daemon']);
@@ -48,16 +50,29 @@ function readInternalWorkspaceDependencyNames(packageJsonPath) {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl = existsSync, includeShippedFiles = false, excludeGeneratedPluginArtifacts = false }) {
+function collectWorkspaceSourceDirs({ repoDir, hostDir }) {
   const dependencyNames = readInternalWorkspaceDependencyNames(join(hostDir, 'package.json'));
   const closure = resolveInternalWorkspacePackageNameClosure({
     repoRoot: repoDir,
     packageNames: dependencyNames,
   });
-  return closure.flatMap((packageName) => {
-    const packageDir = resolveWorkspaceSourceDir({ repoRoot: repoDir, packageName });
-    return resolveWorkspaceBuildInputWatchPaths(packageDir, { existsSyncImpl, includeShippedFiles, excludeGeneratedPluginArtifacts });
-  });
+  return closure.map(packageName => resolveWorkspaceSourceDir({ repoRoot: repoDir, packageName }));
+}
+
+function collectWorkspaceSourcePaths({ repoDir, hostDir, existsSyncImpl = existsSync, includeShippedFiles = false, excludeGeneratedPluginArtifacts = false }) {
+  return collectWorkspaceSourceDirs({ repoDir, hostDir }).flatMap(packageDir =>
+    resolveWorkspaceBuildInputWatchPaths(packageDir, { existsSyncImpl, includeShippedFiles, excludeGeneratedPluginArtifacts }));
+}
+
+export function createRuntimeComponentSourceIgnorePath({ component, sourceMetadata, excludeGeneratedPluginArtifacts = false }) {
+  const repoDir = sourceMetadata.repoDir;
+  const cliDir = join(repoDir, 'apps/cli');
+  if (component === 'daemon') return createHappyCliRuntimeInputIgnorePath({ cliDir, includeShippedFiles: true, excludeGeneratedPluginArtifacts });
+  const hostDir = join(repoDir, 'apps', component === 'web' ? 'ui' : 'server');
+  const packageDirs = collectWorkspaceSourceDirs({ repoDir, hostDir });
+  if (component === 'web') packageDirs.push(...collectHappyCliRuntimePackageDirs({ cliDir }).map(({ dir }) => dir));
+  return createWorkspaceBuildInputIgnorePath(packageDirs,
+    { repoDir, hostDir, includeShippedFiles: true, excludeGeneratedPluginArtifacts });
 }
 
 export function resolveRuntimeComponentSourcePaths({
@@ -119,8 +134,10 @@ export function resolveRuntimeComponentSourcePaths({
   ])].sort((left, right) => left.localeCompare(right));
 }
 
-async function readSourcePathFingerprint({ component, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs, inputEntries }) {
-  let signature = await readDevReloadWatchChangeSignatureAsync(paths, includeRuntimeSupportInputs ? { ignorePath: null, portableSymlinks: true } : undefined);
+async function readSourcePathFingerprint({ component, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs, excludeGeneratedPluginArtifacts, inputEntries }) {
+  let signature = await readDevReloadWatchChangeSignatureAsync(paths, includeRuntimeSupportInputs ? {
+    ignorePath: createRuntimeComponentSourceIgnorePath({ component, sourceMetadata: { repoDir }, excludeGeneratedPluginArtifacts }), portableSymlinks: true,
+  } : undefined);
   if (signature && inputEntries) for (const entry of signature.split('\n')) {
     const [path, ...values] = entry.split('\0');
     inputEntries[relative(repoDir, path).replaceAll('\\', '/')] = JSON.stringify(values);
@@ -167,7 +184,7 @@ export async function readRuntimeComponentSourceFingerprint({
     includeRuntimeSupportInputs,
     excludeGeneratedPluginArtifacts,
   });
-  return await readSourcePathFingerprintImpl({ component: normalizedComponent, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs, inputEntries });
+  return await readSourcePathFingerprintImpl({ component: normalizedComponent, paths, repoDir, identityRepoDir, includeRuntimeSupportInputs, excludeGeneratedPluginArtifacts, inputEntries });
 }
 
 export async function collectRuntimeComponentSourceFingerprints({

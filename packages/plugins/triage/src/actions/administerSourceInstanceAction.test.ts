@@ -156,6 +156,30 @@ async function readRows(
 }
 
 describe('the source administration Action handler', () => {
+    it('lets an agent configure native service metadata and persists no account or credential', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const handler = createTriageAdministerSourceInstanceActionHandler({
+            mintSourceInstanceId: () => INSTANCE_ID,
+            nowMs: () => 1_000,
+        });
+        const binding = {
+            purpose: PURPOSE,
+            source: 'native' as const,
+            service: { pluginId: SOURCE.pluginId, localId: 'accounts' },
+        };
+        const nativeDraft = { ...draft(), binding };
+        expect(await handler(
+            { v: 1, kind: 'create', source: SOURCE, draft: nativeDraft },
+            createContext({ collections, surface: 'agent' }),
+        )).toEqual({ kind: 'active', sourceInstanceId: INSTANCE_ID });
+        const rows = await readRows(collections);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.configured.binding).toEqual(binding);
+        expect(rows[0]?.configured.binding).not.toHaveProperty('account');
+        expect(JSON.stringify(rows)).not.toContain('authorization');
+        expect(JSON.stringify(rows)).not.toContain('credential');
+    });
+
     it('lets a host agent configure an admitted source and remove its existing instance without spoofing provenance', async () => {
         const { collections } = createTestkitCorpusCollections();
         const handler = createTriageAdministerSourceInstanceActionHandler({

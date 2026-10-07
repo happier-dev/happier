@@ -30,10 +30,10 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     const index = Math.max(0, props.files.findIndex((file) => file.fullPath === props.activePath));
     const active = props.files[index];
     const position = t('walkthrough.stopOf', { number: index + 1, total: props.files.length });
-    const items = React.useMemo(() => props.files.map((file) => ({
+    const items = React.useMemo(() => !open || display.changesLayout === 'tree' ? [] : props.files.map((file) => ({
         id: file.fullPath, title: file.fileName, subtitle: file.filePath, accessibilityLabel: file.fullPath,
         rightElement: <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />,
-    })), [props.files, props.findModel]);
+    })), [open, display.changesLayout, props.files, props.findModel]);
     const focus = React.useCallback((path: string) => { props.onFocusPath(path); setOpen(false); }, [props.onFocusPath]);
     return <View testID="scm-comparison-file-control" style={styles.control}>
         <DropdownMenu testID="scm-comparison-file-picker" open={open} onOpenChange={setOpen}

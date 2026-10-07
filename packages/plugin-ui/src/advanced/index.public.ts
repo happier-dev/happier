@@ -19,6 +19,13 @@ export type {
   PluginUiSessionPartPresentation,
   PluginUiWidgetAreaPresentation,
 } from '../presentationHost/context.js';
+/** The same claim owner backs author-side suppression and host-side Session arrangements. */
+export {
+  createSessionPartClaims,
+  useSessionPartClaim,
+  type SessionPartClaims,
+  type SessionPartKind,
+} from '../presentationHost/sessionPartClaims.js';
 /** Private host composition: physical scrollers pass the incumbent activity owner to widgets. */
 export {
   PluginUiScrollActivityProvider,

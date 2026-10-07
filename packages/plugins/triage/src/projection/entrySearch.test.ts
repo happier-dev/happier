@@ -120,6 +120,7 @@ function pickerTitles(
         window: fold(observations),
         freshness: 'fresh',
         pending: 'idle',
+        passes: 1,
         configuredSources: [{ sourceInstanceId: INSTANCE_ID, source: TRIAGE_TESTKIT_SOURCE, available: true }],
     };
     const view = buildTriagePickerView({

@@ -75,8 +75,7 @@ export function resolveVoiceSpeechSegmentLength(text: string, options: Readonly<
   targetChars?: number;
 }>): number {
   const target = options.targetChars ?? 320;
-  const maximum = 1_024;
-  const limit = speechTextEndAtOrBefore(text, Math.min(text.length, maximum));
+  const limit = text.length;
   if (options.force) return limit;
   for (let index = 0; index < limit; index += 1) {
     if (!isSpeechSentenceBoundary(text, index, { streaming: true })) continue;
@@ -85,11 +84,11 @@ export function resolveVoiceSpeechSegmentLength(text: string, options: Readonly<
     if (options.firstSegment || end >= target) return end;
     index = end - 1;
   }
-  if (text.length < Math.min(target, maximum)) return 0;
+  if (text.length < target) return 0;
   for (let index = limit - 1; index >= target - 1; index -= 1) {
     if (/\s/u.test(text[index]!) || isSpeechClauseBoundary(text, index, { streaming: true })) return index + 1;
   }
-  return text.length >= maximum ? limit : 0;
+  return 0;
 }
 
 /** Ordered synthesis batches; never split a UTF-16 surrogate pair. */

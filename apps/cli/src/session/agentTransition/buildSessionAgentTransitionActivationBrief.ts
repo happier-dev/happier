@@ -35,9 +35,8 @@ function readNonEmptyString(value: unknown): string | null {
  * preview's whole claim is that it shows what the target Agent was sent, and a
  * rebuild against a different budget would quietly break that.
  *
- * Parsed through the shared budget owner rather than a range restated here, so
- * the floor beneath which the seed builder deliberately produces NO seed stays
- * stated in exactly one place.
+ * Parsed through the shared positive-integer budget owner. The Replay builder
+ * decides whether its actual frame and dispatch reservation can fit that total.
  */
 function readAccountReplayMaxSeedChars(): number | null {
   const settings = getActiveAccountSettingsSnapshot()?.settings as
@@ -51,8 +50,8 @@ function readAccountReplayMaxSeedChars(): number | null {
  * `seed: null` is the EMPTY source, not a failure: a Session whose Agent has
  * produced no dialog has nothing to carry over, which is the trivially
  * satisfiable case. `unavailable` is reserved for a bounded retrieval that
- * genuinely failed — the only one that may fail a transition whose source is
- * already stopped.
+ * genuinely failed or whose nonempty source cannot fit the selected total —
+ * the only one that may fail a transition whose source is already stopped.
  */
 export type SessionAgentTransitionActivationBriefV1 =
   | Readonly<{ status: 'available'; seed: ReplaySeedV1 | null }>

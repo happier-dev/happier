@@ -1538,7 +1538,7 @@ export function WorkflowRunScreen(): React.ReactElement {
             workflowName: visibleAcceptedContext?.metadata?.title,
             notice: t('workflows.recovery.repeatedEffectWarning'),
             startDisabled: runAgainAgentOverride !== null && runAgainAgentOverride.engine === undefined,
-            preview: visibleAcceptedContext?.metadata?.description || visibleDefinition.blocks.map(workflowBlockReferenceLabel).join('\n'),
+            preview: visibleAcceptedContext?.metadata?.description || visibleDefinition.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n'),
             machineId: visibleAcceptedContext?.machineId ?? null,
             ...(visibleAcceptedContext === null ? {} : { extraActionChips: [{
                 ...createExecutionRunStartContentChip({

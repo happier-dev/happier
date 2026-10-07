@@ -6,7 +6,6 @@ import type {
 } from '@/session/external/privateContract';
 import type { CommittedTranscriptLocalIdBaseline } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import {
-    EXTERNAL_SESSIONS_INVOCATION_POLICY,
     invokeBoundedExternalSessionsOperation,
 } from '@/session/external/agentExternalSessionsInvocation';
 import type { ExternalSessionTerminalFollowProjectionAdmission } from '@/session/external/terminalFollowProjection';
@@ -61,7 +60,7 @@ function readTerminalFollowUnavailableCode(error: unknown): string | null {
 export function createHostTerminalTranscriptFollowService(params: Readonly<{
     loadCommittedLocalIdBaseline?(input: Readonly<{
         signal: AbortSignal;
-        deadlineAtMs: number;
+        deadlineAtMs?: number;
     }>): Promise<CommittedTranscriptLocalIdBaseline>;
     followProviderSession(
         request: Readonly<{
@@ -112,8 +111,7 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                 const result = unavailable('plugin_external_follow_identity_mismatch');
                 return result;
             }
-            const admissionDeadlineAtMs =
-                Date.now() + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs;
+            const admissionDeadlineAtMs = request.admissionDeadlineAtMs;
             const bindingAbort = new AbortController();
             const signal = AbortSignal.any([
                 params.signal,
@@ -155,7 +153,7 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                         'Committed transcript baseline could not be loaded',
                     );
                 }
-                if (Date.now() >= admissionDeadlineAtMs) {
+                if (admissionDeadlineAtMs !== undefined && Date.now() >= admissionDeadlineAtMs) {
                     throw terminalFollowFailure('plugin_external_follow_resync_required', 'Committed transcript baseline exceeded admission');
                 }
                 const committedBaseline = baselineResult.value;
@@ -170,7 +168,7 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                         providerSessionId: request.providerSessionId,
                         initialReplay: true,
                         ...(request.replay === 'fresh' ? { replay: request.replay } : {}),
-                        admissionDeadlineAtMs,
+                        ...(admissionDeadlineAtMs === undefined ? {} : { admissionDeadlineAtMs }),
                         signal,
                     },
                     async (event) => {

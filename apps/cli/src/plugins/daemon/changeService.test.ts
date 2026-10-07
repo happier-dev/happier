@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -11,6 +11,7 @@ import {
 } from './changeService';
 
 describe('createDaemonPluginChangeService', () => {
+  afterEach(() => { vi.useRealTimers(); });
   it('publishes an ephemeral development candidate without running rejection cleanup', async () => {
     const cleanup = vi.fn(async () => undefined);
     const candidate = Object.freeze({
@@ -123,11 +124,12 @@ describe('createDaemonPluginChangeService', () => {
     });
   });
 
-  it('bounds and redacts credential material in a reported preparation cause', async () => {
+  it('retains the full preparation cause while redacting credential material', async () => {
+    const explanation = 'Registry recovery context. '.repeat(400);
     const service = createDaemonPluginChangeService({
       prepare: async () => {
         throw new Error(
-          `Plugin registry request failed: authorization: bearer sk-abcdefghijklmnopqrstuvwxyz012345 ${'x'.repeat(8_000)}`,
+          `Plugin registry request failed: authorization: bearer sk-abcdefghijklmnopqrstuvwxyz012345\n${explanation}`,
         );
       },
     });
@@ -142,13 +144,10 @@ describe('createDaemonPluginChangeService', () => {
     const message = result.kind === 'failed' ? result.message ?? '' : '';
     expect(message).toContain('Plugin registry request failed');
     expect(message).not.toContain('sk-abcdefghijklmnopqrstuvwxyz012345');
-    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(message).toContain(explanation.trim());
   });
 
-  it('drops a multi-byte character whole when the byte bound falls inside it', async () => {
-    // The bound is a byte bound, so a 4-byte emoji can straddle it. Cutting the
-    // buffer mid-codepoint publishes a replacement character in place of the
-    // author's text, so the bound has to land on a character boundary.
+  it('retains multi-byte preparation cause text beyond the former byte ceiling', async () => {
     const prefix = 'Plugin registry request failed: ';
     const head = `${prefix}${'a'.repeat(2_046 - prefix.length)}`;
     const service = createDaemonPluginChangeService({
@@ -166,7 +165,7 @@ describe('createDaemonPluginChangeService', () => {
     expect(result.kind).toBe('failed');
     const message = result.kind === 'failed' ? result.message ?? '' : '';
     expect(message).not.toContain('�');
-    expect(message).toBe(head);
+    expect(message).toBe(`${head}\u{1F600}tail`);
   });
 
   it('keeps review state ephemeral and applies a candidate at most once', async () => {
@@ -186,7 +185,6 @@ describe('createDaemonPluginChangeService', () => {
         cleanup,
       })),
       createPendingChangeId: () => 'pending-1',
-      nowMs: () => 100,
     });
 
     const begun = await service.requestPluginChange({
@@ -217,7 +215,7 @@ describe('createDaemonPluginChangeService', () => {
     await expect(service.decidePluginChange(decision)).resolves.toEqual({ kind: 'expired' });
   });
 
-  it('rejoins one pending change through review, apply, and its bounded terminal result without preparing again', async () => {
+  it('rejoins one pending change and retains its terminal result for the daemon lifetime', async () => {
     let markApplyStarted!: () => void;
     const applyStarted = new Promise<void>((resolve) => {
       markApplyStarted = resolve;
@@ -234,7 +232,6 @@ describe('createDaemonPluginChangeService', () => {
     const cleanupBlocked = new Promise<void>((resolve) => {
       finishCleanup = resolve;
     });
-    let nowMs = 0;
     const prepare = vi.fn(async () => ({
       pluginId: 'acme.example',
       review: createPluginInstallationReviewFixture(),
@@ -257,7 +254,6 @@ describe('createDaemonPluginChangeService', () => {
     const service = createDaemonPluginChangeService({
       prepare,
       createPendingChangeId: () => 'pending-1',
-      nowMs: () => nowMs,
     });
 
     const begun = await service.requestPluginChange({
@@ -296,9 +292,10 @@ describe('createDaemonPluginChangeService', () => {
     });
     expect(prepare).toHaveBeenCalledTimes(1);
 
-    nowMs = 10 * 60_000;
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
     await expect(service.statusPluginChange({ pendingChangeId: begun.pendingChangeId }))
-      .resolves.toEqual({ kind: 'expired' });
+      .resolves.toEqual({ kind: 'terminal', pendingChangeId: begun.pendingChangeId, result: committed });
   });
 
   it('retains a cancelled terminal status while candidate cleanup drains', async () => {
@@ -350,80 +347,6 @@ describe('createDaemonPluginChangeService', () => {
 
     finishCleanup();
     await expect(cancelling).resolves.toEqual({ kind: 'cancelled' });
-    await service.shutdown();
-  });
-
-  it('keeps a source-root no-review application rejoinable while candidate cleanup drains', async () => {
-    let markCleanupStarted!: () => void;
-    const cleanupStarted = new Promise<void>((resolve) => {
-      markCleanupStarted = resolve;
-    });
-    let finishCleanup!: () => void;
-    const cleanupBlocked = new Promise<void>((resolve) => {
-      finishCleanup = resolve;
-    });
-    const service = createDaemonPluginChangeService({
-      prepare: async () => ({
-        kind: 'projectTrustApprovalRequired',
-        pendingKey: '/tmp/example',
-        review: { source: { kind: 'path', locator: '/tmp/example' } },
-        continueAfterProjectTrustApproval: async () => ({
-          pluginId: 'acme.example',
-          requiresReview: false,
-          apply: async () => ({
-            kind: 'committed' as const,
-            pluginId: 'acme.example',
-            desiredGeneration: 'generation-1',
-            appliedGeneration: 'generation-1',
-            pendingSurfaces: [],
-          }),
-          cleanup: async () => {
-            markCleanupStarted();
-            await cleanupBlocked;
-          },
-        }),
-        cleanup: async () => undefined,
-      }),
-      createPendingChangeId: () => 'pending-1',
-    });
-
-    const begun = await service.requestPluginChange({
-      kind: 'development',
-      pluginId: 'acme.example',
-      sourceRootPath: '/tmp/example',
-    });
-    if (begun.kind !== 'reviewRequired' || begun.reviewKind !== 'projectTrust') throw new Error('Expected source-root review');
-
-    const deciding = service.decidePluginChange({
-      pendingChangeId: begun.pendingChangeId,
-      decision: 'installAndTrust', optionalSelections: [],
-    });
-    await cleanupStarted;
-
-    await expect(service.statusPluginChange({ pendingChangeId: begun.pendingChangeId })).resolves.toEqual({
-      kind: 'applying',
-      pendingChangeId: begun.pendingChangeId,
-    });
-
-    finishCleanup();
-    await expect(deciding).resolves.toEqual({
-      kind: 'committed',
-      pluginId: 'acme.example',
-      desiredGeneration: 'generation-1',
-      appliedGeneration: 'generation-1',
-      pendingSurfaces: [],
-    });
-    await expect(service.statusPluginChange({ pendingChangeId: begun.pendingChangeId })).resolves.toEqual({
-      kind: 'terminal',
-      pendingChangeId: begun.pendingChangeId,
-      result: {
-        kind: 'committed',
-        pluginId: 'acme.example',
-        desiredGeneration: 'generation-1',
-        appliedGeneration: 'generation-1',
-        pendingSurfaces: [],
-      },
-    });
     await service.shutdown();
   });
 
@@ -560,8 +483,7 @@ describe('createDaemonPluginChangeService', () => {
     expect(events.indexOf('cleanup-2')).toBeGreaterThan(events.indexOf('apply-2'));
   });
 
-  it('removes expired review state without making an unrelated plugin wait for candidate cleanup', async () => {
-    let nowMs = 0;
+  it('retains pending review without making an unrelated plugin wait for candidate cleanup', async () => {
     let releaseExpiredCleanup!: () => void;
     const expiredCleanupBlocked = new Promise<void>((resolve) => { releaseExpiredCleanup = resolve; });
     const prepare = vi.fn(async (request: Readonly<{ locator?: string }>) => {
@@ -593,7 +515,6 @@ describe('createDaemonPluginChangeService', () => {
     });
     const service = createDaemonPluginChangeService({
       prepare: prepare as Parameters<typeof createDaemonPluginChangeService>[0]['prepare'],
-      nowMs: () => nowMs,
       createPendingChangeId: () => `pending-${prepare.mock.calls.length}`,
     });
 
@@ -603,7 +524,8 @@ describe('createDaemonPluginChangeService', () => {
       development: false,
     })).resolves.toEqual(expect.objectContaining({ kind: 'reviewRequired' }));
 
-    nowMs = 11 * 60_000;
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
     const unrelated = service.requestPluginChange({
       kind: 'installPath',
       locator: '/tmp/ready',
@@ -855,12 +777,13 @@ describe('createDaemonPluginChangeService', () => {
     await service.shutdown();
   });
 
-  it('counts concurrent candidate preparations against pending confirmation capacity', async () => {
+  it('admits valid preparations beyond the former pending confirmation ceiling', async () => {
     let releasePreparations!: () => void;
     const preparationsBlocked = new Promise<void>((resolve) => {
       releasePreparations = resolve;
     });
     let prepareCount = 0;
+    let pendingCount = 0;
     const service = createDaemonPluginChangeService({
       prepare: async () => {
         prepareCount += 1;
@@ -885,7 +808,7 @@ describe('createDaemonPluginChangeService', () => {
           cleanup: async () => undefined,
         };
       },
-      createPendingChangeId: () => `pending-${prepareCount}`,
+      createPendingChangeId: () => `pending-${++pendingCount}`,
     });
 
     const admitted = Array.from({ length: 64 }, (_, index) => (
@@ -902,13 +825,26 @@ describe('createDaemonPluginChangeService', () => {
       locator: '/tmp/capacity-overflow',
       development: false,
     })).resolves.toEqual({
-      kind: 'unavailable',
-      code: 'pending_confirmation_capacity',
+      kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall', currentVersion: null,
+      authorityExpansion: [], pendingChangeId: 'pending-1',
+      review: createPluginInstallationReviewFixture({
+        pluginId: 'acme.capacity-65', displayName: 'acme.capacity-65',
+        source: { kind: 'path', locator: '/tmp/acme.capacity-65' },
+        updateChannel: { kind: 'path', locator: '/tmp/acme.capacity-65', development: false },
+      }),
     });
-    expect(prepareCount).toBe(64);
+    expect(prepareCount).toBe(65);
 
     releasePreparations();
     await expect(Promise.all(admitted)).resolves.toHaveLength(64);
+    const pending = (await service.listPendingPluginChanges()).changes;
+    expect(pending).toHaveLength(65);
+    for (const change of pending) {
+      await expect(service.decidePluginChange({ pendingChangeId: change.pendingChangeId, decision: 'cancel' }))
+        .resolves.toEqual({ kind: 'cancelled' });
+    }
+    await expect(service.statusPluginChange({ pendingChangeId: 'pending-1' }))
+      .resolves.toEqual({ kind: 'terminal', pendingChangeId: 'pending-1', result: { kind: 'cancelled' } });
     await service.shutdown();
   });
 
@@ -1036,17 +972,21 @@ describe('createDaemonPluginChangeService', () => {
     });
   });
 
-  it('bounds cancellation cleanup and reports a candidate that cannot be removed', async () => {
+  it('keeps cancellation and handoff pending until slow cleanup settles', async () => {
+    vi.useFakeTimers();
+    let releaseCleanup!: () => void;
+    let markCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const cleanupBlocked = new Promise<void>((resolve) => { releaseCleanup = resolve; });
     const onCleanupFailure = vi.fn();
     const service = createDaemonPluginChangeService({
       prepare: async () => ({
         pluginId: 'acme.example',
         review: createPluginInstallationReviewFixture(),
         apply: async () => ({ kind: 'failed' as const, code: 'not_used' }),
-        cleanup: async () => await new Promise<void>(() => undefined),
+        cleanup: async () => { markCleanupStarted(); await cleanupBlocked; },
       }),
       createPendingChangeId: () => 'pending-1',
-      cleanupTimeoutMs: 0,
       onCleanupFailure,
     });
     const begun = await service.requestPluginChange({
@@ -1056,13 +996,23 @@ describe('createDaemonPluginChangeService', () => {
     });
     if (begun.kind !== 'reviewRequired') throw new Error('Expected review');
 
-    await expect(service.decidePluginChange({
+    const settled = vi.fn();
+    const deciding = service.decidePluginChange({
       pendingChangeId: begun.pendingChangeId,
       decision: 'cancel',
-    })).resolves.toEqual({ kind: 'cancelled' });
-    expect(onCleanupFailure).toHaveBeenCalledWith('acme.example', expect.objectContaining({
-      message: expect.stringContaining('timed out'),
-    }));
+    }).then((result) => { settled(); return result; });
+    await cleanupStarted;
+    const handedOff = vi.fn();
+    const handoff = service.quiesceForHandoff().then((lease) => { handedOff(); return lease; });
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(settled).not.toHaveBeenCalled();
+    expect(handedOff).not.toHaveBeenCalled();
+    releaseCleanup();
+    await expect(deciding).resolves.toEqual({ kind: 'cancelled' });
+    (await handoff).resume();
+    expect(onCleanupFailure).not.toHaveBeenCalled();
+    await service.shutdown();
+    vi.useRealTimers();
   });
 
   it('enumerates every pending change a present user still has to decide', async () => {
@@ -1073,20 +1023,14 @@ describe('createDaemonPluginChangeService', () => {
     const service = createDaemonPluginChangeService({
       prepare: async (request) => (request.kind === 'development'
         ? {
-            kind: 'projectTrustApprovalRequired' as const,
-            pendingKey: '/tmp/agent-authored',
-            review: { source: { kind: 'path' as const, locator: '/tmp/agent-authored' } },
-            continueAfterProjectTrustApproval: async () => ({
+            pluginId: 'acme.agent-authored',
+            review: createPluginInstallationReviewFixture({ pluginId: 'acme.agent-authored' }),
+            apply: async () => ({
+              kind: 'committed' as const,
               pluginId: 'acme.agent-authored',
-              requiresReview: false,
-              apply: async () => ({
-                kind: 'committed' as const,
-                pluginId: 'acme.agent-authored',
-                desiredGeneration: 'generation-1',
-                appliedGeneration: 'generation-1',
-                pendingSurfaces: [],
-              }),
-              cleanup: async () => undefined,
+              desiredGeneration: 'generation-1',
+              appliedGeneration: 'generation-1',
+              pendingSurfaces: [],
             }),
             cleanup: async () => undefined,
           }
@@ -1111,7 +1055,7 @@ describe('createDaemonPluginChangeService', () => {
       kind: 'development',
       sourceRootPath: '/tmp/agent-authored',
     });
-    if (sourceRoot.kind !== 'reviewRequired' || sourceRoot.reviewKind !== 'projectTrust') throw new Error('Expected source-root review');
+    if (sourceRoot.kind !== 'reviewRequired' || sourceRoot.reviewKind !== 'installation') throw new Error('Expected source-root review');
     const install = await service.requestPluginChange({
       kind: 'installPath',
       locator: '/tmp/example',
@@ -1135,8 +1079,7 @@ describe('createDaemonPluginChangeService', () => {
     await service.shutdown();
   });
 
-  it('drops an expired pending change from the enumeration', async () => {
-    let nowMs = 0;
+  it('retains a late pending decision until the user decides or the daemon retires', async () => {
     const service = createDaemonPluginChangeService({
       prepare: async () => ({
         pluginId: 'acme.example',
@@ -1145,7 +1088,6 @@ describe('createDaemonPluginChangeService', () => {
         cleanup: async () => undefined,
       }),
       createPendingChangeId: () => 'pending-1',
-      nowMs: () => nowMs,
     });
     const begun = await service.requestPluginChange({
       kind: 'installPath',
@@ -1155,8 +1097,11 @@ describe('createDaemonPluginChangeService', () => {
     if (begun.kind !== 'reviewRequired') throw new Error('Expected review');
     await expect(service.listPendingPluginChanges()).resolves.toEqual({ changes: [begun] });
 
-    nowMs = 10 * 60_000;
-    await expect(service.listPendingPluginChanges()).resolves.toEqual({ changes: [] });
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    await expect(service.listPendingPluginChanges()).resolves.toEqual({ changes: [begun] });
+    await expect(service.decidePluginChange({ pendingChangeId: begun.pendingChangeId, decision: 'cancel' }))
+      .resolves.toEqual({ kind: 'cancelled' });
     await service.shutdown();
   });
 

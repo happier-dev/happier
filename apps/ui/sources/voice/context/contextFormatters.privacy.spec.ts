@@ -276,6 +276,14 @@ describe('voice context privacy (opt-out defaults)', () => {
     expect(out).not.toContain('SUPER SECRET SUMMARY');
   });
 
+  it('shares the selected recent-message count beyond fifty without a second formatter cap', () => {
+    const messages = Array.from({ length: 80 }, (_, index) =>
+      createUserMessage(`selected-${index}`, `selected message ${index}`, index));
+    const out = formatSessionFull(createSession(null), messages, prefs({ voiceRecentMessagesCount: 80 }));
+    expect(out).toContain('selected message 0');
+    expect(out).toContain('selected message 79');
+  });
+
   it.each([
     ['online', formatSessionOnline],
     ['offline', formatSessionOffline],

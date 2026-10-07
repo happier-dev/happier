@@ -102,6 +102,8 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
                 if (stored.body) revisions.push({ bodyVersion: stored.bodyVersion!, body: stored.body,
                     createdAt: stored.updatedAt, sizeBytes: decodeBase64(stored.body).byteLength });
                 stored = { ...stored, header: input.header!, body: input.body!,
+                    provenance: input.provenance ?? stored.provenance,
+                    provenanceDataEncryptionKey: input.provenanceDataEncryptionKey ?? stored.provenanceDataEncryptionKey,
                     headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion! + 1, seq: stored.seq + 1 };
                 return Response.json({ success: true, headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion });
             }
@@ -110,15 +112,17 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         if (stored && target.pathname === '/v1/artifacts/document/revisions') return Response.json({ revisions, retentionCount: 10 });
         if (stored && target.pathname === '/v1/artifacts/document/revisions/1/restore') {
             if (restoreQuota) return Response.json(restoreQuota, { status: 413 });
-            const input = JSON.parse(String(init?.body)) as { header: string; expectedHeaderVersion: number; expectedBodyVersion: number };
-            expect(Object.keys(input).sort()).toEqual(['expectedBodyVersion', 'expectedHeaderVersion', 'header']);
+            const input = JSON.parse(String(init?.body)) as { header: string; body: string; provenance?: string;
+                provenanceDataEncryptionKey?: string; expectedHeaderVersion: number; expectedBodyVersion: number };
             if (input.expectedHeaderVersion !== stored.headerVersion || input.expectedBodyVersion !== stored.bodyVersion)
                 return Response.json({ success: false, error: 'version-mismatch', currentHeaderVersion: stored.headerVersion,
                     currentBodyVersion: stored.bodyVersion, currentHeader: stored.header, currentBody: stored.body });
-            const selected = revisions.find(row => row.bodyVersion === 1)!;
             revisions.push({ bodyVersion: stored.bodyVersion!, body: stored.body!, createdAt: stored.updatedAt,
                 sizeBytes: decodeBase64(stored.body!).byteLength });
-            stored = { ...stored, header: input.header, body: selected.body, headerVersion: stored.headerVersion + 1,
+            stored = { ...stored, header: input.header, body: input.body,
+                provenance: input.provenance ?? null,
+                provenanceDataEncryptionKey: input.provenanceDataEncryptionKey ?? stored.provenanceDataEncryptionKey,
+                headerVersion: stored.headerVersion + 1,
                 bodyVersion: stored.bodyVersion! + 1, seq: stored.seq + 1 };
             return Response.json({ success: true, headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion });
         }
@@ -135,10 +139,13 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         if (stored && target.pathname === '/v1/artifacts/document/access/recipients') return Response.json({
             artifactId: 'document', ownerAccountId: 'owner', access, encryptionMode: mode,
             dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: censusCallerEnvelope ?? stored.dataEncryptionKey,
+            provenanceDataEncryptionKey: stored.provenanceDataEncryptionKey ?? null,
+            callerProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey ?? null,
             recipients: grants.length ? [{ recipientAccountId: 'recipient',
                 contentKey: { status: 'available', accountSigningPublicKey: encodeHex(signingPublic),
                     contentPublicKey: encodeBase64(contentPublicKey), contentPublicKeySignature: encodeBase64(signature) },
-                contentPublicKeyFingerprint: fingerprint, encryptedDataKey: null, recipientContentPublicKeyFingerprint: null,
+                contentPublicKeyFingerprint: fingerprint, encryptedDataKey: null, encryptedProvenanceDataKey: null,
+                recipientContentPublicKeyFingerprint: null,
             }] : [],
         });
         if (target.pathname === '/v1/artifacts/document/access/key-envelopes') {
@@ -167,13 +174,22 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
 }
 
 describe('UI Artifact sharing Action front door', () => {
+    it.each(['widget-area-layout.v1', 'home-hub-layout.v1'])('refuses public publication of %s before transport', async kind => {
+        const f = await fixture('plain', { header: { kind }, body: '{}' });
+        try {
+            expect(await f.executor.execute('artifact.public_link.create', { artifactId: 'document' }, {
+                ...f.context, presentUserConfirmation: { actionId: 'artifact.public_link.create' },
+            })).toMatchObject({ ok: false, errorCode: 'artifact_kind_not_shareable' });
+            expect(f.requests.some(request => request.startsWith('POST /v1/public-shares'))).toBe(false);
+        } finally { f.account.dispose(); }
+    });
     it.each(['plain', 'e2ee'] as const)('returns, lists and revokes %s public links without sending secrets to the captured Home', async mode => {
         const f = await fixture(mode, { header: { title: 'Public note' }, body: 'note' });
         try {
             const created = await f.executor.execute('artifact.public_link.create', { artifactId: 'document' }, {
                 ...f.context, presentUserConfirmation: { actionId: 'artifact.public_link.create' },
             });
-            expect(created).toMatchObject({ ok: true, result: { publicShare: { id: 'share-1' } } });
+            expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { publicShare: { id: 'share-1' } } });
             const url = (created as { result: { url: string } }).result.url;
             const parsed = new URL(url);
             const local = { url, lookupId: parsed.pathname.split('/').at(-1)!, secret: new URLSearchParams(parsed.hash.slice(1)).get('k')! };
@@ -201,10 +217,8 @@ describe('UI Artifact sharing Action front door', () => {
         const f = await fixture(mode, { header, body: originalBody });
         try {
             const nextHeader = { ...header, metadata: { title: 'Current title' }, revision: { headerVersion: 2, bodyVersion: 2 } };
-            const nextDefinition = validateWorkflowDefinition({ version: 1, defaults: definition.defaults,
-                blocks: ['Current work'],
-            }).normalizedDefinition!;
-            const nextBody = JSON.stringify({ kind: 'workflow-definition.v1', definition: nextDefinition });
+            const nextBody = JSON.stringify({ kind: 'workflow-definition.v1', definition: { ...definition,
+                blocks: definition.blocks.map(block => ({ ...block, name: 'Current body' })) } });
             await expect(f.account.workflowArtifacts.update({ artifactId: 'document', expectedRevision: header.revision,
                 header: nextHeader, body: nextBody })).resolves.toEqual({ ok: true, revision: nextHeader.revision });
             const listed = await f.executor.execute('artifact.revisions.list', { artifactId: 'document' }, f.context);

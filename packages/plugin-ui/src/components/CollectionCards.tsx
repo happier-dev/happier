@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from 'react';
 import { ScrollView, View } from 'react-native';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 
@@ -23,7 +23,7 @@ import { resolveHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
 import { scaleTextStyleMetrics } from '../presentation/text/textStyleScale.js';
 import type { CollectionAnatomy, CollectionGroupAction, CollectionProps } from './Collection.js';
 import { List, ListItemSelectionContext, useRowFocusRequest, type ItemProps } from './List.js';
-import { activateListItem, useListMultiSelectionRow } from './ListMultiSelection.js';
+import { activateListItem, useListMultiSelectionRow, type ListMultiSelectionStore } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
 import { ListCollectionControlContext, type ListCollectionControl } from './listCollectionControl.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
@@ -73,6 +73,8 @@ export type CollectionCardsProps<Item> = Readonly<{
   accessibilityLabel: string;
   /** The measured width the cards lay out in; `null` before the first measurement. */
   width: number | null;
+  /** The measured height on screen, which a loading grid's skeleton fills; `null` before the first measurement. */
+  height?: number | null;
   /** Both panes do not fit: the board pages its columns (a phone). */
   narrow: boolean;
   boardLayout?: 'columns' | 'stacked';
@@ -93,15 +95,16 @@ export type CollectionCardsProps<Item> = Readonly<{
   testID?: string;
 }>;
 
-type CardText = Readonly<{ title: number; caption: number; label: number }>;
+type CardText = Readonly<{ title: number; meta: number; label: number }>;
 
 function useCardText(): CardText {
   const theme = useHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
   const { textScale } = useHappierUiAccessibility();
   return useMemo(() => ({
-    title: readCollectionLineHeight('body', theme, typography, textScale),
-    caption: readCollectionLineHeight('caption', theme, typography, textScale),
+    // The host's row anatomy on a card: the row title role over the row meta role.
+    title: readCollectionLineHeight('label', theme, typography, textScale),
+    meta: readCollectionLineHeight('body', theme, typography, textScale),
     label: readCollectionLineHeight('label', theme, typography, textScale),
   }), [textScale, theme, typography]);
 }
@@ -117,7 +120,7 @@ function Slot(props: Readonly<{ value: ReactNode; tone?: 'secondary' | 'muted' }
   if (value === null || value === undefined || value === false) return null;
   if (typeof value === 'string' || typeof value === 'number') {
     return (
-      <HappierText variant="caption" tone={props.tone ?? 'secondary'} numberOfLines={1} tabularNumbers style={shrinkStyle}>
+      <HappierText variant="body" tone={props.tone ?? 'secondary'} numberOfLines={1} tabularNumbers style={shrinkStyle}>
         {String(value)}
       </HappierText>
     );
@@ -150,7 +153,7 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
       <View style={boardCardBodyStyle}>
         <View style={lineStyle}>
           <View style={markStyle}>{anatomy.glyph(item)}</View>
-          <HappierText variant="body" tone="neutral" numberOfLines={2} style={[titleStyle, shrinkStyle]}>{anatomy.title(item)}</HappierText>
+          <HappierText variant="label" tone="neutral" numberOfLines={2} style={[titleStyle, shrinkStyle]}>{anatomy.title(item)}</HappierText>
         </View>
         {where === undefined && age === null ? null : (
           <View style={lineStyle}>
@@ -434,9 +437,9 @@ function useGridGeometry(width: number | null, minCardWidth: number, slots: Grid
   return useMemo(() => {
     const inner = Math.max(0, (width ?? 0) - 2 * GUTTER);
     const { columns, cardWidth } = resolveHappierCollectionGridGeometry({ width: inner, minCardWidth: minCardWidth * textScale, gap: GUTTER });
-    const descriptionHeight = slots.description ? 2 * text.caption : 0;
+    const descriptionHeight = slots.description ? 2 * text.meta : 0;
     // Exact per text size, never measured per card: every card is the same height, so rows are equal and footers align.
-    const head = Math.max(CARD.markSize, text.title + text.caption);
+    const head = Math.max(CARD.markSize, text.title + text.meta);
     const previewHeight = slots.preview ? CARD.previewHeight : 0;
     const cardHeight = 2 + 2 * CARD.padding + head + previewHeight
       + (slots.description ? CARD.gap + descriptionHeight : 0)
@@ -445,7 +448,7 @@ function useGridGeometry(width: number | null, minCardWidth: number, slots: Grid
   }, [minCardWidth, slots, text, textScale, width]);
 }
 
-function GridCard<Item>(props: Readonly<{
+function GridCardView<Item>(props: Readonly<{
   item: Item;
   itemKey: string;
   anatomy: CollectionAnatomy<Item>;
@@ -455,8 +458,15 @@ function GridCard<Item>(props: Readonly<{
   onOpen: (key: string) => void;
   onFocus: (key: string) => void;
   onKey: (key: string, from: string, event: unknown) => boolean;
-  model: HappierCollectionModel<Item>;
-  selection?: CollectionProps<Item>['selection'];
+  /** The grid's card count (its grid row extent). Never the model: a new object on every render. */
+  count: number;
+  /**
+   * This card's resolved selection facts. Never the caller's `selection` object, which a consumer may
+   * rebuild on every render: a memoized card would then re-render with every one.
+   */
+  activatable: boolean;
+  selectable: boolean;
+  multipleStore: ListMultiSelectionStore | null;
   useRowActions?: CollectionProps<Item>['useRowActions'];
   rowIndex: number;
   register: (key: string, target: HappierFocusable | null) => void;
@@ -475,10 +485,9 @@ function GridCard<Item>(props: Readonly<{
   const onFocus = props.onFocus;
   const multi = useListMultiSelectionRow(itemKey);
   const actions = props.useRowActions?.(item) ?? {};
-  const activatable = props.selection?.isItemActivatable?.(item) !== false;
-  const selectable = props.selection?.multiple !== undefined && props.selection.multiple.isItemSelectable?.(item) !== false;
+  const { activatable, selectable } = props;
   const select = (event?: import('../presentation/portableTypes.js').HappierGestureResponderEvent): 'handled' | 'open' => {
-    return activateListItem({ key: itemKey, event, store: props.selection?.multiple?.store ?? null,
+    return activateListItem({ key: itemKey, event, store: props.multipleStore,
       focus: onFocus, open: props.onOpen });
   };
   const row: ReactElement<ItemProps> = (
@@ -489,26 +498,10 @@ function GridCard<Item>(props: Readonly<{
     >
       <View style={{ flex: 1, gap: CARD.gap }}>
 
-        {geometry.previewHeight === 0 ? null : (
-          // The item itself, edge to edge under the card's top corners, a hairline above the title.
-          <View
-            pointerEvents="none"
-            style={[gridPreviewStyle, {
-              height: geometry.previewHeight,
-              borderTopLeftRadius: RADIUS - 2,
-              borderTopRightRadius: RADIUS - 2,
-              backgroundColor: palette.fieldBackground,
-              borderBottomColor: palette.sheetBorder,
-            }]}
-            {...(testID === undefined ? {} : { testID: `${testID}:preview` })}
-          >
-            {anatomy.preview?.(item)}
-          </View>
-        )}
         <View style={[lineStyle, { alignItems: 'flex-start' }]}>
           <View style={[markStyle, { width: CARD.markSize, height: CARD.markSize }]}>{anatomy.glyph(item)}</View>
           <View style={shrinkStyle}>
-            <HappierText variant="body" tone="neutral" numberOfLines={1} style={titleStyle}>{anatomy.title(item)}</HappierText>
+            <HappierText variant="label" tone="neutral" numberOfLines={1} style={titleStyle}>{anatomy.title(item)}</HappierText>
             <Slot value={where} />
           </View>
         </View>
@@ -516,7 +509,7 @@ function GridCard<Item>(props: Readonly<{
         <View style={{ height: geometry.descriptionHeight }}>
           {description === null ? null : (
             <HappierText
-              variant="caption"
+              variant="body"
               tone="secondary"
               numberOfLines={2}
               {...(testID === undefined ? {} : { testID: `${testID}:description` })}
@@ -541,15 +534,31 @@ function GridCard<Item>(props: Readonly<{
       testID={testID === undefined ? undefined : `${testID}:card`}
     >
       <ListItemSelectionContext.Provider value={{
-        itemKey, multiSelectable: selectable, selected: props.selection?.multiple ? multi.isSelected : props.selected,
-        activatable, select, positionInSet: props.rowIndex + 1, setSize: props.model.keys.length,
+        itemKey, multiSelectable: selectable, selected: props.multipleStore !== null ? multi.isSelected : props.selected,
+        activatable, select, positionInSet: props.rowIndex + 1, setSize: props.count,
         roving: { isTabStop: props.tabStop, register: target => register(itemKey, target),
           onFocus: () => onFocus(itemKey),
           onKeyDown: (key, event) => onKey(key, itemKey, event) },
-        accessibilityPattern: 'grid', rowIndex: props.rowIndex, rowCount: props.model.keys.length,
+        accessibilityPattern: 'grid', rowIndex: props.rowIndex, rowCount: props.count,
       }}>
         {renderCollectionItemDestination(host, anatomy, item, row)}
       </ListItemSelectionContext.Provider>
+      {geometry.previewHeight === 0 ? null : (
+        // Anchor the edge-to-edge band to the card, not the padded metadata inside List.Item.
+        <View
+          pointerEvents="none"
+          style={[gridPreviewStyle, {
+            height: geometry.previewHeight,
+            borderTopLeftRadius: RADIUS - 2,
+            borderTopRightRadius: RADIUS - 2,
+            backgroundColor: palette.fieldBackground,
+            borderBottomColor: palette.sheetBorder,
+          }]}
+          {...(testID === undefined ? {} : { testID: `${testID}:preview` })}
+        >
+          {anatomy.preview?.(item)}
+        </View>
+      )}
       {!hasAction ? null : (
         // Its own target beside the card's, never inside it: pressing it acts and never opens the item.
         <View style={gridActionStyle}>{action}</View>
@@ -559,6 +568,12 @@ function GridCard<Item>(props: Readonly<{
   );
   return card;
 }
+
+/**
+ * One card re-renders only when its own facts change (its item, selection, tab stop, geometry): opening an
+ * item or moving focus commits the two cards involved, not the whole grid.
+ */
+const GridCard = memo(GridCardView) as typeof GridCardView;
 
 function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   const { model, anatomy } = props;
@@ -602,7 +617,11 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
 
   const inner = props.width === null ? null : props.width - 2 * GUTTER;
   if (props.loading === true && keys.length === 0) {
-    const count = lastKnownCount.current > 0 ? lastKnownCount.current : geometry.columns;
+    // The last known count, else as many rows as fill what is on screen (the table's skeleton rule).
+    const rowsOnScreen = props.height === null || props.height === undefined
+      ? 1
+      : Math.max(1, Math.ceil(props.height / (geometry.cardHeight + GUTTER)));
+    const count = lastKnownCount.current > 0 ? lastKnownCount.current : geometry.columns * rowsOnScreen;
     const rows: number[][] = [];
     for (let index = 0; index < count; index += 1) {
       if (index % geometry.columns === 0) rows.push([]);
@@ -680,8 +699,10 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                       itemKey={key}
                       anatomy={anatomy}
                       geometry={geometry}
-                      model={model}
-                      selection={props.selection}
+                      count={keys.length}
+                      activatable={props.selection?.isItemActivatable?.(item) !== false}
+                      selectable={props.selection?.multiple !== undefined && props.selection.multiple.isItemSelectable?.(item) !== false}
+                      multipleStore={props.selection?.multiple?.store ?? null}
                       useRowActions={props.useRowActions}
                       rowIndex={rowIndices.get(key)!}
                       selected={key === selectedKey}

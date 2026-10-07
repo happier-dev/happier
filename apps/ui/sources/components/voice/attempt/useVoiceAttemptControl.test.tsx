@@ -50,15 +50,20 @@ const recoveryRuntime = vi.hoisted(() => ({
     serverId: 'server-work',
     serverIdentityId: 'server-identity-work' as string | null,
     machineId: 'machine-work',
+    useRealServerSnapshot: false,
 }));
 
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({
-        serverId: recoveryRuntime.serverId,
-        serverUrl: '',
-        generation: 1,
-    }),
-}));
+vi.mock('@/hooks/server/useActiveServerSnapshot', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/hooks/server/useActiveServerSnapshot')>();
+    return {
+        ...actual,
+        useActiveServerSnapshot: () => recoveryRuntime.useRealServerSnapshot ? actual.useActiveServerSnapshot() : ({
+            serverId: recoveryRuntime.serverId,
+            serverUrl: '',
+            generation: 1,
+        }),
+    };
+});
 
 vi.mock('@/sync/domains/server/resolvePortableServerIdentityForRoutingId', () => ({
     resolvePortableServerIdentityForRoutingId: (id: string) => (
@@ -525,6 +530,44 @@ describe('useVoiceAttemptControl availability ladder', () => {
         await hook.unmount();
     });
 
+    it('hides the setup-pose mic once the person dismissed "Set up voice", until Voice is set up', async () => {
+        const { VOICE_SETUP_STEP_ID } = await import('@/voice/settings/setup/useVoiceSetupItem');
+        const { HOME_HUB_DEFAULT_LAYOUT, setHomeSetupStepHidden } = await import('@happier-dev/protocol/home');
+        const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
+        const { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+        const { flushHookEffects } = await import('@/dev/testkit');
+        installDisconnectedServerSocketBoundary();
+        await import('@/sync/syncEngine');
+        const artifact = createHomeHubArtifactHttpBoundary('voice-dismissal-account');
+        artifact.seed(setHomeSetupStepHidden(HOME_HUB_DEFAULT_LAYOUT, VOICE_SETUP_STEP_ID, true));
+        const webLocks = installWebLockManagerMock();
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://voice-setup-dismissal.test', accountId: 'voice-dismissal-account', request: artifact.request,
+        });
+        recoveryRuntime.useRealServerSnapshot = true;
+        let hook: Awaited<ReturnType<typeof renderBothOwners>> | undefined;
+        try {
+            const scope = { serverId: connection.home.id, accountId: 'voice-dismissal-account' };
+            getStorage().setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+            seedVoiceSettings({ providerId: null, ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } });
+            const { useVoiceSurfaceModel } = await import('@/components/voice/surface/useVoiceSurfaceModel');
+            const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+            hook = await renderHook(() => ({
+                model: useVoiceSurfaceModel({ variant: 'sidebar' }),
+                control: useVoiceAttemptControl(GLOBAL_TARGET),
+            }), { wrapper: ({ children }) => <InjectedAuthProvider credentials={connection.credentials}>{children}</InjectedAuthProvider> });
+            await flushHookEffects({ cycles: 3 });
+            // The same Account Artifact Home's "Get set up" reads; Settings → Voice remains reachable.
+            expect(hook.getCurrent().control).toMatchObject({ availability: 'unavailable', primaryAction: null });
+        } finally {
+            await hook?.unmount();
+            recoveryRuntime.useRealServerSnapshot = false;
+            await connection.dispose();
+            webLocks.restore();
+        }
+    });
     it('keeps the rest mic and opens Voice setup when the selected provider cannot run here', async () => {
         const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
         registerVoiceAdapters([

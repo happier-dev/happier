@@ -1,6 +1,7 @@
 import {
   openCodeServerHealthPath,
   readOpenCodeManagedServerDialect,
+  readOpenCodeCliVersionDialect,
   type OpenCodeServerDialect,
 } from './dialect.js';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -58,6 +59,10 @@ export async function resolveOpenCodeManagedServerDialect(params: Readonly<{
   cwd?: string;
   signal?: AbortSignal;
   logger?: OpenCodeManagedServerDialectLogger;
+  /** Scoped preflight hosts retain executable custody and supply only the declared version result. */
+  readVersion?: () => Promise<Readonly<{ ok: boolean; stdout: string }>>;
+  /** Cold catalog reads must not mistake an unknown executable generation for V1. */
+  requireKnownGeneration?: boolean;
   systemToolId: OpenCodeSystemToolId;
 }>): Promise<Readonly<{ dialect: OpenCodeServerDialect; healthPath: string }>> {
   try {
@@ -72,29 +77,36 @@ export async function resolveOpenCodeManagedServerDialect(params: Readonly<{
       : params.systemToolId === OPEN_CODE_STABLE_SYSTEM_TOOL_ID
         ? 'v1'
         : readOpenCodeManagedServerDialect(resolved.executablePath);
+    let knownGeneration = dialect === 'v2';
     if (params.systemToolId !== OPEN_CODE_V2_SYSTEM_TOOL_ID
       && dialect === 'v1'
-      && resolved.executable
-      && params.exec.run) {
+      && (params.readVersion || (resolved.executable && params.exec.run))) {
       try {
-        const version = await params.exec.run({
-          executable: resolved.executable,
-          args: ['--version'],
-          cwd: { root: 'workspace', relativePath: '' },
-        }, params.signal ? { signal: params.signal } : undefined);
-        const versionText = new TextDecoder().decode(version.stdout).trim();
-        if (version.termination.observed.kind === 'exit'
-          && version.termination.observed.exitCode === 0
-          && /^v?2\./iu.test(versionText)) {
+        const version = params.readVersion
+          ? await params.readVersion()
+          : await params.exec.run!({
+              executable: resolved.executable!,
+              args: ['--version'],
+              cwd: { root: 'workspace', relativePath: '' },
+            }, params.signal ? { signal: params.signal } : undefined).then((result) => ({
+              ok: result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0,
+              stdout: new TextDecoder().decode(result.stdout),
+            }));
+        const generation = version.ok ? readOpenCodeCliVersionDialect(version.stdout) : null;
+        if (generation === 'v2') {
           dialect = 'v2';
-        } else if (version.termination.observed.kind !== 'exit'
-          || version.termination.observed.exitCode !== 0
-          || !/^v?1\./iu.test(versionText)) {
-          params.logger?.warn('[OpenCodeServer] version probe was inconclusive; keeping the legacy readiness route', {
+          knownGeneration = true;
+        } else if (generation === 'v1') {
+          knownGeneration = true;
+        } else {
+          params.logger?.warn(params.requireKnownGeneration
+            ? '[OpenCodeServer] version probe was inconclusive; native generation is unavailable'
+            : '[OpenCodeServer] version probe was inconclusive; keeping the legacy readiness route', {
             executablePath: resolved.executablePath,
           });
         }
       } catch (error) {
+        if (params.requireKnownGeneration) throw error;
         // An unknown executable keeps the established V1 route; the managed
         // service reports its own startup failure if the command is unusable.
         params.logger?.warn('[OpenCodeServer] version probe failed; keeping the legacy readiness route', {
@@ -102,6 +114,9 @@ export async function resolveOpenCodeManagedServerDialect(params: Readonly<{
           error,
         });
       }
+    }
+    if (params.requireKnownGeneration && !knownGeneration) {
+      throw new Error('OpenCode native generation is unavailable: the declared version command did not identify a supported native generation');
     }
     const healthPath = openCodeServerHealthPath(dialect, resolved.executablePath);
     params.logger?.info('[OpenCodeServer] resolved managed server readiness route', {
@@ -111,6 +126,7 @@ export async function resolveOpenCodeManagedServerDialect(params: Readonly<{
     });
     return { dialect, healthPath };
   } catch (error) {
+    if (params.requireKnownGeneration) throw error;
     params.logger?.warn(
       '[OpenCodeServer] could not resolve the OpenCode executable; keeping the legacy readiness route',
       { dialect: 'v1', healthPath: openCodeServerHealthPath('v1'), error },

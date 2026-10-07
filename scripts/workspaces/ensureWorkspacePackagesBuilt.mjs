@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { cp, mkdir, readFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,7 +36,7 @@ export { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from './workspace
 import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
 import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs';
 import { createBundledPluginPublicationFailure } from './bundledPluginPublicationFailure.mjs';
-import { BuildInputDriftError, WorkspacePackageBuildError, withSingleTrailingBuildPass } from './buildInputConvergence.mjs';
+import { BuildInputDriftError, WorkspacePackageBuildError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, withSingleTrailingBuildPass } from './buildInputConvergence.mjs';
 import {
   collectInternalWorkspaceDependencyNames,
   collectAdmittedInternalWorkspacePeerDependencyNames,
@@ -53,11 +54,14 @@ function compilerDiagnosticSummary(error) {
   return summarizeTypeScriptDiagnostics(error.message)?.diagnosticSummary ?? null;
 }
 
-/** One diagnostic projection for retained-package and current CLI QA output. */
+/** One semantic-diagnostic admission for retained-package and current CLI QA output. */
 export function summarizeTypeScriptDiagnostics(text) {
   const lines = String(text).replace(/\u001b\[[0-9;]*m/g, '').split(/\r?\n/)
     .filter((line) => /\berror TS\d+:/.test(line));
   if (!lines.length) return null;
+  // TypeScript's 1000-range diagnostics are parser failures. A partial source
+  // edit must abort both retained-output admission and current CLI publication.
+  if (lines.some(line => /\berror TS1\d{3}:/.test(line))) return null;
   const files = [...new Set(lines.flatMap((line) => {
     const match = line.match(/^(.+?)\(\d+,\d+\):\s*error TS\d+:/);
     return match ? [match[1].replaceAll('\\', '/')] : [];
@@ -338,19 +342,22 @@ export function readWorkspacePackageInputFingerprint({
     .map((match) => resolve(packageDir, match[1]))
     .filter(existsSync);
   const invocation = resolveTypeScriptCliInvocationImpl({ args: [], env: process.env });
-  const compilerPath = invocation.argsPrefix[0];
+  const compilerPath = invocation.compilerPath ?? invocation.argsPrefix[0];
   const compilerPackageJson = resolve(dirname(compilerPath), '..', 'package.json');
-  const buildOwnerPath = fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', import.meta.url));
+  const capturedBuildOwnerPath = identitySourceRepoDir && join(identitySourceRepoDir, 'scripts/workspaces/buildTypeScriptPackageDist.mjs');
+  const buildOwnerPath = capturedBuildOwnerPath && existsSync(capturedBuildOwnerPath)
+    ? capturedBuildOwnerPath : fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', import.meta.url));
+  const identityPathFor = path => identityRepoDir && identitySourceRepoDir
+    ? remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : path;
   const paths = [...new Set([
     ...inputPaths,
     ...referencedBuildInputs,
     compilerPath,
     compilerPackageJson,
     buildOwnerPath,
-  ])].sort();
+  ])].sort((a, b) => identityPathFor(a) < identityPathFor(b) ? -1 : identityPathFor(a) > identityPathFor(b) ? 1 : 0);
   for (const path of paths) {
-    const identityPath = identityRepoDir && identitySourceRepoDir
-      ? remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : path;
+    const identityPath = identityPathFor(path);
     hash.update(`${identityPath}\0${readWorkspaceBuildFileDigest(path)}\0`);
   }
   for (const dependencyDir of [...dependencyDirs].sort()) {
@@ -386,10 +393,11 @@ function collectPublishedDistFiles(distDir, relativeDir = '') {
   }).sort();
 }
 
-function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = false, allowQaFailure = true } = {}) {
+function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = false, allowQaFailure = true, buildMode = 'qa-runtime' } = {}) {
   try {
     const record = JSON.parse(readFileSync(join(distDir, BUILD_INPUT_RECORD), 'utf8'));
     if (!allowQaFailure && record.qaFailure) return false;
+    if (buildMode === 'strict' && record.buildMode === 'qa-runtime') return false;
     if (record.version !== 2 || record.fingerprint !== inputFingerprint || !Array.isArray(record.outputs) || record.outputs.length === 0) {
       return false;
     }
@@ -412,11 +420,11 @@ function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = fals
   }
 }
 
-export function isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs = [] } = {}) {
+export function isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs = [], buildMode = 'qa-runtime' } = {}) {
   return publishedOutputsMatch(
     join(packageDir, 'dist'),
     readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs }),
-    { allowQaFailure: false },
+    { allowQaFailure: false, buildMode },
   ) && publishedDependencyOutputsMatch(join(packageDir, 'dist'), readWorkspaceBuiltDependencies({
     monorepoRoot: coerceHappyMonorepoRootFromPath(packageDir) ?? packageDir, dependencyDirs,
   }));
@@ -552,6 +560,7 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
     && await publishedOutputsMatch(distDir, inputFingerprint, {
       requirePruned: publicationMode === 'artifact',
       allowQaFailure,
+      buildMode: resolveWorkspaceBuildMode({ env }),
     });
   if (outputsAreAdmissible) {
     try {
@@ -589,6 +598,7 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
     try {
       const record = await readJson(join(distDir, BUILD_INPUT_RECORD));
       if (record.qaFailure && !allowQaFailure) invalidation = 'previous-compiler-failure';
+      else if (record.buildMode === 'qa-runtime' && resolveWorkspaceBuildMode({ env }) === 'strict') invalidation = 'unchecked-qa-output';
       else if (record.fingerprint !== inputFingerprint) invalidation = 'inputs-changed';
     } catch { invalidation = 'missing-build-record'; }
   }
@@ -683,6 +693,74 @@ const defaultWorkspaceBuildBoundary = {
   }),
 };
 
+async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) {
+  const directory = await mkdtemp(join(tmpdir(), 'happier-workspace-capture-'));
+  const repoDir = join(directory, 'repo');
+  const capturedDirs = [packageDir, ...dependencyDirs];
+  try {
+    const readPaths = async () => {
+      const paths = new Set();
+      const visit = async path => {
+        const info = await lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+        if (!info) return;
+        paths.add(relative(monorepoRoot, path));
+        if (info.isDirectory()) for (const name of await readdir(path)) await visit(join(path, name));
+      };
+      for (const dir of capturedDirs) {
+        for (const path of readWorkspaceBuildInputs(dir, { includeShippedFiles: true })) await visit(resolve(dir, path));
+        await visit(join(dir, 'dist'));
+      }
+      for (const name of await readdir(monorepoRoot, { withFileTypes: true })) {
+        if (name.isFile()) await visit(join(monorepoRoot, name.name));
+      }
+      // Package scripts execute the canonical build owner and its process/FS
+      // adapters; capture that consumed code as well as the package sources.
+      await visit(join(monorepoRoot, 'scripts/workspaces'));
+      await visit(join(monorepoRoot, 'apps/stack/scripts/utils'));
+      return [...paths];
+    };
+    const capture = await captureBuildInputFiles({ sourceDir: monorepoRoot, captureDir: repoDir, readPaths });
+    const branchDirs = new Set(capture.files.flatMap(file => {
+      const dirs = [];
+      for (let path = dirname(join(monorepoRoot, file)); path !== monorepoRoot; path = dirname(path)) dirs.push(path);
+      return dirs;
+    }));
+    // Installed tools and unrelated workspaces keep their existing resolution
+    // paths. Authored inputs and dependency outputs are physical capture files.
+    const mount = async (source, target) => {
+      await mkdir(target, { recursive: true });
+      for (const entry of await readdir(source, { withFileTypes: true })) {
+        if (['.git', '.project', '.happier', 'node_modules'].includes(entry.name) || entry.name.startsWith('.dist.')) continue;
+        const path = join(source, entry.name);
+        const destination = join(target, entry.name);
+        if (existsSync(destination)) {
+          if (entry.isDirectory() && !capturedDirs.includes(source) && branchDirs.has(path)) await mount(path, destination);
+          continue;
+        }
+        if (capturedDirs.includes(source)) continue;
+        if (entry.isDirectory()) await symlink(path, destination, process.platform === 'win32' ? 'junction' : 'dir');
+        else await cp(path, destination, { verbatimSymlinks: true });
+      }
+    };
+    await mount(monorepoRoot, repoDir);
+    await mountCapturedWorkspaceDependencies({ sourceDir: monorepoRoot, captureDir: repoDir,
+      workspaceDirs: capturedDirs.map(dir => relative(monorepoRoot, dir)) });
+    const capturePackageDir = join(repoDir, relative(monorepoRoot, packageDir));
+    const captureDependencyDirs = dependencyDirs.map(dir => join(repoDir, relative(monorepoRoot, dir)));
+    const identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR || monorepoRoot;
+    const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs,
+      identitySourceRepoDir: repoDir, identityRepoDir });
+    const builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot: repoDir, dependencyDirs: captureDependencyDirs });
+    return { packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, repoDir, inputFingerprint, builtDependencies,
+      env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir,
+        HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: identityRepoDir },
+      cleanup: () => rm(directory, { recursive: true, force: true }) };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function ensureWorkspacePackageBuiltUnderLock({
   monorepoRoot,
   packageDir,
@@ -702,8 +780,8 @@ async function ensureWorkspacePackageBuiltUnderLock({
   dependencyDirs,
 }) {
   const packageJson = await readJson(packageJsonPath);
-  const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs });
-  const builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs });
+  let inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs });
+  let builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs });
   const state = await inspectWorkspacePackageOutput(packageDir, packageJson, {
     env,
     retryImports: true,
@@ -727,7 +805,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     };
   }
 
-  const refreshOnly = !force && state.compileComplete;
+  let refreshOnly = !force && state.compileComplete;
   const priorRecord = refreshOnly ? await readJson(join(distDir, BUILD_INPUT_RECORD)) : null;
 
   if (!packageJson?.scripts?.build) {
@@ -750,9 +828,18 @@ async function ensureWorkspacePackageBuiltUnderLock({
     packageDir,
     packageName: String(packageJson?.name ?? '').trim(),
   });
+  const capture = buildMode === 'qa-runtime'
+    ? await captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) : null;
+  const buildPackageDir = capture?.packageDir ?? packageDir;
+  const buildDependencyDirs = capture?.dependencyDirs ?? dependencyDirs;
+  if (capture) {
+    if (capture.inputFingerprint !== inputFingerprint) refreshOnly = false;
+    inputFingerprint = capture.inputFingerprint;
+    builtDependencies = capture.builtDependencies;
+  }
   const publishOutputs = async (tmpDistDir) => {
     const buildEnv = {
-      ...env,
+      ...(capture?.env ?? env),
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
       HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: tmpDistDir,
       [WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR]: '1',
@@ -763,21 +850,22 @@ async function ensureWorkspacePackageBuiltUnderLock({
     try {
       if (refreshOnly) {
         const runScript = workspaceBuildBoundary.runPackageScript ?? defaultWorkspaceBuildBoundary.runPackageScript;
-        if (packageJson.scripts?.prebuild) await runScript(packageDir, 'prebuild', options);
+        if (packageJson.scripts?.prebuild) await runScript(buildPackageDir, 'prebuild', options);
         if (packageJson.scripts?.['build:ui']) {
           // Live dist may retain prior generations. Only the recorded current
           // tree may seed an output-only refresh or an artifact publication.
           for (const path of priorRecord.files) {
-            const sourcePath = resolve(distDir, path);
-            if (!sourcePath.startsWith(`${resolve(distDir)}${sep}`)) throw new Error(`[workspace-build] invalid recorded output: ${path}`);
+            const sourceDistDir = join(buildPackageDir, 'dist');
+            const sourcePath = resolve(sourceDistDir, path);
+            if (!sourcePath.startsWith(`${resolve(sourceDistDir)}${sep}`)) throw new Error(`[workspace-build] invalid recorded output: ${path}`);
             const destinationPath = join(tmpDistDir, path);
             await mkdir(dirname(destinationPath), { recursive: true });
             await cp(sourcePath, destinationPath);
           }
-          await runScript(packageDir, 'build:ui', options);
+          await runScript(buildPackageDir, 'build:ui', options);
         }
       } else {
-        await workspaceBuildBoundary.runPackageBuild(packageDir, options);
+        await workspaceBuildBoundary.runPackageBuild(buildPackageDir, options);
       }
     } catch (error) {
       throw new WorkspacePackageBuildError(error);
@@ -807,14 +895,17 @@ async function ensureWorkspacePackageBuiltUnderLock({
         onRetry: reportImportRetry,
       });
     }
-    if (readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs }) !== inputFingerprint
-      || JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs })) !== JSON.stringify(builtDependencies)) {
+    if (readWorkspacePackageInputFingerprint({ packageDir: buildPackageDir, dependencyDirs: buildDependencyDirs,
+      ...(capture ? { identitySourceRepoDir: capture.repoDir, identityRepoDir: capture.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR } : {}) }) !== inputFingerprint
+      || JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot: capture?.repoDir ?? monorepoRoot, dependencyDirs: buildDependencyDirs })) !== JSON.stringify(builtDependencies)) {
       // A successful compiler exit cannot identify which moving files it read.
       // Do not replace the last-green tree/receipt with an unproven mixture.
       throw new BuildInputDriftError(`[workspace-build] inputs changed while building ${packageJson.name ?? packageDir}; retained the last coherent output; rerun the phase`);
     }
     const record = {
       version: 2,
+      // A runtime-only refresh cannot upgrade emit-only compiler evidence.
+      buildMode: refreshOnly ? priorRecord.buildMode ?? 'strict' : buildMode,
       builtAt: refreshOnly ? priorRecord.builtAt : new Date().toISOString(),
       fingerprint: inputFingerprint,
       dependencies: builtDependencies,
@@ -856,6 +947,8 @@ async function ensureWorkspacePackageBuiltUnderLock({
     await onPackageBuildDone?.({ packageDir, packageName: packageJson.name, stalePackage });
     process.stderr.write(`[workspace-build] QA last-green fallback: ${packageJson.name}\n${diagnosticSummary}\n`);
     return { built: false, reason: 'qa-last-green', stalePackage };
+  } finally {
+    await capture?.cleanup();
   }
   if (!refreshOnly) await onPackageBuildDone?.({
     packageDir,

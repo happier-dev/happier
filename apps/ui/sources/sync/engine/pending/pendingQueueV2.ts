@@ -591,7 +591,7 @@ function replacePendingEditStructuredInput(
         : null;
     if (parsedExisting && !parsedExisting.success) throw new Error('Pending structured input is invalid');
 
-    const nextStructuredInput: Record<string, unknown> = parsedExisting?.success
+    const nextStructuredInput: Record<string, unknown> & { v: 1 } = parsedExisting?.success
         ? { ...parsedExisting.data }
         : { v: 1 };
     delete nextStructuredInput.mentions;

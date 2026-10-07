@@ -115,32 +115,32 @@ export async function resolveGeminiAcpFlag(exec: Pick<ExecService, 'run'>, param
   env?: Readonly<Record<string, string>>;
   signal?: AbortSignal;
 }): Promise<GeminiAcpFlag> {
-  if (params.signal?.aborted) {
-    throw createAbortError();
-  }
-  try {
+  return await resolveGeminiAcpFlagFromHelpProbe(async () => {
     const result = await exec.run({
       executable: { kind: 'systemTool', id: 'gemini-cli' },
       args: ['--help'],
       env: params.env,
       timeoutMs: 2000,
-    }, {
-      signal: params.signal,
-    });
-
-    if (params.signal?.aborted) {
-      throw createAbortError();
-    }
-
+    }, { signal: params.signal });
     const decoder = new TextDecoder();
-    const output = `${decoder.decode(result.stdout)}\n${decoder.decode(result.stderr)}`;
+    return `${decoder.decode(result.stdout)}\n${decoder.decode(result.stderr)}`;
+  }, params.signal);
+}
+
+/** The native launcher and preflight share one interpretation of the vendor help surface. */
+export async function resolveGeminiAcpFlagFromHelpProbe(
+  readHelp: () => Promise<string>,
+  signal?: AbortSignal,
+): Promise<GeminiAcpFlag> {
+  if (signal?.aborted) throw createAbortError();
+  try {
+    const output = await readHelp();
+    if (signal?.aborted) throw createAbortError();
     if (output.includes('--acp')) return '--acp';
     if (output.includes('--experimental-acp')) return '--experimental-acp';
   } catch (error) {
-    if (isAbortLikeError(error)) {
-      throw error;
-    }
-    // Fallback if probe fails
+    if (isAbortLikeError(error)) throw error;
+    // Keep the existing native launch owner's fallback when help is unavailable.
   }
   return '--acp';
 }

@@ -362,9 +362,15 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         registration: response.result.registration,
         cleanup,
         async refreshRuntimeAuth(request, options) {
-            if (!deps.refreshRuntimeAuth) return { status: 'unavailable', reason: 'connected_service_run_materialization_unavailable' };
-            return await deps.refreshRuntimeAuth({ ...request, runId: params.runId,
-                runnerPid: deps.runnerPid, activationId: response.result.activationId }, options);
+            if (cleanupPromise || !deps.refreshRuntimeAuth) {
+                return { status: 'unavailable', reason: 'connected_service_run_materialization_unavailable' };
+            }
+            return await deps.refreshRuntimeAuth({
+                ...request,
+                runId: params.runId,
+                runnerPid: deps.runnerPid,
+                activationId: response.result.activationId,
+            }, options);
         },
         async recoverRejectedStart(classification) {
             const modelId = params.modelId ?? classification.providerLimitId;

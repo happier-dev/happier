@@ -26,6 +26,7 @@ import {
 } from '@/components/browser/annotation/useBrowserAnnotationController';
 import {
     selectBrowserDiagnosticsForView,
+    createBrowserDiagnosticsUiStore,
     type BrowserDiagnosticsPanelProjection,
 } from '@/sync/domains/browser/diagnostics';
 import type { BrowserRecordingState } from '@/sync/domains/browser/recording';
@@ -348,12 +349,13 @@ export function BrowserShell(props: Readonly<{
         props.localServicePreviewState !== undefined
             ? props.localServicePreviewState
             : liveLocalServicePreviewState;
-    const activeDiagnostics = activeView && browserDiagnostics
-        ? selectBrowserDiagnosticsForView(browserDiagnostics.state, {
+    // Only drawer identity/sections live in chrome. Its open body reads the event history.
+    const activeDiagnostics = React.useMemo(() => activeView && browserDiagnostics
+        ? selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), {
             browserSessionId: activeView.browserSessionId,
             viewId: activeView.viewId,
         })
-        : null;
+        : null, [activeView?.browserSessionId, activeView?.viewId, Boolean(browserDiagnostics)]);
     const diagnosticsBridge = resolveActiveDiagnosticsBridge({
         activeView,
         bridge: browserDiagnostics?.bridge ?? props.browserAutomation?.engineBridge,
@@ -473,6 +475,11 @@ export function BrowserShell(props: Readonly<{
     // daemon's, already in the view state.
     const agentDrivesPage = Boolean(activeView && isDaemonAuthoritativeBrowserView(activeView)
         && activeView.automationController?.controller === 'agent');
+    const onAddressEdit = React.useCallback(() => {
+        if (!agentDrivesPage || !activeView?.automationController) return;
+        const { browserSessionId, viewId } = activeView;
+        props.onCommand({ kind: 'takeControl', commandId: createCommandId('takeControl', viewId), browserSessionId, viewId });
+    }, [activeView, agentDrivesPage, props.onCommand]);
     const browserContextPresent = Boolean(props.browserContext) && !agentDrivesPage;
     const markUpOffered = browserContextPresent && annotation.supported;
     const markUpDisabledReason = annotation.contextButtonDisabled
@@ -512,6 +519,9 @@ export function BrowserShell(props: Readonly<{
             formatWhileBlurred
             value={activeView?.pendingUrl ?? activeView?.currentUrl ?? ''}
             disabled={activeView ? !toolbar.canNavigate : !props.onNavigateInPlace}
+            onEditStart={onAddressEdit}
+            editIntentKey={activeView ? JSON.stringify([activeView.browserSessionId, activeView.viewId,
+                activeView.automationController?.controller, activeView.automationController?.controlEpoch]) : undefined}
             {...(props.searchUrlTemplate ? { searchUrlTemplate: props.searchUrlTemplate } : {})}
             leading={(
                 <SecurityOriginIndicator
@@ -724,6 +734,8 @@ export function BrowserShell(props: Readonly<{
             {activeDiagnostics || props.supplementalDiagnostics ? (
                 <BrowserDiagnosticsDrawer
                     diagnostics={activeDiagnostics ?? props.supplementalDiagnostics!}
+                    state={browserDiagnostics?.eventSource ? undefined : browserDiagnostics?.state}
+                    eventSource={browserDiagnostics?.eventSource}
                     supplemental={activeDiagnostics ? props.supplementalDiagnostics : null}
                     interaction={browserDiagnostics?.interaction}
                     surfaceHeightPx={chromeDensity.containerHeightPx ?? undefined}

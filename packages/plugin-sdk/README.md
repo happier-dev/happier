@@ -293,10 +293,12 @@ Plugin UI. A host-source reference instead requires a `capture.view` Action
 approval for each viewing, unless the user waived approval for this plugin in
 Action settings. Replacement retires the exact old viewing.
 
-`StoredImageRefV1` identifies file-backed native Session-image artifacts
-retained from a successful Action in the same mounted surface. The bound `readStoredImage` operation
+`StoredImageRefV1` carries the complete file-backed native Session-image reference,
+including dimensions, byte size, Session storage path and digest. References can
+be reused after remounting or handed to another plugin; the bound `readStoredImage` operation
 requires the plugin's declared/selected Sessions READ scope and matching Account
-encryption mode; ids are not filesystem authority. See the
+encryption mode. The daemon verifies the exact file and digest before disclosure;
+reference possession or a successful Action is not read permission. See the
 [Plugin UI media interface](../plugin-ui/README.md#capture-previews-and-session-images)
 for rendering and unavailable-host behavior.
 

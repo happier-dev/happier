@@ -62,18 +62,20 @@ export function createArtifactActionsClient(scope: ServerAccountScope, execute =
     const run = async <Id extends SurfaceActionId>(actionId: Id, input: unknown): Promise<ArtifactActionOutcome<ArtifactActionResultV1<Id>>> => {
         return readOutcome(actionId, await dispatch(actionId, input));
     };
+    const runMutation = async <Id extends 'artifact.revisions.restore' | 'artifact.delete'>(actionId: Id, input: unknown) => {
+        const result = await dispatch(actionId, input);
+        const pending = result?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+        return pending?.success
+            ? { approvalId: pending.data.artifactId } as const
+            : readOutcome(actionId, result);
+    };
     return {
         storageUsage: () => run('artifact.storage.usage', {}),
         listRevisions: (artifactId: string) => run('artifact.revisions.list', { artifactId }),
         restoreRevision: (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) =>
-            run('artifact.revisions.restore', input),
-        deleteArtifact: async (input: Readonly<{ artifactId: string; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) => {
-            const result = await dispatch('artifact.delete', input);
-            const pending = result?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
-            return pending?.success
-                ? { approvalId: pending.data.artifactId } as const
-                : readOutcome('artifact.delete', result);
-        },
+            runMutation('artifact.revisions.restore', input),
+        deleteArtifact: (input: Readonly<{ artifactId: string; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) =>
+            runMutation('artifact.delete', input),
     };
 }
 
@@ -91,19 +93,19 @@ export function useArtifactActionsClient(): ArtifactActionsClient | null {
 }
 
 /**
- * Read the active Account's authoritative usage on mount and whenever its canonical Artifact
- * projection changes. Retain the last successful read during refresh; never carry it to another
+ * Read the active Account's authoritative usage on mount and whenever stored Artifact versions
+ * change. Retain the last successful read during refresh; never carry it to another
  * Account. The server, not the retained local heads, accounts for storage and revision bytes.
  */
 export function useArtifactStorageUsage(): ArtifactStorageUsageV1 | null {
     const client = useArtifactActionsClient();
-    const artifacts = getStorage()((state) => state.artifacts);
+    const storageRevision = getStorage()((state) => state.artifactsStorageRevision);
     const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; usage: ArtifactStorageUsageV1 }> | null>(null);
     React.useEffect(() => {
         if (!client) return;
         let current = true;
         void client.storageUsage().then((outcome) => { if (current && outcome.ok) setSnapshot({ client, usage: outcome.value }); });
         return () => { current = false; };
-    }, [client, artifacts]);
+    }, [client, storageRevision]);
     return snapshot && snapshot.client === client ? snapshot.usage : null;
 }

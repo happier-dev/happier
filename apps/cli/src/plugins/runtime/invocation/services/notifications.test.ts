@@ -13,7 +13,6 @@ import type {
 import {
     createStablePluginNotificationsOwner,
     createStablePluginNotificationsService,
-    PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS,
     type PluginNotificationSenderBinding,
 } from './notifications';
 
@@ -196,7 +195,6 @@ describe('stable plugin notifications service', () => {
                 binding = Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender });
             },
             readChannel: () => binding,
-            now: () => 1_000,
         });
 
         const request = Object.freeze({
@@ -230,7 +228,6 @@ describe('stable plugin notifications service', () => {
                 demands.push(`${ref.pluginId}/notificationChannels/${ref.localId}`);
             },
             readChannel: () => null,
-            now: () => 1_000,
         });
 
         await expect(service.listCategories()).resolves.toEqual({
@@ -337,7 +334,6 @@ describe('stable plugin notifications service', () => {
             channels: [disabledChannel, unknownChannel],
             activateChannel,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
 
         await expect(service.listCategories()).resolves.toEqual({
@@ -412,7 +408,6 @@ describe('stable plugin notifications service', () => {
                     return Object.freeze({ dispose: disposePreferenceWatch });
                 },
             },
-            now: () => 1_000,
         });
 
         await expect(service.preferences('review-ready')).resolves.toEqual({
@@ -465,7 +460,6 @@ describe('stable plugin notifications service', () => {
                 isCurrent: async () => false,
                 send: sender,
             }),
-            now: () => 1_000,
         });
 
         await expect(service.send({
@@ -503,7 +497,6 @@ describe('stable plugin notifications service', () => {
                 isCurrent: async () => current,
                 send: sender,
             }),
-            now: () => 1_000,
         });
 
         await expect(service.send({
@@ -521,8 +514,9 @@ describe('stable plugin notifications service', () => {
         expect(sender).toHaveBeenCalledTimes(1);
     });
 
-    it('settles an unresponsive sender on occurrenceId retirement, then expires its terminal evidence', async () => {
+    it('retains uncertain terminal evidence and conflict detection across occurrenceId retirement for the owner lifetime', async () => {
         let now = 1_000;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const retiredGeneration = new AbortController();
         const currentGeneration = new AbortController();
         let resolveLateSuccess: ((result: PluginNotificationSendResult) => void) | undefined;
@@ -562,7 +556,6 @@ describe('stable plugin notifications service', () => {
                 isCurrent: () => !callerSeed!.signal.aborted,
                 send: sender,
             }),
-            now: () => now,
         });
         const request = (clientRequestId: string) => Object.freeze({
             clientRequestId,
@@ -644,17 +637,20 @@ describe('stable plugin notifications service', () => {
         }
         expect(sender).toHaveBeenCalledTimes(2);
 
-        now += PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS;
+        now += 8 * 24 * 60 * 60 * 1_000;
         for (const clientRequestId of ['request-late-success', 'request-late-failure']) {
             await expect(currentService.send(request(clientRequestId))).resolves.toEqual({
-                replayed: false,
+                replayed: true,
                 deliveries: [expect.objectContaining({
-                    status: 'accepted',
-                    evidence: 'provider',
+                    status: 'outcomeUnknown',
+                    code: 'plugin_notification_outcome_unknown',
                 })],
             });
+            await expect(currentService.send({ ...request(clientRequestId), title: 'Changed notification' }))
+                .rejects.toMatchObject({ code: 'plugin_notification_request_conflict' });
         }
-        expect(sender).toHaveBeenCalledTimes(4);
+        expect(sender).toHaveBeenCalledTimes(2);
+        clock.mockRestore();
     });
 
     it('owns a real preference watch with the caller occurrenceId and fences late publication', () => {
@@ -676,7 +672,6 @@ describe('stable plugin notifications service', () => {
                 publish = params.listener;
                 return Object.freeze({ dispose: disposeHostWatch });
             },
-            now: () => 1_000,
         });
         const listener = vi.fn();
         const watch = service.watchPreferences('review-ready', listener);
@@ -694,7 +689,7 @@ describe('stable plugin notifications service', () => {
         expect(disposeHostWatch).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects undeclared, conflicting, oversized, and retired-occurrenceId operations before unsafe delivery', async () => {
+    it('rejects undeclared, conflicting and retired-occurrenceId operations before delivery', async () => {
         let current = true;
         const sender = vi.fn(async (request: PluginNotificationSendRequest): Promise<PluginNotificationSendResult> => {
             current = false;
@@ -710,7 +705,6 @@ describe('stable plugin notifications service', () => {
             categories: [category], channels,
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
 
         await expect(service.send({
@@ -729,45 +723,13 @@ describe('stable plugin notifications service', () => {
             clientRequestId: 'request-4', categoryId: 'missing', title: 'Missing',
         })).rejects.toMatchObject({ code: 'plugin_notification_category_undeclared' });
         await expect(service.send({
-            clientRequestId: 'request-5', categoryId: 'review-ready', title: 'x'.repeat(513),
-        })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
-        await expect(service.send({
             clientRequestId: 'request-invalid-channel', categoryId: 'review-ready', title: 'Review ready',
             channelIds: ['INVALID'],
         })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
-        const accessorRequest = Object.defineProperty({
-            clientRequestId: 'request-6', categoryId: 'review-ready',
-        }, 'title', {
-            enumerable: true,
-            get() { throw new Error('must not invoke author accessors'); },
-        });
-        await expect(service.send(accessorRequest as Parameters<typeof service.send>[0]))
-            .rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
-        let channelAccessorReads = 0;
-        const accessorChannels = Object.defineProperty(['configured'], '0', {
-            enumerable: true,
-            get() {
-                channelAccessorReads += 1;
-                return 'configured';
-            },
-        });
-        await expect(service.send({
-            clientRequestId: 'request-accessor-channel', categoryId: 'review-ready', title: 'Review ready',
-            channelIds: accessorChannels,
-        })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
-        expect(channelAccessorReads).toBe(0);
-        const proxyRequest = new Proxy({
-            clientRequestId: 'request-proxy', categoryId: 'review-ready', title: 'Review ready',
-        }, {
-            ownKeys() { throw new Error('must not escape author proxy traps'); },
-        });
-        await expect(service.send(proxyRequest))
-            .rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
         expect(sender).toHaveBeenCalledTimes(1);
     });
 
-    it('deduplicates manifest defaults and treats accessor-backed sender results as unknown without invoking them', async () => {
-        let accessorReads = 0;
+    it('deduplicates manifest defaults and accepts typed sender results supplied by trusted plugin code', async () => {
         const duplicateDefaults: ResolvedNotificationCategoryContribution = Object.freeze({
             ...category,
             definition: Object.freeze({
@@ -778,18 +740,15 @@ describe('stable plugin notifications service', () => {
         const sender = vi.fn(async (request: PluginNotificationSendRequest) => Object.defineProperty({
             deliveryId: request.deliveryId,
             channelId: request.channelId,
+            evidence: 'provider',
         }, 'status', {
             enumerable: true,
-            get() {
-                accessorReads += 1;
-                return 'accepted';
-            },
+            get() { return 'accepted'; },
         }));
         const service = createStablePluginNotificationsService(seed, {
             categories: [duplicateDefaults], channels,
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
 
         await expect(service.listCategories()).resolves.toEqual({
@@ -804,12 +763,58 @@ describe('stable plugin notifications service', () => {
             replayed: false,
             deliveries: [expect.objectContaining({
                 channelId: 'acme.notifications/configured',
-                status: 'outcomeUnknown',
-                code: 'plugin_notification_outcome_unknown',
+                status: 'accepted',
+                evidence: 'provider',
             })],
         });
         expect(sender).toHaveBeenCalledTimes(1);
-        expect(accessorReads).toBe(0);
+    });
+
+    it('delivers valid plugin input without local payload, channel-count or request-id ceilings', async () => {
+        const declaredChannels = Array.from({ length: 33 }, (_, index) => Object.freeze({
+            ...channels[0]!,
+            definition: Object.freeze({ ...channels[0]!.definition, id: `channel-${index}` }),
+        }));
+        const requests: PluginNotificationSendRequest[] = [];
+        const service = createStablePluginNotificationsService(seed, {
+            categories: [category], channels: declaredChannels,
+            activateChannel: async () => undefined,
+            readChannel: () => ({ occurrenceId: '7', isCurrent: () => true,
+                send: async (request) => {
+                    requests.push(request);
+                    return { deliveryId: request.deliveryId, channelId: request.channelId,
+                        status: 'accepted', evidence: 'provider' };
+                },
+            }),
+        });
+        const title = 't'.repeat(513);
+        const body = 'b'.repeat(8_001);
+        const data = { message: 'd'.repeat(64 * 1024 + 1) };
+        const request = { clientRequestId: 'r'.repeat(129), categoryId: 'review-ready',
+            get title() { return title; }, body, data,
+            channelIds: declaredChannels.map(({ definition }) => definition.id),
+        };
+        await expect(service.send(request)).resolves.toMatchObject({ replayed: false,
+            deliveries: Array.from({ length: 33 }, () => expect.objectContaining({ status: 'accepted' })),
+        });
+        expect(requests).toHaveLength(33);
+        expect(requests[0]).toMatchObject({ title, body, data, clientRequestId: request.clientRequestId });
+        await expect(service.send(request)).resolves.toMatchObject({ replayed: true });
+        expect(requests).toHaveLength(33);
+    });
+
+    it('lists all declared channels or the requested page without a local page-size ceiling', async () => {
+        const declaredChannels = Array.from({ length: 101 }, (_, index) => Object.freeze({
+            ...channels[0]!,
+            definition: Object.freeze({ ...channels[0]!.definition, id: `channel-${index}` }),
+        }));
+        const service = createStablePluginNotificationsService(seed, {
+            categories: [category], channels: declaredChannels,
+            activateChannel: async () => undefined,
+            readChannel: () => ({ occurrenceId: '7', isCurrent: () => true, send: async () => undefined }),
+        });
+        expect((await service.listChannels()).items).toHaveLength(101);
+        expect((await service.listChannels({ limit: 101 })).items).toHaveLength(101);
     });
 
     it('resolves a declared local channel id containing a slash before treating it as a qualified id', async () => {
@@ -833,7 +838,6 @@ describe('stable plugin notifications service', () => {
             channels: [slashChannel],
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
 
         await expect(service.send({
@@ -874,7 +878,6 @@ describe('stable plugin notifications service', () => {
             categories: [category], channels,
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
         const first = owner.bind(seed);
         const second = owner.bind(Object.freeze({
@@ -899,7 +902,6 @@ describe('stable plugin notifications service', () => {
             categories: [category], channels,
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => 1_000,
         });
         const request = Object.freeze({
             clientRequestId: 'request-9', categoryId: 'review-ready', title: 'Review ready', channelIds: ['configured'],
@@ -941,8 +943,9 @@ describe('stable plugin notifications service', () => {
         expect(sender).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps an in-flight operation bound after the settled-result retention window', async () => {
+    it('keeps an in-flight operation bound regardless of elapsed time', async () => {
         let now = 1_000;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const pending: Array<Readonly<{
             request: PluginNotificationSendRequest;
             resolve(result: PluginNotificationSendResult): void;
@@ -954,7 +957,6 @@ describe('stable plugin notifications service', () => {
             categories: [category], channels,
             activateChannel: async () => undefined,
             readChannel: () => Object.freeze({ occurrenceId: '7', isCurrent: () => true, send: sender }),
-            now: () => now,
         });
         const request = Object.freeze({
             clientRequestId: 'request-pending-retention',
@@ -965,7 +967,7 @@ describe('stable plugin notifications service', () => {
 
         const first = service.send(request);
         await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(1));
-        now += PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS;
+        now += 8 * 24 * 60 * 60 * 1_000;
         const joined = service.send(request);
         await new Promise<void>((resolve) => setImmediate(resolve));
         const dispatchCount = sender.mock.calls.length;
@@ -981,10 +983,12 @@ describe('stable plugin notifications service', () => {
         await expect(first).resolves.toMatchObject({ replayed: false });
         await expect(joined).resolves.toMatchObject({ replayed: true });
         expect(dispatchCount).toBe(1);
+        clock.mockRestore();
     });
 
-    it('rejects exact capacity plus one before delivery with the earliest retry delay, then admits after expiry', async () => {
+    it('keeps distinct notification requests available beyond the former local operation ceiling', async () => {
         let now = 1_000;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const categoryWithoutDefaults: ResolvedNotificationCategoryContribution = Object.freeze({
             ...category,
             definition: Object.freeze({ ...category.definition, defaultChannels: [] }),
@@ -993,7 +997,6 @@ describe('stable plugin notifications service', () => {
             categories: [categoryWithoutDefaults], channels: [],
             activateChannel: async () => undefined,
             readChannel: () => null,
-            now: () => now,
         });
 
         for (let index = 0; index < 16_384; index += 1) {
@@ -1007,16 +1010,14 @@ describe('stable plugin notifications service', () => {
             clientRequestId: 'capacity-over',
             categoryId: 'review-ready',
             title: 'Review ready',
-        })).rejects.toMatchObject({
-            code: 'plugin_notification_capacity_unavailable',
-            details: { retryAfterMs: PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS },
-        });
+        })).resolves.toMatchObject({ replayed: false, deliveries: [] });
 
-        now += PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS;
+        now += 8 * 24 * 60 * 60 * 1_000;
         await expect(service.send({
             clientRequestId: 'capacity-after-expiry',
             categoryId: 'review-ready',
             title: 'Review ready',
         })).resolves.toMatchObject({ replayed: false, deliveries: [] });
+        clock.mockRestore();
     }, 30_000);
 });

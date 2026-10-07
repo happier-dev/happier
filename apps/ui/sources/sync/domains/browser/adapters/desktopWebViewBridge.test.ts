@@ -541,6 +541,17 @@ describe('desktop WebView native bridge', () => {
         });
     });
 
+    it('preserves native source privacy denials for screenshots and recording frames', async () => {
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockResolvedValue({ ok: false, availability: {}, errorCode: 'sensitiveFieldsPresent' });
+        const mod = await import('./desktopWebViewBridge');
+        const request = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 7,
+            captureRequestId: 'capture_request_1' };
+        expect(await mod.captureDesktopBrowserSnapshot(request)).toMatchObject({ ok: false, errorCode: 'sensitiveFieldsPresent' });
+        expect(await mod.captureDesktopBrowserRecordingFrame({ ...request, outputPath: '/tmp/frame.png', maxBytes: 16_000_000 }))
+            .toMatchObject({ ok: false, errorCode: 'sensitiveFieldsPresent' });
+    });
+
     it('captures typed desktop WebView snapshots only when native identity and generation match', async () => {
         isDesktopHostMock.mockReturnValue(true);
         invokeDesktopHostMock.mockResolvedValue({

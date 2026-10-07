@@ -223,6 +223,7 @@ export type PluginUiHostApiSurfaceThemeV1 = {
     };
     typography: {
         body: PluginUiHostApiSurfaceTypographyMetricV1;
+        reading: PluginUiHostApiSurfaceTypographyMetricV1;
         label: PluginUiHostApiSurfaceTypographyMetricV1;
         title: PluginUiHostApiSurfaceTypographyMetricV1;
         caption: PluginUiHostApiSurfaceTypographyMetricV1;

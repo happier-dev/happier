@@ -370,6 +370,8 @@ export type ConnectedAccountMaterialization =
     }>;
 export type ConnectedAccountMaterializationOptions = Readonly<{
     signal?: AbortSignal;
+    /** Use this declared service's machine login only when no explicit purpose binding exists. */
+    nativeService?: PluginContributionRef;
     /** An observed account reference is only a currentness precondition. */
     expectedAccount?: ConnectedAccountRef;
 }>;
@@ -494,6 +496,8 @@ export interface ConnectedAccountRuntime {
         options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<Readonly<{
         observedAtMs: number;
+        /** Provider-declared plan fact; absence never infers a plan from allowances. */
+        planLabel?: string | null;
         subscription?: ProviderAccountSubscriptionV1;
         limits: readonly Readonly<{
             id: string;

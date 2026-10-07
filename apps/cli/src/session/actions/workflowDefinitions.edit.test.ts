@@ -48,6 +48,10 @@ function harness(options: { authorityAvailable?: boolean; currentPermissionMode?
   };
   http.get.mockImplementation(async () => ({ status: 200, data: saved }));
   http.post.mockImplementation(async (_url: string, payload: Record<string, unknown>) => {
+    if (payload.id === definitionId) {
+      saved = { ...saved, header: String(payload.header), body: String(payload.body), headerVersion: 1, bodyVersion: 1 };
+      return { status: 200, data: saved };
+    }
     if (payload.expectedHeaderVersion !== saved.headerVersion || payload.expectedBodyVersion !== saved.bodyVersion) {
       return { status: 200, data: { success: false, error: 'version-mismatch' } };
     }
@@ -76,6 +80,32 @@ function harness(options: { authorityAvailable?: boolean; currentPermissionMode?
 const human = { surface: 'cli' as const };
 describe('workflow.definition.edit through the real Action and Artifact owners', () => {
   beforeEach(() => { http.get.mockReset(); http.post.mockReset(); http.delete.mockReset(); });
+
+  it('saves an authored block name through the edit Action and clears it without changing the prompt', async () => {
+    const { executor, definitions, saved } = harness();
+    http.get.mockResolvedValueOnce({ status: 404 });
+    const initial = { ...definition, blocks: definition.blocks.map((block, index) => ({ ...block, name: index === 1 ? '  ' : '  From create  ' })) };
+    await expect(executor.execute('workflow.definition.create', { definitionId, metadata, definition: initial }, human))
+      .resolves.toMatchObject({ ok: true });
+    expect((await definitions.get({ definitionId })).definition.blocks[0]).toMatchObject({ name: 'From create' });
+    expect((await definitions.get({ definitionId })).definition.blocks[1]).not.toHaveProperty('name');
+    await expect(executor.execute('workflow.definition.edit', { definitionId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      ops: [{ kind: 'set_block_name', blockId: 'b2', name: '  Implement  ' }],
+    }, human)).resolves.toMatchObject({ ok: true, result: { changedBlockIds: ['b2'] } });
+    expect((await definitions.get({ definitionId })).definition.blocks[1]).toMatchObject({ name: 'Implement', document: { text: 'Second' } });
+    const updated = { ...definition, blocks: definition.blocks.map((block, index) => ({ ...block, name: index === 2 ? '  ' : '  From update  ' })) };
+    await expect(executor.execute('workflow.definition.update', { definitionId,
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 }, metadata, definition: updated,
+    }, human)).resolves.toMatchObject({ ok: true });
+    expect((await definitions.get({ definitionId })).definition.blocks[0]).toMatchObject({ name: 'From update' });
+    expect((await definitions.get({ definitionId })).definition.blocks[2]).not.toHaveProperty('name');
+    await expect(executor.execute('workflow.definition.edit', { definitionId,
+      expectedRevision: { headerVersion: 3, bodyVersion: 3 },
+      ops: [{ kind: 'set_block_name', blockId: 'b2', name: '  ' }],
+    }, human)).resolves.toMatchObject({ ok: true });
+    expect((await definitions.get({ definitionId })).definition.blocks[1]).not.toHaveProperty('name');
+    expect(saved().bodyVersion).toBe(4);
+  });
 
   it('saves one atomic revision, preserves metadata and matches the local editor operations', async () => {
     const { executor, saved } = harness();

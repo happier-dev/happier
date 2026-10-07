@@ -71,6 +71,13 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     onAttachUnavailable?: (reason: BrowserContextUnavailableReason) => void;
 }>): SessionBrowserContextRuntime | null {
     const [state, setState] = React.useState(createBrowserContextState);
+    const stateRef = React.useRef(state);
+    const readState = React.useCallback(() => stateRef.current, []);
+    const onStateChange = React.useCallback((next: BrowserContextState) => {
+        // Keep live annotation admission current even before React publishes the next projection.
+        stateRef.current = next;
+        setState(next);
+    }, []);
     const uploadConfig = useAttachmentsUploadConfig();
     const annotationMediaRegistrar = React.useMemo(() => params.sessionId
         ? createBrowserAnnotationMediaRegistrar({ sessionId: params.sessionId, config: uploadConfig })
@@ -82,13 +89,13 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     );
 
     React.useEffect(() => {
-        setState(createBrowserContextState());
+        onStateChange(createBrowserContextState());
         setAttachPageReference(null);
-    }, [params.scopeKey]);
+    }, [onStateChange, params.scopeKey]);
 
     const removeAttachment = React.useCallback((attachmentId: string) => {
-        setState((current) => removeBrowserContextComposerAttachment(current, { attachmentId }));
-    }, []);
+        onStateChange(removeBrowserContextComposerAttachment(readState(), { attachmentId }));
+    }, [onStateChange, readState]);
 
     const onAttachPageReferenceChange = React.useCallback((handler: (() => void) | null) => {
         setAttachPageReference(() => handler);
@@ -109,6 +116,7 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
             state,
             browserShellContext: {
                 state,
+                readState,
                 contextCapabilities,
                 enabled: true,
                 attachmentsUploadsEnabled: params.attachmentsUploadsEnabled,
@@ -116,7 +124,7 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
                 annotationMediaRegistrar,
                 annotationRuntimeActionExecute,
                 nowMs: params.nowMs,
-                onStateChange: setState,
+                onStateChange,
                 onAttachPageReferenceChange,
                 onAttachUnavailable: params.onAttachUnavailable,
             },
@@ -130,6 +138,8 @@ export function useSessionBrowserContextRuntime(params: Readonly<{
     }, [
         attachPageReference,
         onAttachPageReferenceChange,
+        onStateChange,
+        readState,
         params.annotationCaptureProvider,
         annotationMediaRegistrar,
         annotationRuntimeActionExecute,

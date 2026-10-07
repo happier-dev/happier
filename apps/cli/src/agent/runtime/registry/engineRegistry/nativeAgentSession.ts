@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -19,7 +20,7 @@ import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/se
 import { SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 import { SessionActivityHeadlineBundleV1Schema } from '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1';
 import { SessionRuntimeIssueSourceV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import {
     getAgentLocalControlCapability,
     parsePermissionIntentAlias,
@@ -29,6 +30,7 @@ import {
 } from '@happier-dev/agents';
 import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from '@/agent/runtime/sessionConfigOptionOverrideSync';
+import { createDaemonRuntimeAuthRefreshService, type RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 import type {
     HostTerminalOrchestration,
     HostTerminalLaunchRequest,
@@ -193,6 +195,7 @@ import { registerCurrentSessionUiBinding } from '@/session/presentation/currentS
 import { readStoredCredentials } from '@/persistence';
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import type { SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
 import { createBoundTranscriptIdentityReconciler } from '@/agent/runtime/session/transcripts/reconcileSourceIdentities';
 import {
     resolveAgentToolsDelivery,
@@ -911,6 +914,8 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     readToolExecutionCapability: () => NonNullable<AgentRuntime['toolExecution']>['capability'] | null;
     accountSettings?: Readonly<Record<string, unknown>>;
     profileId?: string | null;
+    promptPlan?: SessionPromptPlanResolver;
+    readCodingPromptBehavior?: () => CodingPromptBehaviorV1 | null;
     sessionMachineId?: string | null;
     memoryRecallGuidanceEnabled?: boolean;
     toolsDelivery?: AgentToolsDelivery;
@@ -1173,6 +1178,11 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
             assertSessionScopeAvailable('happier-tools');
             const signal = combineSessionOperationSignal(params.signal, options?.signal);
             signal.throwIfAborted();
+            if (params.promptPlan && !params.promptPlan.readCodingPromptBehavior?.()) {
+                await params.promptPlan({ signal });
+                assertSessionScopeAvailable('happier-tools');
+                signal.throwIfAborted();
+            }
             const argsPrefix = [
                 'tools',
                 'call',
@@ -1198,6 +1208,8 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                 tools: resolveSessionNativeToolDescriptors({
                     accountSettings: params.accountSettings ?? {},
                     profileId: params.profileId ?? null,
+                    codingPromptBehavior: params.promptPlan ? params.promptPlan.readCodingPromptBehavior?.() ?? null
+                        : params.readCodingPromptBehavior?.(),
                     sessionId: params.sessionId,
                     sessionMachineId: params.sessionMachineId ?? null,
                     memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled === true,
@@ -2106,11 +2118,33 @@ export function composeNativeAgentSessionRuntimeContext(params: Readonly<{
     sessionId: string;
     signal: AbortSignal;
     services: PluginServices;
+    refreshRuntimeAuthViaDaemon?: RuntimeAuthRefreshViaDaemon;
     sessionServices: AgentSessionHostServices;
     ui: AgentSessionRuntimeContext['ui'];
     protocols: AgentSessionRuntimeContext['protocols'];
     workState: AgentSessionRuntimeContext['workState'];
 }>): AgentSessionRuntimeContext {
+    const currentSession = params.services.sessions.current;
+    if (params.refreshRuntimeAuthViaDaemon && !currentSession) {
+        throw new Error('Execution Run parent Session authentication custody is unavailable');
+    }
+    // A genuine Session-owned Run retains parent projections, but refreshes its own
+    // materialized account through the Run scope rather than the parent's selection.
+    const services = params.refreshRuntimeAuthViaDaemon && currentSession
+        ? Object.freeze({
+            ...params.services,
+            sessions: Object.freeze({
+                ...params.services.sessions,
+                current: Object.freeze({
+                    ...currentSession,
+                    auth: Object.freeze({ services: createDaemonRuntimeAuthRefreshService({
+                        refreshViaDaemon: params.refreshRuntimeAuthViaDaemon,
+                        signal: params.signal,
+                    }) }),
+                }),
+            }),
+        })
+        : params.services;
     return Object.freeze({
         plugin: Object.freeze({
             id: params.identity.pluginId,
@@ -2130,7 +2164,7 @@ export function composeNativeAgentSessionRuntimeContext(params: Readonly<{
             services: params.sessionServices,
         }),
         signal: params.signal,
-        services: params.services,
+        services,
         ui: params.ui,
         agent: Object.freeze({ id: params.identity.agentId }),
         protocols: params.protocols,
@@ -2309,7 +2343,7 @@ export function createNativeAgentSessionOperations(
         readonly waiters: Set<{
             resolve: () => void;
             reject: (error: Error) => void;
-            timer: NodeJS.Timeout | null;
+            cancelDeadline: (() => void) | null;
         }>;
     };
     let turnCompletion: NativeTurnCompletion | null = null;
@@ -2345,7 +2379,7 @@ export function createNativeAgentSessionOperations(
                 : null
         );
         for (const waiter of Array.from(completion.waiters)) {
-            if (waiter.timer) clearTimeout(waiter.timer);
+            waiter.cancelDeadline?.();
             if (completion.error) waiter.reject(completion.error);
             else waiter.resolve();
         }
@@ -3716,11 +3750,11 @@ export function createNativeAgentSessionOperations(
                         completion.waiters.delete(waiter);
                         reject(error);
                     },
-                    timer: null as NodeJS.Timeout | null,
+                    cancelDeadline: null as (() => void) | null,
                 };
                 completion.waiters.add(waiter);
                 if (timeoutMs !== null) {
-                    waiter.timer = setTimeout(() => {
+                    waiter.cancelDeadline = armDeadlineTimer(Date.now() + timeoutMs, () => {
                         completion.waiters.delete(waiter);
                         const turnIds = [...completion.observedTurnIds];
                         reject(
@@ -3730,8 +3764,7 @@ export function createNativeAgentSessionOperations(
                                 }`,
                             ),
                         );
-                    }, timeoutMs);
-                    waiter.timer.unref?.();
+                    }, { unref: true });
                 }
             });
         },
@@ -5091,6 +5124,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     profileId: typeof hostRuntimeParams.metadata.profileId === 'string'
                         ? hostRuntimeParams.metadata.profileId
                         : null,
+                    promptPlan: hostRuntimeParams.resolveFreshSessionSystemPrompt,
                     sessionMachineId: hostRuntimeParams.machineId,
                     memoryRecallGuidanceEnabled: hostRuntimeParams.memoryRecallGuidanceEnabled,
                     ...(terminalHostScope ? { terminalHost: terminalHostScope.service } : {}),

@@ -57,6 +57,8 @@ export type WorkBoardSaveQueue = Readonly<{
     getState(): WorkBoardSaveState;
     subscribe(listener: () => void): () => void;
     dispatch(intent: WorkBoardIntentV1): Promise<WorkBoardSaveOutcome>;
+    /** Admission can refuse before an optimistic write begins; recovery still belongs to this queue. */
+    recordFailure(intent: WorkBoardIntentV1, reason: WorkBoardSaveFailureReason): void;
     /** Replays the failed edit. */
     retry(): Promise<WorkBoardSaveOutcome | null>;
     dismissFailure(): void;
@@ -113,6 +115,9 @@ export function createWorkBoardSaveQueue(deps: Readonly<{ port: Pick<WorkBoardAr
             return () => { listeners.delete(listener); };
         },
         dispatch,
+        recordFailure(intent, reason) {
+            setState({ ...state, failure: { intent, reason } });
+        },
         retry() {
             const failed = state.failure;
             return failed ? dispatch(failed.intent) : Promise.resolve(null);

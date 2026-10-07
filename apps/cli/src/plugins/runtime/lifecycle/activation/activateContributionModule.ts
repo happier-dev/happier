@@ -12,7 +12,6 @@ import {
 } from '../../api/registrationRightsHost';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import {
-    DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS,
     remainingPluginInitializationTimeoutMs,
     normalizePositiveTimeoutMs,
     projectPluginFailureDiagnostic,
@@ -47,12 +46,11 @@ type ContributionActivationPublication = Readonly<{
 const EMPTY_REGISTRATIONS: readonly ContributionRuntimeRegistration[] = Object.freeze([]);
 const EMPTY_VALIDATED_AGENT_FACTORIES = Object.freeze([]);
 const NOOP_DISPOSE = async (): Promise<void> => undefined;
-const DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS = 5_000;
 
 class ActivationDeadlineExceededError extends Error {
     constructor(pluginId: string) {
         super(
-            `Plugin '${pluginId}' activation timed out after ${DEFAULT_PLUGIN_INITIALIZATION_TIMEOUT_MS}ms; `
+            `Plugin '${pluginId}' activation timed out within the daemon startup deadline; `
             + 'synchronous plugin work cannot be preempted by this asynchronous deadline',
         );
         this.name = 'ActivationDeadlineExceededError';
@@ -264,15 +262,13 @@ export async function activateContributionModule(params: Readonly<{
     }
 
     const registeredExternalSessionsByAgent = new Map<string, unknown>();
-    const cleanupTimeoutMs = normalizePositiveTimeoutMs(
-        params.cleanupTimeoutMs ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS,
-    ) ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS;
+    const cleanupTimeoutMs = normalizePositiveTimeoutMs(params.cleanupTimeoutMs);
     const host = createContributionRegistrationHost({
         pluginId: params.pluginId,
         occurrenceId: params.occurrenceId,
         rights,
         isOccurrenceCurrent: params.isOccurrenceCurrent,
-        cleanupTimeoutMs,
+        ...(cleanupTimeoutMs === null ? {} : { cleanupTimeoutMs }),
         onAgentExternalSessionsRegistration(localAgentId, contribution) {
             registeredExternalSessionsByAgent.set(localAgentId, contribution);
         },
@@ -292,10 +288,9 @@ export async function activateContributionModule(params: Readonly<{
         disposalPromise = (async () => {
             const errors: unknown[] = [];
             // Dependency order is intentional: host-captured resources unwind
-            // before the author's own cleanup. Each independent step receives
-            // its own bounded attempt, so one hung disposer can neither starve
-            // the remaining steps nor skip the activation cleanup; every
-            // timeout or rejection is collected for the aggregate outcome.
+            // before the author's own cleanup. Only an explicit host cleanup
+            // budget bounds an attempt; otherwise retirement observes actual
+            // settlement. Rejections remain part of the aggregate outcome.
             for (const step of [
                 {
                     label: 'registration host',
@@ -331,15 +326,14 @@ export async function activateContributionModule(params: Readonly<{
     } catch (error) {
         activationPromise = Promise.reject(error);
     }
-    // One absolute activation-transaction deadline: it spans author
+    // The containing startup deadline, when present, spans author
     // settlement, commit/capture, asynchronous locator resolution and
     // External Sessions companion validation, and retained-fact persistence.
     // Synchronous work cannot be preempted by an asynchronous deadline; this
-    // bounds every asynchronous await of the transaction.
-    const activationDeadlineAt = Date.now()
-        + remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
-    const remainingActivationBudgetMs = (): number =>
-        Math.max(0, activationDeadlineAt - Date.now());
+    // bounds every asynchronous await of the transaction. On-demand activation
+    // without a containing deadline waits for the trusted author's settlement.
+    const remainingActivationBudgetMs = (): number | null =>
+        remainingPluginInitializationTimeoutMs(params.startupDeadlineAtMs);
     let activationDeadlineExceeded = false;
     const activationTimeoutError = (): ActivationDeadlineExceededError => {
         activationDeadlineExceeded = true;
@@ -497,10 +491,8 @@ export async function activateContributionModule(params: Readonly<{
                 ...projectPluginFailureDiagnostic(error, realm),
             }];
         try {
-            // Every cleanup step is individually bounded inside
-            // `disposeActivation`, so the bounded sequence terminates on its
-            // own and each timeout or rejection stays attributable; the outer
-            // registry deadline in the lifecycle manager still caps shutdown.
+            // Retirement stays pending until the captured cleanup settles,
+            // unless the host supplied an explicit cleanup budget.
             await disposeActivation();
         } catch (cleanupError) {
             diagnostics.push({

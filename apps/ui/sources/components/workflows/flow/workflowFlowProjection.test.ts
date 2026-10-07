@@ -39,6 +39,14 @@ function definition(blocks: WorkflowDefinitionV1['blocks']): WorkflowDefinitionV
 }
 
 describe('definition flow projection', () => {
+  it('keeps authored names authoritative over presentation labels for leaves and containers', () => {
+    const projection = projectWorkflowFlow(definition([
+      { ...step('inspect'), name: 'Inspect the change' },
+      { kind: 'loop', id: 'repeat', name: 'Keep going', body: [], repetition: { kind: 'count', count: { kind: 'literal', value: 2 } } },
+    ]), {}, { inspect: 'Catalog label' });
+    expect(projection.nodesById.get('inspect')?.label).toBe('Inspect the change');
+    expect(projection.nodesById.get('repeat')?.label).toBe('Keep going');
+  });
   it('uses catalog-declared labels without inferring them from prompts or changing structure', () => {
     const source = definition([step('ask', 'An entire authored prompt'), step('other')]);
     const projection = projectWorkflowFlow(source, {}, { ask: 'Ask' });

@@ -1,7 +1,6 @@
-import { sameQualifiedConnectedAccountRef, isQualifiedConnectedAccountProfileActiveV4,
-    type ActionExecuteFailure, type AccountProfile, type ConnectedAccountUiProjectionEntryV1, type PluginContributionIdentityV1, type PluginProjectedResourceV2, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { type ActionExecuteFailure, type AccountProfile, type ConnectedAccountUiProjectionEntryV1, type PluginContributionIdentityV1, type PluginProjectedResourceV2, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { resolveWidgetViewerPurposeValuesV1, isSameWidgetDefinitionV1, type WidgetDefinitionRefV1, type WidgetInputDescriptorV1, type WidgetInstanceRefV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { isWidgetConnectedAccountSelectionEligibleV1, resolveWidgetViewerPurposeValuesV1, isSameWidgetDefinitionV1, type WidgetDefinitionRefV1, type WidgetInputDescriptorV1, type WidgetInstanceRefV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
@@ -31,22 +30,20 @@ export function admitWidgetViewerSelectionMetadataV1(input: Readonly<{
             && candidate.id === service.localId && candidate.availability.state === 'available')?.authentication ?? null });
     for (const [path, value] of Object.entries(input.values)) {
         const binding = input.instance.bindings[path];
-        if (binding?.kind === 'value' && input.descriptor.inputs?.fields.some(field => field.path === path && field.connectedAccountOptions)) {
+        const field = input.descriptor.inputs?.fields.find(field => field.path === path);
+        if (binding?.kind === 'value' && field?.connectedAccountOptions) {
             const parsed = QualifiedConnectedAccountRefSchema.safeParse(value);
-            const pinned = QualifiedConnectedAccountRefSchema.safeParse(binding.value);
-            if (input.ref.surface.owner.kind === 'sessionBoard' || !parsed.success || !pinned.success
-                || !sameQualifiedConnectedAccountRef(pinned.data, parsed.data)
-                || !input.profile.connectedAccountsV4.some(account => sameQualifiedConnectedAccountRef(account.ref, parsed.data)
-                    && isQualifiedConnectedAccountProfileActiveV4(account, input.now)))
+            if (!parsed.success || !isWidgetConnectedAccountSelectionEligibleV1({ field, binding, surface: input.ref.surface,
+                selection: parsed.data, viewerValues: current.values, profile: input.profile, now: input.now }))
                 return failure('widgets_viewer_selection_unavailable');
             continue;
         }
-        if (binding?.kind !== 'viewer' || !input.descriptor.inputs?.fields.some(field => field.path === path)
+        if (binding?.kind !== 'viewer' || !field
             || !input.descriptor.connectedAccountPurposeBindings?.some(declaration => declaration.path === path && declaration.purpose === binding.purpose))
             return failure('widgets_viewer_field_invalid');
         const parsed = QualifiedConnectedAccountRefSchema.safeParse(value);
-        const selected = current.values[path];
-        if (!parsed.success || !selected || !sameQualifiedConnectedAccountRef(selected, parsed.data))
+        if (!parsed.success || !isWidgetConnectedAccountSelectionEligibleV1({ field, binding, surface: input.ref.surface,
+            selection: parsed.data, viewerValues: current.values, profile: input.profile, now: input.now }))
             return failure(current.fields.find(field => field.path === path)?.reasonCode ?? 'widgets_viewer_selection_unavailable');
     }
     return null;

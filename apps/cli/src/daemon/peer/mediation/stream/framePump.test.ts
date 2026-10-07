@@ -29,10 +29,15 @@ describe('startMachineLiveStreamFramePump', () => {
         pump.applyControl({ v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 1, windowFrames: 0 });
         expect(pump.offerFrame(frame(1, 'image_keyframe'))).toEqual({ ok: false, reasonCode: 'backpressure_window_exhausted' });
         expect(pump.offerFrame(frame(1, 'image_keyframe'))).toEqual({ ok: false, reasonCode: 'backpressure_window_exhausted' });
+        expect(pump.offerFrame(frame(1, 'metadata'))).toEqual({ ok: false, reasonCode: 'backpressure_window_exhausted' });
         expect(receipts.every((receipt) => typeof receipt === 'object' && receipt !== null && !('terminal' in receipt))).toBe(true);
-        pump.applyControl({ v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 1, windowFrames: 1 });
+        pump.applyControl({ v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 1, windowFrames: 1, windowBytes: 2 });
+        expect(pump.offerFrame(frame(1, 'metadata'))).toEqual({ ok: false, reasonCode: 'backpressure_window_exhausted' });
+        pump.applyControl({ v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 1, windowFrames: 2, windowBytes: 6 });
         expect(pump.offerFrame(frame(1, 'image_keyframe'))).toEqual({ ok: true });
-        expect(frames).toHaveLength(1);
+        expect(pump.offerFrame(frame(2, 'metadata'))).toEqual({ ok: true });
+        expect(pump.offerFrame(frame(3, 'metadata'))).toEqual({ ok: false, reasonCode: 'backpressure_window_exhausted' });
+        expect(frames.map((value) => [value.sequence, value.payloadKind])).toEqual([[1, 'image_keyframe'], [2, 'metadata']]);
     });
     it('leaves relay credit and viewer ACK cursors to the server without changing producer sequencing', () => {
         const emittedFrames: MachineLiveStreamFrameV1[] = [];

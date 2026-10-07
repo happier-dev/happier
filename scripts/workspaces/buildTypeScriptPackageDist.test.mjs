@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { buildTypeScriptPackageDist } from './buildTypeScriptPackageDist.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
@@ -241,6 +241,74 @@ test('buildTypeScriptPackageDist preserves previous dist when TypeScript compila
   );
 
   assert.equal(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), 'export const stable = true;\n');
+});
+
+test('buildTypeScriptPackageDist emits incremental QA output while strict and publication builds still check it', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-qa-emit');
+  const projectPath = join(packageDir, 'tsconfig.json');
+  const config = JSON.parse(await readFile(projectPath, 'utf-8'));
+  config.compilerOptions.incremental = true;
+  await writeJson(projectPath, config);
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built: string = 1;\n');
+  const options = {
+    packageDir, args: ['-p', 'tsconfig.json'], stdio: 'ignore',
+    // Compiler execution is the system boundary. Keep cache preparation,
+    // artifact verification and publication real while observing its options.
+    runCommandImpl: (_command, args) => {
+      if (!args.includes('--noCheck')) return { status: 1 };
+      assert.ok(args.includes('--incremental'));
+      const outDir = args[args.indexOf('--outDir') + 1];
+      mkdirSync(outDir, { recursive: true });
+      const source = readFileSync(join(packageDir, 'src', 'index.ts'), 'utf-8');
+      writeFileSync(join(outDir, 'index.js'), source.replace(': string', ''));
+      writeFileSync(join(outDir, 'index.d.ts'), 'export declare const built: string;\n');
+      writeFileSync(args[args.indexOf('--tsBuildInfoFile') + 1], JSON.stringify({ fileNames: [join(packageDir, 'src', 'index.ts')] }));
+      return { status: 0 };
+    },
+  };
+  const qaEnv = { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'build' };
+  await buildTypeScriptPackageDist({ ...options, env: qaEnv });
+  assert.match(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), /built = 1/);
+  assert.match(await readFile(join(packageDir, 'dist', 'index.d.ts'), 'utf-8'), /built: string/);
+  const cacheRoot = join(packageDir, '.happier', 'typescript-package-build');
+  const qaCache = (await readdir(cacheRoot))[0];
+  assert.ok(existsSync(join(cacheRoot, qaCache, '.tsbuildinfo')));
+  const qaDist = await hashFixtureDist(join(packageDir, 'dist'));
+  for (const env of [
+    { HAPPIER_WORKSPACE_BUILD_MODE: 'strict', npm_lifecycle_event: 'build' },
+    ...['prepack', 'pack', 'publish', 'prepublishOnly'].map((npm_lifecycle_event) => ({ ...qaEnv, npm_lifecycle_event })),
+  ]) {
+    await assert.rejects(buildTypeScriptPackageDist({ ...options, env }), /TypeScript package build failed/);
+    assert.equal(await hashFixtureDist(join(packageDir, 'dist')), qaDist);
+  }
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built: string = 2;\n');
+  await buildTypeScriptPackageDist({ ...options, env: qaEnv });
+  assert.match(await readFile(join(packageDir, 'dist', 'index.js'), 'utf-8'), /built = 2/);
+  assert.deepEqual(await readdir(cacheRoot), [qaCache], 'QA repeats reuse their own compiler cache');
+  delete config.compilerOptions.incremental;
+  await writeJson(projectPath, config);
+  await buildTypeScriptPackageDist({ ...options, env: qaEnv });
+  assert.ok(existsSync(join(cacheRoot, qaCache, '.tsbuildinfo')), 'dev emit stays incremental without requiring package config changes');
+});
+
+test('buildTypeScriptPackageDist produces consumable native QA emit and refreshes it incrementally', async (t) => {
+  const packageDir = await createPackageFixture(t, 'build-ts-package-native-qa-emit');
+  const sourcePath = join(packageDir, 'src', 'index.ts');
+  const options = {
+    packageDir, args: ['-p', 'tsconfig.json'], stdio: 'ignore',
+    env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'build' },
+  };
+  for (const value of [1, 2]) {
+    await writeFile(sourcePath, `export const built: string = ${value};\n`);
+    await buildTypeScriptPackageDist(options);
+    const emitted = await import(`${pathToFileURL(join(packageDir, 'dist', 'index.js')).href}?value=${value}`);
+    assert.equal(emitted.built, value);
+    assert.match(await readFile(join(packageDir, 'dist', 'index.d.ts'), 'utf-8'), /built: string/);
+  }
+  const cacheRoot = join(packageDir, '.happier', 'typescript-package-build');
+  const caches = await readdir(cacheRoot);
+  assert.equal(caches.length, 1);
+  assert.ok(existsSync(join(cacheRoot, caches[0], '.tsbuildinfo')));
 });
 
 test('buildTypeScriptPackageDist removes stale outputs whose source no longer exists', async (t) => {

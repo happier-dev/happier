@@ -1,8 +1,16 @@
 import * as React from 'react';
-import type { ComposerReferenceCandidatePageV1 } from '@happier-dev/plugin-sdk';
+import type { ComposerReferenceCandidatePageV1, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
+import type { TriageSourcePanelOperationV1, TriageSourcePanelResultV1 } from './sourcePanelProtocol.js';
+
+export type TriageSourcePanelCommandV1 = Readonly<{ title: string; operation: TriageSourcePanelOperationV1 }>;
+export type TriageSourcePanelHandlerV1 = (operation: TriageSourcePanelOperationV1, signal: AbortSignal) => Promise<TriageSourcePanelResultV1>;
+export type TriageSourcePanelActionsV1 = Readonly<{
+  bind(kind: TriageSourcePanelOperationV1['kind'], invoke: TriageSourcePanelHandlerV1, commands: readonly TriageSourcePanelCommandV1[]): () => void;
+  execute(operation: TriageSourcePanelOperationV1, signal?: AbortSignal): Promise<TriageSourcePanelResultV1>;
+}>;
 
 /**
  * The child-to-parent half of Triage's selected-evidence disclosure seam.
@@ -65,7 +73,15 @@ export type TriageEvidenceDisclosureOutcomeV1 =
   | Readonly<{ kind: 'inert' }>
   | Readonly<{ kind: 'refused'; reason: string }>;
 
+/** The shared Action result describes the existing disclosure owner's settled outcome. */
+export function triageEvidenceDisclosureActionResultV1(outcome: TriageEvidenceDisclosureOutcomeV1): TriageSourcePanelResultV1 {
+  return { status: outcome.kind === 'applied' || outcome.kind === 'settled' ? 'applied'
+    : outcome.kind === 'inert' ? 'unavailable' : 'rejected' };
+}
+
 export type TriageEvidenceDisclosureV1 = Readonly<{
+  /** Mounted intents share the parent's existing Action address, never its draft authority. */
+  panelActions?: TriageSourcePanelActionsV1;
   /**
    * Whether a Composer origin is currently addressable for this detail. A
    * source offers its disclosure control only while this is true: a control
@@ -74,6 +90,7 @@ export type TriageEvidenceDisclosureV1 = Readonly<{
   available: boolean;
   disclose(
     resolve: TriageEvidenceDisclosureResolverV1,
+    options?: PluginCancellationOptions,
   ): Promise<TriageEvidenceDisclosureOutcomeV1>;
 }>;
 

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { makeMutable } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 import { planetMarkTier } from '@happier-dev/brand/planet';
 
@@ -9,11 +10,13 @@ import { VoiceCompactTranscript } from '@/components/voice/presence/VoiceCompact
 import { VoiceIsland, VOICE_ISLAND_DESKTOP } from '@/components/voice/presence/VoiceIsland';
 import { VoiceMarkArt, type VoiceMarkPose } from '@/components/voice/presence/VoiceMark';
 import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
+import { VoiceOrb } from '@/components/voice/presence/VoiceOrb';
+import { VoiceGlance } from '@/components/voice/presence/VoiceGlance';
 import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
 import { VoiceTransport } from '@/components/voice/presence/VoiceTransport';
 
 import { VoicePresenceContainerFrame } from './VoicePresenceContainerFrames';
-import { buildVoicePresenceFixture, type VoicePresenceFixtureState } from './voicePresenceFixtures';
+import { buildVoicePresenceFixture, buildVoicePresenceSurfaceFixture, VOICE_PRESENCE_FIXTURE_STATES, type VoicePresenceFixtureState } from './voicePresenceFixtures';
 
 const PHONE_FRAMES = new Set(['Ip', 'Op', 'Rp', 'STp']);
 
@@ -23,16 +26,38 @@ const PHONE_FRAMES = new Set(['Ip', 'Op', 'Rp', 'STp']);
  * Frames: M (mark ladder) · K (primitives and containers) · ST (every state) · A · C · R · I · O ·
  * Ip · Op · Rp · STp · END (see `VoicePresenceContainerFrames`).
  */
-export function VoicePresenceSpecimen(props: Readonly<{ frame: string }>): React.ReactElement {
+export function VoicePresenceSpecimen(props: Readonly<{ frame: string; state?: VoicePresenceFixtureState | 'all' }>): React.ReactElement {
     const styles = stylesheet;
     return (
         <ScrollView style={styles.page} contentContainerStyle={PHONE_FRAMES.has(props.frame) ? styles.phonePage : styles.pageContent}>
-            {props.frame === 'M' ? <MarkBoard /> : null}
-            {props.frame === 'K' ? <KitBoard /> : null}
-            {props.frame === 'ST' ? <StatesBoard /> : null}
-            {props.frame !== 'M' && props.frame !== 'K' && props.frame !== 'ST' ? <VoicePresenceContainerFrame frame={props.frame} /> : null}
+            {props.state === 'all' ? VOICE_PRESENCE_FIXTURE_STATES.map((state) => <SingleState key={state} frame={props.frame} state={state} compact />) : props.state ? <SingleState frame={props.frame} state={props.state} /> : (
+                <>
+                    {props.frame === 'M' ? <MarkBoard /> : null}
+                    {props.frame === 'K' ? <KitBoard /> : null}
+                    {props.frame === 'ST' ? <StatesBoard /> : null}
+                    {props.frame !== 'M' && props.frame !== 'K' && props.frame !== 'ST' ? <VoicePresenceContainerFrame frame={props.frame} /> : null}
+                </>
+            )}
         </ScrollView>
     );
+}
+
+/** One real container at an explicit inert fixture state, including Orb recovery/attention states. */
+function SingleState(props: Readonly<{ frame: string; state: VoicePresenceFixtureState; compact?: boolean }>) {
+    const { width } = useWindowDimensions();
+    const voice = buildVoicePresenceFixture(props.state);
+    const anchor = React.useRef<View | null>(null);
+    const translateX = React.useMemo(() => makeMutable(width), [width]);
+    const phone = width < 600;
+    return <View style={{ gap: 24, minHeight: props.compact ? 190 : 220, padding: phone ? 16 : 0 }} testID="dev-voice-single-state">
+        <Text style={stylesheet.h1}>{`${props.frame} · ${props.state}`}</Text>
+        {props.frame === 'O' || props.frame === 'Op'
+            ? <View style={{ alignItems: 'flex-end', paddingTop: 24 }}><VoiceOrb voice={voice} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} translateX={translateX} hostWidth={width} /></View>
+            : props.frame === 'I' || props.frame === 'Ip'
+                ? <VoiceIsland voice={voice} phone={phone} width={phone ? width - 32 : VOICE_ISLAND_DESKTOP.width} anchorRef={anchor} sectionOpen={false} onOpenSection={NOOP} shouldSuppressPress={NO_SUPPRESS} />
+                : <VoiceTopBarPresence voice={voice} />}
+        {props.compact ? null : <View style={{ width: '100%', maxWidth: 360 }}><VoiceGlance model={buildVoicePresenceSurfaceFixture(props.state)} presentation="companion" /></View>}
+    </View>;
 }
 
 type LadderCell = Readonly<{ label: string; pose: VoiceMarkPose; morph?: number; energy?: number; flow?: number; muted?: boolean }>;
@@ -125,7 +150,7 @@ function KitBoard(): React.ReactElement {
 }
 
 const ORDER: readonly VoicePresenceFixtureState[] = [
-    'connecting', 'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
+    'connecting', 'listening', 'transcribing', 'thinking', 'working', 'needs_you', 'speaking', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
 ];
 
 function StatesBoard(): React.ReactElement {

@@ -836,6 +836,33 @@ function createComposedAdmittedOperationFixture() {
 }
 
 describe('admitted targeted-operation currentness through production Actions', () => {
+    it.each(['settled', 'thrown'] as const)('reports retirement when demand activation is %s without publishing H', async (settlement) => {
+        const fixture = createComposedAdmittedOperationFixture();
+        fixture.setDemandContributorActivation(() => {
+            fixture.setCurrentContributorOccurrence('immutable-contributor-h');
+            if (settlement === 'thrown') throw new Error('activation failed after retirement');
+        });
+        try {
+            const result = await fixture.dispatchAdmittedTargetedOperation({
+                targetOccurrenceId: 'immutable-caller',
+                contributorOccurrenceId: 'immutable-contributor-g',
+                targetProtocol: permissiveTargetProtocol('publish'),
+                input: { title: 'Ready' },
+            });
+            expect(fixture.activateContributionsOnDemand).toHaveBeenCalledOnce();
+            expect(result).toMatchObject({
+                matched: true,
+                result: {
+                    ok: false,
+                    errorCode: 'plugin_action_generation_retired',
+                    actionHandlerInvocation: 'notStarted',
+                },
+            });
+        } finally {
+            await fixture.dispose();
+        }
+    });
+
     it('rechecks the target occurrence after awaited Action binding and before the contributor handler starts', async () => {
         const fixture = createComposedAdmittedOperationFixture();
         const inputSchema = defineProtocolObject({

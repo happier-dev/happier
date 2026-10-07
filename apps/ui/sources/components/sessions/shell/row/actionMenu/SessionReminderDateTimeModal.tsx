@@ -63,7 +63,7 @@ export function SessionReminderDateTimeModal(props: Readonly<{
     }, [props]);
 
     const footer = React.useMemo(() => (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
             <RoundButton display="inverted" title={savedReminder ? t('common.close') : t('common.cancel')} disabled={saving} onPress={() => finish(savedReminder)} />
             <RoundButton
                 title={savedReminder ? t('common.retry') : t('sessionsList.reminders.setReminder')}

@@ -591,7 +591,7 @@ export function renderBundledPluginTranslationsTs(translations: JsonObject): str
     '',
     `type BundledPluginTranslationLocale = ${locales.map(renderTsStringLiteral).join(' | ') || 'never'};`,
     'export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<',
-    '    BundledPluginTranslationLocale, Readonly<Record<BundledPluginTranslationKey, string>>',
+    '    BundledPluginTranslationLocale, Readonly<Partial<Record<BundledPluginTranslationKey, string>>>',
     `>> = Object.freeze(${renderJsonLiteral(translations)});`,
     '',
     'export type BundledPluginTranslationKey =',

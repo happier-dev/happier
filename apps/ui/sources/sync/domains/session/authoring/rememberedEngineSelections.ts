@@ -11,6 +11,7 @@ import {
     type SessionModelSelectionV1,
     type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod';
 
 const RememberedEngineSelectionV1Schema = z.object({
@@ -20,6 +21,8 @@ const RememberedEngineSelectionV1Schema = z.object({
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.nullable().optional(),
     updatedAt: z.number().finite().nonnegative(),
 }).strict();
+const StoredRememberedEngineSelectionV1Schema = createStoredReadSchema(RememberedEngineSelectionV1Schema);
+const StoredSessionModelSelectionV1Schema = createStoredReadSchema(SessionModelSelectionV1Schema);
 
 export type RememberedEngineSelectionV1 = z.infer<typeof RememberedEngineSelectionV1Schema>;
 
@@ -61,7 +64,7 @@ function normalizeRememberedSelectionForScope(scopeKey: string, raw: unknown): u
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     const record = raw as Record<string, unknown>;
     if (record.modelSelection !== undefined) {
-        const parsed = SessionModelSelectionV1Schema.safeParse(record.modelSelection);
+        const parsed = StoredSessionModelSelectionV1Schema.safeParse(record.modelSelection);
         if (!parsed.success) return raw;
         const targetKey = readTargetKeyFromScopeKey(scopeKey);
         if (!targetKey) return raw;
@@ -79,14 +82,6 @@ function normalizeRememberedSelectionForScope(scopeKey: string, raw: unknown): u
         };
     }
     if (record.modelId !== null && typeof record.modelId !== 'string') return raw;
-    const legacyKeys = new Set([
-        'v',
-        'modelId',
-        'acpSessionModeId',
-        'sessionConfigOptionOverrides',
-        'updatedAt',
-    ]);
-    if (!Object.keys(record).every((key) => legacyKeys.has(key))) return raw;
     if (record.v !== undefined && record.v !== 1) return raw;
     const targetKey = readTargetKeyFromScopeKey(scopeKey);
     if (!targetKey) return null;
@@ -128,7 +123,7 @@ export const RememberedEngineSelectionsByScopeV1Schema = z.preprocess((value) =>
             if (!normalizedScopeKey) return [];
             const normalized = normalizeRememberedSelectionForScope(normalizedScopeKey, raw);
             if (normalized === null) return [];
-            const parsed = RememberedEngineSelectionV1Schema.safeParse(normalized);
+            const parsed = StoredRememberedEngineSelectionV1Schema.safeParse(normalized);
             const scopedTargetKey = readTargetKeyFromScopeKey(normalizedScopeKey);
             if (!scopedTargetKey) return [];
             if (parsed.success

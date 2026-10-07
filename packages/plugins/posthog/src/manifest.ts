@@ -20,6 +20,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageSourcesContributionProtocolV1,
+    TriageSourceConnectedAccountInputsV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { posthogConnectedAccountRuntime } from './connect/account.js';
@@ -315,9 +316,7 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.configuration]: {
             title: 'Configure PostHog error issues',
             description: 'Reads one user-requested page of PostHog organizations or environments.',
-            // The explicit empty list is the canonical mounted-only placement:
-            // only the settings page this plugin itself mounts invokes it.
-            surfaces: ['ui'],
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: PosthogConfigurationDirectoryInputV1Schema.jsonSchema,
             resultSchema: PosthogConfigurationDirectoryResultV1Schema.jsonSchema,
@@ -350,7 +349,7 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Reads one page of the configured PostHog error-issue walk.',
             surfaces: sources.operations.scan.declaration.surfaces,
             dangerLevel: sources.operations.scan.declaration.dangerLevel,
-            inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
+            inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
             resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
             hostAccess: READ_HOST_ACCESS,
             connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -401,7 +400,7 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Reads native overview facts and query-enrichment status through the canonical issue read.',
             surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
-            inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
+            inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
             resultSchema: PosthogNativeOverviewResultV1Schema.jsonSchema,
             hostAccess: READ_HOST_ACCESS,
             connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
@@ -418,7 +417,7 @@ export const POSTHOG_PLUGIN = definePlugin({
             // disables no invocation.
             placementBindings: [],
             dangerLevel: sources.operations.get.declaration.dangerLevel,
-            inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
+            inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
             resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
             hostAccess: READ_HOST_ACCESS,
             connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,

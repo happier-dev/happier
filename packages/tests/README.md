@@ -149,7 +149,9 @@ Core E2E split convention:
 
 ## Artifacts & debugging
 
-Every test case gets its own directory under `.project/logs/e2e/...` (see `src/testkit/runDir.ts`).
+By default, every test case gets its own directory under `.project/logs/e2e/...` (see `src/testkit/runDir.ts`).
+
+For isolated scratch runs, set `HAPPIER_E2E_LOGS_DIR`, `HAPPIER_E2E_PROCESS_LEASES_DIR`, and `HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR` to directories beneath your own temporary root; explicit `createRunDirs({ logsDir })` still takes precedence, and lease kinds remain separate beneath the configured lease directory.
 
 Common artifacts:
 - `manifest.json`: per-test metadata and final scenario result (`status`, `endedAt`, topology, resolved config, summary pointers)

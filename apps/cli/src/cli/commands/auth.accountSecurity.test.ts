@@ -267,6 +267,40 @@ describe('trusted interactive CLI Account Security vertical', () => {
     }
   });
 
+  it('keeps a slow security read alive until the caller cancels or the Home responds', async () => {
+    const app = fastify();
+    app.get('/v1/account/security', async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 31_000));
+      return {
+        v: 1,
+        terminalPresentUserPolicy: 'allowed',
+        encryptionMode: 'plain',
+        nativeEmail: 'automation@example.test',
+        password: { status: 'enrolled', revision: 2 },
+      };
+    });
+    // Use Axios's real socket adapter to distinguish a command phase deadline
+    // from the lifetime of the caller's operation.
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+    env.patch({
+      HAPPIER_LOCAL_SERVER_URL: origin,
+      HAPPIER_TOKEN: `hap_v1_12345678-1234-4234-8234-123456789abc_${'A'.repeat(43)}`,
+    });
+    const output = captureConsoleText();
+    try {
+      const { handleAuthSecurityGet } = await import('./auth/accountSecurity');
+      await handleAuthSecurityGet(['get', '--json']);
+      expect(JSON.parse(output.text())).toMatchObject({
+        ok: true,
+        data: { nativeEmail: 'automation@example.test' },
+      });
+    } finally {
+      output.restore();
+      await app.close();
+    }
+    // This real 31s response needs a test budget beyond the package's 30s default.
+  }, 120_000);
+
   it.each([404, 405, 501])(
     'reports Account security as unsupported for an API token when an old Home answers HTTP %s',
     async (status) => {

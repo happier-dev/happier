@@ -6,7 +6,7 @@ import {
     type ApprovalQueueListItemV1,
     type ApprovalRequestV1,
 } from '@happier-dev/protocol';
-import { createBlockingApprovalCoordinator } from '../../../../session/actions/approvals/blockingApprovalCoordinator';
+import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 import { createStablePluginApprovalQueueOwner } from './approvalQueue';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';

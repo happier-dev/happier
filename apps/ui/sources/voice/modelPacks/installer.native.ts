@@ -69,7 +69,7 @@ async function installViaHost(opts: {
   invalidatePackRuntime: InvalidatePackRuntime;
   packId: string;
   manifest: ModelPackManifest;
-  timeoutMs: number;
+  timeoutMs: number | null;
   signal: AbortSignal;
   priorInstall: ModelPackPromotionPriorInstallV1;
   onProgress?: (p: { loaded: number; total: number; file?: string }) => void;
@@ -96,7 +96,7 @@ export async function ensureModelPackInstalled(
     packId: string | null;
     mode: InstallMode;
     manifestUrl: string | null;
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal: AbortSignal;
     onProgress?: (p: { loaded: number; total: number; file?: string }) => void;
     updatePolicy?: UpdatePolicy;
@@ -199,7 +199,7 @@ export async function checkModelPackUpdateAvailable(
   opts: {
     packId: string | null;
     manifestUrl: string | null;
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal: AbortSignal;
   },
   overrides: InstallerOverrides = {},

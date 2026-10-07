@@ -25,6 +25,8 @@ export const COMMAND_PALETTE_ACTION_SPECS = [
     bindings: { voiceClientToolName: 'listCommandPalette', mcpToolName: 'ui_command_palette_list' },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: CommandPaletteListInputSchema, outputSchema: CommandPaletteListOutputSchema,
+    inputHints: { fields: [] },
+    examples: { voice: { argsExample: '{}' } },
     cli: { commands: [{ path: ['ui', 'command-palette', 'list'], visibility: 'canonical' }] },
   },
   {
@@ -36,6 +38,7 @@ export const COMMAND_PALETTE_ACTION_SPECS = [
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputHints: { fields: [{ path: 'commandId', title: 'Command id', widget: 'text', required: true }] },
     inputSchema: CommandPaletteInvokeInputSchema, outputSchema: CommandPaletteInvokeOutputSchema,
+    examples: { voice: { argsExample: '{"commandId":"session.pending.next"}' } },
     cli: { commands: [{ path: ['ui', 'command-palette', 'invoke'], visibility: 'canonical', positionals: ['commandId'] }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];

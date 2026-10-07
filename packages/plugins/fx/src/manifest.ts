@@ -1,7 +1,8 @@
-import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
+import { projectAgentCapabilitiesV2FromDefinition, type PluginHostOwnedAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { FX_ACP_COMMAND } from './agent/preflight.js';
 import { FX_TERMINAL_CONTRIBUTION } from './agent/terminal/contribution.js';
 import { FX_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -11,13 +12,13 @@ export const FX_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'fx-process', capability: 'process', reason: 'Run the declared FX CLI executable.',
-    scope: { executables: [{ kind: 'systemTool', id: 'fx-cli' }] },
+    scope: { executables: [{ kind: 'systemTool', id: FX_ACP_COMMAND.toolId }] },
   }], optional: [] },
   agents: { fx: {
     declaration: {
       title: { key: 'agentInput.agent.fx', fallback: 'FX' },
       description: { key: 'profiles.aiBackend.fxSubtitleExperimental', fallback: 'FX coding agent (experimental)' },
-      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fx-cli' }, args: ['acp'] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
+      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fx-cli' }, args: [...FX_ACP_COMMAND.args] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
       cli: {
         displayName: 'FX CLI', executable: { binaryName: 'fx', knownUserBinDirSuffixes: ['.local/bin'], sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
         install: { managed: null, manual: { kind: 'vendor_recipe', recipes: { darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }], linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }] } }, guideUrl: 'https://github.com/vercel-labs/fx', docsUrl: 'https://github.com/vercel-labs/fx' },
@@ -53,7 +54,7 @@ export const FX_PLUGIN = definePlugin({
           executionRunContext: { versions: [1] },
         },
       }),
-    },
+    } satisfies PluginHostOwnedAgentDeclaration,
     terminal: FX_TERMINAL_CONTRIBUTION,
   } },
   systemTools: { 'fx-cli': { title: 'FX CLI', executableNames: ['fx'] } },

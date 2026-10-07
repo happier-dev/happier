@@ -64,7 +64,7 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
         boundary.createdStores.length = 0;
     });
 
-    it('owns replacement, capacity, and retirement cleanup at one invocation lifetime', async () => {
+    it('owns replacement and retirement cleanup beyond the former lease ceiling at one invocation lifetime', async () => {
         const credentials = {
             token: 'token-initial',
             encryption: null,
@@ -135,10 +135,11 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
                 leaseId: `lease-${index}`,
             });
         }
-        await expect(follow(first, 'lease-over-capacity', 'session-over-capacity')).rejects.toMatchObject({
-            code: 'follow_lease_limit_exceeded',
+        await expect(follow(first, 'additional-lease', 'session-additional')).resolves.toMatchObject({
+            ok: true,
+            leaseId: 'additional-lease',
         });
-        expect(boundary.createdStores.at(-1)?.unsubscribe).toHaveBeenCalledOnce();
+        expect(boundary.createdStores.at(-1)?.unsubscribe).not.toHaveBeenCalled();
 
         await expect(follow(second, 'sibling-lease', 'sibling-session')).resolves.toMatchObject({
             ok: true,
@@ -153,7 +154,6 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
                 .filter(({ unsubscribe }) => unsubscribe.mock.calls.length === 0)).toEqual([]);
         });
         expect(siblingStore?.unsubscribe).not.toHaveBeenCalled();
-        expect(readCredentials).toHaveBeenCalledTimes(19);
 
         secondRetirement.abort();
         await vi.waitFor(() => {
@@ -167,7 +167,6 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
         const firstRelease = vi.fn(async () => undefined);
         const secondRelease = vi.fn(async () => undefined);
         const registry = createSessionTranscriptFollowLeaseRegistry({
-            maxLeases: 2,
             idleTtlMs: 1_000,
         });
         try {

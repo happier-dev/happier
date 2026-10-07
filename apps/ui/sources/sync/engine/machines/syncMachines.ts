@@ -3,7 +3,7 @@ import { log } from '@/log';
 import type { Machine, MachineLockedReason } from '@/sync/domains/state/storageTypes';
 import { serverFetch } from '@/sync/http/client';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
-import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import {
     MachineKindFromLegacyProjectionSchema,
@@ -504,32 +504,17 @@ export async function fetchAndApplyMachines(params: {
         if (isPlainMachineDataKeyMarker(machine.dataEncryptionKey)) {
             return false;
         }
+        if (freshKeyByMachineId.has(machine.id)) return true;
         const existingMachine = params.getExistingMachine?.(machine.id);
         if (!existingMachine?.metadata || existingMachine.metadataVersion !== machine.metadataVersion) {
             return true;
         }
-        if (cachedMachineDisplayEntries[machine.id]?.metadataVersion !== machine.metadataVersion) {
+        if (existingMachine.storageMode !== 'e2ee' || existingMachine.availability?.kind !== 'available') {
             return true;
         }
-        return typeof machine.daemonState === 'string' && machine.daemonState.length > 0;
+        return typeof machine.daemonState === 'string' && machine.daemonState.length > 0
+            && existingMachine.daemonStateVersion !== (machine.daemonStateVersion || 0);
     };
-
-    const buildDisplayFromRowAndCache = (machine: FetchedMachineRow, cachedEntry: MachineDisplayCacheEntryV1 | undefined): MachineDisplayRenderable => ({
-        id: machine.id,
-        updatedAt: machine.updatedAt,
-        active: machine.active,
-        activeAt: machine.activeAt,
-        revokedAt: machine.revokedAt ?? null,
-        ...readMachineIdentityFields(machine),
-        metadataVersion: machine.metadataVersion,
-        metadata: cachedEntry?.metadataVersion === machine.metadataVersion
-            ? {
-                displayName: cachedEntry.displayName ?? null,
-                host: cachedEntry.host ?? null,
-                homeDir: cachedEntry.homeDir ?? null,
-            }
-            : null,
-    });
 
     const buildMachineFromRowAndExisting = (
         machine: FetchedMachineRow,
@@ -574,6 +559,9 @@ export async function fetchAndApplyMachines(params: {
                 ? existingMachine?.daemonStateVersion ?? (machine.daemonStateVersion || 0)
                 : (machine.daemonStateVersion || 0),
             ...readMachineIdentityFields(machine),
+            storageMode: 'e2ee',
+            ...(existingMachine?.storageMode === 'e2ee' && existingMachine.availability
+                ? { availability: existingMachine.availability } : {}),
         });
     };
 
@@ -633,16 +621,26 @@ export async function fetchAndApplyMachines(params: {
     };
 
     if (shouldApplyMachineDisplays) {
-        const displayEntries = machines.map((machine) => buildDisplayFromRowAndCache(machine, cachedMachineDisplayEntries[machine.id]));
+        const warmMachines = machines.map((machine) => buildMachineFromRowAndExisting(
+            machine,
+            params.getExistingMachine?.(machine.id),
+        ));
+        const displayEntries = warmMachines.map((machine) => {
+            const display = buildMachineDisplayRenderableFromMachine(machine);
+            const cachedEntry = cachedMachineDisplayEntries[machine.id];
+            if (display.metadata || machine.availability?.kind === 'locked'
+                || cachedEntry?.metadataVersion !== machine.metadataVersion) return display;
+            return {
+                ...display,
+                metadata: {
+                    displayName: cachedEntry.displayName ?? null,
+                    host: cachedEntry.host ?? null,
+                    homeDir: cachedEntry.homeDir ?? null,
+                },
+            };
+        });
         params.applyMachineDisplayEntries!(displayEntries, { replace: params.replace ?? false });
-        applyMachines(
-            machines.map((machine) =>
-                buildMachineFromRowAndExisting(
-                    machine,
-                    params.getExistingMachine?.(machine.id),
-                )),
-            params.replace ?? false,
-        );
+        applyMachines(warmMachines, params.replace ?? false);
 
         const machinesNeedingHydration = machines
             .filter((machine) =>

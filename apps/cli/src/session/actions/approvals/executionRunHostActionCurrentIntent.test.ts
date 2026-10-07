@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol';
 
 import { createExecutionRunHostActionCurrentIntentAdapter } from './executionRunHostActionCurrentIntent';
-import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 const subject = {
   actionId: 'reviews.comments.create' as const,

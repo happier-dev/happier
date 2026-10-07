@@ -584,7 +584,7 @@ export function LocalConversationSection(props: {
                     kind="integer"
                     value={String(cfg.agent.maxWarmRoots ?? 3)}
                     onCommit={(draft) => {
-                      const next = Math.max(1, Math.min(10, Math.floor(Number(draft))));
+                      const next = Math.max(1, Math.floor(Number(draft)));
                       setAgent({ maxWarmRoots: next });
                       return String(next);
                     }}
@@ -599,7 +599,7 @@ export function LocalConversationSection(props: {
             kind="integer"
             value={String(cfg.agent.idleTtlSeconds)}
             onCommit={(draft) => {
-              const next = Math.max(60, Math.min(21600, Math.floor(Number(draft))));
+              const next = Math.max(1, Math.floor(Number(draft)));
               setAgent({ idleTtlSeconds: next });
               return String(next);
             }}
@@ -785,7 +785,7 @@ export function LocalConversationSection(props: {
             kind="integer"
             value={String(cfg.streaming.ttsChunkChars)}
             onCommit={(draft) => {
-              const next = Math.max(32, Math.min(2000, Math.floor(Number(draft))));
+              const next = Math.max(1, Math.floor(Number(draft)));
               setStreaming({ ttsChunkChars: next });
               return String(next);
             }}

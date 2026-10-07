@@ -170,7 +170,7 @@ describe('session transcript follow leases', () => {
       readAfter: async () => ({ items: [], nextCursor: 'tail-2', truncated: false }),
       subscribe: () => sessionTwoUnsubscribe,
     });
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
 
     await expect(followSessionTranscript({
       store: storeOne,
@@ -198,7 +198,7 @@ describe('session transcript follow leases', () => {
   it('deletes a lease before awaiting disposal so a second release is idempotent', async () => {
     const disposal = createDeferred<void>();
     const release = vi.fn(() => disposal.promise);
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
 
     expect(registry.retain({
       sessionId: 'session-1',
@@ -216,33 +216,26 @@ describe('session transcript follow leases', () => {
     await expect(firstRelease).resolves.toBe(true);
   });
 
-  it('caps retained leases and releases idempotently', async () => {
-    const unsubscribes: Array<() => void> = [];
-    const store = createStore({
-      readAfter: async () => ({ items: [], nextCursor: 'tail', truncated: false }),
-      subscribe: (listener) => {
-        unsubscribes.push(() => listener?.({ items: [{ id: 'update' }], nextCursor: 'tail-2', truncated: false }));
-        return unsubscribes.at(-1)!;
-      },
-    });
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
-
-    await expect(followSessionTranscript({
-      store,
-      registry,
-      sessionId: 'session-1',
-      input: { leaseId: 'lease-1', cursor: 'tail' },
-    })).resolves.toMatchObject({ ok: true, leaseId: 'lease-1' });
-    await expect(followSessionTranscript({
-      store,
-      registry,
-      sessionId: 'session-1',
-      input: { leaseId: 'lease-2', cursor: 'tail' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'follow_lease_limit_exceeded' });
-
-    await registry.release({ sessionId: 'session-1', leaseId: 'lease-1' });
-    await registry.release({ sessionId: 'session-1', leaseId: 'lease-1' });
+  it('retains live observers without a guessed capacity and releases them idempotently', async () => {
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
+    const released = new Set<string>();
+    try {
+      for (let index = 0; index < 17; index++) {
+        const leaseId = `lease-${index}`;
+        expect(registry.retain({ sessionId: 'session-1', leaseId, idleTtlMs: 1000,
+          release: async () => { released.add(leaseId); },
+        })).toBe(true);
+      }
+      expect(registry.activeCount()).toBe(17);
+      await registry.release({ sessionId: 'session-1', leaseId: 'lease-0' });
+      await registry.release({ sessionId: 'session-1', leaseId: 'lease-0' });
+      expect(registry.activeCount()).toBe(16);
+      expect([...released]).toEqual(['lease-0']);
+    } finally {
+      await registry.dispose();
+    }
     expect(registry.activeCount()).toBe(0);
+    expect(released.size).toBe(17);
   });
 
   it('releases the retained lease when the initial transcript read fails', async () => {
@@ -255,7 +248,7 @@ describe('session transcript follow leases', () => {
       readAfter,
       subscribe: () => unsubscribe,
     });
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
 
     await expect(followSessionTranscript({
       store,
@@ -289,7 +282,7 @@ describe('session transcript follow leases', () => {
         .mockReturnValueOnce(staleUnsubscribe)
         .mockReturnValueOnce(currentUnsubscribe),
     });
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
 
     const staleFollow = followSessionTranscript({
       store,
@@ -321,7 +314,6 @@ describe('session transcript follow leases', () => {
         subscribe: () => unsubscribe,
       });
       const registry = createSessionTranscriptFollowLeaseRegistry({
-        maxLeases: 4,
         idleTtlMs: 60_000,
         hostPolicy: { idleTtlMs: 10 },
       });
@@ -355,7 +347,7 @@ describe('session transcript follow leases', () => {
       },
     });
     const delivered: string[] = [];
-    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 4, idleTtlMs: 1000 });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ idleTtlMs: 1000 });
     const emitUpdate = (update: Parameters<NonNullable<typeof listener>>[0]) => {
       if (!listener) {
         throw new Error('Expected transcript follow listener to be registered');

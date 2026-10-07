@@ -15,7 +15,7 @@ import type { SessionViewEmbeddedPresentation } from './embeddedSessionPresentat
 import { EmbeddedSessionNewChat } from './EmbeddedSessionNewChat';
 import type { EmbeddedSessionTarget } from './embeddedSessionTarget';
 import { EmbeddedSessionStablePartsScope } from './EmbeddedSessionPartSlots';
-import { EmbeddedSessionArrangementPartsProvider, EmbeddedSessionPartClaimsScope, EmbeddedSessionStandardLayout } from './EmbeddedSessionParts';
+import { EmbeddedSessionArrangementPartsProvider, EmbeddedSessionControllerClaimsScope, EmbeddedSessionStandardLayout } from './EmbeddedSessionParts';
 
 export type { SessionViewEmbeddedPresentation } from './embeddedSessionPresentation';
 export type {
@@ -106,7 +106,7 @@ export function EmbeddedSessionProvider(props: EmbeddedSessionProviderProps) {
     const usesStableWebSlots = Platform.OS === 'web' && typeof document !== 'undefined';
     return (
         <View testID={props.testID ?? 'embedded-session'} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            <EmbeddedSessionPartClaimsScope>
+            <EmbeddedSessionControllerClaimsScope>
                 <EmbeddedSessionStablePartsScope readyEntering={handoffEntering} renderArrangement={(parts) => (
                     <EmbeddedSessionArrangementPartsProvider value={parts}>
                         {props.children ?? <EmbeddedSessionStandardLayout />}
@@ -118,7 +118,7 @@ export function EmbeddedSessionProvider(props: EmbeddedSessionProviderProps) {
                         </View>
                     ) : producer}
                 </EmbeddedSessionStablePartsScope>
-            </EmbeddedSessionPartClaimsScope>
+            </EmbeddedSessionControllerClaimsScope>
         </View>
     );
 }

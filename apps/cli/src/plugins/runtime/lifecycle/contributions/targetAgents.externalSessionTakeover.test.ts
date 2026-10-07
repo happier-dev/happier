@@ -145,7 +145,7 @@ describe('target Agent External Session takeover lease', () => {
 
         expect(lease).toMatchObject({
             agentId: 'assistant',
-            generation: 'generation-7',
+            occurrenceId: 'generation-7',
             hasPrimaryRuntime: false,
         });
         expect(lease?.externalSessionTakeover).toBeDefined();
@@ -342,7 +342,7 @@ describe('target Agent External Session takeover lease', () => {
         },
     );
 
-    it('clamps every invocation to the host-owned 15-second deadline', async () => {
+    it('preserves the caller takeover deadline beyond the former fifteen-second cutoff', async () => {
         vi.useFakeTimers();
         try {
             const startedAt = Date.now();
@@ -366,9 +366,9 @@ describe('target Agent External Session takeover lease', () => {
 
             const invocation = takeover.resolveLaunch(request());
             await Promise.resolve();
-            expect(boundedRequest?.deadlineAtMs).toBe(startedAt + 15_000);
+            expect(boundedRequest?.deadlineAtMs).toBe(startedAt + 60_000);
             const rejection = expect(invocation).rejects.toThrow(/timed out/u);
-            await vi.advanceTimersByTimeAsync(15_000);
+            await vi.advanceTimersByTimeAsync(60_000);
             await rejection;
             expect(boundedRequest?.signal.aborted).toBe(true);
         } finally {

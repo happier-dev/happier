@@ -7,6 +7,6 @@ export function repoRootDir(): string {
 }
 
 export function projectLogsDir(): string {
-  return resolve(repoRootDir(), '.project', 'logs', 'e2e');
+  const configuredDir = process.env.HAPPIER_E2E_LOGS_DIR?.trim();
+  return configuredDir ? resolve(configuredDir) : resolve(repoRootDir(), '.project', 'logs', 'e2e');
 }
-

@@ -112,6 +112,7 @@ export type ExecutionRunControlActionInputById = {
                 [x: string]: unknown;
                 name: string;
                 id?: string | undefined;
+                idSource?: 'generated' | undefined;
                 origin?: 'vendor' | 'happier' | undefined;
                 path?: string | undefined;
                 label?: string | undefined;
@@ -405,7 +406,7 @@ export type ExecutionRunControlActionInputById = {
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'review' | 'file' | 'external' | 'action' | 'unavailable' | 'search' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                     tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                 };
                 content?: {
@@ -701,6 +702,7 @@ export type ExecutionRunControlActionInputById = {
                     [x: string]: unknown;
                     name: string;
                     id?: string | undefined;
+                    idSource?: 'generated' | undefined;
                     origin?: 'vendor' | 'happier' | undefined;
                     path?: string | undefined;
                     label?: string | undefined;
@@ -994,7 +996,7 @@ export type ExecutionRunControlActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'review' | 'file' | 'external' | 'action' | 'unavailable' | 'search' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                         tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                     };
                     content?: {

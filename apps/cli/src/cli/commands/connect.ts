@@ -751,6 +751,23 @@ async function continueAuthentication(params: Readonly<{
       steps.stop('x', 'Waiting for authorization');
     }
     throw error;
+  } finally {
+    if (
+      'attemptId' in response
+      && response.attemptId
+      && (
+        response.status === 'connected'
+        || response.status === 'cancelled'
+        || response.status === 'reconnectRequired'
+        || response.status === 'rejected'
+        || response.status === 'unavailable'
+        || response.status === 'conflict'
+      )
+    ) {
+      // This interactive journey has consumed its terminal reply. Lost replies
+      // and unresolved effects still belong to the daemon's resumable attempt.
+      await params.client.authenticate({ operation: 'cancel', attemptId: response.attemptId }).catch(() => undefined);
+    }
   }
 }
 

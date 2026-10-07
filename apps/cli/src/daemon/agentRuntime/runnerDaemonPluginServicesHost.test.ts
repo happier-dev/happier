@@ -22,6 +22,7 @@ import {
     decodeRunnerDaemonPluginServiceWireValueV1,
     encodeRunnerDaemonPluginServiceWireValueV1,
     RunnerDaemonManagedProviderBootstrapV1Schema,
+    RunnerDaemonPluginServiceOperationV1Schema,
     type RunnerDaemonPluginServiceOperationV1,
     type RunnerDaemonPluginServiceWireInput,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
@@ -48,6 +49,8 @@ import {
     type RunnerDaemonCurrentGlobalExternalSessionsOwner,
     type RunnerDaemonCurrentGlobalMcpOwner,
 } from './runnerDaemonPluginServicesHost';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
 
 const binding = createAgentSessionRunnerFactoryBinding({
     v: 1,
@@ -191,6 +194,94 @@ function isWireRecord(
 }
 
 describe('runner daemon PluginServices host', () => {
+    it('retains and closes serializable list query demand through the real runner and daemon owners', async () => {
+        const unavailable = createUnavailablePluginServices();
+        let authorityCurrent = true;
+        const basis = { accountSettingsRevision: 'account:1' };
+        const definition = PluginAgentContributionV2Schema.parse({
+            id: 'codex', title: 'Fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+            capabilities: { surfaces: ['externalSessions'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            surfaces: { externalSession: { sources: [{
+                sourceKind: 'codexHome',
+                schema: { fields: [{ name: 'kind', kind: 'literal', value: 'codexHome' }, { name: 'home', kind: 'literal', value: 'user' }] },
+                key: { segments: [{ kind: 'literal', value: 'codexHome' }] },
+                instances: [{ kind: 'default', constants: { home: 'user' } }],
+            }] } },
+        });
+        const host = createRunnerDaemonPluginServicesHost({
+            async createInvocation({ signal }) {
+                const sources = await createConfiguredPluginExternalSessionsAdapter({
+                    agents: [{ id: 'codex', identity: { pluginId: 'fixture.plugin', localId: 'codex' },
+                        richDefinition: { provenance: 'first_party', definition } }],
+                    account: { connectedServicesV2: [] }, basis, readCurrentBasis: () => basis,
+                    isCurrent: () => !signal.aborted,
+                    resolveAgentOccurrence: () => ({ occurrenceId: 'fixture:1', isCurrent: () => !signal.aborted }),
+                    retirementSignal: signal,
+                    resolveProviderOps: async () => ({
+                        validateSource: async ({ source }) => ({ ok: true as const, source }),
+                        listCandidates: async ({ cursor, limit }) => {
+                            const candidates = [
+                                { remoteSessionId: 'first', updatedAtMs: 3 },
+                                { remoteSessionId: 'second', updatedAtMs: 2 },
+                                { remoteSessionId: 'last', updatedAtMs: 1 },
+                            ];
+                            const offset = cursor ? Number(cursor) : 0;
+                            const next = offset + limit;
+                            return { candidates: candidates.slice(offset, next), nextCursor: next < candidates.length ? String(next) : null };
+                        },
+                        pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+                    }),
+                });
+                return {
+                    services: unavailable, resourceDescriptors: {},
+                    subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                    dispose: () => sources.dispose(), authorizeOperation: () => authorityCurrent,
+                    executeCurrentGlobalAction: async () => null, currentGlobalMcp: unavailable.mcp,
+                    currentGlobalExternalSessions: sources.authorService,
+                };
+            },
+        });
+        const lifetime = new AbortController();
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'paging-demand', signal: lifetime.signal,
+            readActiveTurnAdmissionWitness: () => ({
+                ...witness,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+                callerPermissionMode: 'yolo',
+            }),
+            dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation),
+                ...(options?.signal ? { signal: options.signal } : {}),
+            })).value),
+            local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices, exec: unavailable.exec, interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions, composerContent: unavailable.composerContent },
+        });
+        try {
+            const first = await services.sessions.external.list({ limit: 1 });
+            const other = await services.sessions.external.list({ limit: 1 });
+            expect(first.nextCursor).toBeTypeOf('string');
+            if (!first.nextCursor || !other.nextCursor) throw new Error('Expected query continuations');
+            const second = await services.sessions.external.list({ cursor: first.nextCursor, limit: 1 });
+            expect(second.items[0]?.ref.remoteSessionId).toBe('second');
+            if (!second.nextCursor) throw new Error('Expected successor continuation');
+            authorityCurrent = false;
+            // Cleanup remains reachable after fresh read authority is withdrawn.
+            await services.sessions.external.closeList(first.nextCursor);
+            await services.sessions.external.closeList(first.nextCursor);
+            authorityCurrent = true;
+            await expect(services.sessions.external.list({ cursor: second.nextCursor, limit: 1 })).rejects.toMatchObject({
+                code: 'plugin_external_cursor_invalid',
+            });
+            const survivor = await services.sessions.external.list({ cursor: other.nextCursor, limit: 1 });
+            expect(survivor.items[0]?.ref.remoteSessionId).toBe('second');
+            await services.sessions.external.closeList(other.nextCursor);
+        } finally {
+            lifetime.abort();
+            await host.dispose();
+        }
+    });
+
     it('projects retired runner authority as typed unavailable capability facts while effectful operations still reject', async () => {
         const services = createUnavailablePluginServices();
         const capabilities = vi.fn(
@@ -1223,7 +1314,7 @@ describe('runner daemon PluginServices host', () => {
         }));
         const actionExecute = vi.fn(async () => ({
             ok: true as const,
-            result: [],
+            result: { sessions: [], nextCursor: null },
         }));
         const currentActions = createPluginInvocationActionsService({
             seed: {
@@ -1257,7 +1348,7 @@ describe('runner daemon PluginServices host', () => {
                 actionExecutor: {
                     execute: vi.fn(async () => ({
                         ok: true as const,
-                        result: [],
+                        result: { sessions: [], nextCursor: null },
                     })),
                 },
                 invokeContributedAction: vi.fn(),
@@ -1618,7 +1709,7 @@ describe('runner daemon PluginServices host', () => {
             decodeRunnerDaemonPluginServiceWireValueV1(
                 actionResult.value,
             ),
-        ).toEqual([]);
+        ).toEqual({ sessions: [], nextCursor: null });
         expect(actionExecute).toHaveBeenCalledWith(
             'session.list',
             {},
@@ -1628,6 +1719,7 @@ describe('runner daemon PluginServices host', () => {
                     kind: 'plugin',
                     pluginId: 'fixture.plugin',
                     materialization: fixturePluginMaterialization.materialization,
+                    occurrenceId: 'generation-1',
                 },
                 signal: expect.any(AbortSignal),
             }),

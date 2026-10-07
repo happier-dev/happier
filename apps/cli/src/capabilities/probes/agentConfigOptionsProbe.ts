@@ -1,3 +1,4 @@
+import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
@@ -77,6 +78,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
@@ -94,6 +96,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     probeKind: 'configOptions',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    pluginSettings: params.pluginSettings,
     env: params.env,
   });
   const cacheKey = buildAgentProbeCacheKey({
@@ -137,6 +140,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
           cwd,
           timeoutMs,
           accountSettings: params.accountSettings ?? null,
+          pluginSettings: params.pluginSettings,
           env,
         })).catch(() => null);
         return normalizeDynamicConfigOptions(configOptionsRaw);

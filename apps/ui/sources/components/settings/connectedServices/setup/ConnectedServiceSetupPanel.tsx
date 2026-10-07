@@ -40,6 +40,8 @@ export type ConnectedServiceSetupCatalogEntry = Readonly<{
     section: ConnectedServicesIndexSection;
     /** Only services an online machine publishes can be added. */
     canAdd: boolean;
+    statusLine?: string | null;
+    supportDetails?: string | null;
 }>;
 
 /** Where the setup panel is: choosing a service, adding an account to one, or signing an account in again. */
@@ -101,9 +103,9 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
 
     // The plans people sign in with first (Claude, ChatGPT…), then keys; each group by name.
     const blocks = catalog
-        .filter((candidate) => candidate.canAdd && (scope === 'home' || candidate.section === 'agents'))
+        .filter((candidate) => scope === 'home' || candidate.section === 'agents')
         .sort((left, right) => Number(signsInWithAnAccount(right)) - Number(signsInWithAnAccount(left)));
-    const tools = scope === 'all' ? catalog.filter((candidate) => candidate.canAdd && candidate.section === 'tools') : [];
+    const tools = scope === 'all' ? catalog.filter((candidate) => candidate.section === 'tools') : [];
     const selectedIsTool = selected !== null && tools.some((candidate) => candidate.serviceKey === selected.serviceKey);
     const [toolsExpanded, setToolsExpanded] = React.useState(selectedIsTool);
     React.useEffect(() => {

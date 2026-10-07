@@ -4,7 +4,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1, type TriageSourceAccountBindingV1 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -31,6 +31,14 @@ import { renderSurface } from './renderSettingsSurface.js';
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+const accountBinding = {
+  purpose: 'posthog-api',
+  account: {
+    service: { pluginId: POSTHOG_PLUGIN_ID, localId: 'posthog-api' },
+    accountId: 'account-1',
+  },
+} satisfies TriageSourceAccountBindingV1;
+let discoveredBinding: TriageSourceAccountBindingV1 = accountBinding;
 let configuredScanWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
 let configuredDetailWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
 type ConfigurationRequest = Readonly<{
@@ -55,13 +63,7 @@ async function executeAction(
       kind: 'complete',
       candidates: [{
         v: 1,
-        binding: {
-          purpose: 'posthog-api',
-          account: {
-            service: { pluginId: POSTHOG_PLUGIN_ID, localId: 'posthog-api' },
-            accountId: 'account-1',
-          },
-        },
+        binding: discoveredBinding,
         localInstanceKey: 'posthog-org:https://eu.posthog.com:00000000-0000-4000-8000-0000000000a1',
         keyStability: 'locatorDerived',
         configuration: {
@@ -152,10 +154,29 @@ afterEach(async () => {
   configuredScanWindow = { kind: 'relative', durationMs: 2_592_000_000 };
   configuredDetailWindow = { kind: 'relative', durationMs: 2_592_000_000 };
   configurationResult = null;
+  discoveredBinding = accountBinding;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
 describe('the mounted PostHog PRs & Issues settings page', () => {
+  it('refuses a native draft before reading or administering configuration and allows cancellation', async () => {
+    discoveredBinding = {
+      purpose: accountBinding.purpose,
+      source: 'native',
+      service: accountBinding.account.service,
+    };
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Add Example organization to PRs & Issues' }));
+    });
+
+    const actionIds = recorded.map((entry) => (entry.action as Readonly<{ localId?: string }>).localId);
+    expect(actionIds).not.toContain(POSTHOG_ACTION_IDS.configuration);
+    expect(actionIds).not.toContain('sources/administer-v1');
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Cancel' })); });
+    await expect(page.getByRole('button', { name: 'Add Example organization to PRs & Issues' })).resolves.toBeDefined();
+  });
+
   it('asks its own plugin what it can reach, and the target for the rest', async () => {
     await mountSettings();
 

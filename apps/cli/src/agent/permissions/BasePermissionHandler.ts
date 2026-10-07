@@ -21,10 +21,6 @@ import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIde
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from './applyPermissionAllowlistUpdates';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionPermissionRequestIdV1Schema, SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION, SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS, SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -70,6 +66,7 @@ import type {
 import { createPermissionMediationRecordStore } from './mediation/permissionMediationRecordStore';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { isWorkspaceWriteDeniedByRole } from './workspaceWritePolicy';
+import type { CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 
 type AgentStateRequestStoreBindableSession = Readonly<{
     bindAgentStateRequestStore?: (store: AgentStateRequestStore) => void;
@@ -649,6 +646,7 @@ export abstract class BasePermissionHandler {
     private readonly requestCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
     private readonly getAccountSettingsSnapshotFn: () => AccountSettings | null;
+    private readonly getCodingPromptBehaviorFn: (() => CodingPromptBehaviorV1 | null) | null;
     private readonly getWorkspaceWrites: (() => 'allow' | 'deny' | undefined) | null;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
     private readonly triggerAbortCallbackOnAbortDecision: boolean;
@@ -748,25 +746,15 @@ export abstract class BasePermissionHandler {
         if (!await isApprovalReviewerModelEligible(context.toolName, reviewedInput, metadata?.path ?? '')) return 'escalate';
         const backend = resolveBackendTargetFromSessionMetadata(metadata);
         if (!backend) return 'escalate';
-        const role = resolveRoleSelectionV1({
-            roleId: 'approval_reviewer',
-            settingsOverrides: this.getAccountSettingsSnapshot()?.rolesV1.overrides,
-            sessionRoles: readSessionRolesV1(metadata) ?? undefined,
-            defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(backend) },
-        });
-        if (!role.ok || !role.selection.engine) return 'escalate';
         const projection = projectRemoteMediatedRequestSummary({ kind: 'permission', toolName: context.toolName, toolInput: reviewedInput });
         if (!projection || !this.isApprovalReviewerEnabled()) return 'escalate';
         const start = await this.session.executionRuns.start({
             roleId: 'approval_reviewer', intent: 'task',
-            backendTarget: parseBackendTargetKeyV2(role.selection.engine.agentTargetKey),
-            ...(role.selection.engine.modelId ? { modelId: role.selection.engine.modelId } : {}),
-            ...(role.selection.engine.effort ? { sessionConfigOptionOverrides: {
-                v: 1, updatedAt: 0, overrides: { effort: { value: role.selection.engine.effort, updatedAt: 0 } },
-            } } : {}),
-            ...(role.selection.profileId && !role.selection.profileUnavailable ? { profileId: role.selection.profileId } : {}),
+            backendTarget: backend,
             permissionMode: 'no_tools', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
-            instructions: role.selection.instructions,
+            // Target-host admission owns the role engine, Launch Profile and
+            // rendered role block. This is only the request-specific task.
+            instructions: 'Assess this pending tool request and return the requested JSON result.',
             intentInput: { input: projection, resultSchema: {
                 type: 'object', properties: { decision: { type: 'string', enum: ['allow_once', 'escalate'] }, reason: { type: 'string' } },
                 required: ['decision'], additionalProperties: false,
@@ -875,6 +863,7 @@ export abstract class BasePermissionHandler {
         opts?: {
             pushSender?: PermissionRequestPushSender | null;
             getAccountSettings?: (() => AccountSettings | null) | null;
+            getCodingPromptBehavior?: (() => CodingPromptBehaviorV1 | null) | null;
             /** Canonical host resolution includes Artifact/plugin and workflow role layers. */
             getWorkspaceWrites?: (() => 'allow' | 'deny' | undefined) | null;
             getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
@@ -891,6 +880,7 @@ export abstract class BasePermissionHandler {
     ) {
         this.session = session;
         this.getAccountSettingsSnapshotFn = typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null);
+        this.getCodingPromptBehaviorFn = opts?.getCodingPromptBehavior ?? null;
         this.getWorkspaceWrites = opts?.getWorkspaceWrites ?? null;
         // A remote grant is an external authorization effect. A host runtime
         // that has not supplied the registry-owned lifecycle read must not
@@ -939,6 +929,10 @@ export abstract class BasePermissionHandler {
             logger.debug(`${this.getLogPrefix()} Failed to read account settings`, error);
             return null;
         }
+    }
+
+    protected getCodingPromptBehavior(): CodingPromptBehaviorV1 | null | undefined {
+        return this.getCodingPromptBehaviorFn?.();
     }
 
     /**

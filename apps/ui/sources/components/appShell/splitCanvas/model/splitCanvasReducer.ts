@@ -4,7 +4,6 @@ import type {
     SplitCanvasState,
 } from './splitCanvasTypes';
 import {
-    countSplitCanvasLeaves,
     findSplitCanvasLeaf,
     getFirstSplitCanvasLeafId,
     rebalanceSplitCanvasTree,
@@ -16,7 +15,6 @@ import {
 
 export const SPLIT_CANVAS_RATIO_MIN = 0.2;
 export const SPLIT_CANVAS_RATIO_MAX = 0.8;
-export const SPLIT_CANVAS_DEFAULT_MAX_LEAVES = 8;
 
 function measuredRatioBounds(input: Readonly<{
     availableSizePx?: number;
@@ -40,13 +38,11 @@ export function createSplitCanvasState<TLeafPayload>(input: Readonly<{
     root: SplitCanvasLeafNode<TLeafPayload> | null;
     focusedLeafId?: string | null;
     maximizedLeafId?: string | null;
-    maxLeaves?: number;
 }>): SplitCanvasState<TLeafPayload> {
     return {
         root: input.root,
         focusedLeafId: input.focusedLeafId ?? input.root?.id ?? null,
         maximizedLeafId: input.maximizedLeafId ?? null,
-        maxLeaves: input.maxLeaves ?? SPLIT_CANVAS_DEFAULT_MAX_LEAVES,
     };
 }
 
@@ -101,9 +97,6 @@ function reduceSplitCanvasAction<TLeafPayload>(
             if (action.availableSizePx !== undefined || action.minimumFirstSizePx !== undefined || action.minimumSecondSizePx !== undefined) {
                 const bounds = measuredRatioBounds(action);
                 if (!bounds || bounds.minRatio > 0.5 || bounds.maxRatio < 0.5) return state;
-            } else if (countSplitCanvasLeaves(state.root) >= state.maxLeaves) {
-                // The pre-workspace session canvas still calls this legacy path.
-                return state;
             }
             const nextRoot = splitSplitCanvasLeaf(state.root, {
                 targetLeafId: action.targetLeafId,

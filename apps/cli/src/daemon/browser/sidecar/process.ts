@@ -38,7 +38,7 @@ export type SidecarProcessEndpointSourceResult =
 
 type EndpointWaiter = Readonly<{
     sidecarId: string;
-    timeout: NodeJS.Timeout;
+    dispose: () => void;
     resolve: (result: SidecarProcessEndpointSourceResult) => void;
 }>;
 
@@ -53,7 +53,6 @@ type ActiveSidecarProcess = Readonly<{
 }>;
 
 const MAX_STDERR_PREVIEW_CHARS = 64 * 1024;
-const DEFAULT_ENDPOINT_TIMEOUT_MS = 5_000;
 
 function statusForPlan(
     plan: SidecarPrivateLaunchPlan,
@@ -94,10 +93,10 @@ function cdpUnavailable(stderr = ''): SidecarProcessEndpointSourceResult {
     };
 }
 
-function normalizeEndpointTimeoutMs(input: number | undefined): number {
+function normalizeEndpointTimeoutMs(input: number | undefined): number | undefined {
     return typeof input === 'number' && Number.isFinite(input) && input > 0
         ? Math.trunc(input)
-        : DEFAULT_ENDPOINT_TIMEOUT_MS;
+        : undefined;
 }
 
 function appendStderrPreview(current: string, chunk: string | Uint8Array): string {
@@ -122,7 +121,7 @@ function resolveEndpointWaiter(
     result: SidecarProcessEndpointSourceResult,
 ): void {
     if (!activeProcess.endpointWaiters.delete(waiter)) return;
-    clearTimeout(waiter.timeout);
+    waiter.dispose();
     waiter.resolve(result);
 }
 
@@ -278,6 +277,7 @@ export function createSidecarProcessController(params: Readonly<{
             return status;
         },
         async waitForDevToolsEndpointSource(input) {
+            if (input.signal?.aborted) return cdpUnavailable();
             const current = active;
             if (!current || current.plan.sidecarId !== input.sidecarId) {
                 return endpointFailure;
@@ -292,14 +292,21 @@ export function createSidecarProcessController(params: Readonly<{
             }
 
             return await new Promise<SidecarProcessEndpointSourceResult>((resolve) => {
+                const cancelled = (): void => {
+                    resolveEndpointWaiter(current, waiter, cdpUnavailable(current.stderrPreview.value));
+                };
+                const timeoutMs = normalizeEndpointTimeoutMs(input.timeoutMs);
+                const timeout = timeoutMs === undefined ? undefined : setTimeout(cancelled, timeoutMs);
                 const waiter: EndpointWaiter = {
                     sidecarId: input.sidecarId,
                     resolve,
-                    timeout: setTimeout(() => {
-                        resolveEndpointWaiter(current, waiter, cdpUnavailable(current.stderrPreview.value));
-                    }, normalizeEndpointTimeoutMs(input.timeoutMs)),
+                    dispose: () => {
+                        clearTimeout(timeout);
+                        input.signal?.removeEventListener('abort', cancelled);
+                    },
                 };
                 current.endpointWaiters.add(waiter);
+                input.signal?.addEventListener('abort', cancelled, { once: true });
             });
         },
     };
@@ -314,5 +321,6 @@ export type SidecarProcessController = Readonly<{
     waitForDevToolsEndpointSource: (input: Readonly<{
         sidecarId: string;
         timeoutMs?: number;
+        signal?: AbortSignal;
     }>) => Promise<SidecarProcessEndpointSourceResult>;
 }>;

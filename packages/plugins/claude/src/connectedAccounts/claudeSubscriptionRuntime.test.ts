@@ -70,6 +70,25 @@ function readContext(
 }
 
 describe('Claude Subscription Connected Account', () => {
+  it('retains existing plan facts through a successful credential refresh', async () => {
+    const runtime = activateConnectedAccountRuntime();
+    const staged = credentialStore();
+    const context = readContext('oauth', new Map([
+      ['accessToken', 'current-access'], ['refreshToken', 'current-refresh'],
+      ['subscriptionType', 'max'], ['rateLimitTier', 'max_20x'],
+    ]));
+    await expect(runtime.refresh({
+      ...context,
+      operation: { operationId: 'refresh-plan', configurationRevision: 'configuration-1' },
+      stagedCredentials: staged.store,
+      services: { http: { async request() {
+        return { status: 200, finalUrl: 'https://platform.claude.com/v1/oauth/token', headers: {},
+          body: new TextEncoder().encode(JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh' })) };
+      } } },
+    })).resolves.toMatchObject({ status: 'connected' });
+    expect(staged.values.get('subscriptionType')).toBe('max');
+    expect(staged.values.get('rateLimitTier')).toBe('max_20x');
+  });
   it.each([
     [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [401, 'reconnectRequired'],
   ] as const)('preserves stored credentials without staging when refresh returns %s (%s)', async (status, outcome) => {
@@ -223,6 +242,8 @@ describe('Claude Subscription Connected Account', () => {
     const credentials = credentialStore(new Map([
       ['accessToken', 'claude-access'],
       ['refreshToken', 'host-owned-refresh'],
+      ['subscriptionType', 'max'],
+      ['rateLimitTier', 'max_20x'],
       ['providerAccountId', 'claude-account-1'],
       ['providerEmail', 'claude@example.com'],
       ['expiresAtMs', '1700003600000'],
@@ -267,6 +288,8 @@ describe('Claude Subscription Connected Account', () => {
       claudeAiOauth: {
         accessToken: 'claude-access',
         expiresAt: 1700003600000,
+        subscriptionType: 'max',
+        rateLimitTier: 'max_20x',
         scopes: ['user:inference', 'user:sessions:claude_code'],
       },
     });
@@ -368,6 +391,8 @@ describe('Claude Subscription Connected Account', () => {
     const signal = new AbortController().signal;
     const context = readContext('oauth', new Map([
       ['accessToken', 'claude-access'],
+      ['subscriptionType', 'max'],
+      ['rateLimitTier', 'max_20x'],
       ['scopes', JSON.stringify(['user:inference', 'user:sessions:claude_code'])],
     ]));
 
@@ -377,6 +402,7 @@ describe('Claude Subscription Connected Account', () => {
       services: { http: { request } },
     })).resolves.toMatchObject({
       observedAtMs: expect.any(Number),
+      planLabel: 'max',
       limits: expect.arrayContaining([
         {
           id: 'five_hour',

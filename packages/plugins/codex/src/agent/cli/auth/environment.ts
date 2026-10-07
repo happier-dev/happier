@@ -1,3 +1,5 @@
+import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
+
 type CodexEnvironmentEnv = Readonly<Record<string, string | undefined>>;
 
 export type CodexEnvironmentAuthTokens = Readonly<{
@@ -6,6 +8,18 @@ export type CodexEnvironmentAuthTokens = Readonly<{
   accountId: string | null;
   accountLabel: string | null;
 }>;
+
+/** Reads only the host-declared native auth file; never opens a user home directly. */
+export async function readCodexAuthTokensFromNativeHome(
+  nativeHome: AgentSessionHostServices['nativeHome'],
+): Promise<CodexEnvironmentAuthTokens> {
+  try {
+    const bytes = (await nativeHome?.readFiles(['auth.json']))?.['auth.json'];
+    return readCodexAuthTokensFromJson(bytes ? JSON.parse(new TextDecoder().decode(bytes)) as unknown : null);
+  } catch {
+    return readCodexAuthTokensFromJson(null);
+  }
+}
 
 export function readCodexApiKey(env: CodexEnvironmentEnv): string {
   const openAiApiKey = typeof env.OPENAI_API_KEY === 'string' ? env.OPENAI_API_KEY.trim() : '';

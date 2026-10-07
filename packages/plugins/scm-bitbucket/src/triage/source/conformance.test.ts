@@ -4,6 +4,7 @@ import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/te
 import {
   TriageSourceDescriptorV1Schema,
   TriageSourcesContributionProtocolV1,
+  TriageSourceConnectedAccountInputsV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -91,7 +92,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(action, 'workspace preparation Action must be declared').toBeDefined();
     expect(action?.surfaces).toEqual(declaration.surfaces);
     expect(action?.dangerLevel).toBe('writesLocal');
-    expect(action?.inputSchema).toEqual(declaration.input.schema.jsonSchema);
+    expect(action?.inputSchema).toEqual(TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema);
     expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
     expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
     expect(action?.connectedAccountPurposeBindings).toEqual([{
@@ -111,7 +112,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(action, 'workspace verification Action must be declared').toBeDefined();
     expect(action?.surfaces).toEqual(declaration.surfaces);
     expect(action?.dangerLevel).toBe('safe');
-    expect(action?.inputSchema).toEqual(declaration.input.schema.jsonSchema);
+    expect(action?.inputSchema).toEqual(TriageSourceConnectedAccountInputsV1.verifyReviewWorkspace.jsonSchema);
     expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
     expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
     expect(action?.connectedAccountPurposeBindings).toEqual([{
@@ -215,7 +216,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
           surfaces: sources.operations.scan.declaration.surfaces,
           execution: { target: 'daemon' },
           dangerLevel: sources.operations.scan.declaration.dangerLevel,
-          inputSchema: sources.operations.scan.declaration.input.schema.jsonSchema,
+          inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
           resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
           connectedAccountPurposeBindings: [{ path, purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE }],
           run: async () => ({ kind: 'failed', failure: { class: 'unknown', code: 'x' } }),

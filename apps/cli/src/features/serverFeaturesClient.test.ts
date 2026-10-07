@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type ServerResponse } from 'node:http';
 
 import { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol';
 
@@ -15,16 +16,87 @@ describe('fetchServerFeaturesSnapshot', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lets a caller stop waiting without cancelling the shared public request', async () => {
+  it.each(['cancellation', 'wait budget'] as const)('retries a sole public observation abandoned by %s with a new HTTP request', async (release) => {
+    const responses: ServerResponse[] = [];
+    let firstArrived!: () => void;
+    const firstArrival = new Promise<void>((resolve) => { firstArrived = resolve; });
+    const server = createServer((_request, response) => {
+      responses.push(response);
+      if (responses.length === 1) firstArrived();
+      else {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ features: {}, capabilities: {} }));
+      }
+    });
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback server address');
+    const serverUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const caller = new AbortController();
+      const pending = fetchServerFeaturesSnapshot({
+        serverUrl,
+        ...(release === 'cancellation' ? { signal: caller.signal } : { timeoutMs: 100 }),
+      });
+      const released = release === 'cancellation'
+        ? expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+        : expect(pending).resolves.toEqual({ status: 'error', reason: 'timeout' });
+      await firstArrival;
+      if (release === 'cancellation') caller.abort();
+      await released;
+
+      const retried = await refreshServerFeaturesSnapshot({ serverUrl, timeoutMs: 200 });
+
+      expect(responses).toHaveLength(2);
+      expect(retried).toMatchObject({ status: 'ready' });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); });
+    }
+  });
+
+  it('lets one of two live callers cancel without cancelling their shared HTTP request', async () => {
+    const responses: ServerResponse[] = [];
+    let arrived!: () => void;
+    const arrival = new Promise<void>((resolve) => { arrived = resolve; });
+    const server = createServer((_request, response) => { responses.push(response); arrived(); });
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve); });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback server address');
+    const serverUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const caller = new AbortController();
+      const first = fetchServerFeaturesSnapshot({ serverUrl, signal: caller.signal });
+      const cancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+      const second = fetchServerFeaturesSnapshot({ serverUrl });
+      await arrival;
+      caller.abort();
+      await cancelled;
+      responses[0].setHeader('content-type', 'application/json');
+      responses[0].end(JSON.stringify({ features: {}, capabilities: {} }));
+
+      await expect(second).resolves.toMatchObject({ status: 'ready' });
+      expect(responses).toHaveLength(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); });
+    }
+  });
+
+  it('does not let a retired request that ignores transport abort overwrite its replacement', async () => {
     const caller = new AbortController();
     let observedSignal: AbortSignal | undefined;
     let resolveRequest!: (response: Response) => void;
-    vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchMock = vi.fn<typeof fetch>(async (_input: string | URL | Request, init?: RequestInit) => {
       observedSignal = init?.signal ?? undefined;
+      if (fetchMock.mock.calls.length > 1) return Response.json({
+        features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_replacement' } },
+      });
       return await new Promise<Response>((resolve) => {
         resolveRequest = resolve;
       });
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const pending = fetchServerFeaturesSnapshot({
       serverUrl: 'https://server.example.test',
@@ -32,17 +104,25 @@ describe('fetchServerFeaturesSnapshot', () => {
     });
     await vi.waitFor(() => expect(observedSignal).toBeDefined());
     const cancellation = new DOMException('Caller cancelled feature discovery', 'AbortError');
+    const cancelled = expect(pending).rejects.toBe(cancellation);
     caller.abort(cancellation);
 
-    expect(observedSignal?.aborted).toBe(false);
-    await expect(pending).rejects.toBe(cancellation);
-    resolveRequest(new Response(JSON.stringify({ features: {}, capabilities: {} }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
+    await cancelled;
+    expect(observedSignal?.aborted).toBe(true);
+    await expect(refreshServerFeaturesSnapshot({
+      serverUrl: 'https://server.example.test', timeoutMs: 200,
+    })).resolves.toMatchObject({
+      status: 'ready', features: { capabilities: { serverIdentity: { serverIdentityId: 'srv_replacement' } } },
+    });
+    resolveRequest(Response.json({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_retired' } },
     }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     await expect(fetchServerFeaturesSnapshot({
       serverUrl: 'https://server.example.test',
-    })).resolves.toMatchObject({ status: 'ready' });
+    })).resolves.toMatchObject({
+      status: 'ready', features: { capabilities: { serverIdentity: { serverIdentityId: 'srv_replacement' } } },
+    });
   });
 
   it('coalesces concurrent public reads and caches the ready snapshot', async () => {
@@ -124,27 +204,28 @@ describe('fetchServerFeaturesSnapshot', () => {
     }
   });
 
-  it('does not fail ordinary feature discovery at the former six-second deadline', async () => {
+  it.each(['public', 'authenticated'] as const)('waits for a valid slow %s response without a feature-owned deadline', async (projection) => {
     vi.useFakeTimers();
     try {
-      vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => (
-        await new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('Feature request timed out', 'AbortError'));
-          }, { once: true });
-        })
-      )));
-      let settled = false;
-      const pending = fetchServerFeaturesSnapshot({ serverUrl: 'https://server.example.test' })
-        .then((snapshot) => {
-          settled = true;
-          return snapshot;
+      let resolveRequest!: (response: Response) => void;
+      let requestSignal: AbortSignal | null | undefined;
+      vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        requestSignal = init?.signal;
+        return await new Promise<Response>((resolve, reject) => {
+          resolveRequest = resolve;
+          requestSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
         });
-
-      await vi.advanceTimersByTimeAsync(6_001);
+      }));
+      let settled = false;
+      const pending = fetchServerFeaturesSnapshot({
+        serverUrl: 'https://server.example.test',
+        ...(projection === 'authenticated' ? { token: 'home-token' } : {}),
+      }).then((snapshot) => { settled = true; return snapshot; });
+      await vi.advanceTimersByTimeAsync(61_000);
       expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(54_000);
-      await expect(pending).resolves.toEqual({ status: 'error', reason: 'timeout' });
+      expect(requestSignal?.aborted ?? false).toBe(false);
+      resolveRequest(Response.json({ features: {}, capabilities: {} }));
+      await expect(pending).resolves.toMatchObject({ status: 'ready', provenance: projection });
     } finally {
       vi.useRealTimers();
     }

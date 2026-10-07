@@ -1,3 +1,5 @@
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
+
 export function normalizeBaseUrl(url: string): string {
   const trimmed = String(url ?? '').trim();
   if (!trimmed) return '';
@@ -10,18 +12,20 @@ export function normalizeBaseUrl(url: string): string {
 }
 
 export async function withAbortTimeout<T>(
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   run: (signal: AbortSignal) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
+  const timeout = timeoutMs === undefined
+    ? null
+    : armDeadlineTimer(Date.now() + Math.max(1_000, timeoutMs), () => controller.abort());
   try {
     const operationSignal = signal && signal !== controller.signal
       ? AbortSignal.any([controller.signal, signal])
       : controller.signal;
     return await run(operationSignal);
   } finally {
-    clearTimeout(timeout);
+    timeout?.();
   }
 }

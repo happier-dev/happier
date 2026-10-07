@@ -56,17 +56,31 @@ function toNode(dir: DirBuilder): ChangedFilesOutlineNode & { kind: 'dir' } {
     };
 }
 
+function readChangedFilePath(path: string): Readonly<{ fullPath: string; parts: string[] }> | null {
+    const fullPath = path?.trim();
+    if (!fullPath) return null;
+    // SCM paths are normally forward-slash normalized; retain Windows/interop inputs.
+    const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);
+    return parts.length > 0 ? { fullPath, parts } : null;
+}
+
+/** The outline's root folder count without allocating or sorting its file rows. */
+export function countChangedFilesOutlineRootFolders(files: readonly Pick<ScmFileStatus, 'fullPath'>[]): number {
+    const roots = new Set<string>();
+    for (const file of files) {
+        const path = readChangedFilePath(file.fullPath);
+        if (path && path.parts.length > 1) roots.add(path.parts[0]!);
+    }
+    return roots.size;
+}
+
 export function buildChangedFilesOutlineTree(files: readonly Pick<ScmFileStatus, 'fullPath'>[]): ChangedFilesOutlineNode[] {
     const root = createDir('', '');
 
     for (const file of files) {
-        const fullPath = file.fullPath?.trim();
-        if (!fullPath) continue;
-
-        // SCM paths are expected to be forward-slash normalized, but be resilient to
-        // backslash-delimited inputs (e.g. Windows/interop edge cases).
-        const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);
-        if (parts.length === 0) continue;
+        const path = readChangedFilePath(file.fullPath);
+        if (!path) continue;
+        const { fullPath, parts } = path;
 
         let current = root;
         for (let i = 0; i < parts.length - 1; i++) {

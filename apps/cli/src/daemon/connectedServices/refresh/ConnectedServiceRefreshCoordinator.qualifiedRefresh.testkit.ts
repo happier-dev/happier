@@ -17,12 +17,15 @@ import {
   type QualifiedConnectedAccountRef,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   ConnectedServiceCredentialRevisionV1Schema,
+  ConnectedServiceBindingsV2IngressSchema,
 } from '@happier-dev/protocol';
 import type { ApiClient } from '@/api/api';
 import type { Credentials } from '@/persistence';
 import { createPluginReloadController, type PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { createQualifiedConnectedAccountEstablishedRuntimeOwner, createRevisionedLegacyConnectedAccountMaterializationOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '../purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceRefreshCoordinator } from './ConnectedServiceRefreshCoordinator';
@@ -37,6 +40,7 @@ const now = 1_000_000;
 export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
   controller?: PluginReloadController;
   happyHomeDir?: string;
+  runtimeRegistry?: ConnectedServiceRuntimeRegistry;
   onQualifiedConnectedAccountCredentialUpdated?: NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['qualifiedConnectedAccountRuntime']>['onCredentialUpdated'];
   createPurposeRuntime?: (resources: Readonly<{
     controller: PluginReloadController;
@@ -234,6 +238,12 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     refreshWindowMs: 60_000,
     refreshLeaseMs: 30_000,
     now: () => now,
+    runtimeRegistry: input.runtimeRegistry,
+    resolveQualifiedPurposeBindingSnapshot: async ({ agentId, connectedServicesBindingsRaw }) => {
+      const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(connectedServicesBindingsRaw);
+      return bindings.success ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId,
+        bindings: bindings.data, contributions: admittedRuntime.registry.contributes }) : null;
+    },
     qualifiedConnectedAccountRuntime: {
       resolvePeerClass: () => 'advertised_v4',
       establishedRuntimeOwner,
@@ -296,7 +306,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
 
 /** Real selection, purpose resolution and file materialization over the same HTTP/storage fixture. */
 export async function createBuiltInQualifiedNativeRefreshHarness(
-  resources: Pick<NonNullable<Parameters<typeof createBuiltInQualifiedRefreshHarness>[0]>, 'controller' | 'happyHomeDir' | 'onQualifiedConnectedAccountCredentialUpdated'> = {},
+  resources: Pick<NonNullable<Parameters<typeof createBuiltInQualifiedRefreshHarness>[0]>, 'controller' | 'happyHomeDir' | 'runtimeRegistry' | 'onQualifiedConnectedAccountCredentialUpdated'> = {},
 ) {
   let group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
     ref: { service, groupId: 'pool' }, incarnation: 'pool-lifetime', displayName: 'Pool',
@@ -326,14 +336,8 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
           profiles: [{ profileId: 'work', status: 'connected' as const, kind: 'oauth' as const },
             { profileId: 'backup', status: 'connected' as const, kind: 'oauth' as const }] }),
       };
-      return createDaemonConnectedAccountPurposeBindingRuntime({ api,
+      return createDaemonConnectedAccountPurposeBindingRuntime({
         establishedRuntimeOwner: prepared.establishedRuntimeOwner, reloadController: prepared.controller,
-        revisionedLegacyMaterializationOwner: createRevisionedLegacyConnectedAccountMaterializationOwner({
-          reloadController: prepared.controller, credentials: prepared.credentials, api,
-          getAccountEncryptionMode: async () => 'plain', configuration: { read: async () => null,
-            secrets: { admit: async () => undefined, has: async () => false, read: async () => null } },
-        }),
-        resolveQualifiedConnectedAccountMaterializationTransport: () => ({ kind: 'v4' }),
         resolveQualifiedConnectedAccountV4Support: () => 'advertised',
         qualifiedApi: { listAccounts, listGroups: async () => ({ groups: [group] }), readGroup: async () => group },
         store: { read: async () => stored, update: async (mutate) => {

@@ -22,6 +22,7 @@ import {
     moveWorkflowBlock,
     removeWorkflowBlock,
     setWorkflowStepExecutionField,
+    setWorkflowBlockName,
     updateWorkflowBlock,
     type WorkflowBlockListRef,
     type WorkflowBlockRemoval,
@@ -44,7 +45,7 @@ import { formatWorkflowConditionLead, formatWorkflowConditionSentence, WorkflowC
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowReferenceSentence } from './WorkflowStepDataEditor';
 import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
-import { WorkflowBlockHeading } from './WorkflowBlockHeading';
+import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { duplicateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import type { WorkflowDocumentPresentation } from './workflowDocumentPresentation';
@@ -104,6 +105,11 @@ export type WorkflowBlockListEditorProps = Readonly<{
     onBlockRemoved?: (removal: WorkflowBlockRemoval) => void;
     /** Whole-example insertion belongs to the root draft, not a nested block-list scope. */
     onUseExample?: (example: WorkflowStarterExampleV1) => void;
+    /**
+     * `false`: the host's own bar holds the root list's Add (a phone, lab P1), so the document
+     * ends without a second, identical Add; Start from an example stays. Nested lists keep theirs.
+     */
+    rootAddRow?: boolean;
     /** Names the scope for the Add control's accessible hint. */
     scopeLabel?: string;
     /**
@@ -236,6 +242,14 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
     // On touch there is no hover: the inserters show while a block in this list is selected.
     const selectedInList = selectedBlockId !== null && blocks.some((block) => block.id === selectedBlockId);
 
+    const nameEditorFor = (block: WorkflowBlock): WorkflowBlockNameEditor | undefined => editable ? {
+        value: block.name ?? '',
+        placeholder: workflowBlockReferenceLabel(block),
+        accessibilityLabel: `${t('common.rename')} · ${workflowBlockReferenceLabel(block)}`,
+        onChangeText: (name) => onChange(setWorkflowBlockName(draft, block.id, name), t('common.rename'), false),
+        onCommit: props.onCommitChange,
+    } : undefined;
+
     return (
         <View
             testID={`${testIDPrefix}-list-${list.kind}`}
@@ -282,6 +296,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                         <View style={workflowEditorStyles.blockColumn}>
                         {block.kind === 'step' ? (
                             <WorkflowStepEditor
+                                nameEditor={nameEditorFor(block)}
                                 draft={draft}
                                 step={block}
                                 ordinal={ordinal}
@@ -318,6 +333,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'parallel' ? (
                             <WorkflowGroupEditor
+                                nameEditor={nameEditorFor(block)}
                                 block={block}
                                 ordinal={ordinal}
                                 actions={actions}
@@ -351,6 +367,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'loop' ? (
                             <WorkflowLoopEditor
+                                nameEditor={nameEditorFor(block)}
                                 draft={draft}
                                 block={block}
                                 ordinal={ordinal}
@@ -376,6 +393,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                         if (evaluator.kind === 'action') {
                                             return (
                                                 <WorkflowActionBlockEditor
+                                                    nameEditor={nameEditorFor(evaluator)}
                                                     composerScope={composerScope}
                                                     block={evaluator}
                                                     draft={draft}
@@ -398,6 +416,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                         }
                                         return (
                                         <WorkflowStepEditor
+                                            nameEditor={nameEditorFor(evaluator)}
                                             draft={draft}
                                             step={evaluator}
                                             ordinal={block.body.length + 1}
@@ -434,6 +453,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'action' ? (
                             <WorkflowActionBlockEditor
+                                nameEditor={nameEditorFor(block)}
                                 composerScope={composerScope}
                                 block={block}
                                 {...(editable ? {
@@ -460,6 +480,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'workflow' ? (
                             <WorkflowNestedWorkflowBlockEditor
+                                nameEditor={nameEditorFor(block)}
                                 block={block}
                                 {...(editable ? {
                                     onOpenOptions: (anchorRef: React.RefObject<View | null>) => onCustomize(block.id, anchorRef),
@@ -482,6 +503,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
 
                         {block.kind === 'wait' ? (
                             <WorkflowWaitBlockEditor
+                                nameEditor={nameEditorFor(block)}
                                 block={block}
                                 draft={draft}
                                 {...(editable ? {
@@ -507,6 +529,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                         {block.kind === 'if' ? (
                             <View testID={`${testIDPrefix}-if-${block.id}`} style={workflowEditorStyles.blockBody}>
                                 <WorkflowBlockHeading
+                                    nameEditor={nameEditorFor(block)}
                                     ordinal={ordinal}
                                     displayName={workflowBlockReferenceLabel(block)}
                                     actions={actions}
@@ -585,9 +608,10 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                 );
             })}
 
-            {editable ? (
+            {editable && !(list.kind === 'root' && props.rootAddRow === false && props.onUseExample === undefined) ? (
                 <WorkflowAddBlockMenu
                     composerScope={composerScope}
+                    examplesOnly={list.kind === 'root' && props.rootAddRow === false}
                     onAdd={(request) => addBlock(request, blocks[blocks.length - 1]?.id)}
                     {...(list.kind !== 'root' || props.onUseExample === undefined ? {} : { onUseExample: props.onUseExample })}
                     {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { PluginInstallationReviewCompatibilityDiagnosticSchema } from '@happier-dev/protocol/marketplace/internal';
+
+import { PluginCompatibilityDiagnosticSchema } from '../../validation/diagnostics/types';
 
 import { mapDaemonModuleLoadErrorToDiagnostic, projectPluginFailureText, remainingPluginInitializationTimeoutMs } from './utils';
 
 describe('plugin initialization budget', () => {
     it('spends the containing daemon-start remainder without a shorter plugin cutoff', () => {
         expect(remainingPluginInitializationTimeoutMs(Date.now() + 60_000)).toBeGreaterThan(59_000);
-        expect(remainingPluginInitializationTimeoutMs()).toBe(30_000);
+        expect(remainingPluginInitializationTimeoutMs()).toBeNull();
     });
 });
 
@@ -52,11 +55,11 @@ describe('plugin lifecycle failure diagnostics', () => {
         expect(diagnostic.message).not.toContain(externalPath);
     });
 
-    it('projects a module-load failure through a redacted head-preserving UTF-8 bound', () => {
+    it('publishes a complete large module-load diagnostic while preserving privacy', () => {
         const diagnostic = mapDaemonModuleLoadErrorToDiagnostic(new Error([
             'BEGIN_FAILURE client_secret=module-load-secret',
             'https://alice:module-userinfo@example.test/load?access_token=module-query-secret&safe=yes',
-            '🙂'.repeat(1_200),
+            '🙂'.repeat(20_000),
             'END_STACK',
         ].join(' ')));
 
@@ -64,10 +67,11 @@ describe('plugin lifecycle failure diagnostics', () => {
         expect(diagnostic.message).not.toContain('module-load-secret');
         expect(diagnostic.message).not.toContain('module-userinfo');
         expect(diagnostic.message).not.toContain('module-query-secret');
-        expect(diagnostic.message).not.toContain('END_STACK');
+        expect(diagnostic.message).toContain(`${'🙂'.repeat(20_000)} END_STACK`);
         expect(diagnostic.message).toContain('example.test');
         expect(diagnostic.message).toContain('safe=yes');
-        expect(Buffer.byteLength(diagnostic.message, 'utf8')).toBeLessThanOrEqual(2_048);
+        expect(PluginCompatibilityDiagnosticSchema.parse(diagnostic).message).toBe(diagnostic.message);
+        expect(PluginInstallationReviewCompatibilityDiagnosticSchema.parse(diagnostic).message).toBe(diagnostic.message);
     });
 
     it('uses neutral text when hostile error accessors throw during projection', () => {

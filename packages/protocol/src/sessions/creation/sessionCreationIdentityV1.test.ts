@@ -29,8 +29,20 @@ describe('Session creation identity V1', () => {
     expect(pluginTag).not.toContain('durable-operation');
   });
 
-  it('rejects blank and over-byte-limit public creation keys', () => {
+  it('admits nonblank keys and namespaces beyond 256 UTF-8 bytes with fixed-size opaque tags', () => {
+    const creationKey = 'é'.repeat(129);
+    const callerCreationNamespace = `plugin:${'caller'.repeat(50)}`;
+
+    expect(SessionCreationKeyV1Schema.parse(creationKey)).toBe(creationKey);
+    const tag = deriveSessionCreationTagV1({ callerCreationNamespace, creationKey });
+    expect(tag).toMatch(/^create:v1:[A-Za-z0-9_-]{43}$/u);
+    expect(deriveSessionCreationTagV1({
+      callerCreationNamespace: `  ${callerCreationNamespace}  `,
+      creationKey: `  ${creationKey}  `,
+    })).toBe(tag);
+  });
+
+  it('rejects blank public creation keys', () => {
     expect(() => SessionCreationKeyV1Schema.parse(' \t ')).toThrow();
-    expect(() => SessionCreationKeyV1Schema.parse('é'.repeat(129))).toThrow();
   });
 });

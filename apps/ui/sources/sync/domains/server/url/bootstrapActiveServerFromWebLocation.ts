@@ -4,19 +4,19 @@ import { setActiveServer, upsertAndActivateServer } from '../serverRuntime';
 
 export type WebServerUrlOverride = Readonly<{ serverUrl: string; cleanedRelativeUrl: string }>;
 
-type CommitWebServerUrlOverrideAction =
-    | Readonly<{ kind: 'cleanup_only'; cleanedRelativeUrl: string }>
-    | Readonly<{ kind: 'refresh_auth'; cleanedRelativeUrl: string }>
-    | Readonly<{ kind: 'switch_server'; serverUrl: string; cleanedRelativeUrl: string }>;
+export type WebServerUrlOverrideAction = Readonly<{
+    kind: 'cleanup_only' | 'refresh_auth' | 'switch_server';
+    serverUrl: string;
+}>;
 
 export async function commitWebServerUrlOverride(params: Readonly<{
-    action: CommitWebServerUrlOverrideAction;
+    action: WebServerUrlOverrideAction;
     switchServer: (params: Readonly<{
         serverUrl: string;
         refreshAuth: () => Promise<void>;
     }>) => Promise<void>;
     refreshAuth: () => Promise<void>;
-    replaceRelativeUrl: (nextRelativeUrl: string) => void;
+    signal?: AbortSignal;
 }>): Promise<void> {
     if (params.action.kind === 'switch_server') {
         await params.switchServer({
@@ -26,7 +26,7 @@ export async function commitWebServerUrlOverride(params: Readonly<{
     } else if (params.action.kind === 'refresh_auth') {
         await params.refreshAuth();
     }
-    params.replaceRelativeUrl(params.action.cleanedRelativeUrl);
+    consumeWebServerUrlOverrideFromLocation({ serverUrl: params.action.serverUrl, signal: params.signal });
 }
 
 function isWebRuntime(): boolean {
@@ -102,6 +102,17 @@ export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | n
     } catch {
         return null;
     }
+}
+
+/** Consume only the admitted Home still present at the current browser destination. */
+export function consumeWebServerUrlOverrideFromLocation(params: Readonly<{
+    serverUrl: string;
+    signal?: AbortSignal;
+}>): void {
+    if (params.signal?.aborted) return;
+    const current = readWebServerUrlOverrideFromLocation();
+    if (current?.serverUrl !== params.serverUrl) return;
+    window.history.replaceState(window.history.state, '', current.cleanedRelativeUrl);
 }
 
 export async function bootstrapActiveServerFromWebLocation(

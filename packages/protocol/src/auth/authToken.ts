@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 /**
  * Closed credential kinds stamped into every newly-issued signed auth token.
@@ -73,6 +74,7 @@ export const AuthTokenAuthenticationEvidenceSnapshotV1Schema = z.object({
 export type AuthTokenAuthenticationEvidenceSnapshotV1 = z.infer<
   typeof AuthTokenAuthenticationEvidenceSnapshotV1Schema
 >;
+export const StoredAuthTokenAuthenticationEvidenceSnapshotV1Schema = createStoredReadSchema(AuthTokenAuthenticationEvidenceSnapshotV1Schema);
 
 /**
  * The one canonical kind→authority mapping. Every mint and every

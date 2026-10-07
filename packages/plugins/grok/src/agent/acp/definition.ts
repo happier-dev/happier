@@ -61,11 +61,12 @@ export function buildGrokAcpRuntimeDefinition(
     delivery: {
       steer: {
         method: 'x.ai/interject',
-        buildParams({ providerSessionId, inputIds, input }) {
+        buildParams({ providerSessionId, inputIds, input, content }) {
           return {
             sessionId: providerSessionId,
             text: input.text,
             interjectionId: inputIds[0],
+            content: [...content],
           };
         },
         isAccepted(response) {

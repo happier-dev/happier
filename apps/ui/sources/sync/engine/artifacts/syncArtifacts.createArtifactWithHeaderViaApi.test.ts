@@ -2,14 +2,60 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
-import type { ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { Artifact, ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { ArtifactBodyV1Schema, decodePlainArtifactStoredContent, type ArtifactBlobStoredContentV1 } from '@happier-dev/protocol';
 import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
+import { createDeferred } from '@/dev/testkit';
 
 describe('createArtifactWithHeaderViaApi', () => {
+  it.each(['plain', 'e2ee'] as const)('reads a newly saved %s document on the creating and fresh clients with independent private provenance custody', async mode => {
+    const seed = new Uint8Array(32).fill(9);
+    const encryption = mode === 'e2ee' ? await Encryption.create(seed) : null;
+    const artifactDataKeys: ArtifactDataKeyCache = new Map();
+    let stored: Artifact | undefined;
+    const calls: string[] = [];
+    // Only HTTP is substituted. These are the ordinary create, full-read and
+    // recipient-census route projections; real writer/openers and crypto run below it.
+    const request = async (path: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${path}`);
+      if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 0 });
+      if (path === '/v1/artifacts' && init?.method === 'POST') {
+        const input = JSON.parse(String(init.body)) as ArtifactCreateRequest;
+        stored = { ...input, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        return Response.json(stored);
+      }
+      if (!stored) throw new Error('Read before create');
+      if (path === `/v1/artifacts/${stored.id}/access/recipients`) return Response.json({ artifactId: stored.id,
+        ownerAccountId: 'owner', access: 'owner', encryptionMode: mode, dataEncryptionKey: stored.dataEncryptionKey,
+        callerDataEncryptionKey: stored.dataEncryptionKey, provenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
+        callerProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey, recipients: [] });
+      if (path === `/v1/artifacts/${stored.id}`) return Response.json(stored);
+      throw new Error(`Unexpected Artifact route: ${path}`);
+    };
+    const { createArtifactWithHeaderViaApi, fetchArtifactWithBodyFromApi, decryptArtifactListItem } = await import('./syncArtifacts');
+    const added: DecryptedArtifact[] = [];
+    const provenance = { savedBy: { kind: 'person' as const, accountId: 'owner' } };
+    const id = await createArtifactWithHeaderViaApi({ credentials: { token: 't' }, header: { kind: 'text', title: 'Saved document' },
+      body: 'Exact saved body: 😀\nsecond line', ...provenance, encryption, artifactDataKeys, request,
+      addArtifact: artifact => added.push(artifact) });
+    expect(added).toMatchObject([{ id, isDecrypted: true, body: 'Exact saved body: 😀\nsecond line', provenance }]);
+    const freshEncryption = mode === 'e2ee' ? await Encryption.create(seed) : null;
+    for (const client of [{ encryption, artifactDataKeys }, { encryption: freshEncryption, artifactDataKeys: new Map() }]) {
+      const opened = await fetchArtifactWithBodyFromApi({ credentials: { token: 't' }, artifactId: id, request, ...client });
+      expect(opened).toMatchObject({ id, isDecrypted: true, body: 'Exact saved body: 😀\nsecond line', bodyVersion: 1, provenance });
+      if (!stored) throw new Error('Missing persisted document');
+      const { body: _body, ...headerOnly } = stored;
+      const listed = await decryptArtifactListItem({ artifact: headerOnly, ...client });
+      expect(listed).toMatchObject({ id, isDecrypted: true, title: 'Saved document', provenance });
+      expect(listed?.body).toBeUndefined();
+    }
+    expect(calls.filter(call => call === `GET /v1/artifacts/${id}`)).toHaveLength(2);
+    if (mode === 'e2ee') expect(calls.filter(call => call.endsWith('/access/recipients')).length).toBeGreaterThanOrEqual(2);
+  });
   it('publishes content without actor disclosure to a recipient holding the public-share content key', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(9));
     const artifactDataKeys: ArtifactDataKeyCache = new Map();
@@ -50,10 +96,13 @@ describe('createArtifactWithHeaderViaApi', () => {
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0 });
     };
     const { createArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const added: DecryptedArtifact[] = [];
     await createArtifactWithHeaderViaApi({ credentials: { token: 't' }, artifactId,
       header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 },
         metadata: { title: 'Flow' }, previewSteps: ['Stale label'] }, body,
-      encryption: null, artifactDataKeys: new Map(), request, addArtifact: () => {} });
+      encryption: null, artifactDataKeys: new Map(), request, addArtifact: artifact => added.push(artifact) });
+    expect(added[0]?.title).toBe('Flow');
+    expect(added[0]?.rawHeader).toMatchObject({ metadata: { title: 'Flow' } });
   });
   it.each(['plain', 'e2ee'] as const)('refuses a reference-only create in %s before any request can persist missing file bytes', async (mode) => {
     const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
@@ -80,6 +129,7 @@ describe('createArtifactWithHeaderViaApi', () => {
     const added: DecryptedArtifact[] = [];
     let saved: ArtifactCreateRequest | null = null;
     let blob: ArtifactBlobStoredContentV1 | null = null;
+    let beforeBlobRead: (() => Promise<void>) | undefined;
     const request = vi.fn(async (path: string, init?: RequestInit) => {
       if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode, updatedAt: 0 }));
       if (path === ARTIFACT_UPLOAD_PATH_V1) {
@@ -96,11 +146,14 @@ describe('createArtifactWithHeaderViaApi', () => {
       if (!saved) throw new Error('Missing created Artifact');
       if (path.endsWith('/recipients')) return new Response(JSON.stringify({ artifactId: saved.id, ownerAccountId: 'owner', access: 'owner',
         encryptionMode: mode, dataEncryptionKey: saved.dataEncryptionKey, callerDataEncryptionKey: saved.dataEncryptionKey, recipients: [] }));
-      if (path.includes('/blobs/')) return new Response(JSON.stringify({ blobId: saved.blob?.blobId, content: blob }));
+      if (path.includes('/blobs/')) {
+        await beforeBlobRead?.();
+        return new Response(JSON.stringify({ blobId: saved.blob?.blobId, content: blob }));
+      }
       return new Response(JSON.stringify({ ...saved, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0 }));
     });
-    const { createArtifactWithHeaderViaApi, fetchArtifactBinaryFromApi } = await import('./syncArtifacts');
+    const { createArtifactWithHeaderViaApi, fetchArtifactForViewFromApi, fetchArtifactBinaryFromApi } = await import('./syncArtifacts');
     const bytes = new Uint8Array([0, 255, 128, 13, 10]);
     const artifactId = await createArtifactWithHeaderViaApi({ credentials: { token: 't' }, header: { kind: 'artifact.legacy', title: 'Image' },
       body: { bytes, mime: 'image/png' }, encryption, artifactDataKeys, request, addArtifact: artifact => added.push(artifact) });
@@ -112,7 +165,37 @@ describe('createArtifactWithHeaderViaApi', () => {
     if (typeof body === 'string') throw new Error('Binary must remain a reference');
     expect(body).toMatchObject({ mime: 'image/png', sizeBytes: bytes.length, blobId: wire.blob?.blobId });
     expect(added[0]?.body).toEqual(body);
-    await expect(fetchArtifactBinaryFromApi({ credentials: { token: 't' }, artifactId, reference: body, encryption, artifactDataKeys, request })).resolves.toEqual(bytes);
+    request.mockClear();
+    const headerOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptHeaderRaw');
+    const bodyOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptBody');
+    const view = await fetchArtifactForViewFromApi({ credentials: { token: 't' }, artifactId, encryption, artifactDataKeys, request, includePdfPreview: true });
+    const opened = view?.artifact;
+    if (!opened?.isDecrypted) throw new Error('Missing opened Artifact');
+    const composedRead = { credentials: { token: 't' }, artifactId, reference: body, encryption, artifactDataKeys, request, artifact: opened };
+    expect(view?.binaryBytes).toEqual(bytes);
+    console.info('Binary Artifact composed read measurement', { mode,
+      heads: request.mock.calls.filter(([path]) => path === `/v1/artifacts/${artifactId}`).length,
+      preparations: request.mock.calls.filter(([path]) => path.endsWith('/recipients')).length,
+      headerOpens: headerOpens.mock.calls.length, bodyOpens: bodyOpens.mock.calls.length });
+    expect(request.mock.calls.filter(([path]) => path === `/v1/artifacts/${artifactId}`)).toHaveLength(1);
+    expect(request.mock.calls.filter(([path]) => path.endsWith('/recipients'))).toHaveLength(mode === 'e2ee' ? 1 : 0);
+    expect(headerOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
+    expect(bodyOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
+    headerOpens.mockRestore();
+    bodyOpens.mockRestore();
+    if (mode === 'e2ee') {
+      const entry = artifactDataKeys.get(artifactId)!;
+      const issued = createDeferred<void>();
+      const release = createDeferred<void>();
+      beforeBlobRead = async () => { issued.resolve(); await release.promise; };
+      const reading = fetchArtifactBinaryFromApi(composedRead);
+      await issued.promise;
+      artifactDataKeys.set(artifactId, { ...entry, envelope: `${entry.envelope}-replaced` });
+      release.resolve();
+      await expect(reading).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+      artifactDataKeys.set(artifactId, entry);
+      beforeBlobRead = undefined;
+    }
     const substituted = new Uint8Array(bytes.length).fill(42);
     blob = mode === 'plain' ? { t: 'plain', v: encodeBase64(substituted, 'base64') }
       : { t: 'encrypted', c: await new ArtifactEncryption(artifactDataKeys.get(artifactId)!.dataKey).encryptBytes(substituted) };

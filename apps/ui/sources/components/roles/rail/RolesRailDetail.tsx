@@ -12,6 +12,7 @@ import type { WorkflowRoleV1 } from '@happier-dev/protocol';
 import { useRoleRailItems } from './useRoleRailItems';
 
 export type RolesRailDetailProps = Readonly<{
+    serverId?: string | null;
     /** The role in effect, or null for none. Controlled: the rail never moves its own check. */
     value: string | null;
     workflowRoles?: readonly WorkflowRoleV1[];
@@ -31,7 +32,7 @@ export type RolesRailDetailProps = Readonly<{
  * The catalog is read here, in the open leaf, so a closed composer chip never subscribes to it.
  */
 export function RolesRailDetail(props: RolesRailDetailProps) {
-    const roles = useRoleRailItems(props.workflowRoles);
+    const roles = useRoleRailItems(props.workflowRoles, props.serverId);
     return <RolesRailDetailView {...props} roles={roles} />;
 }
 

@@ -33,13 +33,13 @@ export type EmbedBridgeGuestEvents = Readonly<{
 export type EmbedCredentialOutcome =
     | Readonly<{ kind: 'credential'; credential: EmbedCredentialV1 }>
     | Readonly<{ kind: 'error'; code: EmbedErrorCodeV1 }>
-    /** The bridge closed before the host answered. */
+    /** The bridge closed or a newer request retired this one before the host answered. */
     | Readonly<{ kind: 'closed' }>;
 
 export type EmbedBridgeGuest = Readonly<{
     /** The origin `init` came from; `null` until then. */
     readonly parentOrigin: string | null;
-    /** Asks the host for a credential; settles with the host's answer to this exact request. */
+    /** Asks the host for a credential; settles with its answer, or closes on retirement/disposal. */
     requestCredential: (request: Omit<EmbedCredentialRequestV1, 'kind'>) => Promise<EmbedCredentialOutcome>;
     publishState: (state: Omit<EmbedStateV1, 'kind'>) => void;
     publishSessionCreated: (sessionId: string) => void;
@@ -64,7 +64,7 @@ export function startEmbedBridgeGuest(input: Readonly<{
     let disposed = false;
     let sequence = 0;
     let lastHostSequence = -1;
-    const pending = new Map<number, (outcome: EmbedCredentialOutcome) => void>();
+    let pending: Readonly<{ sequence: number; settle: (outcome: EmbedCredentialOutcome) => void }> | null = null;
 
     const onPortMessage = (event: MessageEvent) => {
         const data: unknown = event.data;
@@ -74,9 +74,9 @@ export function startEmbedBridgeGuest(input: Readonly<{
         if (response) {
             if (!wireIdentitiesEqual(response.identity, identity) || response.sequence <= lastHostSequence) return;
             lastHostSequence = response.sequence;
-            const settle = pending.get(response.requestSequence);
-            if (!settle) return;
-            pending.delete(response.requestSequence);
+            if (pending?.sequence !== response.requestSequence) return;
+            const settle = pending.settle;
+            pending = null;
             settle(response.kind === 'result'
                 ? { kind: 'credential', credential: response.payload }
                 : { kind: 'error', code: response.payload.code });
@@ -127,12 +127,14 @@ export function startEmbedBridgeGuest(input: Readonly<{
             return parentOrigin;
         },
         requestCredential: (request) => new Promise<EmbedCredentialOutcome>((resolve) => {
+            pending?.settle({ kind: 'closed' });
+            pending = null;
             const requestSequence = send({ kind: 'credential.request', ...request });
             if (requestSequence === null) {
                 resolve({ kind: 'closed' });
                 return;
             }
-            pending.set(requestSequence, resolve);
+            pending = { sequence: requestSequence, settle: resolve };
         }),
         publishState: (state) => {
             send({ kind: 'state', ...state });
@@ -149,8 +151,8 @@ export function startEmbedBridgeGuest(input: Readonly<{
                 port.close();
                 port = null;
             }
-            for (const settle of pending.values()) settle({ kind: 'closed' });
-            pending.clear();
+            pending?.settle({ kind: 'closed' });
+            pending = null;
         },
     };
 }

@@ -36,7 +36,7 @@ export type RolesRailPickerOptionParams = Omit<RolesRailDetailProps, 'onChange'>
  * `session.role.set`, a workflow draft's role arm) belongs to the caller.
  */
 export function buildRolesRailPickerOption(params: RolesRailPickerOptionParams): AgentInputChipPickerOption {
-    const { onChange, roles, value, describeConsequence, onManageRoles, footer, workflowRoles } = params;
+    const { onChange, roles, value, describeConsequence, onManageRoles, footer, workflowRoles, serverId } = params;
     return {
         id: ROLES_RAIL_PICKER_OPTION_ID,
         sectionId: ROLES_RAIL_PICKER_OPTION_ID,
@@ -50,6 +50,7 @@ export function buildRolesRailPickerOption(params: RolesRailPickerOptionParams):
         preserveFocusOnExternalSelectionChange: true,
         renderDetailContent: ({ onRequestClose }) => {
             const detailProps: RolesRailDetailProps = {
+                serverId,
                 value,
                 workflowRoles,
                 describeConsequence,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BoundedLegacyJsonValueSchema } from './catalog/legacyJson.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 /** Shipped 0.2 input grammar, reused by the canonical authoring value readers. */
 export const LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS = Object.freeze([
@@ -8,8 +8,8 @@ export const LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS = Object.freeze([
 export type LegacyAuthoringMemorySettingsKey = typeof LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS[number];
 
 export const LegacyRecentMachinePathSchema = z.object({
-  machineId: z.string().min(1).max(1024),
-  path: z.string().min(1).max(16 * 1024),
+  machineId: z.string().min(1),
+  path: z.string().min(1),
 }).strip();
 
 export const LegacyRecentMachinePathsSchema = z.preprocess((value) => {
@@ -19,13 +19,14 @@ export const LegacyRecentMachinePathsSchema = z.preprocess((value) => {
     const parsed = LegacyRecentMachinePathSchema.safeParse(candidate);
     if (!parsed.success) continue;
     paths.push(parsed.data);
-    if (paths.length === 256) break;
   }
   return paths;
-}, z.array(LegacyRecentMachinePathSchema).max(256));
+}, z.array(LegacyRecentMachinePathSchema));
 
-export const LegacyLastUsedProfileSchema = z.string().max(1024).nullable();
+export const LegacyLastUsedProfileSchema = z.string().nullable();
 export const LegacyRememberedEngineSelectionsByScopeV1Schema = z.record(
-  z.string().max(64 * 1024), BoundedLegacyJsonValueSchema,
+  // Engine carriers now belong to reserved rows, not the whole Settings
+  // document. Its generic collection/depth budgets do not govern this domain.
+  z.string(), StrictJsonValueSchema,
 );
 export type RetainedRememberedEngineSelectionsByScopeV1 = z.infer<typeof LegacyRememberedEngineSelectionsByScopeV1Schema>;

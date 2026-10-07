@@ -7,14 +7,20 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { parseMarkdownSpans } from '@/components/markdown/parseMarkdownSpans';
 import { t } from '@/text';
 
 import { WalkthroughStopNumber } from './WalkthroughAtoms';
 import type { WalkthroughReading } from './walkthroughReading';
 
-/** The note's one-line gist: the explanation's first sentence, without inline code ticks. */
+function plainInlineText(markdown: string): string {
+    return parseMarkdownSpans(markdown, false).map((span) => span.styles.includes('code') || span.text === markdown
+        ? span.text : plainInlineText(span.text)).join('');
+}
+
+/** The note's one-line gist: inline labels, never citation destinations or formatting syntax. */
 function firstSentence(markdown: string): string {
-    const plain = markdown.replace(/`([^`]*)`/g, '$1').replace(/\s+/g, ' ').trim();
+    const plain = plainInlineText(markdown).replace(/\s+/g, ' ').trim();
     const end = plain.search(/[.!?](\s|$)/);
     return end >= 0 ? plain.slice(0, end + 1) : plain;
 }

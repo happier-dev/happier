@@ -179,7 +179,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'review' | 'external' | 'search' | 'attention' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -221,7 +221,7 @@ export type WorkflowsActionInputById = {
                                 label: string;
                                 typeLabel: string;
                                 description?: string | undefined;
-                                icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                icon?: 'file' | 'error' | 'check' | 'review' | 'external' | 'search' | 'attention' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                                 tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                             };
                         }[] | undefined;
@@ -283,7 +283,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'review' | 'external' | 'search' | 'attention' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -2704,6 +2704,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         admission: 'created' | 'existing';
     };
@@ -2863,6 +2864,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         }[];
         metadataByRunId: Record<string, {
             kind: 'available';
@@ -3049,6 +3051,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         callerAccess: {
             canEdit: boolean;
@@ -4999,6 +5002,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         observation: 'terminal';
         matchedCondition: 'terminal';
@@ -5161,6 +5165,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         observation: 'paused';
         matchedCondition: 'paused';
@@ -5323,6 +5328,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         observation: 'needs_attention';
         matchedCondition: 'attention';
@@ -5485,6 +5491,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         observation: 'timeout';
         result?: string | number | boolean | readonly JsonValue[] | {
@@ -5646,6 +5653,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         observation: 'not_matched_terminal';
         result?: string | number | boolean | readonly JsonValue[] | {
@@ -5808,6 +5816,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
@@ -5967,6 +5976,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
@@ -6126,6 +6136,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
@@ -6692,7 +6703,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'review' | 'external' | 'search' | 'attention' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -6900,6 +6911,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         invocation: {
             id: string;
@@ -7466,7 +7478,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'review' | 'external' | 'search' | 'attention' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -7674,6 +7686,7 @@ export type WorkflowsActionResultById = {
                 workspaceRefId?: string | undefined;
             } | null | undefined;
             attentionRequired?: boolean | undefined;
+            finishedAt?: string | null | undefined;
         };
         invocation: {
             id: string;

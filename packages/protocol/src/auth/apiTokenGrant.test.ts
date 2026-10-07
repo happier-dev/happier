@@ -44,6 +44,18 @@ describe('API token grant admission', () => {
       targets: { sessions: [], machines: ['m1'] } }).success).toBe(true);
     expect(ApiTokenGrantV1Schema.safeParse({ ...full, create }).success).toBe(true);
   });
+  it('does not impose a grant-local capacity on canonical target identities', () => {
+    const sessionId = 'session-'.repeat(80);
+    const machineId = 'machine-'.repeat(80);
+    const admitted = ApiTokenGrantV1Schema.safeParse({ ...full,
+      targets: { sessions: [sessionId], machines: [machineId] },
+    });
+    expect(admitted.success).toBe(true);
+    if (!admitted.success) throw new Error('Expected unrestricted-length target identities');
+    expect(evaluate({ grant: admitted.data, actionId: 'session.message.send',
+      target: { kind: 'session', sessionId } })).toEqual({ ok: true });
+    expect(within(admitted.data, full)).toBe(true);
+  });
   it('uses action ids, canonical families and explicit contributed ids', () => {
     const g = grant({ actions: { families: ['messaging'], ids: ['example/action'] } });
     expect(evaluate({ grant: g, actionId: 'session.message.send', target: session })).toEqual({ ok: true });
@@ -160,6 +172,16 @@ describe('API token grant admission', () => {
 });
 
 describe('monotonic child attenuation', () => {
+  it('uses the same conversational admission when attenuating explicit action ids', () => {
+    const send = grant({ actions: { families: [], ids: ['session.message.send'] } });
+    const sendAndAnswer = grant({ actions: { families: [], ids: ['session.message.send', 'session.user_action.answer'] } });
+    expect(within(sendAndAnswer, send)).toBe(true);
+    for (const actionId of ['session.message.send', 'session.user_action.answer']) {
+      expect(evaluate({ grant: sendAndAnswer, actionId, target: session })).toEqual({ ok: true });
+      expect(evaluate({ grant: send, actionId, target: session })).toEqual({ ok: true });
+    }
+    expect(within(send, grant({ actions: { families: [], ids: ['session.user_action.answer'] } }))).toBe(false);
+  });
   it('does not introduce contributed actions absent from the parent', () => {
     const contributed = grant({ actions: { families: [], ids: ['example/action'] } });
     expect(within(contributed, full)).toBe(true);

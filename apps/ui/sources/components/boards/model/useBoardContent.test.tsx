@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyWorkBoardIntentV1, buildWorkBoardItemKeyV1, createWorkBoardV1, encodePlainArtifactStoredContent, normalizeSessionListFilterV1 } from '@happier-dev/protocol';
 
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
+import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -33,6 +37,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
     standardCleanup();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
     (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
     (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
     await harness.dispose();
@@ -47,6 +53,130 @@ function runsBoard(startedBy: readonly ('you' | 'agents' | 'triggers')[] = []) {
 }
 
 describe('Board shared Run filter membership', () => {
+    it('refreshes Session and machine statuses at canonical deadlines without store writes', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(100_000);
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '1000');
+        const row = createSessionListRenderableSessionFixture({ id: 'expiring-session', active: true,
+            activeAt: Date.now(), hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() });
+        const machine = createMachineFixture({ id: 'expiring-machine', activeAt: Date.now() });
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: row } },
+            machineListByServerId: { [homes.activeServerId!]: [machine] } });
+        const members = [
+            { kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id: row.id } } as const,
+            { kind: 'machine', qualifiedId: { serverId: homes.activeServerId!, id: machine.id } } as const,
+        ].map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }));
+        const membership = { members, complete: true };
+        const hook = await renderHook(() => useBoardCards(membership, homes));
+        expect(hook.getCurrent()[0]?.status.bucket).toBe('needs_you');
+        expect(hook.getCurrent()[1]?.body).toMatchObject({ kind: 'machine', online: true });
+        const freshnessAt = readSessionStatusNextRefreshAtMs(row, Date.now());
+        expect(freshnessAt).not.toBeNull();
+        await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
+        expect(hook.getCurrent()[1]?.body).toMatchObject({ kind: 'machine', online: false });
+        await act(async () => { await vi.advanceTimersByTimeAsync(freshnessAt! - Date.now() + 1); });
+        expect(hook.getCurrent()[0]?.status.bucket).not.toBe('needs_you');
+    });
+
+    it('removes Board deadline demand while inactive and refreshes on focus', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(100_000);
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '1000');
+        const machine = createMachineFixture({ id: 'inactive-machine', activeAt: Date.now() });
+        storage.setState({ machineListByServerId: { [homes.activeServerId!]: [machine] } });
+        const ref = { kind: 'machine', qualifiedId: { serverId: homes.activeServerId!, id: machine.id } } as const;
+        const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
+        let renders = 0;
+        const hook = await renderHook((props: { enabled: boolean }) => {
+            renders += 1;
+            return useBoardCards(membership, homes, props);
+        }, { initialProps: { enabled: true } });
+        const retained = hook.getCurrent();
+        await hook.rerender({ enabled: false });
+        const inactiveRenders = renders;
+        await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
+        expect(renders).toBe(inactiveRenders);
+        expect(hook.getCurrent()).toBe(retained);
+        expect(vi.getTimerCount()).toBe(0);
+        await hook.rerender({ enabled: true });
+        expect(hook.getCurrent()[0]?.body).toMatchObject({ kind: 'machine', online: false });
+    });
+
+    it('does no definition read or machine-driven projection for a session-only Board', async () => {
+        const row = createSessionListRenderableSessionFixture({ id: 'only-session' });
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: row } } });
+        const ref = { kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id: row.id } } as const;
+        const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useBoardCards(membership, homes); });
+        const cards = hook.getCurrent();
+        const before = renders;
+        act(() => { storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId, unrelated: [] } }); });
+        expect(renders).toBe(before);
+        expect(hook.getCurrent()).toBe(cards);
+        expect(harness.home.requests.filter(request => request.path === ARTIFACT_LIST_PATH)).toHaveLength(0);
+    });
+
+    it('constructs only the changed card on a populated 40-card Board', async () => {
+        let nameReads = 0;
+        const rows = Object.fromEntries(Array.from({ length: 20 }, (_, index) => {
+            const row = createSessionListRenderableSessionFixture({ id: `session-${index}`, active: true, activeAt: Date.now(), metadata: {
+                path: '/repo', host: 'test', homeDir: '/home/test',
+                get name() { nameReads += 1; return `Session ${index}`; },
+            } });
+            return [row.id, row];
+        }));
+        const runs = Object.fromEntries(Array.from({ length: 20 }, (_, index) => {
+            const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: `run-${index}`, state: 'running' }), null);
+            return [row.id, row];
+        }));
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: rows }, workflowRunsById: runs });
+        const members = [...Object.keys(rows).map(id => ({ kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id } } as const)),
+            ...Object.keys(runs).map(id => ({ kind: 'workflow_run', qualifiedId: { serverId: homes.activeServerId!, id } } as const))]
+            .map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }));
+        const hook = await renderHook(() => useBoardCards({ members, complete: true }, homes));
+        const before = hook.getCurrent();
+        expect(before).toHaveLength(40);
+        nameReads = 0;
+        const updated = { ...rows['session-7']!, hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() };
+        act(() => { storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { ...rows, [updated.id]: updated } } }); });
+        expect(hook.getCurrent().filter((card, index) => card !== before[index]).map(card => card.ref.qualifiedId.id)).toEqual(['session-7']);
+        // The name getter observes real detail projection work, rather than only reconciled output identities.
+        expect(nameReads).toBeGreaterThan(0);
+        expect(nameReads).toBeLessThanOrEqual(3);
+    });
+
+    it('retains same-Account cards without detail work while inactive and resumes current facts', async () => {
+        let titleReads = 0;
+        const row = createSessionListRenderableSessionFixture({ id: 'focus-session', active: true, activeAt: Date.now(), metadata: {
+            path: '/repo', host: 'test', homeDir: '/home/test',
+            get name() { titleReads += 1; return 'Focus session'; },
+        } });
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: row } } });
+        const ref = { kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id: row.id } } as const;
+        const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
+        let renders = 0;
+        const hook = await renderHook((props: { enabled: boolean }) => {
+            renders += 1;
+            return useBoardCards(membership, homes, props);
+        }, { initialProps: { enabled: true } });
+        const retained = hook.getCurrent();
+        await hook.rerender({ enabled: false });
+        const inactiveRenders = renders;
+        titleReads = 0;
+        const updated = { ...row, hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() };
+        act(() => { storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: updated } } }); });
+        expect(renders).toBe(inactiveRenders);
+        expect(hook.getCurrent()).toBe(retained);
+        expect(titleReads).toBe(0);
+        await hook.rerender({ enabled: true });
+        expect(hook.getCurrent()[0]?.status.bucket).toBe('needs_you');
+        expect(titleReads).toBeGreaterThan(0);
+        await hook.rerender({ enabled: false });
+        act(() => { storage.setState({ profileScope: { serverId: homes.activeServerId!, accountId: 'account-b' } }); });
+        expect(hook.getCurrent()).toEqual([]);
+    });
+
     it('preserves unavailable definition reasons on Board cards beside readable neighbors', async () => {
         const definitionIds = ['header', 'body', 'readable'];
         // Only stored HTTP bytes are malformed; the real Artifact codec and

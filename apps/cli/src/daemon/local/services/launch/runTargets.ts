@@ -22,7 +22,6 @@ export type LocalServiceRunTarget = Readonly<{
 const SERVER_SCRIPT_PRIORITY = ['dev', 'serve', 'preview', 'start'] as const;
 const RUN_TARGET_ID_MAX_LENGTH = 256;
 const RUN_TARGET_ID_HASH_LENGTH = 12;
-const DEFAULT_MAX_VISITED_DIRECTORIES = 5_000;
 const IGNORED_DIRECTORY_NAMES = new Set([
     '.git',
     '.hg',
@@ -166,16 +165,9 @@ async function readPackageJson(cwd: string): Promise<Readonly<{
     };
 }
 
-async function collectPackageDirectories(
-    root: string,
-    budget: { remaining: number },
-): Promise<string[]> {
+async function collectPackageDirectories(root: string): Promise<string[]> {
     const out: string[] = [];
     const visit = async (directory: string): Promise<void> => {
-        if (budget.remaining <= 0) {
-            return;
-        }
-        budget.remaining -= 1;
         if (await pathExists(join(directory, 'package.json'))) {
             out.push(directory);
         }
@@ -193,16 +185,11 @@ async function collectPackageDirectories(
 
 export async function discoverLocalServiceRunTargets(input: Readonly<{
     roots: readonly string[];
-    maxVisitedDirectories?: number;
 }>): Promise<readonly LocalServiceRunTarget[]> {
     const targets: LocalServiceRunTarget[] = [];
     const seenDirectories = new Set<string>();
-    const traversalBudget = {
-        remaining: Math.max(0, input.maxVisitedDirectories ?? DEFAULT_MAX_VISITED_DIRECTORIES),
-    };
-
     for (const root of input.roots) {
-        const directories = await collectPackageDirectories(root, traversalBudget);
+        const directories = await collectPackageDirectories(root);
         for (const cwd of directories) {
             if (seenDirectories.has(cwd)) {
                 continue;

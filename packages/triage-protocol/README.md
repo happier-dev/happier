@@ -49,6 +49,13 @@ The conformance helper verifies the declared source contribution against the
 public V1 contract. Installation, generation currentness, provider behavior,
 and host admission remain owned by their existing host boundaries.
 
+Account-only sources use `TriageSourceConnectedAccountInputsV1` from `/v1`
+for their Action input schemas. These canonical specializations preserve the
+role fields and require a configured account in every instance-bearing arm.
+Native-capable sources retain the generic role input and declare both account
+and native-service selection paths. Conformance accepts only the published
+generic schema or its account-only specialization.
+
 ## Optional pull-request status (development preview)
 
 Sources may bind the safe `readPullRequestStatus` role for a declared

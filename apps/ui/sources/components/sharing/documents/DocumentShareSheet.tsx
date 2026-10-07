@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -37,7 +38,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
     const controller = useDocumentShareController({ artifactId: props.artifactId, scope: props.scope });
     const { theme } = useUnistyles();
     const publicLinkEnabled = useFeatureEnabled('sharing.public', { scopeKind: 'spawn', serverId: props.scope.serverId });
-    const canManagePublicLink = publicLinkEnabled && controller.model.owner !== null
+    const canManagePublicLink = publicLinkEnabled && getArtifactKindPolicyV1(props.kind).publicLinkAllowed && controller.model.owner !== null
         && controller.model.editable && !controller.loading && !controller.issue && !controller.model.stale;
     const publicLink = useDocumentPublicLinkController({ artifactId: props.artifactId, scope: props.scope,
         enabled: canManagePublicLink, canManage: canManagePublicLink });

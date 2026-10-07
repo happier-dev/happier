@@ -1,12 +1,12 @@
 import { BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS } from '@happier-dev/protocol/browser/automation/notImplemented';
 import { BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
-import type { BrowserActiveTargetV1, BrowserEventV1, BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationControllerKindV1, BrowserAutomationControllerStateV1, BrowserAutomationErrorCodeV1, BrowserAutomationRequesterKindV1, BrowserAutomationRequesterRefV1, BrowserAutomationTimelineEntryV1, BrowserAutomationTimelineV1 } from '@happier-dev/protocol';
+import type { BrowserActiveTargetV1, BrowserCommandDispatchResultV1, BrowserEventV1, BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationControllerKindV1, BrowserAutomationControllerStateV1, BrowserAutomationErrorCodeV1, BrowserAutomationRequesterKindV1, BrowserAutomationRequesterRefV1, BrowserAutomationTimelineEntryV1, BrowserAutomationTimelineV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineEntryV1Schema, BrowserAutomationTimelineV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
 
 import { executeBrowserAutomationAction } from './actions';
 import type { BrowserAutomationAdapter } from './adapters/types';
-import type { SurfaceInputAdmissionFailure, SurfaceInputControl } from '../../surfaces/inputControl';
+import type { SurfaceInputAdmissionFailure, SurfaceInputControl, SurfaceInputExecutionResult } from '../../surfaces/inputControl';
 import {
   createBrowserAutomationOwnerRegistry,
   type BrowserAutomationOwnerRegistry,
@@ -68,6 +68,8 @@ export type BrowserAutomationDaemonService = Readonly<{
     input: BrowserAutomationViewRef & Readonly<{ authority: 'present_user' }>,
   ): Promise<BrowserAutomationCancelResult>;
   recordHumanInput(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<BrowserAutomationCancelResult>;
+  /** Page-changing control commands retain their host authority through the same admission and drain. */
+  executeControlCommand(view: BrowserAutomationViewRef, authority: 'present_user' | 'account_automation', dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
   handBack(input: BrowserAutomationViewRef & BrowserControllerAuthority): Readonly<{ ok: boolean }>;
   getStatus(view: BrowserAutomationViewRef): BrowserAutomationControllerStateV1;
   getTimeline(view: BrowserAutomationViewRef): BrowserAutomationTimelineV1;
@@ -350,6 +352,28 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   }
   return {
     execute,
+    async executeControlCommand(view, authority, dispatch) {
+      const runtime = runtimeFor(view);
+      if (authority === 'present_user') await recordHumanInput({ ...view, authority });
+      const navigationGeneration = input.adapter.getNavigationGeneration?.(view) ?? 0;
+      if (runtime.navigationGeneration !== navigationGeneration) runtime.inputControl.invalidateObservation();
+      runtime.navigationGeneration = navigationGeneration;
+      try {
+        return await runtime.inputControl.execute({
+          requestedBy: authority === 'present_user' ? 'human' : 'agent',
+          effect: async () => {
+            emitController(view);
+            // The broker awaits the actual CDP acknowledgement. Keep admission until it settles;
+            // abort cannot retract a page command already issued to Chromium.
+            return await dispatch();
+          },
+          // The broker/sidecar refuse missing views and unavailable history before a page effect.
+          // Transport/invalid-result failures cannot establish whether Chromium applied the command.
+          classifyCompletion: result => result.status === 'dispatched' || result.error.code === 'view_not_found'
+            || result.error.code === 'unsupported_command' ? 'known' : 'unknown',
+        });
+      } finally { emitController(view); }
+    },
     cancelActive: recordHumanInput,
     recordHumanInput,
     handBack(view) {

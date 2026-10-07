@@ -20,6 +20,11 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('excludes both layout kinds through the shared kind policy while retaining documents', () => {
+        const rows = [artifact('widget', { kind: 'widget-area-layout.v1' }), artifact('home', { kind: 'home-hub-layout.v1' }),
+            artifact('approval', { kind: 'target_action_approval.v1' }), artifact('doc', { kind: 'text' }), artifact('old', {})];
+        expect(projectArtifactBrowserRows(rows, { query: '', kind: 'all', sort: 'title_asc' }).map(row => row.key)).toEqual(['doc', 'old']);
+    });
     it('previews the saved Board layout without live queries and prefers loaded owner data', () => {
         const previewLayout = { mode: 'by_status', source: { sections: ['needs_you'], hasFilter: true, pickedCount: 2 },
             widgets: [{ title: 'Notes', width: 2, position: { x: 24, y: 48 } }] };
@@ -51,6 +56,14 @@ describe('artifactBrowserModel', () => {
                 input: [], result: { kind: 'text' } }] } });
         expect(readArtifactPreview(artifact('loaded', header, { body })))
             .toEqual({ kind: 'workflow', steps: [{ title: 'Loaded step' }] });
+        const saved = JSON.parse(body);
+        saved.future = true;
+        saved.definition.future = true;
+        saved.definition.blocks[0].future = true;
+        expect(readArtifactPreview(artifact('additive', header, { body: JSON.stringify(saved) })))
+            .toEqual({ kind: 'workflow', steps: [{ title: 'Loaded step' }] });
+        saved.definition.blocks[0].document.text = 42;
+        expect(readArtifactPreview(artifact('malformed', header, { body: JSON.stringify(saved) }))).toEqual({ kind: 'none' });
         expect(readArtifactPreview(artifact('invalid', header, { body: '{}' }))).toEqual({ kind: 'none' });
     });
     it('keeps HTML documents and bundles static in the grid, using only the exact stored kind', () => {

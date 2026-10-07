@@ -325,6 +325,26 @@ describe('useSimulatorRelayIngestion', () => {
         expect(stream?.decodedFrames).toBe(1);
     });
 
+    it('delivers source status metadata without decoding it or replacing the held image', async () => {
+        const fake = createFakeTransport();
+        const statuses: MachineLiveStreamFrameV1[] = [];
+        const hook = await renderHook(() => useSimulatorRelayIngestion({
+            ...baseInput(fake.transport), viewerSocketId: 'viewer', onMetadataFrame: frame => statuses.push(frame),
+        }));
+        await act(async () => { fake.deliver(frameEnvelope(imageFrame(1))); });
+        const held = hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID];
+        const metadata: MachineLiveStreamFrameV1 = { ...imageFrame(2), payloadKind: 'metadata', payloadBase64: 'e30=', payloadSizeBytes: 2 };
+        await act(async () => {
+            fake.deliver(frameEnvelope({ ...metadata, streamId: 'another-stream' }));
+            fake.deliver(frameEnvelope(metadata));
+        });
+        expect(statuses).toEqual([metadata]);
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]).toBe(held);
+        expect(held?.decodedFrames).toBe(1);
+        expect(fake.sent.at(-1)).toMatchObject({ message: { kind: 'control', control: { kind: 'ack', nextSequence: 3 } } });
+        await hook.unmount();
+    });
+
     it('acks delivered viewer-targeted frames so the server relay window replenishes (SIM-P0-2)', async () => {
         const fake = createFakeTransport();
         await renderHook(() => useSimulatorRelayIngestion({

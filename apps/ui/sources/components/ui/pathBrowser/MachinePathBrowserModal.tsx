@@ -89,8 +89,6 @@ const styles = StyleSheet.create((theme) => ({
         minHeight: 0,
     },
     footer: {
-        paddingHorizontal: 16,
-        paddingVertical: 14,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',

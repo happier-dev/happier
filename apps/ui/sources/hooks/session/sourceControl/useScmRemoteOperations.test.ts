@@ -189,8 +189,9 @@ describe('useScmRemoteOperations', () => {
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledWith('session-1', undefined);
     });
 
-    it('releases the remote operation lifecycle when the post-fetch refresh stalls', async () => {
-        refreshScmData.mockImplementationOnce(() => new Promise<void>(() => {}));
+    it('waits for the owning refresh rather than treating an elapsed timer as completion', async () => {
+        let completeRefresh!: () => void;
+        refreshScmData.mockImplementationOnce(() => new Promise<void>((resolve) => { completeRefresh = resolve; }));
         vi.useFakeTimers();
 
         const { useScmRemoteOperations } = await import('./useScmRemoteOperations');
@@ -221,9 +222,12 @@ describe('useScmRemoteOperations', () => {
             await Promise.resolve();
         });
 
+        expect(settled).toBe(false);
+        expect(hook.getCurrent().scmRemoteOperationBusy).toBe(true);
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
+        await act(async () => { completeRefresh(); });
         expect(settled).toBe(true);
         expect(hook.getCurrent().scmRemoteOperationBusy).toBe(false);
-        expect(refreshScmData).toHaveBeenCalledTimes(1);
     });
 
     it('passes the one-time pull policy to the machine and preserves a needs-input outcome in the real log', async () => {

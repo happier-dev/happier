@@ -1,8 +1,11 @@
+import { isDeepStrictEqual } from 'node:util';
 import { realpath, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import { logger } from '@/ui/logger';
+import { createPreflightCatalogCleanupScope, type PreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
 
+import type { ManagedServiceSpec, ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { JsonValue, PluginPath } from '@happier-dev/plugin-sdk';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
@@ -27,9 +30,10 @@ import type {
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import type { PluginAgentCliMetadata, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { ManagedExecutableRef, PluginAgentCliMetadata, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
+import { probeAcpCatalogs } from '@/capabilities/probes/probeAcpCatalogs';
 import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -38,7 +42,7 @@ import type {
     ConnectedServiceStateSharingDescriptor,
 } from '@/agent/catalog/types';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
-import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createStablePluginExecService, type ResolvedPluginExecutable } from '@/plugins/runtime/invocation/services/exec';
 import { projectPluginSystemToolContributions } from '@/plugins/runtime/exec/system/tools/definitions';
 import {
     createAgentCliSystemToolService,
@@ -150,7 +154,6 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
     | 'connectedAccountSwitchContinuity'
     | 'getConnectedServiceStateSharingDescriptor'
     | 'getConnectedServiceRuntimeAuthAdapter'
-    | 'getConnectedAccountNativeAuthRefreshCodec'
     | 'verifyResumeReachable'
 > {
     const requestAuthUses = params.connectedAccountLaunch.requestAuthUses;
@@ -383,21 +386,6 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         ...(runtimeAuthAdapter === null
             ? {}
             : { getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter }),
-        ...(nativeAuthCodec?.runtimeAuthRefresh === undefined ? {} : {
-            getConnectedAccountNativeAuthRefreshCodec: async () => {
-                if (!params.isCurrent()) return null;
-                const refresh = nativeAuthCodec.runtimeAuthRefresh!;
-                return Object.freeze({
-                    ...refresh,
-                    decode: (input: Parameters<typeof refresh.decode>[0]) => {
-                        if (!params.isCurrent()) throw new Error('plugin_generation_retired');
-                        const result = refresh.decode(input);
-                        if (!params.isCurrent()) throw new Error('plugin_generation_retired');
-                        return result;
-                    },
-                });
-            },
-        }),
         ...(continuity?.verifyResumeReachable === undefined
             ? {}
             : {
@@ -710,7 +698,11 @@ function readPreflightProbeInput(params: Readonly<{
     runtimeKindOverride?: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     environment: Readonly<Record<string, string>>;
+    pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
 }>): AgentPreflightSessionControlsProbeInputV1 {
+    const nonblankEnvironment = Object.freeze(Object.fromEntries(
+        Object.entries(params.environment).map(([key, value]) => [key, value.trim().length > 0]),
+    ));
     const source = params.accountSettings;
     const settings: Record<string, JsonValue> = {};
     if (source) {
@@ -721,6 +713,8 @@ function readPreflightProbeInput(params: Readonly<{
                     ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
                     ...(typeof params.runtimeKindOverride === 'string' ? { runtimeKindOverride: params.runtimeKindOverride } : {}),
                     accountSettings: null,
+                    nonblankEnvironment,
+                    ...(params.pluginSettings === undefined ? {} : { pluginSettings: params.pluginSettings }),
                     environment: Object.freeze(Object.fromEntries(
                         Object.keys(params.environment).map((key) => [key, true]),
                     )),
@@ -733,6 +727,8 @@ function readPreflightProbeInput(params: Readonly<{
         ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
         ...(typeof params.runtimeKindOverride === 'string' ? { runtimeKindOverride: params.runtimeKindOverride } : {}),
         accountSettings: source ? Object.freeze(settings) : null,
+        nonblankEnvironment,
+        ...(params.pluginSettings === undefined ? {} : { pluginSettings: params.pluginSettings }),
         environment: Object.freeze(Object.fromEntries(
             Object.keys(params.environment).map((key) => [key, true]),
         )),
@@ -743,10 +739,12 @@ function resolveSettingsSelectedSystemToolId(params: Readonly<{
     commandToolIds: readonly string[];
     resolveCommandToolId(input: Readonly<{
         accountSettings: Readonly<Record<string, JsonValue>> | null;
+        pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
     }>): string | null | undefined;
     accountSettings: Readonly<Record<string, JsonValue>> | null;
+    pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
 }>): string | null {
-    const selected = params.resolveCommandToolId({ accountSettings: params.accountSettings });
+    const selected = params.resolveCommandToolId({ accountSettings: params.accountSettings, pluginSettings: params.pluginSettings });
     return typeof selected === 'string' && params.commandToolIds.includes(selected)
         ? selected
         : null;
@@ -774,20 +772,28 @@ function applyPreflightCommandEnvironment(
 
 async function withPreparedPreflightCommand<T>(
     command: AgentPreflightSessionControlsCommandV1,
-    input: AgentPreflightSessionControlsProbeInputV1 & Readonly<{ bypassCache?: boolean }>,
+    input: AgentPreflightSessionControlsProbeInputV1 & Readonly<{ bypassCache?: boolean; signal?: AbortSignal }>,
     environment: Readonly<Record<string, string>>,
-    run: (args: readonly string[], env: Readonly<Record<string, string>>) => Promise<T>,
+    run: (args: readonly string[], env: Readonly<Record<string, string>>, preferredPath?: string) => Promise<T>,
+    cleanupScope?: PreflightCatalogCleanupScope,
 ): Promise<T> {
     const selectedEnvironment = applyPreflightCommandEnvironment(environment, command);
     const artifacts: string[] = [];
+    const cleanup = async () => { await Promise.all(artifacts.map((path) => rm(path, { recursive: true, force: true }))); };
+    const releaseCleanup = await cleanupScope?.retain(cleanup);
     try {
+        input.signal?.throwIfAborted();
         const prepared = command.prepareCommand?.(input);
         if (prepared === undefined) return await run(command.args, selectedEnvironment);
-        if (!prepared || !Array.isArray(prepared.args) || Object.keys(prepared).some((key) => key !== 'args')) {
+        if (!prepared || !Array.isArray(prepared.args) || Object.keys(prepared).some((key) => key !== 'args' && key !== 'preferredPath')) {
             throw new TypeError('Invalid prepared preflight command');
+        }
+        if (prepared.preferredPath !== undefined && (typeof prepared.preferredPath !== 'string' || !prepared.preferredPath.trim() || prepared.preferredPath.includes('\0'))) {
+            throw new TypeError('Invalid prepared preflight executable path');
         }
         const args: string[] = [];
         for (const argument of prepared.args) {
+            input.signal?.throwIfAborted();
             if (typeof argument === 'string') { args.push(argument); continue; }
             if (!argument || typeof argument !== 'object') throw new TypeError('Invalid prepared preflight argument');
             if (argument.kind === 'temporaryTextFile') {
@@ -819,44 +825,58 @@ async function withPreparedPreflightCommand<T>(
                 args.push(path);
             } else { throw new TypeError('Unknown prepared preflight argument'); }
         }
-        return await run(args, selectedEnvironment);
+        input.signal?.throwIfAborted();
+        return await run(args, selectedEnvironment, prepared.preferredPath);
     } finally {
-        await Promise.all(artifacts.map((path) => rm(path, { recursive: true, force: true })));
+        try { await cleanup(); } finally { releaseCleanup?.(); }
     }
+}
+
+type PreflightCommandRequest = Parameters<AgentPreflightSessionControlsProbeContextV1['withDeclaredJsonRpcClient']>[0];
+
+function isSpawnManagedServiceSpec(spec: ManagedServiceSpec): spec is Extract<ManagedServiceSpec, { mode: { kind: 'spawn' } }> {
+    return spec.mode.kind === 'spawn';
 }
 
 function isExactPreflightCommand(
     command: AgentPreflightSessionControlsCommandV1,
-    requested: Readonly<{ toolId: string; args: readonly string[] }>,
+    requested: PreflightCommandRequest,
 ): boolean {
-    return command.toolId === requested.toolId
+    return (command.toolId !== undefined ? command.toolId === requested.toolId : requested.executable !== undefined && isDeepStrictEqual(command.executable, requested.executable))
         && command.args.length === requested.args.length
         && command.args.every((arg, index) => arg === requested.args[index]);
 }
 
 function resolveDeclaredPreflightCommand(
     contribution: AgentPreflightSessionControlsContributionV1,
-    requested: Readonly<{ toolId: string; args: readonly string[] }>,
+    requested: PreflightCommandRequest,
 ): AgentPreflightSessionControlsCommandV1 | null {
     const candidates = [
+        contribution.catalogs?.command,
         contribution.models?.command,
         contribution.models?.fallback?.command,
         ...(contribution.jsonRpcCommands ?? []),
+        ...(contribution.managedServiceCommands ?? []),
     ];
     const exact = candidates.find((candidate): candidate is AgentPreflightSessionControlsCommandV1 => (
         candidate !== undefined && isExactPreflightCommand(candidate, requested)
     ));
     if (exact) return exact;
 
-    const models = contribution.models;
-    if (!models?.commandToolIds?.includes(requested.toolId)) return null;
-    const selected = [models.command, models.fallback?.command]
-        .find((candidate): candidate is AgentPreflightSessionControlsCommandV1 => (
-            candidate !== undefined
-            && candidate.args.length === requested.args.length
-            && candidate.args.every((arg, index) => arg === requested.args[index])
-        ));
-    return selected ? Object.freeze({ ...selected, toolId: requested.toolId }) : null;
+    for (const declaration of [contribution.models, contribution.catalogs]) {
+        if (requested.toolId === undefined || !declaration?.commandToolIds?.includes(requested.toolId)) continue;
+        const selected = [declaration.command, 'fallback' in declaration ? declaration.fallback?.command : undefined]
+            .find((candidate): candidate is AgentPreflightSessionControlsCommandV1 => (
+                candidate !== undefined
+                && candidate.args.length === requested.args.length
+                && candidate.args.every((arg, index) => arg === requested.args[index])
+            ));
+        if (selected) {
+            const { executable: _executable, ...command } = selected;
+            return Object.freeze({ ...command, toolId: requested.toolId });
+        }
+    }
+    return null;
 }
 
 function readPreflightCommandResult(
@@ -881,7 +901,7 @@ function createPreflightProbeSignal(
 /**
  * Projects a public Agent preflight declaration through the incumbent catalog
  * probe seam. The Agent receives only strict settings JSON, environment
- * presence, bounded command output, and a request/notification-only JSON-RPC client. This
+ * presence facts, bounded command output, and a protocol-only JSON-RPC client. This
  * host remains the sole executor, cancellation/currentness owner, and result
  * projection owner.
  */
@@ -892,27 +912,35 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     runtimeSpec?: AgentCliRuntimeDescriptor | null;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     retirementSignal: AbortSignal;
+    resolvePluginSettings?(options?: Readonly<{ signal?: AbortSignal }>): Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
+    nativeEnvironment?: Readonly<Record<string, string>>;
+    managedExecutableRefs?: readonly Extract<ManagedExecutableRef, { kind: 'managedDependency' }>[];
+    resolveReadyManagedExecutable?(ref: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>): Promise<ResolvedPluginExecutable>;
+    bindManagedServices?(input: Readonly<{ exec: ExecService; signal: AbortSignal }>): ManagedServices;
     isCurrent(): boolean;
 }>): Pick<ResolvedCatalogEntry,
     | 'needsAccountSettingsForProbes'
+    | 'resolveProbePluginSettings'
     | 'resolveModelsProbeVariant'
     | 'resolveSessionControlsProbeVariant'
     | 'getPreflightSessionControlsProbeAdapter'
 > {
     const contribution = params.preflightSessionControls;
     const declaredSystemToolIds = new Set(params.systemTools.map((tool) => tool.id));
-    for (const toolId of contribution.models?.commandToolIds ?? []) {
+    for (const toolId of [...(contribution.models?.commandToolIds ?? []), ...(contribution.catalogs?.commandToolIds ?? []), ...(contribution.managedServiceCommands ?? []).map((command) => command.toolId)]) {
         if (!declaredSystemToolIds.has(toolId)) {
             throw new TypeError(`Agent '${params.agentId}' preflight command tool '${toolId}' is not declared`);
         }
     }
     const requiresAccountSettings = contribution.resolveProbeVariant !== undefined
         || contribution.models?.resolveCommandToolId !== undefined
+        || contribution.catalogs?.resolveCommandToolId !== undefined
         || (contribution.jsonRpcCommands?.length ?? 0) > 0;
     const resolveBaseVariant = (input: Readonly<{
         runtimeDescriptorV1?: RuntimeDescriptorV1;
         runtimeKindOverride?: string;
         accountSettings?: Readonly<Record<string, unknown>> | null;
+        pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
         env?: NodeJS.ProcessEnv;
     }>): string | null => {
         if (!params.isCurrent() || !contribution.resolveProbeVariant) return null;
@@ -920,6 +948,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             runtimeDescriptorV1: input.runtimeDescriptorV1,
             runtimeKindOverride: input.runtimeKindOverride,
             accountSettings: input.accountSettings,
+            pluginSettings: input.pluginSettings,
             environment: readPreflightProbeEnvironment(input.env),
         }));
         return typeof output === 'string' && output.length > 0 ? output : null;
@@ -928,6 +957,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         runtimeDescriptorV1?: RuntimeDescriptorV1;
         runtimeKindOverride?: string;
         accountSettings?: Readonly<Record<string, unknown>> | null;
+        pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
         env?: NodeJS.ProcessEnv;
     }>): string | null => {
         const models = contribution.models;
@@ -937,18 +967,21 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             runtimeDescriptorV1: input.runtimeDescriptorV1,
             runtimeKindOverride: input.runtimeKindOverride,
             accountSettings: input.accountSettings,
+            pluginSettings: input.pluginSettings,
             environment: readPreflightProbeEnvironment(input.env),
         });
         return resolveSettingsSelectedSystemToolId({
             commandToolIds: models.commandToolIds ?? [],
             resolveCommandToolId: models.resolveCommandToolId,
             accountSettings: probeInput.accountSettings,
+            pluginSettings: probeInput.pluginSettings,
         });
     };
     const resolveModelsVariant = (input: Readonly<{
         runtimeDescriptorV1?: RuntimeDescriptorV1;
         runtimeKindOverride?: string;
         accountSettings?: Readonly<Record<string, unknown>> | null;
+        pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
         env?: NodeJS.ProcessEnv;
     }>): string | null => {
         const base = resolveBaseVariant(input);
@@ -956,12 +989,21 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         const toolId = resolveModelsCommandToolId(input) ?? 'unavailable';
         return [base, `tool:${toolId}`].filter((part): part is string => Boolean(part)).join('|');
     };
-    const createContext = (
+    const createContext = async (
         probeParams: PreflightSessionControlsProbeParams,
-    ): AgentPreflightSessionControlsProbeContextV1 => {
+    ): Promise<AgentPreflightSessionControlsProbeContextV1> => {
         const signal = createPreflightProbeSignal(probeParams.signal, params.retirementSignal);
-        const environment = readPreflightProbeEnvironment(probeParams.env);
+        const assertCurrent = (): void => {
+            if (!params.isCurrent() || signal.aborted) {
+                throw new Error('Agent preflight belongs to a retired or cancelled generation');
+            }
+        };
+        assertCurrent();
+        const environment = Object.freeze({ ...readPreflightProbeEnvironment(probeParams.env), ...params.nativeEnvironment });
+        const pluginSettings = probeParams.pluginSettings ?? await params.resolvePluginSettings?.({ signal: probeParams.signal }) ?? undefined;
+        assertCurrent();
         const input = readPreflightProbeInput({
+            pluginSettings,
             runtimeDescriptorV1: probeParams.runtimeDescriptorV1,
             runtimeKindOverride: probeParams.runtimeKindOverride,
             accountSettings: probeParams.accountSettings,
@@ -974,14 +1016,12 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             agentId: params.agentId,
             runtimeSpec: params.runtimeSpec,
             agentCliSystemTool: params.agentCliSystemTool,
+            managedExecutableRefs: params.managedExecutableRefs,
+            resolveReadyManagedExecutable: params.resolveReadyManagedExecutable,
             signal,
             isOccurrenceCurrent: params.isCurrent,
+            additionalAllowedEnvironmentKeys: contribution.managedServiceCommands?.flatMap((command) => command.environmentKeys ?? []),
         });
-        const assertCurrent = (): void => {
-            if (!params.isCurrent() || signal.aborted) {
-                throw new Error('Agent preflight belongs to a retired or cancelled generation');
-            }
-        };
         const unavailable = (): AgentPreflightSessionControlsCommandResultV1 => Object.freeze({
             ok: false,
             stdout: '',
@@ -994,28 +1034,32 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 if (!command) return unavailable();
                 try {
                     assertCurrent();
-                    const resolved = await exec.systemTools.resolve({
-                        toolId: command.toolId,
-                        purpose: `Probe ${params.agentId} Session controls`,
-                        cwd: probeParams.cwd,
-                        signal,
-                    });
-                    return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache }, environment, async (args, env) => {
+                    if (command.toolId === undefined) return unavailable();
+                    return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
                         assertCurrent();
-                        const result = await exec.run({
+                        const resolved = await exec.systemTools.resolve({ toolId: command.toolId!, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal, ...(preferredPath ? { preferredPath } : {}) });
+                        assertCurrent();
+                        const execution = exec.run({
                             executable: resolved.executable,
                             args,
+                            ...(command.stdin === undefined ? {} : { stdin: new TextEncoder().encode(command.stdin) }),
                             cwd: { root: 'workspace', relativePath: '' },
                             env,
                             maxStdoutBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
                             maxStderrBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
                             timeoutMs: probeParams.timeoutMs,
                         }, { signal });
-                        assertCurrent();
-                        const observed = readPreflightCommandResult(result);
-                        if (!observed.ok) logger.info('[agent-preflight] Command failed', { agentId: params.agentId, toolId: command.toolId });
-                        return observed;
-                    });
+                        // Exec.run already awaits its supervised process disposal.
+                        const completion = execution.then(() => undefined, () => undefined);
+                        const releaseCleanup = await probeParams.cleanupScope?.retain(() => completion);
+                        try {
+                            const result = await execution;
+                            assertCurrent();
+                            const observed = readPreflightCommandResult(result);
+                            if (!observed.ok) logger.info('[agent-preflight] Command failed', { agentId: params.agentId, toolId: command.toolId });
+                            return observed;
+                        } finally { releaseCleanup?.(); }
+                    }, probeParams.cleanupScope);
                 } catch {
                     logger.info('[agent-preflight] Command unavailable', { agentId: params.agentId, toolId: command.toolId });
                     return unavailable();
@@ -1028,18 +1072,19 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     throw new Error('Agent preflight JSON-RPC command is not declared');
                 }
                 assertCurrent();
-                const resolved = await exec.systemTools.resolve({
-                    toolId: command.toolId,
-                    purpose: `Probe ${params.agentId} Session controls`,
-                    cwd: probeParams.cwd,
-                    signal,
-                });
-                return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache }, environment, async (args, env) => {
+                return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
                     assertCurrent();
+                    const executable = command.toolId !== undefined
+                        ? (await exec.systemTools.resolve({ toolId: command.toolId, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal, ...(preferredPath ? { preferredPath } : {}) })).executable
+                        : command.executable;
+                    assertCurrent();
+                    if (command.toolId === undefined && (preferredPath !== undefined || !params.managedExecutableRefs?.some((ref) => isDeepStrictEqual(ref, executable)))) {
+                        throw new Error('Agent preflight managed executable is not declared');
+                    }
                     const handle = await exec.clients.spawn({
                         kind: 'jsonRpc',
                         launch: {
-                            executable: resolved.executable,
+                            executable,
                             args,
                             cwd: { root: 'workspace', relativePath: '' },
                             env,
@@ -1049,8 +1094,11 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         maxFrameBytes: PREFLIGHT_JSON_RPC_MAX_FRAME_BYTES,
                         requestTimeoutMs: probeParams.timeoutMs,
                     }, { signal });
+                    const releaseCleanup = await probeParams.cleanupScope?.retain(() => handle.dispose());
                     try {
                         const client = Object.freeze({
+                            onNotification: handle.client.onNotification.bind(handle.client),
+                            onRequest: handle.client.onRequest.bind(handle.client),
                             request: async (method: string, requestParams?: JsonValue): Promise<JsonValue> => (
                                 await handle.client.request(method, requestParams, { signal })
                             ),
@@ -1066,26 +1114,84 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         assertCurrent();
                         return result;
                     } finally {
-                        await handle.dispose();
+                        try { await handle.dispose(); } finally { releaseCleanup?.(); }
                     }
-                });
+                }, probeParams.cleanupScope);
             };
+        const resolveDeclaredSystemTool: AgentPreflightSessionControlsProbeContextV1['resolveDeclaredSystemTool'] = async (request) => {
+            if (!declaredSystemToolIds.has(request.toolId)) throw new Error('Agent preflight system tool is not declared');
+            assertCurrent();
+            const resolved = await exec.systemTools.resolve({ toolId: request.toolId, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal });
+            assertCurrent();
+            return Object.freeze({ executablePath: resolved.executablePath });
+        };
+        const withDeclaredManagedService: AgentPreflightSessionControlsProbeContextV1['withDeclaredManagedService'] = async (spec, inspect) => {
+            if (!isSpawnManagedServiceSpec(spec) || spec.mode.launch.executable.kind !== 'systemTool') {
+                throw new Error('Agent preflight managed service must use a declared system tool');
+            }
+            const mode = spec.mode;
+            const toolId = spec.mode.launch.executable.id;
+            if (typeof toolId !== 'string') throw new Error('Agent preflight managed service command is not declared');
+            const requested = { toolId, args: mode.launch.args ?? [] };
+            const command = contribution.managedServiceCommands?.find((candidate) => isExactPreflightCommand(candidate, requested));
+            if (!command || !declaredSystemToolIds.has(requested.toolId)) throw new Error('Agent preflight managed service command is not declared');
+            if (mode.launch.cwd?.root !== 'workspace' || mode.launch.cwd.relativePath !== '') throw new Error('Agent preflight managed service must use its scoped working directory');
+            if (!params.bindManagedServices) throw new Error('Agent preflight managed service owner is unavailable');
+            return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env) => {
+                assertCurrent();
+                const services = params.bindManagedServices!({ exec, signal });
+                const service = await services.supervise({
+                    ...spec,
+                    startupTimeoutMs: probeParams.timeoutMs,
+                    mode: { ...mode, launch: { ...mode.launch, executable: { kind: 'systemTool', id: toolId }, args, env: { ...env, ...mode.launch.env } } },
+                }, { signal });
+                const releaseCleanup = await probeParams.cleanupScope?.retain(() => service.dispose());
+                try {
+                    await service.waitUntilHealthy({ signal, timeoutMs: probeParams.timeoutMs });
+                    assertCurrent();
+                    const client = Object.freeze({ request: async (request: Parameters<typeof service.request>[0]) => {
+                        assertCurrent();
+                        if ((request.method !== undefined && request.method !== 'GET' && request.method !== 'HEAD') || request.body !== undefined) {
+                            throw new Error('Agent preflight managed service supports read-only requests');
+                        }
+                        const result = await service.request({ ...request, signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+                        assertCurrent();
+                        return result;
+                    } });
+                    const result = await inspect(client, signal);
+                    assertCurrent();
+                    return result;
+                } finally {
+                    try { await service.dispose(); } finally { releaseCleanup?.(); }
+                }
+            }, probeParams.cleanupScope);
+        };
+        const probeDeclaredAcpCatalogs: AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpCatalogs'] =
+            async (request) => await withDeclaredJsonRpcClient(request, async (client, scopedSignal) => (
+                await probeAcpCatalogs({ client, signal: scopedSignal, cwd: probeParams.cwd,
+                    ...(request.authenticationMethodId ? { authenticationMethodId: request.authenticationMethodId } : {}),
+                })
+            ));
         return Object.freeze({
             ...input,
             cwd: probeParams.cwd,
             bypassCache: probeParams.bypassCache,
             signal,
             runDeclaredSystemToolCommand,
+            probeDeclaredAcpCatalogs,
             withDeclaredJsonRpcClient,
+            resolveDeclaredSystemTool,
+            withDeclaredManagedService,
         });
     };
     const invoke = <T>(
         callback: ((context: AgentPreflightSessionControlsProbeContextV1) => Promise<T> | T) | undefined,
         probeParams: PreflightSessionControlsProbeParams,
     ): Promise<T | null> => callback
-        ? Promise.resolve(callback(createContext(probeParams))).catch(() => null)
+        ? Promise.resolve(createContext(probeParams)).then(callback).catch(() => null)
         : Promise.resolve(null);
     return Object.freeze({
+        ...(params.resolvePluginSettings ? { resolveProbePluginSettings: params.resolvePluginSettings } : {}),
         ...(requiresAccountSettings ? { needsAccountSettingsForProbes: true } : {}),
         ...(contribution.resolveProbeVariant
             ? {
@@ -1107,6 +1213,67 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             ...((contribution.jsonRpcCommands?.length ?? 0) > 0
                 ? { failureCacheStrategy: 'retry' as const }
                 : {}),
+            ...(contribution.catalogs || contribution.probeCatalogs ? {
+                probeCatalogsRaw: async (probeParams: PreflightSessionControlsProbeParams) => {
+                    const cleanupScope = probeParams.cleanupScope ?? createPreflightCatalogCleanupScope();
+                    const deadline = new AbortController();
+                    const timer = probeParams.deadlineSignal ? undefined
+                        : setTimeout(() => deadline.abort(new Error('Agent catalog preflight timed out')), probeParams.timeoutMs);
+                    const signal = createPreflightProbeSignal(
+                        probeParams.deadlineSignal ?? (probeParams.signal ? AbortSignal.any([probeParams.signal, deadline.signal]) : deadline.signal),
+                        params.retirementSignal,
+                    );
+                    let rejectAbort: (() => void) | undefined;
+                    const aborted = new Promise<never>((_resolve, reject) => {
+                        rejectAbort = () => reject(signal.reason ?? new Error('Agent catalog preflight aborted'));
+                        signal.addEventListener('abort', rejectAbort, { once: true });
+                    });
+                    try {
+                        signal.throwIfAborted();
+                        return await Promise.race([
+                            (async () => {
+                                const context = await createContext({ ...probeParams, signal, cleanupScope });
+                                if (contribution.probeCatalogs) {
+                                    const catalogs = await contribution.probeCatalogs(context);
+                                    if (!params.isCurrent() || signal.aborted) throw new Error('Agent preflight belongs to a retired or cancelled generation');
+                                    return catalogs;
+                                }
+                                const catalogs = contribution.catalogs!;
+                                const toolId = catalogs.resolveCommandToolId
+                                    ? resolveSettingsSelectedSystemToolId({
+                                        commandToolIds: catalogs.commandToolIds ?? [],
+                                        resolveCommandToolId: catalogs.resolveCommandToolId,
+                                        accountSettings: context.accountSettings,
+                                        pluginSettings: context.pluginSettings,
+                                    })
+                                    : catalogs.command.toolId;
+                                if (catalogs.resolveCommandToolId && !toolId) throw new Error('Agent catalog preflight tool is unavailable');
+                                if ('kind' in catalogs && catalogs.kind === 'acp') {
+                                    return await context.withDeclaredJsonRpcClient(toolId ? { toolId, args: catalogs.command.args } : { executable: catalogs.command.executable!, args: catalogs.command.args }, async (client, scopedSignal) => (
+                                        await probeAcpCatalogs({
+                                            client, signal: scopedSignal, cwd: probeParams.cwd,
+                                            ...(catalogs.authenticationMethodId ? { authenticationMethodId: catalogs.authenticationMethodId } : {}),
+                                            ...(catalogs.selectAuthentication ? { selectAuthentication: (initializeResult) => catalogs.selectAuthentication!({ initializeResult, probe: context }) } : {}),
+                                        })
+                                    ));
+                                }
+                                if (!toolId) throw new Error('Agent catalog preflight tool is unavailable');
+                                const result = await context.runDeclaredSystemToolCommand({ toolId, args: catalogs.command.args });
+                                if (!result.ok) throw new Error('Agent catalog preflight command failed');
+                                if (!('parseOutput' in catalogs)) throw new Error('Agent catalog preflight parser is unavailable');
+                                const parsed = await catalogs.parseOutput(result);
+                                if (!params.isCurrent() || signal.aborted) throw new Error('Agent preflight belongs to a retired or cancelled generation');
+                                return parsed;
+                            })(),
+                            aborted,
+                        ]);
+                    } finally {
+                        if (rejectAbort) signal.removeEventListener('abort', rejectAbort);
+                        clearTimeout(timer);
+                        await cleanupScope.dispose();
+                    }
+                },
+            } : {}),
             ...(contribution.models
                 ? {
                     probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) => {
@@ -1119,12 +1286,13 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                             runtimeDescriptorV1: probeParams.runtimeDescriptorV1,
                             runtimeKindOverride: probeParams.runtimeKindOverride,
                             accountSettings: probeParams.accountSettings,
+                            pluginSettings: probeParams.pluginSettings,
                             env: probeParams.env,
                         });
                         if (!toolId) return null;
                         const primaryParams = withRemainingTimeout();
                         if (!primaryParams) return null;
-                        const primary = await createContext(primaryParams).runDeclaredSystemToolCommand({
+                        const primary = await (await createContext(primaryParams)).runDeclaredSystemToolCommand({
                             toolId,
                             args: contribution.models!.command.args,
                         });
@@ -1138,7 +1306,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         if (!fallback) return null;
                         const fallbackParams = withRemainingTimeout();
                         if (!fallbackParams) return null;
-                        const fallbackResult = await createContext(fallbackParams).runDeclaredSystemToolCommand({
+                        const fallbackResult = await (await createContext(fallbackParams)).runDeclaredSystemToolCommand({
                             toolId,
                             args: fallback.command.args,
                         });
@@ -1374,21 +1542,21 @@ export function createCliSessionCommandHandler(
 function createProviderScopedStableExecService(params: Readonly<{
     cwd: string;
     environment: Readonly<Record<string, string>>;
+    additionalAllowedEnvironmentKeys?: readonly string[];
     systemTools: readonly PluginSystemToolContributionV1[];
     agentId?: CatalogAgentId;
     runtimeSpec?: AgentCliRuntimeDescriptor | null;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
     signal?: AbortSignal;
     isOccurrenceCurrent?: () => boolean;
+    managedExecutableRefs?: readonly Extract<ManagedExecutableRef, { kind: 'managedDependency' }>[];
+    resolveReadyManagedExecutable?(ref: Extract<ManagedExecutableRef, { kind: 'managedDependency' }>): Promise<ResolvedPluginExecutable>;
 }>): ExecService {
     const workspaceRoot = resolve(params.cwd);
     const systemTools = createProviderScopedSystemToolResolver(params);
     return createStablePluginExecService({
-        allowedExecutables: params.systemTools.map((tool) => Object.freeze({
-            kind: 'systemTool' as const,
-            id: tool.id,
-        })),
-        allowedEnvKeys: Object.freeze([...new Set([...Object.keys(params.environment), 'CI'])]),
+        allowedExecutables: [...params.systemTools.map((tool) => Object.freeze({ kind: 'systemTool' as const, id: tool.id })), ...(params.managedExecutableRefs ?? [])],
+        allowedEnvKeys: Object.freeze([...new Set([...Object.keys(params.environment), ...(params.additionalAllowedEnvironmentKeys ?? []), 'CI'])]),
         environment: Object.freeze({}),
         allowedCwdScopes: Object.freeze([{
             root: 'workspace' as const,
@@ -1397,8 +1565,26 @@ function createProviderScopedStableExecService(params: Readonly<{
         }]),
         signal: params.signal ?? new AbortController().signal,
         isOccurrenceCurrent: params.isOccurrenceCurrent ?? (() => true),
-        async resolveExecutable() {
-            throw new Error('Provider preflight executables must resolve through a declared system tool');
+        async resolveExecutable(executable) {
+            if (executable.kind === 'managedDependency') {
+                if (!params.resolveReadyManagedExecutable || !params.managedExecutableRefs?.some((ref) => isDeepStrictEqual(ref, executable))) {
+                    throw new Error('Agent preflight managed dependency is not declared');
+                }
+                return await params.resolveReadyManagedExecutable(executable);
+            }
+            if (executable.kind !== 'systemTool' || typeof executable.id !== 'string' || !params.systemTools.some((tool) => tool.id === executable.id)) {
+                throw new Error('Provider preflight executables must resolve through a declared system tool');
+            }
+            const resolved = await systemTools.resolve({
+                toolId: executable.id, purpose: 'Run declared Agent preflight service',
+                cwd: params.cwd, signal: params.signal,
+            });
+            return {
+                command: resolved.launch.executablePath,
+                args: resolved.launch.args,
+                env: resolved.launch.env,
+                ...(resolved.allowedArguments ? { allowedArguments: resolved.allowedArguments } : {}),
+            };
         },
         async resolvePath(path: PluginPath) {
             if (path.root !== 'workspace') {

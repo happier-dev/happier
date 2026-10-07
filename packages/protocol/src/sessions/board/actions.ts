@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import {
   ActionApprovalRequestCreatedResultSchema,
@@ -677,7 +678,9 @@ function parseBoardFailure(
   input: unknown,
   result: Readonly<Record<string, unknown>>,
   options: Readonly<{ expectedSessionId?: string; expectedServerId?: string }>,
+  storedRead = false,
 ): SessionBoardActionPortResultParseV1 {
+  const readSchema = <T extends z.ZodType>(schema: T): T => storedRead ? createStoredReadSchema(schema) : schema;
   if (result.ok !== false || typeof result.errorCode !== 'string' || result.error !== result.errorCode) {
     return { success: false };
   }
@@ -700,8 +703,9 @@ function parseBoardFailure(
       return { success: false };
     }
     const details = result.details as Readonly<Record<string, unknown>>;
-    if (Object.hasOwn(details, 'error')) return { success: false };
-    const parsed = SessionBoardErrorV1Schema.safeParse({ error: errorCode, ...details });
+    const parsedDetails = readSchema(BoardRevisionConflictDetailsV1Schema).safeParse(details);
+    if (!parsedDetails.success) return { success: false };
+    const parsed = SessionBoardErrorV1Schema.safeParse({ error: errorCode, ...parsedDetails.data });
     if (!parsed.success) return { success: false };
     if (parsed.data.error !== 'session_board_revision_conflict') return { success: false };
     return {
@@ -711,7 +715,7 @@ function parseBoardFailure(
         ok: false,
         errorCode,
         error: errorCode,
-        ...(Object.keys(details).length > 0 ? { details: {
+        ...(Object.keys(parsedDetails.data).length > 0 ? { details: {
           ...(parsed.data.currentItemRevision !== undefined ? { currentItemRevision: parsed.data.currentItemRevision } : {}),
           ...(parsed.data.currentLayoutRevision !== undefined ? { currentLayoutRevision: parsed.data.currentLayoutRevision } : {}),
         } } : {}),
@@ -723,7 +727,7 @@ function parseBoardFailure(
       operation: z.literal(actionId),
       featureDecision: FeatureDecisionSchema.optional(),
     }).strict();
-    const parsed = detailsSchema.safeParse(result.details);
+    const parsed = readSchema(detailsSchema).safeParse(result.details);
     if (
       !parsed.success
       || (parsed.data.featureDecision !== undefined && (
@@ -736,12 +740,12 @@ function parseBoardFailure(
     return { success: true, kind: 'failure', data: { ok: false, errorCode, error: errorCode, details: parsed.data } };
   }
   if (errorCode === 'update_required') {
-    const parsed = OperationUpdateRequiredV1Schema.safeParse(result.details);
+    const parsed = readSchema(OperationUpdateRequiredV1Schema).safeParse(result.details);
     if (!parsed.success || parsed.data.operation !== actionId) return { success: false };
     return { success: true, kind: 'failure', data: { ok: false, errorCode, error: errorCode, details: parsed.data } };
   }
   if (errorCode === 'outcome_unknown' && actionId !== 'session.board.get') {
-    const parsed = SessionBoardOutcomeUnknownDetailsV1Schema.safeParse(result.details);
+    const parsed = readSchema(SessionBoardOutcomeUnknownDetailsV1Schema).safeParse(result.details);
     if (
       !parsed.success
       || parsed.data.recovery.actionId !== actionId
@@ -759,6 +763,18 @@ function parseBoardFailure(
     return { success: true, kind: 'failure', data: { ok: false, errorCode, error: errorCode } };
   }
   return { success: false };
+}
+
+/** Persistence-only failure projection, retaining the same request/Home bindings. */
+export function parseStoredSessionBoardActionFailureV1(
+  actionId: SessionBoardActionIdV1,
+  input: unknown,
+  failure: unknown,
+  options: Readonly<{ expectedSessionId?: string; expectedServerId?: string }> = {},
+): SessionBoardActionPortResultParseV1 {
+  const parsedInput = createStoredReadSchema(SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[actionId]).safeParse(input);
+  if (!parsedInput.success || !failure || typeof failure !== 'object' || Array.isArray(failure)) return { success: false };
+  return parseBoardFailure(actionId, parsedInput.data, failure as Readonly<Record<string, unknown>>, options, true);
 }
 
 /** Validate a Board family port response against both its schema and the request it acknowledges. */

@@ -25,6 +25,14 @@ describe('voiceAutoTargetMachineSettings', () => {
     expect(readVoiceAutoTargetMachineId({ settings: state.settings })).toBeNull();
   });
 
+  it('does not use remembered automatic targets when the canonical preference is malformed', () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'local-machine');
+    expect(readVoiceAutoTargetMachineId({
+      settingsScope: scope,
+      settings: { voice: { executionMachine: { mode: 'fixed', machineId: 42 } } },
+    })).toBeNull();
+  });
+
   it('clears local target memory on recovery without changing an explicit fixed preference', () => {
     useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'local-machine');
     expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('local-machine');

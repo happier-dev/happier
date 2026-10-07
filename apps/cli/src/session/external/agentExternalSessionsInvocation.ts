@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
 import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1Schema, ExternalSessionsContentCoverageSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
@@ -57,11 +58,7 @@ const MAX_QUALIFIED_CURSOR_CODE_UNITS = 4_096;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOTS = 16;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOT_CODE_UNITS = 4_096;
 export const EXTERNAL_SESSIONS_INVOCATION_POLICY = Object.freeze({
-    deadlineMs: 15_000,
-    resolveSource: Object.freeze({ maxSerializedBytes: 262_144 }),
     listCandidates: Object.freeze({ maxItems: 50, maxSerializedBytes: 1_048_576 }),
-    resolveLinkIdentity: Object.freeze({ maxSerializedBytes: 262_144 }),
-    resolveLinkedIdentity: Object.freeze({ maxSerializedBytes: 262_144 }),
     pageTranscript: Object.freeze({ maxItems: 200, maxSerializedBytes: 524_288 }),
     readAfterTranscript: Object.freeze({ maxItems: 200, maxSerializedBytes: 524_288 }),
     sourceKindMaxCodeUnits: MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
@@ -873,11 +870,11 @@ function serializedResultBytes(value: unknown, maxSerializedBytes: number): numb
 function parseAndBoundResult<T>(
     value: unknown,
     parseValue: (candidate: unknown) => T | null,
-    maxSerializedBytes: number,
+    maxSerializedBytes: number | undefined,
 ): AgentExternalSessionsResult<T> {
     const failure = parseFailure(value);
     if (failure) {
-        return serializedResultBytes(failure, maxSerializedBytes) <= maxSerializedBytes
+        return maxSerializedBytes === undefined || serializedResultBytes(failure, maxSerializedBytes) <= maxSerializedBytes
             ? failure
             : agentError();
     }
@@ -886,18 +883,18 @@ function parseAndBoundResult<T>(
     const parsedValue = parseValue(record.value);
     if (parsedValue === null) return agentError();
     const result = Object.freeze({ ok: true as const, value: parsedValue });
-    return serializedResultBytes(result, maxSerializedBytes) <= maxSerializedBytes ? result : agentError();
+    return maxSerializedBytes === undefined || serializedResultBytes(result, maxSerializedBytes) <= maxSerializedBytes ? result : agentError();
 }
 
-function readMaxSerializedBytes(value: unknown, ceiling: number): number | null {
+function readMaxSerializedBytes(value: unknown): number | null {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-        ? Math.min(value, ceiling)
+        ? value
         : null;
 }
 
-function readMaxItems(value: unknown, ceiling: number): number | null {
+function readMaxItems(value: unknown): number | null {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-        ? Math.min(value, ceiling)
+        ? value
         : null;
 }
 
@@ -908,17 +905,26 @@ export type BoundedExternalSessionsOperationResult<T> =
     | Readonly<{ status: 'cancelled' }>
     | Readonly<{ status: 'timeout' }>;
 
+/** Node timers represent at most signed-32 milliseconds, not the caller's lifetime. */
+export function armExternalSessionsDeadline(
+    deadlineAtMs: number,
+    onDeadline: () => void,
+    options: Readonly<{ unref?: true }> = {},
+): () => void {
+    return armDeadlineTimer(deadlineAtMs, onDeadline, options);
+}
+
 /**
  * Runs one leaf operation inside the canonical External Sessions admission
- * boundary. Callers provide an absolute ceiling; this owner applies the
- * ordinary per-call ceiling, cancellation, retirement, and timer cleanup.
+ * boundary. The caller owns any deadline; this owner composes cancellation,
+ * retirement, and timer cleanup without adding a subordinate cutoff.
  */
 export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly<{
     signal: AbortSignal;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     deadlineAtMs?: number;
-    operation(signal: AbortSignal, deadlineAtMs: number): Promise<T> | T;
+    operation(signal: AbortSignal, deadlineAtMs: number | undefined): Promise<T> | T;
 }>): Promise<BoundedExternalSessionsOperationResult<T>> {
     if (!params.isCurrent() || params.retirementSignal.aborted) {
         return Object.freeze({ status: 'retired' });
@@ -926,11 +932,8 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
     if (params.signal.aborted) return Object.freeze({ status: 'cancelled' });
 
     const nowMs = Date.now();
-    const deadlineAtMs = Math.min(
-        nowMs + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs,
-        params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
-    );
-    if (deadlineAtMs <= nowMs) return Object.freeze({ status: 'timeout' });
+    const deadlineAtMs = params.deadlineAtMs;
+    if (deadlineAtMs !== undefined && deadlineAtMs <= nowMs) return Object.freeze({ status: 'timeout' });
 
     const operationController = new AbortController();
     let terminal: 'retired' | 'cancelled' | 'timeout' | null = null;
@@ -953,7 +956,7 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
     } else if (params.signal.aborted) {
         finish('cancelled');
     }
-    const timer = setTimeout(() => finish('timeout'), Math.max(0, deadlineAtMs - nowMs));
+    const cancelDeadline = deadlineAtMs === undefined ? undefined : armExternalSessionsDeadline(deadlineAtMs, () => finish('timeout'));
     const settled = Promise.resolve()
         .then(() => terminal === null
             ? params.operation(operationController.signal, deadlineAtMs)
@@ -984,7 +987,7 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
         if (!operationController.signal.aborted) {
             operationController.abort(new Error('Agent External Sessions invocation settled'));
         }
-        clearTimeout(timer);
+        cancelDeadline?.();
         params.retirementSignal.removeEventListener('abort', retire);
         params.signal.removeEventListener('abort', cancel);
     }
@@ -995,7 +998,7 @@ async function invokeBounded<T>(params: Readonly<{
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     deadlineAtMs?: number;
-    operation(signal: AbortSignal, deadlineAtMs: number): Promise<unknown> | unknown;
+    operation(signal: AbortSignal, deadlineAtMs: number | undefined): Promise<unknown> | unknown;
     parse(value: unknown): AgentExternalSessionsResult<T>;
 }>): Promise<AgentExternalSessionsResult<T>> {
     const outcome = await invokeBoundedExternalSessionsOperation({
@@ -1060,7 +1063,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
     const bindInvocationContext = async (
         source: AgentExternalSessionSource,
         signal: AbortSignal,
-        maxSerializedBytes: number,
+        maxSerializedBytes: number | undefined,
     ) => {
         const managedEndpointRead = await bindManagedEndpointRead(source, signal);
         assertOperationAdmissible(signal);
@@ -1091,10 +1094,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             const terminal = terminalBeforeAdmission(request.signal);
             if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes,
-            );
+            const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
             if (!parsedSource || maxSerializedBytes === null) return invalidRequest();
             return await invokeBounded({
                 signal: request.signal,
@@ -1122,11 +1122,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             const terminal = terminalBeforeAdmission(request.signal);
             if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
-            const maxItems = readMaxItems(request.maxItems, EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxItems);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxSerializedBytes,
-            );
+            const maxItems = readMaxItems(request.maxItems);
+            const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
             const searchTerm = request.searchTerm === undefined
                 ? undefined
                 : parseBoundedString(request.searchTerm, MAX_SEARCH_CODE_UNITS, true);
@@ -1199,10 +1196,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
             const linkData = request.linkData === undefined ? undefined : parseLinkData(request.linkData);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkIdentity.maxSerializedBytes,
-            );
+            const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
             if (!parsedSource || !remoteSessionId || linkData === null || maxSerializedBytes === null) return invalidRequest();
             return await invokeBounded({
                 signal: request.signal,
@@ -1234,10 +1228,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
             const linkData = parseLinkData(request.linkData);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveLinkedIdentity.maxSerializedBytes,
-            );
+            const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
             if (!parsedSource || !remoteSessionId || !linkData || maxSerializedBytes === null) return invalidRequest();
             return await invokeBounded({
                 signal: request.signal,
@@ -1270,11 +1261,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             if (request.projection === 'terminal' && request.direction !== 'newer') return invalidRequest();
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
-            const maxItems = readMaxItems(request.maxItems, EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxItems);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxSerializedBytes,
-            );
+            const maxItems = readMaxItems(request.maxItems);
+            const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
             const scope = parsedSource && remoteSessionId
                 ? Object.freeze({ method: 'pageTranscript' as const, source: parsedSource, remoteSessionId })
                 : null;
@@ -1329,11 +1317,8 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             if (request.projection !== undefined && request.projection !== 'terminal') return invalidRequest();
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
-            const maxItems = readMaxItems(request.maxItems, EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems);
-            const maxSerializedBytes = readMaxSerializedBytes(
-                request.maxSerializedBytes,
-                EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
-            );
+            const maxItems = readMaxItems(request.maxItems);
+            const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
             const scope = parsedSource && remoteSessionId
                 ? Object.freeze({ method: 'readAfterTranscript' as const, source: parsedSource, remoteSessionId })
                 : null;

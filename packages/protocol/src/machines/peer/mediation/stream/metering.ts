@@ -26,6 +26,7 @@ export type MachineLiveStreamMeterResult =
 type FrameSample = Readonly<{
   atMs: number;
   bytes: number;
+  mediaFrame: boolean;
 }>;
 
 function sumRecent(samples: readonly FrameSample[], nowMs: number): Readonly<{ bytes: number; frames: number }> {
@@ -35,7 +36,7 @@ function sumRecent(samples: readonly FrameSample[], nowMs: number): Readonly<{ b
   for (const sample of samples) {
     if (sample.atMs < windowStartMs) continue;
     bytes += sample.bytes;
-    frames += 1;
+    if (sample.mediaFrame) frames += 1;
   }
   return { bytes, frames };
 }
@@ -50,10 +51,10 @@ export function createMachineLiveStreamMeter(input: Readonly<{
   let bytesSent = 0;
   let framesSent = 0;
 
-  const snapshot = (nowMs: number, nextBytes = 0, nextFrame = 0): MachineLiveStreamMeterSnapshot => {
+  const snapshot = (nowMs: number, nextBytes = 0, nextFrame = 0, nextMediaFrame = nextFrame): MachineLiveStreamMeterSnapshot => {
     const recent = sumRecent(samples, nowMs);
     const bytes = recent.bytes + nextBytes;
-    const frames = recent.frames + nextFrame;
+    const frames = recent.frames + nextMediaFrame;
     return {
       bytesSent: bytesSent + nextBytes,
       framesSent: framesSent + nextFrame,
@@ -72,7 +73,10 @@ export function createMachineLiveStreamMeter(input: Readonly<{
         return { ok: false, reasonCode: 'max_duration_ms_exceeded', metering: snapshot(nowMs) };
       }
 
-      const nextSnapshot = snapshot(nowMs, frameBytes, 1);
+      // Metadata uses the same byte budgets and transport credit as media, but status changes
+      // are not image cadence. framesSent remains the count of all admitted transport frames.
+      const mediaFrame = frame.payloadKind !== 'metadata';
+      const nextSnapshot = snapshot(nowMs, frameBytes, 1, mediaFrame ? 1 : 0);
       if (typeof input.caps.maxFramesPerSecond === 'number' && nextSnapshot.framesPerSecond > input.caps.maxFramesPerSecond) {
         return { ok: false, reasonCode: 'max_frames_per_second_exceeded', metering: snapshot(nowMs) };
       }
@@ -83,7 +87,7 @@ export function createMachineLiveStreamMeter(input: Readonly<{
         return { ok: false, reasonCode: 'max_total_bytes_exceeded', metering: snapshot(nowMs) };
       }
 
-      samples.push({ atMs: nowMs, bytes: frameBytes });
+      samples.push({ atMs: nowMs, bytes: frameBytes, mediaFrame });
       while (samples.length > 0 && samples[0]!.atMs < nowMs - 999) {
         samples.shift();
       }

@@ -426,7 +426,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           backendTargetKey: 'agent:claude',
         }),
       }),
-      {},
+      { authority: 'present_user' },
     );
   });
 
@@ -469,7 +469,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           }),
         }),
       }),
-      {},
+      { authority: 'present_user' },
     );
     const claudeCall = (deps.executionRunStart as ReturnType<typeof vi.fn>).mock.calls
       .find((call) => (call[1] as { backendTarget?: { agentId?: string } }).backendTarget?.agentId === 'claude');
@@ -480,7 +480,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         v: 2,
       },
     });
-    expect(claudeCall?.[2]).toEqual({});
+    expect(claudeCall?.[2]).toEqual({ authority: 'present_user' });
   });
 
   it('treats successful execution-run service envelopes as successful fanout results', async () => {
@@ -551,7 +551,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           backendTargetKey: 'backend:codex',
         }),
       }),
-      {},
+      { authority: 'present_user' },
     );
     expect(deps.executionRunStart).toHaveBeenNthCalledWith(
       2,
@@ -564,7 +564,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           backendTargetKey: 'backend:review-bot:configured:review-bot',
         }),
       }),
-      {},
+      { authority: 'present_user' },
     );
   });
 
@@ -678,7 +678,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         message: 'Continue and summarize what changed.',
         delivery: 'steer_if_supported',
       },
-      undefined,
+      { authority: 'present_user' },
     );
   });
 
@@ -875,7 +875,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         status: 'running',
         limit: 5,
       }),
-      undefined,
+      { authority: 'present_user' },
     );
     expect((deps.executionRunList as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).not.toHaveProperty('sessionId');
   });
@@ -909,7 +909,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
           backendTargetKey: 'agent:codex',
         }),
       }),
-      {},
+      { authority: 'present_user' },
     );
   });
 
@@ -1734,11 +1734,11 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     // Query by id so the assertion measures surface filtering rather than where a
     // growing catalog happens to paginate.
-    const surfaced = await executor.execute('action.spec.search', { query: 'session.mode.set', limit: 50 }, { surface: 'mcp' });
+    const surfaced = await executor.execute('action.spec.search', { query: 'session.mode.set', limit: 50 }, { surface: 'cli' });
     expect(surfaced.ok).toBe(true);
     expect((surfaced as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(true);
 
-    const unsurfaced = await executor.execute('action.spec.search', { query: 'ui.voice_global.reset', limit: 50 }, { surface: 'mcp' });
+    const unsurfaced = await executor.execute('action.spec.search', { query: 'ui.voice_global.reset', limit: 50 }, { surface: 'cli' });
     expect(unsurfaced.ok).toBe(true);
     expect((unsurfaced as any).result.actionSpecs.some((spec: any) => spec.id === 'ui.voice_global.reset')).toBe(false);
   });
@@ -2109,6 +2109,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
+  it('preserves unlimited dynamic choices through the public result parser and honors an explicit limit', async () => {
+    const items = Array.from({ length: 257 }, (_, index) => ({ id: `agent${index}`, title: `Agent ${index}` }));
+    const executor = createActionExecutor({ ...createDeps(), agentsBackendsList: async () => ({ items }) });
+    const request = { optionsSourceId: 'execution.backends.enabled' };
+    const unlimited = await executor.execute('action.options.resolve', request);
+    if (!unlimited.ok) throw new Error(unlimited.error);
+    expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(unlimited.result).options)
+      .toEqual(items.map(item => ({ value: `agent:${item.id}`, label: item.title })));
+    const limited = await executor.execute('action.options.resolve', { ...request, query: 'Agent', limit: 200 });
+    if (!limited.ok) throw new Error(limited.error);
+    expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(limited.result).options).toHaveLength(200);
+  });
+
   it('filters resolved static action options by query and limit', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -2292,7 +2305,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('action.spec.get', { id: 'ui.voice_global.reset' }, { surface: 'mcp' });
+    const res = await executor.execute('action.spec.get', { id: 'ui.voice_global.reset' }, { surface: 'cli' });
 
     expect(res).toEqual({
       ok: false,
@@ -2300,7 +2313,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       error: 'action_disabled',
       details: expect.objectContaining({
         actionId: 'ui.voice_global.reset',
-        surface: 'mcp',
+        surface: 'cli',
         reason: 'unsupported_surface',
       }),
     });
@@ -2320,7 +2333,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('ui.voice_global.reset', {}, { surface: 'mcp' });
+    const res = await executor.execute('ui.voice_global.reset', {}, { surface: 'cli' });
 
     expect(res).toEqual({
       ok: false,
@@ -2328,7 +2341,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       error: 'action_disabled',
       details: expect.objectContaining({
         actionId: 'ui.voice_global.reset',
-        surface: 'mcp',
+        surface: 'cli',
         reason: 'unsupported_surface',
       }),
     });

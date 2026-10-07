@@ -223,28 +223,6 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
 
 export function createCodexConnectedAccountNativeAuthCodec(): AgentConnectedAccountNativeAuthCodecV1 {
   return {
-    runtimeAuthRefresh: {
-      purpose: 'primary',
-      materialization: { kind: 'files', fileIds: ['auth.json'] },
-      decode({ files, credentialRevision, planType }) {
-        const bytes = files['auth.json'];
-        if (!bytes) throw new TypeError('Codex runtime authentication materialization is unavailable');
-        let auth: Record<string, unknown> | null;
-        try {
-          auth = readRecord(JSON.parse(new TextDecoder().decode(bytes)));
-        } catch {
-          throw new TypeError('Codex runtime authentication materialization is invalid');
-        }
-        const tokens = readRecord(auth?.tokens);
-        const accessToken = readString(auth?.access_token);
-        const chatgptAccountId = readString(auth?.account_id);
-        if (!accessToken || !chatgptAccountId || auth?.auth_mode !== 'chatgptAuthTokens'
-          || readString(auth.refresh_token) || readString(tokens?.refresh_token)) {
-          throw new TypeError('Codex runtime authentication requires access-only native material');
-        }
-        return { accessToken, chatgptAccountId, chatgptPlanType: planType ?? null, credentialRevision };
-      },
-    },
     materialize({ credential }) {
       const record = parseCredentialRecord(credential);
       if (!record || record.kind !== 'oauth' || record.serviceId !== 'openai-codex') {

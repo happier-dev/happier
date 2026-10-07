@@ -63,7 +63,8 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 vi.mock('@/sync/domains/workflows/workflowRunListActions', () => ({
     listWorkflowRuns: listRuns,
 }));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>(),
     captureActiveServerAccountScopeLifetime: () => {
         const captured = accountScope.state.current;
         if (captured === null) return null;
@@ -127,11 +128,11 @@ vi.mock('@/sync/domains/state/storage', async () => {
 let latest: SessionManagedWorkflowRunsState | null = null;
 let probeRenders = 0;
 
-async function renderHook(sessionId: string | null = 'session-1') {
+async function renderHook(sessionId: string | null = 'session-1', serverId: string | null = 'server-a') {
     const { useSessionManagedWorkflowRuns } = await import('./useSessionManagedWorkflowRuns');
     function Probe(): null {
         probeRenders += 1;
-        latest = useSessionManagedWorkflowRuns({ sessionId });
+        latest = useSessionManagedWorkflowRuns({ sessionId, serverId });
         return null;
     }
     const screen = await renderScreen(React.createElement(Probe));

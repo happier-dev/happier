@@ -1,4 +1,4 @@
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -206,6 +206,7 @@ function reviewerCollection(input: Readonly<{
 function transportFor(input: Readonly<{
   /** Answers, in order, the preflight read and then every following read. */
   reads: readonly Readonly<Record<string, unknown>>[];
+  nativeMaterialization?: ConnectedAccountMaterialization;
   repository?: Readonly<Record<string, unknown>>;
   write?: StubHttpResponse | Error;
   readStatus?: number;
@@ -239,6 +240,7 @@ function transportFor(input: Readonly<{
     return input.write ?? fallback;
   };
   const stub = createStubGithubTransport({
+    ...(input.nativeMaterialization === undefined ? {} : { nativeMaterialization: input.nativeMaterialization }),
     executeAction: async (actionId, actionInput) => {
       expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
       claimedPlans.push(actionInput);
@@ -451,6 +453,39 @@ describe('GitHub pull-request review publication', () => {
   function commentRecord(body: string, id = 992) {
     return { id, body };
   }
+
+  it('publishes a review through the native service identity without an invented connected account', async () => {
+    const nativeToken = 'review-native-token-kept-local';
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: `Bearer ${nativeToken}` } },
+      reviewPublicationReads: [[reviewRecord(`Review\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`)]],
+      reviewCommentPublicationReads: [[commentRecord(`Comment\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`)]],
+    });
+    const accountPlan = publicationPlan();
+    const nativeTarget = {
+      providerId: accountPlan.target.providerId,
+      nativeService: CONFIGURED_ACCOUNT.service,
+      entryRef: accountPlan.target.entryRef,
+      subtarget: accountPlan.target.subtarget,
+    };
+    const input = publicationInput({
+      instance: {
+        ...configuredInstance(),
+        binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native', service: CONFIGURED_ACCOUNT.service },
+      },
+      publicationPlan: publicationPlan({ target: nativeTarget }),
+    });
+
+    const result = await publishGithubPullRequestReviewAction(input, stub.context);
+
+    expect(result.kind).toBe('settled');
+    expect(writes(stub)[0]?.headers.Authorization).toBe(`Bearer ${nativeToken}`);
+    expect(stub.claimedPlans[0]).toMatchObject({ target: nativeTarget });
+    expect(JSON.stringify(stub.claimedPlans)).not.toContain(nativeToken);
+    expect(JSON.stringify(result)).not.toContain(nativeToken);
+    expect(stub.materializations).toEqual([]);
+  });
 
   it('submits summary and verdict atomically at the observed head, then returns the authoritative detail', async () => {
     const stub = transportFor({

@@ -27,7 +27,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-    TriageConfiguredSourceInstanceV1Schema,
+    TriageConfiguredSourceConnectedAccountInstanceV1Schema,
     TriageSourceEntryLocalRefV1Schema,
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -105,7 +105,7 @@ export const PosthogProjectedIssueEventV1Schema = defineProtocolObject({
 
 export const PosthogSampledEventsInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    instance: TriageConfiguredSourceInstanceV1Schema,
+    instance: TriageConfiguredSourceConnectedAccountInstanceV1Schema,
     localRef: TriageSourceEntryLocalRefV1Schema,
     limit: defineProtocolNumber({
         integer: true,

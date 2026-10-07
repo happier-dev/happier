@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type TextInput as NativeTextInput, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
@@ -11,7 +11,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
+import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/InlineTextField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { NavigationHeaderActions, type NavigationHeaderAction } from '@/components/ui/layout/NavigationHeaderActions';
@@ -33,19 +34,7 @@ export type PageHeaderMetaFact = Readonly<{
  * An entity page whose identity is edited in place (a workflow's name and description): the title and
  * description render as the page's own text, editable with the caret as the only focus cue.
  */
-export type PageHeaderTextEditor = Readonly<{
-    value: string;
-    /** Shown in the tertiary role while the value is empty ("Untitled workflow"). */
-    placeholder: string;
-    accessibilityLabel: string;
-    onChangeText: (next: string) => void;
-    /** The value is final (Enter on a title, blur). */
-    onCommit?: () => void;
-    editable?: boolean;
-    /** Entity owners may focus the existing field after an explicit draft operation. */
-    controlRef?: React.RefObject<NativeTextInput | null>;
-    testID?: string;
-}>;
+export type PageHeaderTextEditor = InlineTextEditor;
 
 /** The page's one primary action (Create, Save): in the page on wide layouts, in the native header on phones. */
 export type PageHeaderPrimaryAction = NavigationHeaderAction;
@@ -146,10 +135,10 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     })), [props.meta, theme.colors.text.secondary]);
 
     const titleNode = props.titleEditor
-        ? <PageHeaderInlineTextField editor={props.titleEditor} role="title" />
+        ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput} />
         : props.title;
     const descriptionNode = props.descriptionEditor
-        ? <PageHeaderInlineTextField editor={props.descriptionEditor} role="description" />
+        ? <InlineTextField editor={props.descriptionEditor} multiline style={stylesheet.descriptionInput} />
         : props.description;
 
     return (
@@ -178,62 +167,6 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     );
 });
 
-/**
- * The in-place title or description: the page's own text step, editable. Its focus cue is the caret
- * (no ring, no box), per the text-field rule; Escape restores what editing began with, and on the
- * title Enter commits instead of inserting a newline, so a name never gains a line break.
- */
-function PageHeaderInlineTextField(props: Readonly<{ editor: PageHeaderTextEditor; role: 'title' | 'description' }>) {
-    const { theme } = useUnistyles();
-    const { editor } = props;
-    const inputRef = React.useRef<NativeTextInput | null>(null);
-    const setInputRef = React.useCallback((input: NativeTextInput | null) => {
-        inputRef.current = input;
-        if (editor.controlRef) editor.controlRef.current = input;
-    }, [editor.controlRef]);
-    const valueAtFocusRef = React.useRef(editor.value);
-    const latestRef = React.useRef(editor);
-    latestRef.current = editor;
-    const isTitle = props.role === 'title';
-    const handleKeyPress = React.useCallback((event: Readonly<{
-        nativeEvent: Readonly<{ key?: string; shiftKey?: boolean }>;
-        preventDefault?: () => void;
-    }>) => {
-        const key = event.nativeEvent.key;
-        if (key === 'Escape') {
-            event.preventDefault?.();
-            latestRef.current.onChangeText(valueAtFocusRef.current);
-            inputRef.current?.blur?.();
-            return;
-        }
-        if (isTitle && key === 'Enter' && event.nativeEvent.shiftKey !== true) {
-            event.preventDefault?.();
-            latestRef.current.onCommit?.();
-            inputRef.current?.blur?.();
-        }
-    }, [isTitle]);
-    return (
-        <TextInput
-            ref={setInputRef}
-            testID={editor.testID}
-            accessibilityLabel={editor.accessibilityLabel}
-            value={editor.value}
-            placeholder={editor.placeholder}
-            placeholderTextColor={theme.colors.text.tertiary}
-            editable={editor.editable !== false}
-            // Long names wrap rather than truncate; Enter on the title commits (see the key handler).
-            multiline
-            submitBehavior={isTitle ? 'blurAndSubmit' : 'newline'}
-            onSubmitEditing={isTitle ? () => latestRef.current.onCommit?.() : undefined}
-            onKeyPress={handleKeyPress as never}
-            onFocus={() => { valueAtFocusRef.current = latestRef.current.value; }}
-            onBlur={() => latestRef.current.onCommit?.()}
-            onChangeText={(next) => latestRef.current.onChangeText(isTitle ? next.replace(/[\r\n]+/g, ' ') : next)}
-            scrollEnabled={false}
-            style={isTitle ? stylesheet.titleInput : stylesheet.descriptionInput}
-        />
-    );
-}
 
 function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
     const { action } = props;

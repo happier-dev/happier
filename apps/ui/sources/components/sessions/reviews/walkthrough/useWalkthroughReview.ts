@@ -99,11 +99,10 @@ export function useWalkthroughReview(params: Readonly<{
         const load = async () => {
             if (loading) { refreshPending = true; return; }
             loading = true;
-            setReads((previous) => ({ key: readKey, reads: runIds.map((runId) => ({
-                runId, run: null, payload: null,
-                ...(previous.key === readKey ? previous.reads.find((read) => read.runId === runId) : undefined),
-                state: 'loading',
-            })) }));
+            setReads((previous) => previous.key === readKey ? previous : ({
+                key: readKey,
+                reads: runIds.map((runId) => ({ runId, run: null, payload: null, state: 'loading' })),
+            }));
             const next = await Promise.all(runIds.map(async (runId): Promise<ReviewRunRead> => {
                 const got = await sessionExecutionRunGet(sessionId, { runId, includeStructured: true }, { serverId: scope.serverId, scope })
                     .catch(() => null);
@@ -132,7 +131,7 @@ export function useWalkthroughReview(params: Readonly<{
         read.runId, (read.payload?.findings ?? []).flatMap((finding) => finding.comment ? [finding.comment.id] : []),
     ])), [runReads]);
     const comments = useReviewRunsComments({ scope, sessionId, runIds, commentIdsByRunId, enabled: runIds.length > 0 });
-    const { messages } = useSessionMessages(sessionId);
+    const { messages } = useSessionMessages(sessionId, { enabled: runIds.length > 0 });
 
     return React.useMemo(() => {
         if (!comparison || runIds.length === 0) return null;

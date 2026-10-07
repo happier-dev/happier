@@ -126,4 +126,16 @@ describe('approval Artifact header correspondence', () => {
     expect(approvalArtifactBodyMatchesHeaderV1(header, null)).toBeNull();
     expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(target))).toBeNull();
   });
+
+  it.each([
+    ['built_in', builtIn, buildApprovalRequestArtifactHeaderV1(builtIn), ApprovalRequestV2Schema],
+    ['target_action', target, buildTargetActionApprovalArtifactHeaderV1(target), TargetActionApprovalRequestV1Schema],
+    ['execution_run_host_action', host, buildExecutionRunHostActionApprovalArtifactHeaderV1(host), ExecutionRunHostActionApprovalRequestV1Schema],
+  ] as const)('reads known stored %s fields while strict admission rejects unknown fields', (family, request, header, schema) => {
+    const stored = { ...request, future: true, createdBy: { ...request.createdBy, future: true } };
+    expect(schema.safeParse(stored).success).toBe(false);
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, future: true }, JSON.stringify(stored)))
+      .toEqual({ family, request });
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify({ ...stored, status: 'unknown' }))).toBeNull();
+  });
 });

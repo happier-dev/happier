@@ -97,8 +97,8 @@ export const SESSION_COMPOSER_SUGGESTION_KINDS = [
  * The NEW-session composer's eligibility list (R-9): exactly the kinds whose candidate source
  * exists before a session does. Files are workspace state — the user has already picked the
  * machine and the folder — referenceable sessions are the target server's, not this session's,
- * and composer references come from the target daemon's current projection. Plugins and skills
- * stay out: those catalogs are session metadata published only after spawn.
+ * and composer references come from the target daemon's current projection. Native skills and
+ * commands use the launch-scoped preflight catalog; vendor plugins remain session metadata.
  *
  * It lives beside the session list for the same reason that one does: kept private to the
  * screen model, the host's decision and the wiring test's could drift, and dropping a kind
@@ -108,6 +108,7 @@ export const NEW_SESSION_COMPOSER_SUGGESTION_KINDS = [
     'file',
     'session',
     'composerReference',
+    'skill',
     'slashCommand',
 ] as const satisfies readonly ComposerSuggestionKindId[];
 
@@ -135,7 +136,7 @@ export type ComposerAccountMentionSource = Readonly<{
 }>;
 
 /** Which session catalog snapshot a kind reads, if any. */
-export type ComposerSuggestionCatalogKey = 'vendorPlugins' | 'skills';
+export type ComposerSuggestionCatalogKey = 'vendorPlugins' | 'skills' | 'commands';
 
 /**
  * Placement-owned daemon facts for the public reference search. The picker gets
@@ -676,6 +677,7 @@ async function resolveSlashCommandSuggestions(
     return await getCommandSuggestions(context.sessionId, context.scopedQuery, {
         limit: context.limit,
         contributedActions: context.contributedActions,
+        ...(context.catalogs.commands ? { nativeCommands: context.catalogs.commands } : {}),
     });
 }
 
@@ -854,6 +856,7 @@ const COMPOSER_SUGGESTION_KIND_DEFINITIONS = {
     },
     slashCommand: {
         id: 'slashCommand',
+        catalog: 'commands',
         limit: 8,
         sectionTitleKey: 'agentInput.suggestionGroups.commands',
         resolve: resolveSlashCommandSuggestions,

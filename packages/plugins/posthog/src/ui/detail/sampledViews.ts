@@ -34,6 +34,11 @@ export type PosthogStackFrameRowV1 = Readonly<{
 export type PosthogStackTraceV1 = Readonly<{
     exceptionLabel: string | null;
     frames: readonly PosthogStackFrameRowV1[];
+    /**
+     * The frame PostHog itself calls the top in-app frame: the last application frame in
+     * the exception list, or `null` when the occurrence carried none.
+     */
+    topFrame: PosthogStackFrameRowV1 | null;
     appFrameCount: number;
     otherFrameCount: number;
 }>;
@@ -93,6 +98,7 @@ export function posthogStackTrace(
         return {
             exceptionLabel: null,
             frames: [],
+            topFrame: null,
             appFrameCount: 0,
             otherFrameCount: 0,
         };
@@ -116,6 +122,7 @@ export function posthogStackTrace(
     return {
         exceptionLabel: exceptionLabel(event),
         frames,
+        topFrame: [...frames].reverse().find((frame) => frame.inApp) ?? null,
         appFrameCount,
         otherFrameCount: frames.length - appFrameCount,
     };

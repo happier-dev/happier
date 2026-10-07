@@ -540,7 +540,6 @@ describe('createCliActionExecutorFromCredentials', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     const transcriptFollowLeaseRegistry = createSessionTranscriptFollowLeaseRegistry({
-      maxLeases: 16,
       idleTtlMs: 1_000,
     });
     const executorCreationsBefore = createCliActionExecutor.mock.calls.length;

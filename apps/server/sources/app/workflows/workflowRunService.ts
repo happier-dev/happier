@@ -15,7 +15,7 @@ import {
     type WorkflowRunSummariesResultV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
-import { isWorkflowDraftPublicationLifecycleV1, type WorkflowRunRecipientKeyEnvelopeV1, type WorkflowRunWaitConditionV1 } from "@happier-dev/protocol/workflows";
+import { WorkflowDirectRunAdmissionIdV1Schema, WorkflowInvocationRecordIdSchema, isWorkflowDraftPublicationLifecycleV1, type WorkflowRunRecipientKeyEnvelopeV1, type WorkflowRunWaitConditionV1 } from "@happier-dev/protocol/workflows";
 import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx } from "./workflowRunAccess";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 
@@ -58,10 +58,6 @@ function automationPreviousStateForWorkflowTerminalEffects(state: WorkflowRunSta
     const parsed = AutomationRunStateV3Schema.safeParse(automationState);
     if (!parsed.success) throw new WorkflowRunServiceError("currentness_conflict");
     return parsed.data;
-}
-
-function isWorkflowUuid(value: string): boolean {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 export class WorkflowRunServiceError extends Error {
@@ -196,8 +192,8 @@ function projectRun(row: WorkflowRunRow): WorkflowRunSummaryV1 {
         availability: availability(row),
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
-        // A row read through a narrower select carries no finish fact; omission says so.
-        ...(row.finishedAt === undefined ? {} : { finishedAt: row.finishedAt?.toISOString() ?? null }),
+        // Every Run row select carries the terminal-transition instant (`workflowRunProjectionSelect`).
+        finishedAt: row.finishedAt?.toISOString() ?? null,
     };
 }
 
@@ -330,7 +326,7 @@ async function resolveEditableWorkflowRunAccessTx(tx: Tx, input: Readonly<{ acto
 }
 
 export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput): Promise<{ kind: "created" | "existing"; run: WorkflowRunSummaryV1 }> {
-        if (!isWorkflowUuid(params.runId)) {
+        if (!WorkflowDirectRunAdmissionIdV1Schema.safeParse(params.runId).success) {
             throw new WorkflowRunServiceError("invalid_input");
         }
         const existing = await tx.automationRun.findUnique({ where: { id: params.runId }, select: workflowRunSelect });
@@ -530,7 +526,7 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
 }>) {
     return await inTx(async (tx) => {
-        if (!isWorkflowUuid(params.rootInvocation.id) || !Number.isSafeInteger(params.parentAttempt) || params.parentAttempt < 0) throw new WorkflowRunServiceError("invalid_input");
+        if (!WorkflowInvocationRecordIdSchema.safeParse(params.rootInvocation.id).success || !Number.isSafeInteger(params.parentAttempt) || params.parentAttempt < 0) throw new WorkflowRunServiceError("invalid_input");
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: params.runId } });
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.rootInvocation.contentEnvelope, mode, binding: { v: 1, purpose: "invocation_progress", accountId: params.accountId, runId: params.runId, recordId: params.rootInvocation.id, sequence: "0", parentRecordId: null, memberOrdinal: "0", attempt: "0" } });
@@ -579,12 +575,12 @@ export async function admitWorkflowInvocations(params: Readonly<{
         if (new Set(invocationIds).size !== invocationIds.length) throw new WorkflowRunServiceError("invalid_input");
         if (new Set(params.invocations.map((item) => JSON.stringify([item.parentRecordId, item.memberOrdinal.toString()]))).size !== params.invocations.length) throw new WorkflowRunServiceError("invalid_input");
         for (const invocation of params.invocations) {
-            if (!isWorkflowUuid(invocation.id)
+            if (!WorkflowInvocationRecordIdSchema.safeParse(invocation.id).success
                 || invocation.sequence < 0n || invocation.sequence > MAX_DATABASE_BIGINT
                 || invocation.memberOrdinal < 0n || invocation.memberOrdinal > MAX_DATABASE_BIGINT) {
                 throw new WorkflowRunServiceError("invalid_input");
             }
-            if (invocation.replaces && (!isWorkflowUuid(invocation.replaces.id)
+            if (invocation.replaces && (!WorkflowInvocationRecordIdSchema.safeParse(invocation.replaces.id).success
                 || invocation.replaces.id === invocation.id || invocation.replaces.attempt < 0n
                 || invocation.replaces.attempt >= MAX_DATABASE_BIGINT || invocation.replaces.contentRevision < 0n
                 || invocation.replaces.contentRevision >= MAX_DATABASE_BIGINT)) throw new WorkflowRunServiceError("invalid_input");
@@ -2096,7 +2092,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         const deliveryBefore = await readOriginDeliverySignalTx(tx, params.accountId, params.runId);
         const ids = new Set<string>();
         for (const recovery of params.recoveries) {
-            if (!isWorkflowUuid(recovery.newInvocationId)
+            if (!WorkflowInvocationRecordIdSchema.safeParse(recovery.newInvocationId).success
                 || ids.has(recovery.invocationId)
                 || ids.has(recovery.newInvocationId)) throw new WorkflowRunServiceError("invalid_input");
             ids.add(recovery.invocationId);

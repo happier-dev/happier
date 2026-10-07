@@ -106,11 +106,13 @@ export function TriagePullRequestReviewChooser(
     return () => { operation.current += 1; };
   }, [loadEngines]);
 
+  const focusDestination = phase.kind === 'choosing'
+    ? phase.options.length > 0 ? 'engines' : 'recovery'
+    : phase.kind === 'failed' ? 'recovery' : null;
   React.useEffect(() => {
-    if (phase.kind === 'choosing' && phase.options.length > 0) engineFocus.focus();
-    if (phase.kind === 'choosing' && phase.options.length === 0) recoveryFocus.focus();
-    if (phase.kind === 'failed') recoveryFocus.focus();
-  }, [engineFocus, phase, recoveryFocus]);
+    if (focusDestination === 'engines') engineFocus.focus();
+    if (focusDestination === 'recovery') recoveryFocus.focus();
+  }, [engineFocus, focusDestination, recoveryFocus]);
 
   const openSession = React.useCallback(async (): Promise<void> => {
     const currentOperation = operation.current + 1;

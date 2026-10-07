@@ -86,7 +86,9 @@ export function resolveProcessOwnershipLeasesDir(params: {
     rootDir?: string;
     leaseKind: string;
 }): string {
-    return resolve(params.rootDir ?? repoRootDir(), '.project', 'tmp', `${params.leaseKind}-processes`);
+    const configuredDir = process.env.HAPPIER_E2E_PROCESS_LEASES_DIR?.trim();
+    const leasesRoot = configuredDir ? resolve(configuredDir) : resolve(params.rootDir ?? repoRootDir(), '.project', 'tmp');
+    return resolve(leasesRoot, `${params.leaseKind}-processes`);
 }
 
 function resolveProcessOwnershipLeasePath(params: {

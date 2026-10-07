@@ -91,7 +91,7 @@ export const GitTimelineSection = React.memo(function GitTimelineSection(props: 
     const reducedMotion = useReducedMotionPreference();
     const originGlide = React.useMemo(() => (reducedMotion ? undefined : LinearTransition
         .duration(240)
-        .easing(reanimatedMotionTokens.easing.standard.factory())
+        .easing(reanimatedMotionTokens.layoutEasing.standard)
         .reduceMotion(ReduceMotion.Never)), [reducedMotion]);
     const originChip = origin ? (
         <Animated.View key="origin" layout={originGlide}>

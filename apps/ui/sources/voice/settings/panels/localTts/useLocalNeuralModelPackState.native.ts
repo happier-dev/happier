@@ -14,7 +14,6 @@ type ModelStatus = 'idle' | 'downloading' | 'ready' | 'error';
 export function useLocalNeuralModelPackState(params: {
   packId: string;
   manifestUrl: string | null;
-  networkTimeoutMs: number;
   role?: 'stt_sherpa' | 'tts_sherpa';
   enabled?: boolean;
 }) {
@@ -93,7 +92,7 @@ export function useLocalNeuralModelPackState(params: {
     try {
       const result = await invokeVoiceDeviceModelPackOperation({
         operation, packId: params.packId, role, manifestUrl: params.manifestUrl,
-        networkTimeoutMs: params.networkTimeoutMs, signal: controller.signal, isCurrent: current,
+        signal: controller.signal, isCurrent: current,
         onDownloadStarted: () => {
           if (!current()) return;
           setModelStatus('downloading');
@@ -159,7 +158,7 @@ export function useLocalNeuralModelPackState(params: {
         if (isCurrent()) setDownloadProgress(null);
       }
     }
-  }, [installed, isCurrent, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState, role]);
+  }, [installed, isCurrent, params.manifestUrl, params.packId, refreshInstallState, role]);
 
   const prepareModel = React.useCallback(() => runOperation('prepare'), [runOperation]);
   const cancelPrepare = React.useCallback(() => { prepareAbortRef.current?.abort(); }, []);
