@@ -36,6 +36,7 @@ import { DelegateOutputV1Schema } from '../../messages/structured/delegateOutput
 import { ParticipantMessageV1Schema } from '../../messages/structured/participantMessageV1.js';
 import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from '../../tools/v2/names.js';
 import type { ExecutionRunAgentIntentInputV1 } from '../../index.js';
+import { buildScmComparisonIdentity } from '../../scm/comparison.js';
 
 describe('executionRuns protocol', () => {
   it('publishes the Agent intent and deferred-input schemas through the package root', () => {
@@ -227,11 +228,12 @@ describe('executionRuns protocol', () => {
   });
 
   it('admits a deferred retained SCM narrator with saved comparison configuration and no initial turn', () => {
+    const comparisonId = buildScmComparisonIdentity({ source: { kind: 'workingTree' }, repositoryRootPath: '/repo' });
     const narrator = {
       intent: 'scm_diff_summary', kind: 'scm_diff_summary.v1',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       initialInput: { kind: 'deferred_session_pending' },
-      intentInput: { cwd: '/repo', source: { kind: 'workingTree' }, comparisonId: 'saved-comparison', outputs: ['walkthrough'] },
+      intentInput: { cwd: '/repo', source: { kind: 'workingTree' }, comparisonId, outputs: ['walkthrough'] },
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
     } as const;
     expect(ExecutionRunStartRequestSchema.safeParse(narrator).success).toBe(true);
@@ -1003,6 +1005,10 @@ describe('executionRuns protocol', () => {
   });
 
   it('accepts checkpoint selectors and a captured comparison id without client-authored evidence', () => {
+    const comparisonId = buildScmComparisonIdentity({
+      source: { kind: 'turnCheckpoint' }, repositoryRootPath: '/repo',
+      turnId: 'turn-1', checkpointReceiptId: 'checkpoint.diff_computed',
+    });
     expect(ExecutionRunStartRequestSchema.safeParse({
         kind: 'scm_diff_summary.v1',
         intent: 'scm_diff_summary',
@@ -1016,7 +1022,7 @@ describe('executionRuns protocol', () => {
           source: { kind: 'turnCheckpoint' },
           turnId: 'turn-1',
           checkpointReceiptId: 'checkpoint.diff_computed',
-          comparisonId: 'captured-comparison',
+          comparisonId,
         },
       }).success).toBe(true);
   });

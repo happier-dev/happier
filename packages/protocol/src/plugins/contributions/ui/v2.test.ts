@@ -235,6 +235,9 @@ describe('declarative node vocabulary v2', () => {
     }).success).toBe(true);
     expect(PluginDeclarativeNodeV2Schema.safeParse({
       kind: 'action', hostAction: 'session.permission_mode.set', label: 'Change mode',
+    }).success).toBe(true);
+    expect(PluginDeclarativeNodeV2Schema.safeParse({
+      kind: 'action', hostAction: 'session.handoff.prepare_target', label: 'Prepare target',
     }).success).toBe(false);
   });
 

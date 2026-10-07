@@ -91,33 +91,24 @@ describe('MarketplaceIndexV1', () => {
     }).success).toBe(false);
   });
 
-  it('applies the lifecycle projector UTF-8 byte ceiling to every outward diagnostic schema', () => {
+  it('preserves complete diagnostic text beyond the retired lifecycle projector byte ceiling', () => {
     const source = { id: 'user', title: 'User', kind: 'user' as const, sourceUrl: 'https://catalog.example/index.json' };
     const freshness = { state: 'fresh' as const, fetchedAtMs: 1 };
-    const exact = { code: 'source_failed', message: 'é'.repeat(1_024) };
-    const oversized = { code: 'source_failed', message: 'é'.repeat(1_025) };
+    const diagnostic = { code: 'source_failed', message: 'é'.repeat(1_025) };
 
-    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
-      source, freshness, entries: [], diagnostics: [exact],
-    }).success).toBe(true);
-    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({
-      source, freshness, entries: [], diagnostics: [oversized],
-    }).success).toBe(false);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.parse({
+      source, freshness, entries: [], diagnostics: [diagnostic],
+    }).diagnostics).toEqual([diagnostic]);
 
-    expect(MarketplaceIndexQueryResultV1Schema.safeParse({
+    const result = MarketplaceIndexQueryResultV1Schema.parse({
       revision: 1,
       items: [],
       nextCursor: null,
-      sources: [{ source, freshness, diagnostics: [exact] }],
-      diagnostics: [exact],
-    }).success).toBe(true);
-    expect(MarketplaceIndexQueryResultV1Schema.safeParse({
-      revision: 1,
-      items: [],
-      nextCursor: null,
-      sources: [{ source, freshness, diagnostics: [oversized] }],
-      diagnostics: [oversized],
-    }).success).toBe(false);
+      sources: [{ source, freshness, diagnostics: [diagnostic] }],
+      diagnostics: [diagnostic],
+    });
+    expect(result.sources[0]!.diagnostics).toEqual([diagnostic]);
+    expect(result.diagnostics).toEqual([diagnostic]);
   });
 
   it.each(['http://catalog.example/index.json', 'javascript:alert(1)', 'https://token@catalog.example/index.json'])(

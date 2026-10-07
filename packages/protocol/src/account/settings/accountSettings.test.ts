@@ -191,19 +191,21 @@ describe('accountSettings', () => {
     expect(accountSettingsParse({ executionRunsGuidanceEnabled: false }).executionRunsGuidanceEnabled).toBe(false);
   });
 
-  it('keeps valid machine-bound recent paths when sibling rows are malformed', () => {
+  it('keeps valid machine-bound recent paths, including long predecessor values, when sibling rows are malformed', () => {
+    const longRetainedPath = 'x'.repeat(16 * 1024 + 1);
     const recentMachinePaths = [
       { machineId: 'machine-1', path: '/workspace/project' },
       { machineId: 'machine-2', path: '/workspace/secondary', ignoredByCurrentSchema: true },
       { machineId: '', path: '/workspace/missing-machine' },
       { machineId: 'machine-3', path: '' },
-      { machineId: 'machine-4', path: 'x'.repeat(16 * 1024 + 1) },
+      { machineId: 'machine-4', path: longRetainedPath },
       'legacy-path-without-machine',
     ];
 
     expect(LegacyRecentMachinePathsSchema.parse(recentMachinePaths)).toEqual([
       { machineId: 'machine-1', path: '/workspace/project' },
       { machineId: 'machine-2', path: '/workspace/secondary' },
+      { machineId: 'machine-4', path: longRetainedPath },
     ]);
     expect(LegacyRecentMachinePathsSchema.parse('not-an-array')).toEqual([]);
   });

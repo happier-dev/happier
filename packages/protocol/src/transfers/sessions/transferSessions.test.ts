@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { SessionAttachmentUploadInitRequestV1Schema } from './index.js';
 
 describe('transferSessions schemas', () => {
-  it('admits only explicitly Session-bound attachment uploads through the public schema', async () => {
-    const mod = await import('../../index.js');
-    expect(mod).toHaveProperty('SessionAttachmentUploadInitRequestV1Schema');
-    const schema = mod.SessionAttachmentUploadInitRequestV1Schema;
+  it('admits only explicitly Session-bound attachment uploads through the public schema', () => {
+    const schema = SessionAttachmentUploadInitRequestV1Schema;
     const request = {
       t: 'session_attachment_upload_v1',
       sessionId: 'session-a',

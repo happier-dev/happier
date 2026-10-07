@@ -1,6 +1,7 @@
-import type { core } from 'zod';
+import Ajv from 'ajv';
+import Ajv2020 from 'ajv/dist/2020.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
-import { SessionRunStreamReadEnvelopeSchema } from '../sessions/control/contract.js';
+import { ScmPullRequestReviewScopeV1Schema } from '../reviews/scmPullRequestScope.js';
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../index.js';
@@ -323,27 +324,32 @@ describe('SCM pull-request protocol contracts', () => {
   });
 });
 
-describe('pull-request references in the composed session control schema', () => {
-  it('retains the inline reference union in both JSON Schema dialects', () => {
+describe('pull-request references in the selected review scope JSON Schema', () => {
+  it('validates every reference arm and rejects malformed scopes in both JSON Schema dialects', () => {
+    const scope = {
+      kind: 'scm_pull_request_review_scope.v1',
+      nativeService: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+      observed: { baseSha: 'base', headSha: 'head', nativeRevision: 'revision', observedAtMs: 1 },
+    };
     for (const target of ['draft-7', 'draft-2020-12'] as const) {
       const projections = [
-        zodSchemaToJsonSchemaObject(SessionRunStreamReadEnvelopeSchema, { target }),
-        SessionRunStreamReadEnvelopeSchema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }),
+        zodSchemaToJsonSchemaObject(ScmPullRequestReviewScopeV1Schema, { target }),
+        ScmPullRequestReviewScopeV1Schema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }),
       ];
       for (const projection of projections) {
-        const schema = projection as core.JSONSchema.JSONSchema;
-        const definitions = (schema.$defs ?? schema.definitions) as Record<string, core.JSONSchema.JSONSchema>;
-        const scope = Object.values(definitions).find((node) => {
-          const kind = node.properties?.kind;
-          return typeof kind === 'object' && kind.const === 'scm_pull_request_review_scope.v1';
-        });
-        expect(scope?.properties?.pullRequest).toEqual({
-          anyOf: [
-            { $ref: expect.any(String) },
-            { $ref: expect.any(String) },
-            { $ref: expect.any(String) },
-          ],
-        });
+        const validator = target === 'draft-7'
+          ? new Ajv({ strict: false, validateFormats: false })
+          : new Ajv2020({ strict: false, validateFormats: false });
+        const validate = validator.compile(projection);
+        for (const pullRequest of [{ number: 42 }, { url: 'https://github.example/owner/repo/pull/42' }, { headBranch: 'feature/login' }]) {
+          expect(validate({ ...scope, pullRequest })).toBe(true);
+        }
+        // Branch normalization is enforced by the runtime schema; its projection exposes the string shape.
+        for (const pullRequest of [{}, { number: 0 }, { headBranch: 123 }]) {
+          expect(validate({ ...scope, pullRequest })).toBe(false);
+        }
+        expect(validate({ ...scope, pullRequest: { number: 42 }, token: 'secret' })).toBe(false);
+        expect(validate({ ...scope, pullRequest: { number: 42 }, observed: { baseSha: 'base', headSha: 'head' } })).toBe(false);
       }
     }
   });

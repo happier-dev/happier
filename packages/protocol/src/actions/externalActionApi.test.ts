@@ -2,21 +2,31 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as externalActionApi from './externalActionApi.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 
 it('carries Home-issued invocation authority only in the trusted daemon dispatch', () => {
   const target = { kind: 'machine', machineId: 'machine-1' };
   const envelope = { v: 1, requestId: 'request-1', target, input: {} };
-  const principal = { accountId: 'account-1', principalId: 'account-1', credentialId: 'pat-1', authority: 'account_automation' };
+  const principal = { accountId: 'account-1', principalId: 'account-1', credentialId: 'pat-1', authority: 'account_automation', grant: API_TOKEN_FULL_GRANT_V1 };
   const executionAuthorization = { v: 1, token: 'home-signed-invocation', binding: {
     serverIdentityId: 'home-1', accountId: 'account-1', principalId: 'account-1', credentialId: 'pat-1',
     machineId: 'machine-1', actionId: 'session.title.set', requestId: 'request-1',
-    requestEnvelopeDigest: 'a'.repeat(43), target,
+    requestEnvelopeDigest: 'a'.repeat(43), target, grant: API_TOKEN_FULL_GRANT_V1,
   } };
   expect(externalActionApi.ExternalActionDaemonDispatchRequestSchema.safeParse({
     actionId: 'session.title.set', envelope, principal,
     placement: { machineId: 'machine-1', target }, executionAuthorization,
   }).success).toBe(true);
   expect(externalActionApi.ExternalActionRequestEnvelopeSchema.safeParse({ ...envelope, executionAuthorization }).success).toBe(false);
+  expect(externalActionApi.ExternalActionDaemonDispatchRequestSchema.safeParse({
+    actionId: 'session.title.set', envelope, principal: { ...principal, grant: undefined },
+    placement: { machineId: 'machine-1', target }, executionAuthorization,
+  }).success).toBe(false);
+  expect(externalActionApi.ExternalActionDaemonDispatchRequestSchema.safeParse({
+    actionId: 'session.title.set', envelope, principal,
+    placement: { machineId: 'machine-1', target },
+    executionAuthorization: { ...executionAuthorization, binding: { ...executionAuthorization.binding, grant: undefined } },
+  }).success).toBe(false);
 });
 
 import {
@@ -229,6 +239,7 @@ describe('External Action API envelope v1', () => {
         principalId: 'principal-1',
         credentialId: 'credential-1',
         authority: 'account_automation',
+        grant: API_TOKEN_FULL_GRANT_V1,
       },
       placement: {
         machineId: 'machine-1',
@@ -258,6 +269,7 @@ describe('External Action API envelope v1', () => {
         principalId: 'principal-1',
         credentialId: 'credential-1',
         authority: 'account_automation',
+        grant: API_TOKEN_FULL_GRANT_V1,
       },
       placement: {
         machineId: 'machine-1',
