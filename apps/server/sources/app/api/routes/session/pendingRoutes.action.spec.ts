@@ -60,7 +60,6 @@ describe("sessionPendingRoutes requested action", () => {
         });
     });
     beforeEach(() => {
-        vi.resetModules();
         emitUpdate.mockReset();
         buildPendingChangedUpdate.mockClear();
         updatePendingRequestedAction.mockReset();

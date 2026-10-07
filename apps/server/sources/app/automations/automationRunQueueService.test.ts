@@ -3,18 +3,32 @@ import {
     MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     parseAutomationRunExecutionRecipeV1,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
+    type AutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
-vi.mock("@/storage/inTx", () => ({ afterTx: vi.fn() }));
-vi.mock("@/app/changes/markAccountChanged", () => ({
-    markAccountChanged: vi.fn(async () => 1),
-}));
+const transaction = vi.hoisted(() => vi.fn());
+// Only Prisma is faked; Run admission, Account changes and after-commit behavior stay real.
+vi.mock("@/storage/db", () => ({ db: { $transaction: transaction } }));
+import { inTx, type Tx } from "@/storage/inTx";
 
 import {
-    admitDueAutomationScheduleTriggerTx,
-    ensureAutomationScheduleCursorsTx,
+    admitDueAutomationScheduleTriggerTx as admitDueAutomationScheduleTriggerOwner,
+    ensureAutomationScheduleCursorsTx as ensureAutomationScheduleCursorsOwner,
     resolveScheduledRunDueAt,
 } from "./automationRunQueueService";
+
+async function inFixtureTransaction<T>(tx: Tx, operation: (tx: Tx) => Promise<T>): Promise<T> {
+    transaction.mockImplementationOnce(async (callback: (tx: Tx) => Promise<unknown>) => callback(tx));
+    return inTx(operation);
+}
+
+function admitDueAutomationScheduleTriggerTx(params: Parameters<typeof admitDueAutomationScheduleTriggerOwner>[0]) {
+    return inFixtureTransaction(params.tx, (tx) => admitDueAutomationScheduleTriggerOwner({ ...params, tx }));
+}
+
+function ensureAutomationScheduleCursorsTx(params: Parameters<typeof ensureAutomationScheduleCursorsOwner>[0]) {
+    return inFixtureTransaction(params.tx, (tx) => ensureAutomationScheduleCursorsOwner({ ...params, tx }));
+}
 
 function strictRecipe(params: Readonly<{
     templateVersion: number;
@@ -29,14 +43,14 @@ function strictRecipe(params: Readonly<{
             kind: "newSession",
             spawn: {
                 executionTarget: { serverId: "server", machineId: "machine" },
-                directory: "/tmp/automation-run-queue",
+                directory: { kind: "path", path: "/tmp/automation-run-queue" },
                 agentTarget: {
                     kind: "agent",
                     identity: { pluginId: "happier.agent.codex", localId: "codex" },
                 },
             },
         },
-    });
+    } satisfies AutomationStoredDefinitionExecutionRecipeV1);
     if (serialized.kind !== "available") throw new Error("Test recipe did not serialize");
     return serialized.serialized;
 }
@@ -75,7 +89,14 @@ function txFixture(params: Readonly<{
     const created: Array<Record<string, unknown>> = [];
     const runAssignments: Array<Record<string, unknown>> = [];
     const triggerUpdates: Array<Record<string, unknown>> = [];
+    let accountSeq = 0;
     const tx = {
+        homeSettings: { findUnique: vi.fn(async () => null) },
+        homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
+        account: {
+            update: vi.fn(async () => ({ seq: ++accountSeq })),
+        },
+        accountChange: { upsert: vi.fn(async () => ({})) },
         automation: {
             findUnique: vi.fn(async () => ({
                 id: "automation",
@@ -87,6 +108,7 @@ function txFixture(params: Readonly<{
             findMany: vi.fn(async () => [{
                 id: "automation",
                 enabled: true,
+                scopeSessionId: null,
                 targetType: "new_session",
                 templateVersion,
                 templateCiphertext: recipe,
@@ -94,6 +116,7 @@ function txFixture(params: Readonly<{
             }]),
             findFirst: vi.fn(async () => ({
                 enabled: true,
+                scopeSessionId: null,
                 targetType: "new_session",
                 templateVersion,
                 templateCiphertext: recipe,
@@ -102,22 +125,26 @@ function txFixture(params: Readonly<{
             update: vi.fn(async () => ({})),
         },
         automationTrigger: {
-            findMany: vi.fn(async () => triggers.map((trigger) => ({
-                ...trigger,
-                automationId: "automation",
-                enabled: true,
-                deletedAt: null,
-                kind: "schedule",
-                eventPluginId: null,
-                eventLocalId: null,
-                sourceSelectorId: null,
-                sessionLifecycleEventsJson: null,
-                sessionLifecyclePolicyKind: null,
-                sessionLifecycleMatchCount: null,
-                remainingOccurrences: null,
-                sourceSessionId: null,
-                sourceTurnId: null,
-            }))),
+            findMany: vi.fn(async (query: Readonly<{
+                where?: Readonly<{ kind?: string; automation?: Readonly<{ scopeSessionId?: unknown }> }>;
+            }>) => query.where?.kind === "runLifecycle" || query.where?.automation?.scopeSessionId
+                ? []
+                : triggers.map((trigger) => ({
+                    ...trigger,
+                    automationId: "automation",
+                    enabled: true,
+                    deletedAt: null,
+                    kind: "schedule",
+                    eventPluginId: null,
+                    eventLocalId: null,
+                    sourceSelectorId: null,
+                    sessionLifecycleEventsJson: null,
+                    sessionLifecyclePolicyKind: null,
+                    sessionLifecycleMatchCount: null,
+                    remainingOccurrences: null,
+                    sourceSessionId: null,
+                    sourceTurnId: null,
+                }))),
             findFirst: vi.fn(async ({ where }: { where: {
                 id: string;
                 revision?: number;
@@ -148,13 +175,21 @@ function txFixture(params: Readonly<{
         },
         automationRun: {
             count: vi.fn(async () => params.eventConversationRunCount ?? 0),
-            findMany: vi.fn(async ({ where }: { where: Record<string, any> }) => created.filter((run) => (
+            findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => created.filter((run) => (
                 (where.accountId === undefined || run.accountId === where.accountId)
+                && (typeof where.causeTriggerKind !== "string" || run.causeTriggerKind === where.causeTriggerKind)
                 && (!Array.isArray(where.OR) || where.OR.some((discriminator: Record<string, unknown>) => (
                     Object.entries(discriminator).every(([key, value]) => run[key] === value)
                 )))
             ))),
-            findFirst: vi.fn(async ({ where }: { where: Record<string, any> }) => created.find((run) => {
+            findFirst: vi.fn(async ({ where }: { where: Readonly<{
+                triggerId?: string;
+                causeTriggerKind?: string;
+                occurrenceKey?: string;
+                automationId?: string;
+                legacyManualIdempotencyKey?: string;
+                state?: Readonly<{ notIn?: readonly string[] }>;
+            }> }) => created.find((run) => {
                 const state = run.state as string;
                 return (
                     (where.triggerId === undefined || run.triggerId === where.triggerId)
@@ -188,7 +223,8 @@ function txFixture(params: Readonly<{
         },
     };
     return {
-        tx: tx as any,
+        // The synthetic adapter implements only database methods reached by these global schedules.
+        tx: tx as unknown as Tx,
         created,
         runAssignments,
         triggerUpdates,

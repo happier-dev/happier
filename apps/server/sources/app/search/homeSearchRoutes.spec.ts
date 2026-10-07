@@ -32,6 +32,7 @@ describe('Home search route', () => {
             resolveVisibleSessions: async (userId) => userId === 'owner'
                 ? [{ sessionId: 'owned-session', maximumSeq: null }]
                 : [],
+            env: { HAPPIER_FEATURE_SEARCH__ENABLED: '1' },
         }), async (app) => {
             const body = {
                 v: 1,
@@ -101,6 +102,7 @@ describe('Home search route', () => {
             await withAuthenticatedTestApp((app) => registerHomeSearchRoutes(app, {
                 service: { ...service, invalidateAndRebuild: vi.fn() },
                 resolveVisibleSessions: async () => [{ sessionId: 'shared', maximumSeq: 4 }],
+                env: { HAPPIER_FEATURE_SEARCH__ENABLED: '1' },
             }), async (app) => {
                 const response = await app.inject({
                     method: 'POST',

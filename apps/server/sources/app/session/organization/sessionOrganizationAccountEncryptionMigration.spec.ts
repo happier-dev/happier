@@ -1,13 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
+import { inTx, type Tx } from "@/storage/inTx";
+
+const transactionState = vi.hoisted<{ tx: Tx | null }>(() => ({ tx: null }));
+
+// Keep real inTx/afterTx and change publication beneath the database boundary.
+vi.mock("@/storage/db", async () => {
+    const { createDbTransactionMock } = await import("@/app/api/testkit/dbMocks");
+    const { wrapDb } = createDbTransactionMock(() => {
+        if (!transactionState.tx) throw new Error("Migration transaction fixture is unavailable");
+        return transactionState.tx;
+    });
+    return { db: wrapDb({}) };
+});
 
 import {
     matchSessionOrganizationAccountEncryptionMigrationPostStateInTx,
-    migrateSessionOrganizationAccountEncryptionInTx,
+    migrateSessionOrganizationAccountEncryptionInTx as migrateSessionOrganizationAccountEncryptionOwnerInTx,
     readSessionOrganizationAccountEncryptionMigrationInventoryInTx,
     SessionOrganizationAccountEncryptionMigrationConflictError,
     SessionOrganizationAccountEncryptionMigrationInvalidContentError,
     type SessionOrganizationAccountEncryptionMigrationDirective,
 } from "./sessionOrganizationAccountEncryptionMigration";
+
+async function migrateSessionOrganizationAccountEncryptionInTx(
+    params: Parameters<typeof migrateSessionOrganizationAccountEncryptionOwnerInTx>[0],
+) {
+    transactionState.tx = params.tx;
+    return await inTx((tx) => migrateSessionOrganizationAccountEncryptionOwnerInTx({ ...params, tx }));
+}
 
 const encryptedDisplay = {
     t: "encrypted" as const,

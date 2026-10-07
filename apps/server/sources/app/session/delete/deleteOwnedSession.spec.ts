@@ -64,6 +64,8 @@ vi.mock('@/storage/inTx', () => {
             accessKey: { deleteMany: deleteAccessKeys },
             ephemeralRunnerActivation: { findFirst: findRunnerActivation },
             sessionFollowEdge: createEmptySessionFollowEdgeTransactionModel(),
+            sessionReportsTo: { findMany: vi.fn(async () => []) },
+            automation: { findMany: vi.fn(async () => []) },
             userKVStore: { findMany: findSessionDrafts, findUnique: findSessionDraft },
         }));
 

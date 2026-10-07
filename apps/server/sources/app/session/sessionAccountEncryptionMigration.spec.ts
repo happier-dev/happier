@@ -417,12 +417,26 @@ describe("migrateSessionAccountEncryptionInTx", () => {
         expect(matchingTx.accountChange.upsert)
             .not.toHaveBeenCalled();
 
+        // The canonical stored reader drops additive fields, but preserves
+        // known owner content for the exact post-state comparison.
+        const additiveTx = createTx({
+            rows: [{
+                ...targetRow,
+                ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1, futureField: true } }),
+            }],
+        });
+        await expect(sessionWriteService.matchSessionAccountEncryptionMigrationPostStateInTx({
+            tx: additiveTx, accountId: "account-1", toMode: "plain", directive,
+        })).resolves.toEqual({ status: "matched" });
+        expect(additiveTx.session.updateMany).not.toHaveBeenCalled();
+        expect(additiveTx.accountChange.upsert).not.toHaveBeenCalled();
+
         const staleTx = createTx({
             rows: [{
                 ...targetRow,
                 ownerMetadata: JSON.stringify({
                     t: "plain",
-                    v: { v: 1, stale: true },
+                    v: { v: 1, workspace: { path: "/different-workspace" } },
                 }),
             }],
         });

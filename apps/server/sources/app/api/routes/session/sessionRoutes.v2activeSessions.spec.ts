@@ -222,7 +222,7 @@ describe("sessionRoutes v2 active sessions listing", () => {
                     id: "shared-active",
                     encryptionMode: "e2ee",
                     dataEncryptionKey: "BAU=",
-                    lastViewedSessionSeq: 2,
+                    lastViewedSessionSeq: 1,
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 2,
                     pendingCount: 3,
