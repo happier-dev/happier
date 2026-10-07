@@ -424,6 +424,27 @@ describe('SDK live Session over real HTTP and Socket.IO', () => {
     expect(controller.getSnapshot().actions).toEqual({ send: true, respondToPermission: true, answerUserAction: true, abort: true });
   });
 
+  it('preserves the published snapshot when a session notification changes no facts', async () => {
+    const server = await fixture();
+    const controller = await server.client.sessions.get('session-1').live();
+    await expect.poll(() => durableIds(controller)).toEqual(['row-1']);
+    await expect.poll(() => controller.getSnapshot().connection).toBe('online');
+    const before = controller.getSnapshot();
+    const published: ReturnType<typeof controller.getSnapshot>[] = [];
+    const unsubscribe = controller.subscribe(() => published.push(controller.getSnapshot()));
+    try {
+      server.update({ t: 'update-session', id: 'session-1', active: true });
+      server.setActive(false);
+      await expect.poll(() => controller.getSnapshot().actions.send).toBe(false);
+      // The real changed event is an ordering witness after the no-op event on
+      // the same socket, so this does not rely on a quiet-period test timer.
+      expect(published.some((snapshot) => snapshot.actions.send === before.actions.send)).toBe(false);
+      expect(published.every((snapshot) => snapshot.transcript === before.transcript)).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('opens the viewer DEK with Account material and keeps E2EE socket RPC encrypted', async () => {
     const server = await fixture('e2ee', true);
     const controller = await server.client.sessions.get('session-1').live();

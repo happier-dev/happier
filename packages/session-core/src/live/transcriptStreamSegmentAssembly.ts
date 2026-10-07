@@ -12,10 +12,8 @@ import { readStreamSegmentMetaV1 } from "../reducer/helpers/streamSegmentMeta.js
  * Correctness over liveness: any gap (unknown segment, tick gap, base-length mismatch) drops the
  * delta and marks the segment desynced until the next full snapshot resyncs it.
  *
- * Bounded: a small LRU capped at MAX_TRACKED_SEGMENTS; entries are evicted when a snapshot reports
- * the segment complete/interrupted.
+ * Entries live until their segment completes/is interrupted or their consumer releases the session.
  */
-const MAX_TRACKED_SEGMENTS = 32;
 
 type TranscriptStreamSegmentAssemblyEntry = {
     text: string;
@@ -82,16 +80,6 @@ export function withTranscriptStreamSegmentText(record: RawRecord, text: string)
 export function createTranscriptStreamSegmentAssembler() {
     const assemblyBySegment = new Map<string, TranscriptStreamSegmentAssemblyEntry>();
 
-    function touchSegment(key: string, entry: TranscriptStreamSegmentAssemblyEntry): void {
-        assemblyBySegment.delete(key);
-        assemblyBySegment.set(key, entry);
-        while (assemblyBySegment.size > MAX_TRACKED_SEGMENTS) {
-            const oldestKey = assemblyBySegment.keys().next().value;
-            if (oldestKey === undefined) break;
-            assemblyBySegment.delete(oldestKey);
-        }
-    }
-
     /** Resynchronize from a snapshot, or release a terminal/non-text segment. */
     function noteTranscriptStreamSegmentSnapshot(params: Readonly<{
         sessionId: string;
@@ -112,7 +100,7 @@ export function createTranscriptStreamSegmentAssembler() {
             assemblyBySegment.delete(key);
             return;
         }
-        touchSegment(key, {
+        assemblyBySegment.set(key, {
             text,
             lastTick: typeof params.tick === 'number' && Number.isFinite(params.tick) ? Math.trunc(params.tick) : null,
             desynced: false,
@@ -150,7 +138,6 @@ export function createTranscriptStreamSegmentAssembler() {
         }
         entry.text += params.deltaText;
         entry.lastTick = params.tick;
-        touchSegment(key, entry);
         return entry.text;
     }
 
@@ -161,9 +148,8 @@ export function createTranscriptStreamSegmentAssembler() {
     /**
      * Release every tracked segment of a session (bounded transcript retention eviction).
      *
-     * The LRU cap bounds entry COUNT, not lifetime: under low segment traffic an evicted
-     * session's accumulated text would otherwise stay rooted indefinitely. Releasing is
-     * always safe — a later delta for an unknown segment is dropped (desync semantics) and
+     * Without release, an evicted session's accumulated text would remain rooted. A later
+     * delta for an unknown segment is dropped (desync semantics) and
      * the next full snapshot re-establishes assembly state.
      */
     function releaseTranscriptStreamSegmentAssemblyForSession(sessionId: string): void {
