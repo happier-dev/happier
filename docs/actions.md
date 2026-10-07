@@ -1126,6 +1126,13 @@ authorized Machine even when the Session is closed. An unavailable binding reade
 must not fabricate an empty link list. Removing a trigger retires its scoped binding
 without discarding the Session's PR link.
 
+The GitHub checks source projects one rollup into `checksCompleted`, `checksFailed`
+and `checksPassed` events. The scoped `ciFailed` adapter consumes that same
+`checksFailed` projection, rather than emitting a separate occurrence for each
+failed job. The PR-checks wait reads the source's checkpoint snapshot; it adds no
+independent checks reader or polling loop. Transport cursors remain separate from
+the shared checks-event identity.
+
 Scoped observations carry explicit binding, Session, trigger and its current revision, PR and authenticated
 actor correspondence into Conversation admission. Only measured repository write
 access admits a Run; false, unknown and mismatched evidence have typed refusals.
