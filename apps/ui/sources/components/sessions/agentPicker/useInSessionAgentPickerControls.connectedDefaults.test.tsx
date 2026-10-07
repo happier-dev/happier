@@ -71,7 +71,7 @@ describe('continuation target account discovery', () => {
         await act(async () => { await Promise.resolve(); });
         const option = hook.getCurrent().composeAgentPickerOptions([]).find((row) => row.id.includes('codex'));
         expect(option?.disabled).not.toBe(true);
-        const detail = option?.renderDetailContent?.({ phase: 'idle' });
+        const detail = option?.renderDetailContent?.({ onRequestClose: vi.fn() });
         if (!React.isValidElement(detail)) throw new Error('Expected target Agent detail content');
         const screen = await renderScreen(detail);
         await act(async () => { await Promise.resolve(); });

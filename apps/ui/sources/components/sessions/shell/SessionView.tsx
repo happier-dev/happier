@@ -3820,13 +3820,14 @@ function SessionViewLoadedContent({
         const entry = sessionAgentCatalogEntries.find((catalogEntry) => (
             catalogEntry.agentId === intent.selection.agentId
         ));
-        const identity = entry?.identity ?? (entry ? parseQualifiedPluginContributionKey(entry.qualifiedId) : null);
+        const agentCatalogEntry = entry?.agentCatalogEntry;
+        const identity = agentCatalogEntry?.identity ?? (agentCatalogEntry ? parseQualifiedPluginContributionKey(agentCatalogEntry.qualifiedId) : null);
         return {
             agentId: intent.selection.agentId,
-            authoringTarget: entry && identity ? {
-                agentId: entry.agentId,
+            authoringTarget: agentCatalogEntry && identity ? {
+                agentId: agentCatalogEntry.agentId,
                 agentIdentity: identity,
-                connectedAccounts: entry.connectedAccounts,
+                connectedAccounts: agentCatalogEntry.connectedAccounts,
             } : null,
             backendTargetKey: inSessionAgentPicker.agentPickerSelectedOptionId ?? undefined,
             label: entry?.title ?? intent.selection.agentId,
