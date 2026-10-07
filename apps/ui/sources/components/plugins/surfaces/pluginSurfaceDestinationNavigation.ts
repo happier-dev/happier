@@ -574,7 +574,10 @@ export function PluginSurfacePaneLaunchScope(props: Readonly<{
     React.useEffect(() => {
         const retirement = accountLifetime?.onRetire(() => {
             store.retire();
-            refreshAfterAccountRetirement();
+            // Capture's direct-change fence can retire this Account while a
+            // sibling renders. Withdraw handoff authority synchronously, but
+            // publish the React refresh after that render (as page scopes do).
+            queueMicrotask(refreshAfterAccountRetirement);
         });
         return () => retirement?.dispose();
     }, [accountLifetime, store]);

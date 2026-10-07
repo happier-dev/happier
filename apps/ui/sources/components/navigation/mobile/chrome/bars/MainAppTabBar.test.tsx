@@ -1,11 +1,23 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import renderer from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
+import { createRootLayoutFeaturesResponse, createSessionFixture, flushHookEffects, renderScreen as renderBoundaryScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import '@/sync/syncEngine';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const friendRequestsState = vi.hoisted(() => ({
     items: [] as Array<{ id: string }>,
@@ -29,29 +41,17 @@ const badgeSettingsState = vi.hoisted(() => ({
     showLabels: true,
 }));
 
-installNavigationCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        });
-    },
-    storage: async (importOriginal) => {
-        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-        return {
-            ...actual,
-            useFriendRequestCount: (() => friendRequestsState.items.length) as typeof import('@/sync/domains/state/storage').useFriendRequestCount,
-            useSetting: ((key: string) => {
-                if (key === 'tabBarFriendsBadgeEnabled') return badgeSettingsState.friends;
-                if (key === 'tabBarInboxBadgeEnabled') return badgeSettingsState.inbox;
-                if (key === 'tabBarSessionsBadgeEnabled') return badgeSettingsState.sessions;
-                if (key === 'tabBarShowLabels') return badgeSettingsState.showLabels;
-                if (key === 'tabBarSize') return 'regular';
-                return undefined;
-            }) as typeof import('@/sync/domains/state/storage').useSetting,
-        };
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: key => key });
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -70,42 +70,62 @@ vi.mock('expo-blur', () => ({
         React.createElement('BlurView', props, children),
 }));
 
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 960 },
-    useLayoutMaxWidth: () => 960,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
-}));
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 
-vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
-    useInboxHasContent: () => inboxState.hasContent,
-}));
+function badgeSettings() {
+    return { ...settingsDefaults, experiments: true, featureToggles: { 'social.friends': true },
+        tabBarFriendsBadgeEnabled: badgeSettingsState.friends, tabBarInboxBadgeEnabled: badgeSettingsState.inbox,
+        tabBarSessionsBadgeEnabled: badgeSettingsState.sessions, tabBarShowLabels: badgeSettingsState.showLabels };
+}
 
-vi.mock('@/hooks/session/useSessionsHaveAttention', () => ({
-    useSessionsHaveAttention: () => sessionsAttentionState.hasAttention,
-}));
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => true,
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
-}));
+async function renderScreen(element: React.ReactElement) {
+    await flushHookEffects({ cycles: 3 });
+    const serverId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
+    const makeSession = (id: string, attention: boolean) => createSessionFixture({
+        id, serverId, active: true, activeAt: Date.now(), updatedAt: Date.now(),
+        agentState: attention ? { requests: { permission: { tool: 'Bash', arguments: {}, kind: 'permission', createdAt: Date.now() } }, completedRequests: {} } : null,
+    });
+    const sessions = sessionsAttentionState.hasAttention ? [makeSession('needs-attention', true)] : [];
+    await act(async () => {
+        // An unseen failed operation belongs to Inbox and cannot light the Sessions badge.
+        actionOperationStore.reset();
+        if (inboxState.hasContent) actionOperationStore.mergeSnapshots({ serverId, snapshots: [{
+            version: 1, operationId: 'operation-1', requestId: 'request-1', revision: 1,
+            actionId: 'session.handoff', state: 'failed', scope: { accountId: 'tabbar-account', machineId: 'machine-1' },
+            title: 'Handoff', createdAt: 1, settledAt: 2, progress: { kind: 'indeterminate' }, cancellation: 'unsupported',
+        }] });
+        storage.setState({
+            isDataReady: true,
+            settings: badgeSettings(),
+            friends: Object.fromEntries(friendRequestsState.items.map(({ id }) => [id, {
+                id, username: id, firstName: id, lastName: null, avatar: null, bio: null, publicKey: null, badges: [], status: 'pending' as const,
+            }])),
+            sessions: Object.fromEntries(sessions.map(session => [session.id, session])),
+            sessionListRowsByServerId: { [serverId]: Object.fromEntries(sessions.map(session => [session.id, buildSessionListRenderableFromSession(session)])) },
+            ordinarySessionListMembershipByServerId: { [serverId]: sessions.map(session => session.id) },
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
+        });
+    });
+    const screen = await renderBoundaryScreen(
+        <InjectedAuthProvider credentials={connection.credentials}>
+            <InboxSummaryProvider>{element}</InboxSummaryProvider>
+        </InjectedAuthProvider>,
+    );
+    await flushHookEffects({ cycles: 3 });
+    return screen;
+}
 
 function hasTextChild(node: renderer.ReactTestInstance, value: string) {
     return node.findAllByType('Text' as never).some((child) => String(child.props.children) === value);
 }
 
 function hasIndicatorDot(node: renderer.ReactTestInstance) {
-    return node.findAll((child) => {
-        if (String(child.type) !== 'View') return false;
-        const style = child.props?.style ?? {};
-        return style.width === 6 && style.height === 6;
-    }).length > 0;
+    return node.findAllByType(TabBadge).some(badge => badge.props.variant === 'dot');
 }
 
 describe('MainAppTabBar', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         friendRequestsState.items = [];
         inboxState.hasContent = false;
         sessionsAttentionState.hasAttention = false;
@@ -114,7 +134,20 @@ describe('MainAppTabBar', () => {
         badgeSettingsState.inbox = true;
         badgeSettingsState.sessions = true;
         badgeSettingsState.showLabels = true;
-        vi.resetModules();
+        const artifact = createHomeHubArtifactHttpBoundary('tabbar-account');
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://tabbar.test', accountId: 'tabbar-account', request: (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v2/account/settings') return Promise.resolve(Response.json({ content: { t: 'plain', v: badgeSettings() }, version: 1 }));
+            if (path === '/v1/features') return Promise.resolve(Response.json(createRootLayoutFeaturesResponse({
+                features: { workflows: { enabled: false }, automations: { enabled: false } },
+            })));
+            return artifact.request(url, init);
+        } });
+    });
+    afterEach(async () => {
+        standardCleanup();
+        actionOperationStore.reset();
+        await connection.dispose();
     });
 
     it('renders a trailing accessory beside the tabs without turning it into one', async () => {
@@ -246,14 +279,15 @@ describe('MainAppTabBar', () => {
 
         const tree = (await renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
-        const tabs = tree.findAll((node) => typeof node.props?.onPress === 'function');
-        const inboxTab = tabs.find((tab) => hasIndicatorDot(tab));
-        const allTextNodes = tree.findAllByType('Text' as never);
+        const inboxTab = tree.root.findByProps({ testID: 'tabbar-tab-inbox' });
+        const friendsTab = tree.root.findByProps({ testID: 'tabbar-tab-friends' });
+        const sessionsTab = tree.root.findByProps({ testID: 'tabbar-tab-sessions' });
 
         expect(inboxTab).toBeTruthy();
-        expect(allTextNodes.some((node) => String(node.props.children) === '2')).toBe(true);
+        expect(hasTextChild(friendsTab, '2')).toBe(true);
         expect(hasIndicatorDot(inboxTab!)).toBe(true);
         expect(hasTextChild(inboxTab!, '2')).toBe(false);
+        expect(hasIndicatorDot(sessionsTab)).toBe(false);
     });
 
     it('shows a dot on the sessions tab when sessions need attention', async () => {
@@ -289,7 +323,7 @@ describe('MainAppTabBar', () => {
         expect(attentionSessionsTab?.props.accessibilityState).toEqual({ selected: true });
 
         const attentionDot = attentionSessionsTab?.find(
-            (node) => String(node.type) === 'View' && node.props?.style?.width === 6,
+            (node) => typeof node.type === 'string' && node.props.importantForAccessibility === 'no-hide-descendants',
         );
         expect(attentionDot?.props.accessible).toBe(false);
         expect(attentionDot?.props.accessibilityElementsHidden).toBe(true);

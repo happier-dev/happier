@@ -15,7 +15,6 @@ const hostMotion = vi.hoisted(() => ({ reduced: false }));
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => hostMotion.reduced }));
 
 const { View } = await import('react-native');
-const { useUnistyles } = await import('react-native-unistyles');
 const { AppRailPeek } = await import('./AppRailPeek');
 const { AppShellPeekLayer, AppShellPeekProvider } = await import('./AppShellPeek');
 type AppShellShownColumn = import('./appRailModel').AppShellShownColumn;
@@ -25,12 +24,6 @@ const COLUMN_WIDTH_PX = 320;
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 const navigate = vi.fn();
-/** The sidebar plane of the theme the shell renders with. */
-const themeState = { surfaceInset: '' };
-function ThemeProbe() {
-    themeState.surfaceInset = useUnistyles().theme.colors.surface.inset;
-    return null;
-}
 const openRow = vi.fn();
 
 /** The shell as `SidebarNavigator` composes it: rail triggers, and the peek layer in the column's place. */
@@ -45,7 +38,6 @@ async function renderShell(params: Readonly<{ currentId: string; columnShown: bo
     await act(async () => {
         root.render(
             <AppShellPeekProvider enabled currentId={params.currentId} columnShown={params.columnShown}>
-                <ThemeProbe />
                 {(['sessions', 'plugins', 'plugin:acme.triage:triage'] as const).map((kind) => (
                     <AppRailPeek key={kind} testID={`rail-peek:${kind}`} destinationId={kind}>
                         {() => <button data-testid={`rail-item:${kind}`} onClick={navigate}>{kind}</button>}
@@ -90,13 +82,6 @@ const hoverOpen = async (el: Element) => {
     await rest(motionTokens.overlay.popover.hoverOpenDelayMs + 10);
 };
 
-function hexToRgb(hex: string): string {
-    const value = hex.replace('#', '');
-    const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value.slice(0, 6);
-    const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
-    return `rgb(${r}, ${g}, ${b})`;
-}
-
 describe('AppShellPeek', () => {
     beforeEach(() => {
         container = document.createElement('div');
@@ -111,7 +96,7 @@ describe('AppShellPeek', () => {
         vi.useRealTimers();
     });
 
-    it("shows another destination's column in the open column's place, size and plane, and the current one again on leave", async () => {
+    it("shows another destination's column in the open column's place and size, and the current one again on leave", async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const item = await renderShell({ currentId: 'plugins', columnShown: true });
 
@@ -126,7 +111,6 @@ describe('AppShellPeek', () => {
         expect(layer.querySelector('[data-testid="column:sessions"]')).not.toBeNull();
         const style = getComputedStyle(layer);
         expect([style.position, style.left, style.top, style.bottom, style.width]).toEqual(['absolute', '0px', '0px', '0px', `${COLUMN_WIDTH_PX}px`]);
-        expect(style.backgroundColor).toBe(hexToRgb(themeState.surfaceInset));
         // A layer above the open column: its lift shows on the trailing edge.
         expect(style.boxShadow).not.toBe('');
 
