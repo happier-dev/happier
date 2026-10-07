@@ -16,7 +16,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function navigationHarness(input: Readonly<{ cleanupFails?: boolean }> = {}) {
+function navigationHarness(input: Readonly<{ cleanupFails?: boolean; navigationFails?: boolean; historyUnavailable?: boolean }> = {}) {
   const view = { browserSessionId: 'browser', viewId: 'view' };
   const pressed = deferred();
   const releasePress = deferred();
@@ -35,8 +35,9 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean }> = {}) {
       pageCommands.push(command.method);
       if (command.method === 'Page.navigate') {
         navigationUrls.push(command.params?.url);
-        if (command.params?.url === 'https://example.test/pending-agent') {
+        if (command.params?.url === 'https://example.test/pending-agent' || command.params?.url === 'https://example.test/pending-human') {
           navigating.resolve(); await releaseNavigation.promise;
+          if (input.navigationFails) throw new Error('CDP navigation acknowledgement unavailable');
         }
       }
       if (holdInput && command.method === 'Input.dispatchMouseEvent') {
@@ -48,6 +49,7 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean }> = {}) {
         }
       }
       if (command.method === 'Page.getNavigationHistory') {
+        if (input.historyUnavailable) return { currentIndex: 0, entries: [{ id: 1 }] };
         return { currentIndex: 1, entries: [{ id: 1 }, { id: 2 }, { id: 3 }] };
       }
       return {};
@@ -74,6 +76,40 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean }> = {}) {
 }
 
 describe('daemon browser controller commands', () => {
+  it('keeps human navigation admitted until its actual acknowledgement before hand back and agent resume', async () => {
+    const harness = navigationHarness();
+    try {
+      await harness.open();
+      const navigation = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'human', url: 'https://example.test/pending-human' }, { authority: 'present_user' });
+      await harness.navigating.promise;
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'handBack', commandId: 'early' }, { authority: 'present_user' }))
+        .toMatchObject({ status: 'failed' });
+      await harness.automation.execute({ ...harness.request, automationRequestId: 'early-observation', actionKind: 'snapshot', payload: {} });
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'reload', commandId: 'early-agent' }, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'failed' });
+      expect(harness.pageCommands).not.toContain('Page.reload');
+      harness.releaseNavigation.resolve();
+      expect(await navigation).toMatchObject({ status: 'dispatched' });
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'handBack', commandId: 'settled' }, { authority: 'present_user' }))
+        .toMatchObject({ status: 'dispatched' });
+      await harness.automation.execute({ ...harness.request, automationRequestId: 'observe', actionKind: 'snapshot', payload: {} });
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'reload', commandId: 'resumed' }, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'dispatched' });
+    } finally { harness.dispose(); }
+  });
+
+  it('does not claim uncertainty for a history command refused before page mutation', async () => {
+    const harness = navigationHarness({ historyUnavailable: true });
+    try {
+      await harness.open();
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'goBack', commandId: 'empty-history' }, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'failed', error: { code: 'unsupported_command' } });
+      expect(harness.pageCommands).not.toContain('Page.navigateToHistoryEntry');
+      expect(harness.automation.getStatus(harness.view).uncertain).toBe(false);
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'reload', commandId: 'next-agent' }, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'dispatched' });
+    } finally { harness.dispose(); }
+  });
   it.each([
     ['navigate', 'Page.navigate'], ['goBack', 'Page.navigateToHistoryEntry'],
     ['goForward', 'Page.navigateToHistoryEntry'], ['reload', 'Page.reload'], ['stop', 'Page.stopLoading'],
@@ -181,6 +217,26 @@ describe('daemon browser controller commands', () => {
     } finally { harness.dispose(); }
   });
 
+  it('retains uncertainty when an interrupted control command loses its CDP acknowledgement', async () => {
+    const harness = navigationHarness({ navigationFails: true });
+    try {
+      await harness.open();
+      const agent = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'agent', url: 'https://example.test/pending-agent' },
+        { authority: 'account_automation', bypassApprovals: true });
+      await harness.navigating.promise;
+      const human = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'human', url: 'https://example.test/human' }, { authority: 'present_user' });
+      harness.releaseNavigation.resolve();
+      expect(await agent).toMatchObject({ status: 'failed', error: { code: 'adapter_unavailable' } });
+      expect(await human).toMatchObject({ status: 'dispatched', events: expect.arrayContaining([
+        expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'human', uncertain: true }) }),
+      ]) });
+      expect(harness.automation.getStatus(harness.view)).toMatchObject({ controller: 'human', uncertain: true });
+      await harness.routes.dispatchCommand({ ...harness.view, kind: 'handBack', commandId: 'back' }, { authority: 'present_user' });
+      expect(await harness.routes.dispatchCommand({ ...harness.view, kind: 'reload', commandId: 'unobserved' }, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'failed', error: { code: 'permission_denied' } });
+    } finally { harness.dispose(); }
+  });
+
   it('keeps focus, account-automation navigation and nonautomatable navigation outside human takeover', async () => {
     const harness = navigationHarness();
     try {
@@ -192,6 +248,8 @@ describe('daemon browser controller commands', () => {
       expect(harness.automation.getStatus(harness.view).controller).toBe('none');
       const withoutAutomation = createBrowserDaemonControlRoutes({ broker: harness.broker, automation: () => null });
       expect(await withoutAutomation.dispatchCommand(command, { authority: 'present_user' })).toMatchObject({ status: 'dispatched' });
+      expect(await withoutAutomation.dispatchCommand(command, { authority: 'account_automation' }))
+        .toMatchObject({ status: 'failed', error: { code: 'adapter_unavailable' } });
       expect(await harness.routes.dispatchCommand({ ...command, viewId: 'missing' }, { authority: 'present_user' })).toMatchObject({ status: 'failed', error: { code: 'view_not_found' } });
       expect(harness.automation.getRuntimeStats().runtimeCount).toBe(1);
       harness.resumeInput();

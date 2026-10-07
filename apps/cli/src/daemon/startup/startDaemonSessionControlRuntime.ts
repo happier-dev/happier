@@ -9402,7 +9402,9 @@ export async function startDaemonSessionControlRuntime(
                             },
                         });
                     }
-                    if (browserControlBroker.hasExecutableAdapters() && browserDaemonFeatureGate.isEnabled('browser.automation') && !browserAutomationRoutes) {
+                    // Control Actions can mutate a page even when automation Actions are disabled.
+                    // They must share the same input authority and drain as automation and streamed human input.
+                    if (browserControlBroker.hasExecutableAdapters() && !browserAutomationServiceForCapture) {
                         const browserSidecarContextCapture = browserSidecarControlAdapterResult.contextCapture;
                         const browserAutomationService = createBrowserAutomationDaemonService({
                             adapter: createBrowserAutomationCdpAdapter({
@@ -9433,7 +9435,6 @@ export async function startDaemonSessionControlRuntime(
                         });
                         disposeBrowserAutomationService = () => browserAutomationService.dispose();
                         browserAutomationServiceForCapture = browserAutomationService;
-                        browserAutomationRoutes = createBrowserAutomationRoutes({ service: browserAutomationService });
                     }
                     const browserSidecarContextCapture = browserSidecarControlAdapterResult.contextCapture;
                     browserSidecarContextCaptureForRecording = browserSidecarContextCapture ?? null;
@@ -9503,6 +9504,9 @@ export async function startDaemonSessionControlRuntime(
                         disabledReason: browserSidecarControlAdapterResult.disabledReason,
                     });
                 }
+            }
+            if (browserAutomationServiceForCapture && browserDaemonFeatureGate.isEnabled('browser.automation') && !browserAutomationRoutes) {
+                browserAutomationRoutes = createBrowserAutomationRoutes({ service: browserAutomationServiceForCapture });
             }
             if (
                 browserRecordingRuntime
