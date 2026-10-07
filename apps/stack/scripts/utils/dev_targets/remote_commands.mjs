@@ -266,7 +266,7 @@ export function renderNativeCommandPolicy() {
     renderShellCommandRules(COMMAND_RULES), '}',
     'native_command_policy_finish() {', renderShellCommandRules(FINAL_COMMAND_RULES), '}',
     'native_package_manager() { case "$1" in ' + REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.join('|') + ') return 0 ;; *) return 1 ;; esac; }',
-    NATIVE_COMMAND_NORMALIZATION, '',
+    NATIVE_COMMAND_NORMALIZATION,
   ].join('\n');
 }
 
