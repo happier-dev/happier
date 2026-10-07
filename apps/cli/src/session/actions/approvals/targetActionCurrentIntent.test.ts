@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginSourceCustodyV1, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { createTargetActionCurrentIntentAdapter, targetActionApprovalMatchesCurrentIntent } from './targetActionCurrentIntent';
-import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 const developmentCustody = { kind: 'development', registeredRootId: 'root-7' } as const;
 

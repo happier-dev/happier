@@ -8,7 +8,7 @@ import { refreshTerminalPresentUserPolicy } from '@/settings/accountSettings/res
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
 import { createDaemonControlApp } from './controlServer';
-import { getSharedBlockingApprovalCoordinator } from '@/session/actions/approvals/blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 // Configuration is the environment boundary. Account policy, catalog and execution stay real.
