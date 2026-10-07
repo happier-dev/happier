@@ -39,7 +39,7 @@ export type WalkthroughViewLayout = 'wide' | 'narrow' | 'phone';
  */
 export type WalkthroughReviewSlots = Readonly<{
     stopAccessory?: (stopId: string) => React.ReactNode;
-    renderStopFindings?: (stop: WalkthroughStop, nav: Readonly<{ scrollToStop: (stopId: string) => void }>) => Readonly<{
+    renderStopFindings?: (stop: WalkthroughStop, nav: Readonly<{ scrollToStop: (stopId: string) => void; scrollToFindings: () => void }>) => Readonly<{
         refs?: React.ReactNode;
         cards?: React.ReactNode;
         /** Findings the prose cites inline, drawn where the narrator placed them. */
@@ -118,6 +118,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(props: Walkth
     const scrollRef = React.useRef<ScrollView>(null);
     const stopOffsets = React.useRef(new Map<string, number>());
     const othersOffset = React.useRef<number | null>(null);
+    const findingsOffset = React.useRef<number | null>(null);
     const streamOffset = React.useRef(0);
     const firstUnread = reading.stops.find((stop) => !stop.reviewed) ?? reading.stops[0];
     const [currentStopId, setCurrentStopId] = React.useState<string | null>(props.initialStopId ?? firstUnread?.id ?? null);
@@ -140,6 +141,11 @@ export const WalkthroughView = React.memo(function WalkthroughView(props: Walkth
     const scrollToOthers = React.useCallback(() => {
         if (othersOffset.current !== null) scrollRef.current?.scrollTo({ y: othersOffset.current + streamOffset.current, animated: false });
     }, []);
+    const scrollToFindings = React.useCallback(() => {
+        if (findingsOffset.current !== null) scrollRef.current?.scrollTo({
+            y: Math.max(0, findingsOffset.current + streamOffset.current - (phone ? 52 : 0)), animated: false,
+        });
+    }, [phone]);
 
     const onScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         const line = event.nativeEvent.contentOffset.y + CURRENT_STOP_READING_LINE_PX - streamOffset.current;
@@ -268,7 +274,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(props: Walkth
     );
     const marksDisabled = props.offline ? t('walkthrough.notice.offlineA11y') : props.marksDisabledReason ?? null;
     const renderStopFindings = props.review?.renderStopFindings;
-    const stopNav = { scrollToStop };
+    const stopNav = { scrollToStop, scrollToFindings };
     const stops = reading.stops.map((stop) => {
         const findings = renderStopFindings?.(stop, stopNav) ?? null;
         const section = (
@@ -314,7 +320,10 @@ export const WalkthroughView = React.memo(function WalkthroughView(props: Walkth
             <View onLayout={(event) => { othersOffset.current = event.nativeEvent.layout.y; }}>
                 <WalkthroughOtherChanges others={reading.others} phone={phone} onOpenFile={props.onOpenFile} />
             </View>
-            {props.review?.afterStops}
+            {props.review?.afterStops ? <View testID="walkthrough-findings-tail-anchor"
+                onLayout={(event) => { findingsOffset.current = event.nativeEvent.layout.y; }}>
+                {props.review.afterStops}
+            </View> : null}
         </>
     );
     const body = reading.phase === 'inventory'

@@ -33,6 +33,22 @@ function overlayOf(reviews: ReviewFindingsOverlayReview[], walkthrough = SPECIME
 }
 
 describe('buildWalkthroughReviewOverlay', () => {
+    it('navigates a citation to the findings tail when its exact code is outdated', () => {
+        const walkthrough = { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.map((stop) =>
+            stop.id === 'key' ? { ...stop, explanationMarkdown: 'See [this finding](finding:run-codex:old).', findingRefs: ['run-codex:old'] } : stop) };
+        const overlay = overlayOf([review('run-codex', 'codex', [
+            finding('old', 'high', { filePath: SHEET, startLine: 11 }),
+        ], { comparisonId: 'older-comparison' })], walkthrough);
+        const slots = buildWalkthroughReviewSlots({ overlay, phone: false, severityColors: () => ({ foreground: '#c00', tint: '#fee' }) });
+        const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
+            walkthrough: { state: 'complete', value: walkthrough }, analysis: null, reviewed: null });
+        const nav = { scrollToStop: vi.fn(), scrollToFindings: vi.fn() };
+        const findings = slots.renderStopFindings?.(reading.stops.find((stop) => stop.id === 'key')!, nav);
+        findings?.proseReferences?.onPress?.('run-codex:old');
+        expect(nav.scrollToFindings).toHaveBeenCalledOnce();
+        expect(nav.scrollToStop).not.toHaveBeenCalled();
+    });
+
     it.each([
         { id: 'with spaces (finding:run-codex:other)', encoded: 'run-codex:with%20spaces%20%28finding:run-codex:other%29' },
         { id: 'literal%20escape', encoded: 'run-codex:literal%2520escape' },
@@ -49,7 +65,7 @@ describe('buildWalkthroughReviewOverlay', () => {
         const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
             walkthrough: { state: 'complete', value: walkthrough }, analysis: null, reviewed: null });
         const scrollToStop = vi.fn();
-        const findings = slots.renderStopFindings?.(reading.stops.find((stop) => stop.id === 'key')!, { scrollToStop });
+        const findings = slots.renderStopFindings?.(reading.stops.find((stop) => stop.id === 'key')!, { scrollToStop, scrollToFindings: vi.fn() });
         const references = findings?.proseReferences;
         expect(references?.resolve(encoded)).toMatchObject({ foreground: '#c00', background: '#fee' });
         references?.onPress?.(encoded);

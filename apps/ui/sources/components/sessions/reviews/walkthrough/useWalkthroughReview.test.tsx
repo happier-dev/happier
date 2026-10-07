@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { ExecutionRunGetResponseSchema, ReviewFindingsV2Schema, ScmComparisonSchema } from '@happier-dev/protocol';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createReducer } from '@happier-dev/session-core/reducer';
+import { storage } from '@/sync/domains/state/storageStore';
 
 const boundary = vi.hoisted(() => ({ read: async (): Promise<unknown> => null }));
 // The scoped Session RPC is the network boundary. Decoding, effective findings, comments and overlays stay real.
@@ -37,6 +39,38 @@ async function refresh() {
 }
 
 describe('a walkthrough reads findings before declaring a review complete', () => {
+    it('does not rerender a walkthrough without reviews when its session transcript streams', async () => {
+        const sessionId = 'walkthrough-without-review';
+        storage.setState((state) => ({ sessionMessages: { ...state.sessionMessages, [sessionId]: {
+            messageIdsOldestFirst: [], messagesById: {}, messagesMap: {}, reducerState: createReducer(),
+            latestThinkingMessageId: null, latestThinkingMessageActivityAtMs: null, messagesVersion: 0, isLoaded: true,
+        } } }));
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useWalkthroughReview({ ...params, sessionId, producer: null }); });
+        const before = renders;
+        for (let index = 0; index < 10; index += 1) {
+            await act(async () => storage.setState((state) => ({ sessionMessages: { ...state.sessionMessages,
+                [sessionId]: { ...state.sessionMessages[sessionId]!, messagesVersion: index + 1 },
+            } })));
+        }
+        expect(hook.getCurrent()).toBeNull();
+        expect(renders - before).toBe(0);
+        storage.getState().evictSessionMessages(sessionId);
+    });
+
+    it('keeps readable findings and completion steady during a background refresh', async () => {
+        boundary.read = async () => response(true);
+        const hook = await renderHook(() => useWalkthroughReview(params));
+        await vi.waitFor(() => expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('readable'));
+        const pending = createDeferred<unknown>();
+        boundary.read = () => pending.promise;
+        await refresh();
+        expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('readable');
+        expect(hook.getCurrent()?.overlay.summary.state).toBe('complete');
+        await act(async () => pending.resolve(response(false)));
+        await vi.waitFor(() => expect(hook.getCurrent()?.overlay.summary.total).toBe(0));
+    });
+
     it('keeps recorded completion unread during loading, a missing payload and a failed read', async () => {
         const pending = createDeferred<unknown>();
         boundary.read = () => pending.promise;
