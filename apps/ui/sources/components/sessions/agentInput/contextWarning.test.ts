@@ -292,6 +292,36 @@ describe('context warning window resolution', () => {
             },
         } as any)).toBe(258_400);
     });
+
+    it('resolves catalog context windows for antigravity (agy) models and variant suffixes', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'agy',
+            metadata: {
+                modelOverrideV1: { v: 1, modelId: 'gemini-3.8-flash', updatedAt: 1 },
+            } as any,
+        })).toBe(1_048_576);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'agy',
+            metadata: {
+                modelOverrideV1: { v: 1, modelId: 'gemini-3.8-flash-high', updatedAt: 1 },
+            } as any,
+        })).toBe(1_048_576);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'agy',
+            metadata: {
+                modelOverrideV1: { v: 1, modelId: 'claude-sonnet-5.5', updatedAt: 1 },
+            } as any,
+        })).toBe(1_000_000);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'agy',
+            metadata: {
+                modelOverrideV1: { v: 1, modelId: 'gpt-oss-120b', updatedAt: 1 },
+            } as any,
+        })).toBe(131_072);
+    });
 });
 
 describe('getContextUsageState overflow guard', () => {

@@ -23,9 +23,18 @@ function descriptionSuggestsClaude1m(description: unknown): boolean {
 
 function resolveCatalogContextWindowTokens(agentId: AgentId, modelId: string): number | null {
     if (!modelId) return null;
-    const matchingModel = getAgentStaticModels(agentId)
-        .find((model) => normalizeModelId(model.id) === modelId) ?? null;
-    return normalizeContextWindowTokens(matchingModel?.contextWindowTokens);
+    const staticModels = getAgentStaticModels(agentId);
+    const directMatch = staticModels.find((model) => normalizeModelId(model.id) === modelId) ?? null;
+    if (directMatch) {
+        return normalizeContextWindowTokens(directMatch.contextWindowTokens);
+    }
+
+    const normalizedKey = modelId.replace(/\./g, '-');
+    const normalizedMatch = staticModels.find((model) => {
+        const idKey = normalizeModelId(model.id).replace(/\./g, '-');
+        return idKey === normalizedKey || normalizedKey.startsWith(`${idKey}-`);
+    });
+    return normalizeContextWindowTokens(normalizedMatch?.contextWindowTokens);
 }
 
 export function toContextWarningWindowTokens(contextWindowTokens: number): number {
