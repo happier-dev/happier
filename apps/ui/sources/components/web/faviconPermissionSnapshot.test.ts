@@ -163,13 +163,13 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const selector = createFaviconPermissionSnapshotSelector();
         const first = selector(createState({
             sessions: {
-                session1: createSession({ id: 'session1', updatedAt: 1 }),
+                session1: createSession({ id: 'session1', updatedAt: 1, activeAt: 1 }),
             },
         }));
 
         const second = selector(createState({
             sessions: {
-                session1: createSession({ id: 'session1', updatedAt: 2 }),
+                session1: createSession({ id: 'session1', updatedAt: 2, activeAt: 1 }),
             },
         }));
 
@@ -400,7 +400,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const firstState = createState({
             sessions: {
                 session1,
-                unrelated: createSession({ id: 'unrelated', updatedAt: 1 }),
+                unrelated: createSession({ id: 'unrelated', updatedAt: 1, activeAt: 1 }),
             },
             sessionMessages: {
                 session1: sessionMessages,
@@ -409,7 +409,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const secondState = createState({
             sessions: {
                 session1,
-                unrelated: createSession({ id: 'unrelated', updatedAt: 2 }),
+                unrelated: createSession({ id: 'unrelated', updatedAt: 2, activeAt: 1 }),
             },
             sessionMessages: {
                 session1: sessionMessages,

@@ -413,9 +413,23 @@ describe('StagePane', () => {
         const brandPane = await renderScreen(<StagePane mode="brand" />);
         const brandPlanet = brandPane.findByTestId('planet-background-desktop');
         const planet = screen.findByTestId('planet-background-desktop');
-        expect(brandPlanet?.props.contentPosition).toBeTruthy();
-        expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
-        expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
+        expect(brandPlanet).not.toBeNull();
+        expect(planet).not.toBeNull();
+        if (Platform.OS === 'web') {
+            const brandFraming = flattenStyle(brandPlanet?.props.style);
+            const framing = flattenStyle(planet?.props.style);
+            expect(brandFraming.backgroundImage).toEqual(expect.any(String));
+            expect(brandFraming.backgroundSize).toBe('cover');
+            expect(framing.backgroundImage).toBe(brandFraming.backgroundImage);
+            expect(framing.backgroundSize).toBe(brandFraming.backgroundSize);
+            expect(framing.backgroundPosition).toBe(brandFraming.backgroundPosition);
+        } else {
+            expect(brandPlanet?.props.contentPosition).toBeTruthy();
+            expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
+            expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
+        }
+        expect(planet?.props.accessible).toBe(false);
+        expect(planet?.props.pointerEvents).toBe('none');
 
         const wallpaperHost = screen.findByTestId('unauth-shell-stage-wallpaper-host');
         const style = flattenStyle(wallpaperHost?.props.style);

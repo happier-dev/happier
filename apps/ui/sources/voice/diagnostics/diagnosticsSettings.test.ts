@@ -25,10 +25,10 @@ describe('Diagnostic recording settings declarations', () => {
             .find((candidate) => candidate.anchor === 'voicePrivacy.diagnosticsEnabled');
         expect(setting).toBeDefined();
         expect(setting?.storage?.access).toBe('read_only');
-        expect(setting?.operation).toMatchObject({ kind: 'interaction', requiresHumanInteraction: true });
+        expect(setting?.operation).toMatchObject({ kind: 'invoke', requiresHumanInteraction: true, requiresApproval: true });
         const deletion = Object.values(VOICE_PRIVACY_SETTINGS.settings)
             .find((candidate) => candidate.anchor === 'voicePrivacy.diagnosticsDelete');
-        expect(deletion?.operation).toMatchObject({ kind: 'interaction', requiresHumanInteraction: true });
+        expect(deletion?.operation).toMatchObject({ kind: 'invoke', requiresHumanInteraction: true, requiresApproval: true });
         expect(deletion?.storage).toBeUndefined();
     });
 });

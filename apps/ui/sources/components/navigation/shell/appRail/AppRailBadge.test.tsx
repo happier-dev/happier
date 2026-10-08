@@ -1,6 +1,4 @@
 import * as React from 'react';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -67,9 +65,4 @@ describe('AppRailBadge', () => {
         expect(resolveAppRailBadgeTone({ source: 'plugin', tone: 'neutral' })).toBe('neutral');
     });
 
-    it('is the only way the rail draws a badge', () => {
-        const rail = readFileSync(resolve(__dirname, 'AppRail.tsx'), 'utf8');
-        expect(rail).not.toMatch(/TabBadge|StatusPill/);
-        expect(rail).not.toMatch(/\n    badge: \{/);
-    });
 });

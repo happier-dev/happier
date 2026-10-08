@@ -81,13 +81,6 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-// Icons render a native glyph package; the view's behaviour never depends on it.
-vi.mock('@/components/ui/icons/Icon', () => ({
-    ICON_SIZE: { sm: 16, md: 20, lg: 24 },
-    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
-}));
-
-
 const SERVICE = { pluginId: 'acme.accounts', localId: 'openai-codex' } as const;
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
@@ -586,6 +579,9 @@ describe('QualifiedPoolDetailView', () => {
 
     it('names a member once: by its label, else its email, never the raw account id', async () => {
         const { screen } = await renderPoolDetail({}, {
+            accounts: ACCOUNTS.map((account) => account.ref.accountId === 'work'
+                ? { ...account, displayName: undefined }
+                : account),
             memberQuotaByAccountId: quota({ work: snapshot('work', [{ id: '5h', label: '5-hour', left: 40, resetsInMs: 60 * MIN }]) }),
         });
         // No user label: the email names the account and is not repeated on the identity line.
@@ -602,7 +598,7 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), status: 'connected' },
             ],
         });
-        expect(memberRow(unnamed.screen, 'backup').title).toBe('Codex');
+        expect(memberRow(unnamed.screen, 'backup').title).toBe('connectedServicesCollection.accountLabel(service=Codex)');
         expect(memberRow(unnamed.screen, 'backup').identityLabel ?? '').not.toContain('backup');
     });
 
@@ -618,10 +614,11 @@ describe('QualifiedPoolDetailView', () => {
                 email: input.email ?? null, accountId: input.accountId ?? null,
             }),
         });
-        expect(memberRow(screen, 'work').title).toBe('provi•••42');
+        const serviceAccountLabel = 'connectedServicesCollection.accountLabel(service=Codex)';
+        expect(memberRow(screen, 'work').title).toBe(serviceAccountLabel);
         expect(memberRow(screen, 'backup').title).toBe('provider-account-43');
-        expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: 'provi•••42' });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=provi•••42)');
+        expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: serviceAccountLabel });
+        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe(`connectedServicesPool.using(name=${serviceAccountLabel})`);
         expect(screen.getTextContent()).not.toContain('provider-account-42');
     });
 
@@ -651,7 +648,7 @@ describe('QualifiedPoolDetailView', () => {
             activeSince: { accountId: 'work', atMs: NOW - 30 * MIN },
         });
         const now = itemProps(screen, 'connected-services-pool-detail:now');
-        expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=work@example\.com,time=/);
+        expect(now.title).toMatch(/^connectedServicesPool\.usingSince\(name=Work workspace,time=/);
         expect(now.subtitle).toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackDescription');
 
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
@@ -660,7 +657,7 @@ describe('QualifiedPoolDetailView', () => {
 
     it('does not claim a since time the pool has not tied to the active member', async () => {
         const { screen } = await renderPoolDetail({ activeSince: null });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=work@example.com)');
+        expect(itemProps(screen, 'connected-services-pool-detail:now').title).toBe('connectedServicesPool.using(name=Work workspace)');
     });
 
     it('keeps the active account when usage-limit switching is disabled, while still allowing Switch now', async () => {
@@ -672,7 +669,7 @@ describe('QualifiedPoolDetailView', () => {
             }),
         });
         expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle)
-            .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackOff(name=work@example.com)');
+            .toBe('connectedServicesPool.leadInOrder connectedServicesPool.fallbackOff(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:switch');
         expect(setActiveAccount).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }) }));
     });
@@ -684,7 +681,7 @@ describe('QualifiedPoolDetailView', () => {
                 { ref: accountRef('backup'), priority: 200, enabled: false, state: {} },
             ],
         });
-        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle).toBe('connectedServicesPool.onlyOneOn(name=work@example.com)');
+        expect(itemProps(screen, 'connected-services-pool-detail:now').subtitle).toBe('connectedServicesPool.onlyOneOn(name=Work workspace)');
         await pressRow(screen, 'connected-services-pool-detail:now:turn-on');
         expect(patchMember).toHaveBeenCalledWith(expect.objectContaining({ group, account: expect.objectContaining({ accountId: 'backup' }), enabled: true }));
     });
@@ -726,8 +723,7 @@ describe('QualifiedPoolDetailView', () => {
         const { screen } = await renderPoolDetail();
         const options = membersDropdown(screen).props.items as ReadonlyArray<{ id: string; title: string; subtitle?: string }>;
         expect(options.map((option) => option.id)).toEqual(['work', 'backup', 'spare']);
-        expect(options[0]).toMatchObject({ title: 'work@example.com' });
-        expect(options[0]?.subtitle).toBeUndefined();
+        expect(options[0]).toMatchObject({ title: 'Work workspace', subtitle: 'work@example.com' });
     });
 
     it('toggling a member switch patches that member', async () => {

@@ -51,14 +51,19 @@ describe('FloatingTabBarSurface', () => {
 
         // The bar can shrink-wrap, but a wide tab row must remain inside the positioner's
         // available width. Query the public surface identity rather than GlassPanel's internals.
-        const bar = screen.root.findAllByProps({ testID: 'tab-bar-surface' })[0]!;
-        const bounds = bar.parent!;
-        const positioner = screen.root.findAll((node) => typeof node.type === 'string')[0];
-        let parentHost = bounds.parent;
+        const bar = screen.findHostByTestId('tab-bar-surface');
+        expect(bar).not.toBeNull();
+        let bounds = bar?.parent ?? null;
+        while (bounds && (typeof bounds.type !== 'string' || mergedStyle(bounds.props.style).maxWidth !== '100%')) {
+            bounds = bounds.parent;
+        }
+        expect(bounds).not.toBeNull();
+        const positioner = screen.root.findAll((node) => typeof node.type === 'string' && node.props.pointerEvents === 'box-none')[0];
+        let parentHost = bounds?.parent ?? null;
         while (parentHost && typeof parentHost.type !== 'string') parentHost = parentHost.parent;
         expect(parentHost).toBe(positioner);
-        expect(bounds.children).toEqual([bar]);
-        expect(mergedStyle(bounds.props.style).maxWidth).toBe('100%');
+        expect(bounds?.findAll((node) => typeof node.type === 'string' && node.props.testID === 'tab-bar-surface')).toEqual([bar]);
+        expect(mergedStyle(bounds?.props.style).maxWidth).toBe('100%');
     });
 
     it('renders a trailing accessory as a sibling capsule beside the bar', async () => {

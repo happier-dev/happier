@@ -182,7 +182,8 @@ describe('Item leading mark on a page', () => {
         const { View } = await import('react-native');
         const screen = await renderScreen(
             <ListPresentationProvider value={presentation}>
-                <Item title="Ada Lovelace" leftElement={<View testID="avatar" style={{ width: 36, height: 36 }} />} />
+                <Item title="Ada Lovelace" iconBoxSize={presentation === 'grouped' ? 36 : undefined}
+                    leftElement={<View testID="avatar" style={{ width: 36, height: 36 }} />} />
             </ListPresentationProvider>,
         );
         return flattenTestStyle(nearestHostView(hostByTestID(screen, 'avatar')).props.style);
@@ -196,12 +197,10 @@ describe('Item leading mark on a page', () => {
         expect(box.minWidth as number).toBeLessThan(36);
     });
 
-    it('lets an oversized identity mark fit outside page presentation too', async () => {
+    it('fits an oversized identity mark outside page presentation when its caller declares the leading slot size', async () => {
         vi.resetModules();
         const box = await leadingBox('grouped');
-        expect(box.width).toBe('auto');
-        expect(box.height).toBe('auto');
-        expect(typeof box.minWidth).toBe('number');
-        expect(box.minWidth as number).toBeLessThan(36);
+        expect(box.width).toBe(36);
+        expect(box.height).toBe(36);
     });
 });
