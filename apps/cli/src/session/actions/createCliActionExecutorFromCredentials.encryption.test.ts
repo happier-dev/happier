@@ -7,6 +7,7 @@ import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
+import { ExternalActionMachineBootstrapListV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { withCliApiToken } from '@/auth/cliApiToken';
 import { reloadConfiguration } from '@/configuration';
@@ -14,6 +15,10 @@ import { readStoredCredentials } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+
+const persistentMachineBootstrap = ExternalActionMachineBootstrapListV1Schema.parse([
+  { id: 'machine-1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null },
+]);
 
 describe('CLI encrypted SDK transport through real HTTP', () => {
   it.each([false, true])('keeps local credential custody and protects the complete Action (direct daemon: %s)', async (directDaemon) => {
@@ -43,7 +48,7 @@ describe('CLI encrypted SDK transport through real HTTP', () => {
           // projection what that Machine publishes, so a restricted Runner is
           // sealed with its own content key. This Home hosts one ordinary
           // persistent daemon, so the released Account sealing stands.
-          result = [{ id: 'machine-1', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null }];
+          result = persistentMachineBootstrap;
         } else {
           const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(body));
           expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-1' });
@@ -129,17 +134,21 @@ describe('CLI encrypted SDK transport through real HTTP', () => {
       randomBytes: (length) => new Uint8Array(length).fill(3) });
     const sessionId = 'c123456789012345678901234';
     const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
-    const captured: string[] = [];
+    const captured: Array<Readonly<{ path: string; body: string }>> = [];
     const failures: unknown[] = [];
     const server = createServer((request, response) => {
       void (async () => {
         let body = '';
         for await (const chunk of request) body += String(chunk);
-        captured.push(body);
+        captured.push({ path: request.url ?? '', body });
         expect(request.headers.authorization).toBe(`Bearer ${bearer}`);
         let result: unknown;
         if (request.url?.endsWith('/encryption-access')) {
           result = { v: 1, accountId: context.accountId, tokenId: context.tokenId, encryptionAccess };
+        } else if (request.url?.endsWith('/v1/machines')) {
+          // Session targets also use the real Runner bootstrap projection before
+          // sealing. This ordinary daemon has no Runner Session claim.
+          result = persistentMachineBootstrap;
         } else {
           const envelope = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(body));
           expect(envelope.target).toEqual({ kind: 'session', sessionId });
@@ -198,9 +207,13 @@ describe('CLI encrypted SDK transport through real HTTP', () => {
             .resolves.toMatchObject({ ok: true, result: { sessionId, result: { operation: 'upsert_item', outcome: 'created' } } });
         });
         expect(failures).toEqual([]);
-        expect(captured).toHaveLength(2);
-        expect(captured.join('')).not.toContain('sentinel');
-        expect(captured.join('')).not.toContain(token);
+        expect(captured.map(({ path }) => path)).toEqual([
+          '/v1/auth/api-tokens/encryption-access',
+          '/v1/machines',
+          '/v1/actions/session.board.item.upsert',
+        ]);
+        expect(JSON.stringify(captured)).not.toContain('sentinel');
+        expect(JSON.stringify(captured)).not.toContain(token);
       });
     } finally {
       env.restore(); reloadConfiguration();

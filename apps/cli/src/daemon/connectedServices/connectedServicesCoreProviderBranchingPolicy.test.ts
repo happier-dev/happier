@@ -10,6 +10,8 @@ const providerOrServiceIdPattern =
   /(['"])(codex|claude|opencode|gemini|pi|openai-codex|claude-subscription|github|anthropic|openai)\1/gu;
 
 const allowedProviderLiteralFiles: Readonly<Record<string, string>> = {
+  'compatibility/exactV021ConnectedServiceMaterialization.ts':
+    'the closed cli-v0.2.1 (b1d15a8a9c241737d1ca9b167459901e6259173a) launch-output adapter retains released Agent/service recipes only until exact-v0.2.1 peer and persisted no-revision credential support ends',
   'github/githubConnectedAccountTarget.ts':
     'provider-owned GitHub connected-account target owns the GitHub service id',
   'notifications/dispatchConnectedServiceAccountSwitchNotification.ts':
@@ -28,7 +30,7 @@ async function listSourceFiles(dir: string): Promise<string[]> {
     const fullPath = `${dir}${sep}${entry.name}`;
     if (entry.isDirectory()) return await listSourceFiles(fullPath);
     if (!entry.isFile()) return [];
-    if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) return [];
+    if (!entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts') || entry.name.endsWith('.testkit.ts')) return [];
     return [fullPath];
   }));
   return files.flat();

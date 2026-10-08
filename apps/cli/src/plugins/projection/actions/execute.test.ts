@@ -1799,7 +1799,7 @@ describe('executeContributedAction', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('executes a first-party plugin action through the same qualified target-action route', async () => {
+  it('refuses an unadmitted Action even when its projection claims first-party provenance', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'mint-client-auth');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -1851,11 +1851,15 @@ describe('executeContributedAction', () => {
       actionId: 'acme.action.plugin/mint-client-auth',
       input: {},
       context: { surface: 'ui' },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       matched: true,
-      result: { ok: true, result: { status: 'minted' } },
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_generation_retired',
+        actionHandlerInvocation: 'notStarted',
+      },
     });
-    expect(target).toHaveBeenCalledTimes(1);
+    expect(target).not.toHaveBeenCalled();
   });
 
   it('executes one committed target action invocation', async () => {

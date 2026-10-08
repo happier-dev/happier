@@ -1,89 +1,73 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
-
-const { createConfiguredAcpProbeBackendMock, cliProbeState } = vi.hoisted(() => ({
-  createConfiguredAcpProbeBackendMock: vi.fn(async () => null),
-  cliProbeState: {
-    counterPath: '',
-    requireSanitizedEnvironment: false,
-  },
-}));
-
-vi.mock('./configuredAcpProbeBackend', () => ({
-  createConfiguredAcpProbeBackend: createConfiguredAcpProbeBackendMock,
-}));
-
-vi.mock('@/agent/catalog/registry', () => ({
-  AGENTS: {
-    opencode: {
-      getPreflightSessionControlsProbeAdapter: async () => ({
-        failureCacheStrategy: 'cooldown',
-        cliModelsCommandArgs: ['models'],
-      }),
-    },
-  },
-}));
-
-vi.mock('@/packagedRuntime/managedTools/agentCliResolution', () => ({
-  resolveAgentCliCommand: () => null,
-  resolveAgentCliCommandForRuntime: () => null,
-}));
-
-vi.mock('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec', () => ({
-  resolveAgentCliLaunchSpec: () => {
-    const expectedEnvironment = {
-      PATH: '/required/cold-probe/path',
-      HAPPIER_OPENCODE_PATH: '/required/cold-probe/opencode',
-      HAPPIER_JS_RUNTIME_PATH: '/required/cold-probe/node',
-    };
-    return {
-      source: 'system',
-      resolvedPath: process.execPath,
-      command: process.execPath,
-      args: [
-        '-e',
-        [
-          'const fs = require("node:fs");',
-          `const counterPath = ${JSON.stringify(cliProbeState.counterPath)};`,
-          `const requireSanitizedEnvironment = ${JSON.stringify(cliProbeState.requireSanitizedEnvironment)};`,
-          `const expectedEnvironment = ${JSON.stringify(expectedEnvironment)};`,
-          'const hasExpectedEnvironment = Object.entries(expectedEnvironment).every(([key, value]) => process.env[key] === value);',
-          'const hasNoAmbientCredentials = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "OPENAI_ACCESS_TOKEN", "HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH"].every((key) => process.env[key] === undefined);',
-          'if (requireSanitizedEnvironment && (!hasExpectedEnvironment || !hasNoAmbientCredentials)) process.exit(41);',
-          'const current = counterPath && fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, "utf8")) : 0;',
-          'if (counterPath) fs.writeFileSync(counterPath, String(current + 1));',
-          'process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");',
-        ].join(' '),
-      ],
-    };
-  },
-}));
+import { afterAll, describe, expect, it } from 'vitest';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { withAgentPreflightCatalog } from './withAgentPreflightCatalog';
 
 import { probeAgentModelsBestEffort, resetAgentModelsProbeCacheForTests } from './agentModelsProbe';
+
+const runtime = await createAdmittedPluginRuntimeFixture({
+  controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.opencode'] },
+});
+afterAll(async () => { await runtime.dispose(); });
+
+async function createNativeProbe(tempDir: string, requireSanitizedEnvironment = false) {
+  const counterPath = join(tempDir, 'counter.txt');
+  const scriptPath = join(tempDir, 'opencode.cjs');
+  const fileName = process.platform === 'win32' ? 'opencode.cmd' : 'opencode';
+  const expectedEnvironment = {
+    PATH: requireSanitizedEnvironment ? '/required/cold-probe/path' : process.env.PATH,
+    HAPPIER_OPENCODE_PATH: join(tempDir, fileName), HAPPIER_JS_RUNTIME_PATH: process.execPath,
+  };
+  // The executable is the OS boundary; the real admitted plugin selects the
+  // command and owns environment custody, parsing, and model semantics.
+  await writeFile(scriptPath, [
+    'const fs = require("node:fs"); const args = process.argv.slice(2);',
+    'if (args[0] === "--version") { process.stdout.write("2.0.0\\n"); process.exit(0); }',
+    'if (args[0] !== "api" || args[1] !== "get" || args[2] !== "/api/model") process.exit(42);',
+    `const expectedEnvironment = ${JSON.stringify(expectedEnvironment)};`,
+    `const requireSanitizedEnvironment = ${JSON.stringify(requireSanitizedEnvironment)};`,
+    'const hasExpectedEnvironment = Object.entries(expectedEnvironment).every(([key, value]) => process.env[key] === value);',
+    'const hasNoAmbientCredentials = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "OPENAI_ACCESS_TOKEN", "HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH"].every(key => process.env[key] === undefined);',
+    'if (requireSanitizedEnvironment && (!hasExpectedEnvironment || !hasNoAmbientCredentials)) process.exit(41);',
+    `const counterPath = ${JSON.stringify(counterPath)};`,
+    'const current = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, "utf8")) : 0;',
+    'fs.writeFileSync(counterPath, String(current + 1));',
+    'process.stdout.write(JSON.stringify({ data: [{ providerID: "openai", id: "gpt-4.1", name: "GPT 4.1" }, { providerID: "openai", id: "gpt-4.1-mini", name: "GPT 4.1 mini" }] }));',
+  ].join('\n'));
+  await writeExecutableShim({ dir: tempDir, fileName, contents: process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\nexit /b %errorlevel%\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${scriptPath}" "$@"\n` });
+  return { counterPath, env: { ...process.env, ...expectedEnvironment } };
+}
+
+async function probe(cwd: string, env: NodeJS.ProcessEnv) {
+  return await withAgentPreflightCatalog({ agentId: 'opencode' }, async context =>
+    await probeAgentModelsBestEffort({ agentId: 'opencode', cwd, env, timeoutMs: 2_000,
+      catalogEntry: context.catalogEntry, runtimeCacheKey: context.runtimeCacheKey }));
+}
 
 describe('probeAgentModelsBestEffort (cache)', () => {
   it('caches dynamic CLI results and avoids re-running the CLI probe', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-agent-model-probe-cache-'));
-    const counterPath = join(tempDir, 'counter.txt');
-
     try {
-      cliProbeState.counterPath = counterPath;
+      const nativeProbe = await createNativeProbe(tempDir);
 
       resetAgentModelsProbeCacheForTests();
 
-      const first = await probeAgentModelsBestEffort({ agentId: 'opencode', cwd: tempDir, timeoutMs: 2_000 });
+      const first = await probe(tempDir, nativeProbe.env);
       expect(first.source).toBe('dynamic');
       expect(first.availableModels.map((model) => model.id)).toEqual(['default', 'openai/gpt-4.1', 'openai/gpt-4.1-mini']);
 
-      const second = await probeAgentModelsBestEffort({ agentId: 'opencode', cwd: tempDir, timeoutMs: 2_000 });
+      const second = await probe(tempDir, nativeProbe.env);
       expect(second.source).toBe('dynamic');
       expect(second.availableModels.map((model) => model.id)).toEqual(['default', 'openai/gpt-4.1', 'openai/gpt-4.1-mini']);
-      await expect(readFile(counterPath, 'utf8')).resolves.toBe('1');
+      await expect(readFile(nativeProbe.counterPath, 'utf8')).resolves.toBe('1');
     } finally {
-      cliProbeState.counterPath = '';
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 20_000);
@@ -92,23 +76,16 @@ describe('probeAgentModelsBestEffort (cache)', () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-agent-model-probe-cold-environment-'));
 
     try {
-      cliProbeState.requireSanitizedEnvironment = true;
+      const nativeProbe = await createNativeProbe(tempDir, true);
       resetAgentModelsProbeCacheForTests();
 
-      const result = await probeAgentModelsBestEffort({
-        agentId: 'opencode',
-        cwd: tempDir,
-        timeoutMs: 2_000,
-        env: {
-          PATH: '/required/cold-probe/path',
-          HAPPIER_OPENCODE_PATH: '/required/cold-probe/opencode',
-          HAPPIER_JS_RUNTIME_PATH: '/required/cold-probe/node',
+      const result = await probe(tempDir, {
+          ...nativeProbe.env,
           OPENAI_API_KEY: 'ambient-openai-api-key',
           ANTHROPIC_API_KEY: 'ambient-anthropic-api-key',
           CODEX_API_KEY: 'ambient-codex-api-key',
           OPENAI_ACCESS_TOKEN: 'ambient-openai-access-token',
           HAPPIER_CLIPROXYAPI_REQUEST_AUTH_CAPABILITY_PATH: '/private/cliproxy-capability.json',
-        },
       });
 
       expect(result).toMatchObject({
@@ -116,8 +93,8 @@ describe('probeAgentModelsBestEffort (cache)', () => {
         source: 'dynamic',
       });
       expect(result.availableModels.map((model) => model.id)).toEqual(['default', 'openai/gpt-4.1', 'openai/gpt-4.1-mini']);
+      await expect(readFile(nativeProbe.counterPath, 'utf8')).resolves.toBe('1');
     } finally {
-      cliProbeState.requireSanitizedEnvironment = false;
       await rm(tempDir, { recursive: true, force: true });
     }
   }, 20_000);
