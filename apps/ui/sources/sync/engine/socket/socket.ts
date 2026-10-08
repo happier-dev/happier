@@ -1148,6 +1148,7 @@ export async function handleSocketUpdate(params: {
     onReadyProjectionAdvance?: (sessionId: string, seq: number) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    invalidateProfile?: () => void;
     invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
@@ -1184,6 +1185,7 @@ export async function handleSocketUpdate(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateProfile,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1225,6 +1227,7 @@ export async function handleSocketUpdate(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateProfile,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1263,6 +1266,7 @@ export async function handleUpdateContainer(params: {
     onReadyProjectionAdvance?: (sessionId: string, seq: number) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    invalidateProfile?: () => void;
     invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
@@ -1299,6 +1303,7 @@ export async function handleUpdateContainer(params: {
         onReadyProjectionAdvance,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateProfile,
         invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
@@ -1869,6 +1874,7 @@ export async function handleUpdateContainer(params: {
                 shouldContinue() ? storage.getState().applySettingsForScope(scope, settings, version) : undefined,
             getLocalSettings: () => storage.getState().settings,
             getPendingSettings,
+            ...(invalidateProfile ? { invalidateProfile: () => { if (shouldContinue()) invalidateProfile(); } } : {}),
             log,
         });
     } else if (updateData.body.t === 'new-machine') {

@@ -290,6 +290,15 @@ export {
   GEMINI_CLI_OAUTH_SCOPES,
   GEMINI_CLI_OAUTH_TOKEN_URL,
 } from './providers/gemini/oauth.js';
+export {
+  AGY_OAUTH_CLIENT_ID,
+  AGY_OAUTH_CLIENT_SECRET,
+  AGY_OAUTH_AUTHORIZE_URL,
+  AGY_OAUTH_TOKEN_URL,
+  AGY_OAUTH_USERINFO_URL,
+  AGY_OAUTH_CALLBACK_URL,
+  AGY_OAUTH_SCOPES,
+} from './providers/agy/oauth.js';
 
 export { computeMonotonicUpdatedAt, type MonotonicUpdatedAtPolicy } from './sessionControls/monotonic.js';
 export {
@@ -457,3 +466,6 @@ export * from './providers/providerCliInstallGuidance.js';
 export * from './providerSettings/index.js';
 
 export * from './voice/index.js';
+
+export { AgyOauthAccountError, resolveAgyOauthAccount, createAgyApiHeaders, AGY_CLOUDCODE_API_BASE_URLS } from './providers/agy/resolveOauthAccount.js';
+export { resolveAgyQuotaPoolForModel, resolveAgyQuotaPoolForLimit, resolveAgyQuotaModelFamily, isAgyInternalQuotaModel } from './providers/agy/quotaModelGroups.js';

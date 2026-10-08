@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
+import { AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_SCOPES } from "@happier-dev/agents";
 
 import { decodeBase64, encodeBase64, openBoxBundle, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
 
@@ -32,6 +33,87 @@ function buildJwt(payload: Record<string, unknown>): string {
 
 describe("exchangeConnectedServiceOauthTokens", () => {
     const resetOauthExchangeEnv = createEnvReset();
+
+    it("exchanges native Antigravity tokens with PKCE and seals verified account/project metadata without an ID token", async () => {
+        const recipient = buildRecipientKeyPair();
+        const fetchMock: typeof fetch = async (input, init) => {
+            const url = String(input);
+            if (url === "https://oauth2.googleapis.com/token") {
+                const body = new URLSearchParams(String(init?.body));
+                expect(body.get("client_id")).toBe(AGY_OAUTH_CLIENT_ID);
+                expect(body.get("client_secret")).toBe(AGY_OAUTH_CLIENT_SECRET);
+                expect(body.get("code_verifier")).toBe("pkce-verifier");
+                expect(body.get("redirect_uri")).toBe("http://localhost:54545/");
+                return Response.json({ access_token: "at", refresh_token: "rt", expires_in: 3600,
+                    scope: AGY_OAUTH_SCOPES.join(" "), token_type: "Bearer" });
+            }
+            expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer at");
+            if (url === "https://www.googleapis.com/oauth2/v3/userinfo") {
+                return Response.json({ sub: "google-account-a", email: "a@example.test", email_verified: true });
+            }
+            if (url.endsWith(":loadCodeAssist")) {
+                expect(JSON.parse(String(init?.body))).toMatchObject({ cloudaicompanionProject: 'requested-project' });
+                return Response.json({ cloudaicompanionProject: "project-a", currentTier: { id: "paid-tier" } });
+            }
+            throw new Error("Unexpected provider request");
+        };
+        const result = await exchangeConnectedServiceOauthTokens({
+            serviceId: "antigravity", publicKeyB64Url: recipient.publicKeyB64Url, code: "code", verifier: "pkce-verifier",
+            redirectUri: "http://localhost:54545/", state: "state", now: 1700000000000, fetcher: fetchMock,
+            projectId: "requested-project",
+        });
+        const opened = openBoxBundle({ bundle: decodeBase64(result.bundleB64Url, "base64url"), recipientSecretKeyOrSeed: recipient.secretKey });
+        expect(opened).toBeTruthy();
+        const payload = JSON.parse(new TextDecoder().decode(opened!));
+        expect(payload).toMatchObject({ serviceId: "antigravity", idToken: null,
+            providerAccountId: "google-account-a", providerEmail: "a@example.test", expiresAt: 1700003600000,
+            scope: AGY_OAUTH_SCOPES.join(" "), raw: { antigravity: {
+                clientId: AGY_OAUTH_CLIENT_ID, authMethod: "oauth-personal", projectId: "project-a", tierId: "paid-tier",
+            } } });
+    });
+
+    it("redacts Antigravity provider errors and preserves invalid-grant classification", async () => {
+        const fetchMock: typeof fetch = async () => Response.json({
+            error: "invalid_grant", error_description: "private-provider-detail",
+        }, { status: 400 });
+        const operation = exchangeConnectedServiceOauthTokens({
+            serviceId: "antigravity", publicKeyB64Url: buildRecipientPublicKeyB64Url(), code: "code", verifier: "v",
+            redirectUri: "http://localhost:54545/", state: "state", now: 1700000000000, fetcher: fetchMock,
+        });
+        await expect(operation).rejects.toMatchObject({ errorCode: "connect_oauth_invalid_grant" });
+        await expect(operation).rejects.not.toThrow("private-provider-detail");
+    });
+
+    it("uses one exchange deadline across Antigravity token and account verification requests", async () => {
+        resetOauthExchangeEnv({ HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS: "1000" });
+        vi.useFakeTimers();
+        try {
+            const fetchMock: typeof fetch = async (input, init) => {
+                await new Promise<void>((resolve, reject) => {
+                    const timer = setTimeout(resolve, 600);
+                    init?.signal?.addEventListener("abort", () => {
+                        clearTimeout(timer);
+                        reject(new DOMException("Aborted", "AbortError"));
+                    }, { once: true });
+                });
+                if (String(input).endsWith("/token")) return Response.json({
+                    access_token: "at", refresh_token: "rt", scope: AGY_OAUTH_SCOPES.join(" "),
+                });
+                if (String(input).endsWith("/userinfo")) return Response.json({ sub: "account-a", email: "a@example.test" });
+                return Response.json({ cloudaicompanionProject: "project-a", currentTier: { id: "paid-tier" } });
+            };
+            const operation = exchangeConnectedServiceOauthTokens({
+                serviceId: "antigravity", publicKeyB64Url: buildRecipientPublicKeyB64Url(), code: "code", verifier: "v",
+                redirectUri: "http://localhost:54545/", state: "state", now: 1700000000000, fetcher: fetchMock,
+            });
+            const settled = operation.then(() => null, (error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(await settled).toBeInstanceOf(ConnectedServiceOauthTimeoutError);
+        } finally {
+            vi.useRealTimers();
+            resetOauthExchangeEnv();
+        }
+    });
 
     it("rejects openai api-key service oauth exchange", async () => {
         await expect(exchangeConnectedServiceOauthTokens({

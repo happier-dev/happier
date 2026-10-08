@@ -10,6 +10,11 @@ describe('parseConnectArgs', () => {
     expect(res.options.device).toBe(true);
   });
 
+  it('parses fixed import sources and project selection', () => {
+    const res = parseConnectArgs(['agy', '--import', '--import-source', 'cli', '--project', 'verified-project']);
+    expect(res.options).toMatchObject({ importExisting: true, importSource: 'cli', projectId: 'verified-project' });
+  });
+
   it('defaults profile to default', () => {
     const res = parseConnectArgs(['codex']);
     expect(res.options.profileId).toBe('default');

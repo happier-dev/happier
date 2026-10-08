@@ -1,4 +1,7 @@
 import {
+  AGY_OAUTH_CLIENT_ID,
+  AGY_OAUTH_CLIENT_SECRET,
+  AGY_OAUTH_TOKEN_URL,
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES,
   CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
@@ -52,6 +55,7 @@ export type ConnectedAccountRefreshCredentialEvidence =
     }>;
 
 export type ConnectedAccountOAuthDescriptor = Readonly<{
+  resolveCredentialClient?: (raw: ConnectedServiceOauthCredentialRawMetadata | null | undefined) => Readonly<{ clientId: string; clientSecret?: string }>;
   clientIdEnv: string;
   defaultClientId: string;
   tokenUrlEnv: string;
@@ -354,6 +358,36 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = [
     ui: { iconName: 'gemini', oauthAddActionModes: ['browser'] },
   },
   {
+    id: 'antigravity', displayName: 'Antigravity (AGY)', providerDisplayName: 'Antigravity', credentialKind: 'oauth',
+    oauth: {
+      clientIdEnv: 'HAPPIER_CONNECTED_SERVICES_AGY_OAUTH_CLIENT_ID', defaultClientId: AGY_OAUTH_CLIENT_ID,
+      clientSecretEnv: 'HAPPIER_CONNECTED_SERVICES_AGY_OAUTH_CLIENT_SECRET', defaultClientSecret: AGY_OAUTH_CLIENT_SECRET,
+      tokenUrlEnv: 'HAPPIER_CONNECTED_SERVICES_AGY_OAUTH_TOKEN_URL', defaultTokenUrl: AGY_OAUTH_TOKEN_URL,
+      refreshTokenBody: 'form', scopes: [],
+      resolveCredentialClient: (raw) => {
+        if (raw?.antigravity?.clientId !== AGY_OAUTH_CLIENT_ID || raw.antigravity.authMethod !== 'oauth-personal') throw new Error('Antigravity credential issuer is unsupported; reconnect in the browser');
+        return { clientId: AGY_OAUTH_CLIENT_ID, clientSecret: AGY_OAUTH_CLIENT_SECRET };
+      },
+      mapCredentialPayload: ({ now, payload }) => {
+        const data = isRecord(payload) ? payload : {};
+        const account = isRecord(data.account) ? data.account : {};
+        const meta = isRecord(data.antigravity) ? data.antigravity : {};
+        if (meta.clientId && meta.clientId !== AGY_OAUTH_CLIENT_ID) throw new Error('Unsupported Antigravity credential issuer');
+        if (meta.authMethod !== 'oauth-personal') throw new Error('Only personal Antigravity OAuth is supported');
+        const providerAccountId = readString(account.id);
+        const providerEmail = readString(account.email);
+        if (!providerAccountId || !providerEmail) throw new Error('Antigravity account identity must be verified before storage');
+        return {
+          accessToken: readRequiredString(data.access_token), refreshToken: readRequiredString(data.refresh_token), idToken: readString(data.id_token),
+          scope: readString(data.scope), tokenType: readString(data.token_type), providerAccountId, providerEmail,
+          expiresAt: resolveExpiresAtFromPayload({ now, payload: data, allowAbsoluteExpiresAt: true }),
+          raw: { antigravity: { clientId: AGY_OAUTH_CLIENT_ID, authMethod: 'oauth-personal', ...(readString(meta.projectId) ? { projectId: readString(meta.projectId)! } : {}), ...(readString(meta.tierId) ? { tierId: readString(meta.tierId)! } : {}) } },
+        };
+      },
+    },
+    ui: { iconName: 'agy', oauthAddActionModes: ['browser', 'import'] },
+  },
+  {
     id: 'github',
     displayName: 'GitHub',
     providerDisplayName: 'GitHub',
@@ -399,6 +433,7 @@ export function requireConnectedAccountDescriptor(serviceId: ConnectedServiceId)
 export function resolveConnectedAccountOauthConfig(
   serviceId: ConnectedServiceId,
   env: EnvLike,
+  credentialRaw?: ConnectedServiceOauthCredentialRawMetadata | null,
 ): ResolvedConnectedAccountOauthConfig {
   const descriptor = requireConnectedAccountDescriptor(serviceId);
   if (!descriptor.oauth) {
@@ -412,9 +447,10 @@ export function resolveConnectedAccountOauthConfig(
       ? resolveNonEmptyEnv(env[oauth.clientSecretEnv], oauth.defaultClientSecret)
       : undefined;
 
+  const credentialClient = oauth.resolveCredentialClient?.(credentialRaw);
   return {
-    clientId,
-    ...(clientSecret ? { clientSecret } : {}),
+    clientId: credentialClient?.clientId ?? clientId,
+    ...((credentialClient?.clientSecret ?? clientSecret) ? { clientSecret: credentialClient?.clientSecret ?? clientSecret } : {}),
     tokenUrl,
     refreshTokenBody: oauth.refreshTokenBody,
     scopes: oauth.scopes,

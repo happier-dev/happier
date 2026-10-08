@@ -11,6 +11,7 @@ export async function recordConnectedServiceAccountProfileChange(
     const projection = await buildAccountConnectedServicesProjection({
         tx,
         accountId: params.accountId,
+        includeAntigravity: false,
     });
     const cursor = await markAccountChanged(tx, {
         accountId: params.accountId,
@@ -20,12 +21,16 @@ export async function recordConnectedServiceAccountProfileChange(
     });
 
     afterTx(tx, () => {
-        const payload = buildUpdateAccountUpdate(
+        const update = buildUpdateAccountUpdate(
             params.accountId,
             projection,
             cursor,
             randomKeyNaked(12),
         );
+        // Released UI clients persist these passthrough rows and parse the cache
+        // with a closed enum on reload. Updated readers refetch the negotiated
+        // HTTP projection rather than adding new IDs to that legacy push shape.
+        const payload = { ...update, body: { ...update.body, connectedServicesProfileChanged: true } };
         // Machine-scoped daemons are the canonical consumers that apply committed
         // group generations to live runtimes. UI-only projection left settings
         // changes invisible until each session independently encountered a failure.

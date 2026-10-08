@@ -1,4 +1,5 @@
 import { db } from "@/storage/db";
+import { ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT } from '@happier-dev/protocol';
 import { getPublicUrl } from "@/storage/blob/files";
 import { fetchLinkedProvidersForAccount } from "@/app/auth/providers/linkedProviders";
 import { type Fastify } from "../../types";
@@ -29,6 +30,7 @@ export function registerAccountProfileRoute(app: Fastify): void {
         const connectedServicesProjection = await buildAccountConnectedServicesProjection({
             tx: db as unknown as ConnectedServicesProjectionClient,
             accountId: userId,
+            includeAntigravity: request.headers.accept === ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT,
         });
         const linkedProviders = await fetchLinkedProvidersForAccount({ tx: db as any, accountId: userId });
         return reply.send({

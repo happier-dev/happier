@@ -1,4 +1,5 @@
 import { t } from '@/text';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 export function resolveConnectedServiceOauthErrorMessage(
   error: unknown,
@@ -10,6 +11,9 @@ export function resolveConnectedServiceOauthErrorMessage(
 
   if (code === 'connect_oauth_state_mismatch') return t('errors.oauthStateMismatch');
   if (code === 'connect_oauth_timeout') return t('errors.connectionTimeout');
+  if (code === 'connect_oauth_service_unsupported') return t('welcome.serverIncompatibleBody', { serverUrl: getActiveServerSnapshot().serverUrl });
+  if (code === 'connect_oauth_project_required') return t('connectedServices.importAccounts.projectRequired');
+  if (code === 'connect_oauth_account_ineligible') return t('connectedServices.importAccounts.accountIneligible');
   if (
     'code' in error
     && error.code === 'connected_service_credential_binding_mismatch'

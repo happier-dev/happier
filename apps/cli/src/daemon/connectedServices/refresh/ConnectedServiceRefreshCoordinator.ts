@@ -1359,6 +1359,7 @@ export class ConnectedServiceRefreshCoordinator {
       refreshed = await refreshConnectedAccountOauthTokens({
         serviceId: binding.serviceId,
         refreshToken: refreshRecord.oauth.refreshToken,
+        credentialRaw: refreshRecord.oauth.raw,
         now,
       });
     } catch (error) {

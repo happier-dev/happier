@@ -63,8 +63,10 @@ export function createConnectedServicesProjectionRetryScheduler(options: Readonl
     }).catch(() => {
       if (capturedEpoch !== epoch || controller.signal.aborted) return;
       attempt += 1;
-      if (!latestWork) latestWork = work;
-      latestWorkRunsImmediately = false;
+      if (!latestWork) {
+        latestWork = work;
+        latestWorkRunsImmediately = false;
+      }
     }).finally(() => {
       if (inFlight === currentRun) inFlight = null;
       arm();
@@ -74,7 +76,7 @@ export function createConnectedServicesProjectionRetryScheduler(options: Readonl
 
   const arm = (): void => {
     if (closed || timer || immediateRunQueued || inFlight || !latestWork) return;
-    if (latestWorkRunsImmediately && attempt === 0) {
+    if (latestWorkRunsImmediately) {
       immediateRunQueued = true;
       queueMicrotask(runLatest);
       return;
@@ -97,6 +99,12 @@ export function createConnectedServicesProjectionRetryScheduler(options: Readonl
       if (closed) return;
       latestWork = work;
       latestWorkRunsImmediately ||= scheduleOptions?.runImmediately === true;
+      // A fresh committed hint is new work, not a retry of the failed projection.
+      // Coalesce it behind in-flight work, but do not inherit an older retry delay.
+      if (latestWorkRunsImmediately && timer) {
+        clearTimer(timer);
+        timer = null;
+      }
       arm();
     },
     cancel(): void {

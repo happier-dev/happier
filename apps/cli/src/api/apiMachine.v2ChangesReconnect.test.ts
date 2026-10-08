@@ -760,6 +760,46 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(writeAccountChangesCursor).not.toHaveBeenCalled();
     });
 
+    it('refetches AGY group generations and credential revisions after a legacy-filtered live push', async () => {
+        const previousV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
+        process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
+        try {
+            const machine: Machine = {
+                id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+                metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            };
+            const socket = createMachineSocket();
+            axiosGet.mockImplementation(async (url: string, config: any) => {
+                if (!url.includes('/v1/account/profile')) throw new Error(`unexpected url: ${url}`);
+                expect(config.headers.Accept).toBe('application/json; happier-connected-service-antigravity=1');
+                return { status: 200, data: { id: 'acc-1', connectedServicesV2: [{
+                    serviceId: 'antigravity', profiles: [], groups: [{ groupId: 'work', generation: 7, memberProfileIds: ['default'] }],
+                }], connectedServiceCredentialRevisionsV1: [{
+                    serviceId: 'antigravity', profileId: 'default', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+                }] } };
+            });
+            const reconcile = vi.fn(async () => {});
+            const client = new ApiMachineClient('token', machine);
+            client.onConnectedServicesProjectionChange(reconcile);
+            (client as any).socket = socket;
+            (client as any).activeTransportGeneration = 1;
+            (client as any).installSocketEventHandlers(socket, 1);
+            socket.trigger('update', { body: {
+                t: 'update-account', connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [], connectedServicesProfileChanged: true,
+            } });
+            await vi.waitFor(() => expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
+                source: 'live', executionAuthority: 'runtime_recovery',
+                connectedServicesV2: [expect.objectContaining({ serviceId: 'antigravity', groups: [expect.objectContaining({ generation: 7 })] })],
+                connectedServiceCredentialRevisionsV1: [expect.objectContaining({ serviceId: 'antigravity', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' })],
+            })));
+            await (client as any).connectedServicesProjectionRetry.waitForIdle();
+            await client.shutdown();
+        } finally {
+            if (previousV2Changes === undefined) delete process.env.HAPPY_ENABLE_V2_CHANGES;
+            else process.env.HAPPY_ENABLE_V2_CHANGES = previousV2Changes;
+        }
+    });
+
     it('serializes a live projection hint behind connect catch-up through one scheduler owner', async () => {
         const previousV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
         process.env.HAPPY_ENABLE_V2_CHANGES = 'true';

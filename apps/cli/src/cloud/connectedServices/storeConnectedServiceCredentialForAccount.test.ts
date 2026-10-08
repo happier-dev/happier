@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildConnectedServiceCredentialRecord,
+  sealConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialRecordV1,
 } from '@happier-dev/protocol';
 
@@ -43,6 +44,78 @@ function createApi(overrides: Partial<ConnectedServiceCredentialStorageApi>): Co
 }
 
 describe('storeConnectedServiceCredentialForAccount', () => {
+  it('refuses changing the existing provider identity when the connect target requires the same account', async () => {
+    const register = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
+    const existing = createRecord();
+    if (existing.kind !== 'token') throw new Error('Expected token record');
+    const api = createApi({
+      getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain', v: { ...existing, token: { ...existing.token!, providerAccountId: 'previous-account' } } }, revisionSemantics: 'revisioned', credentialRevision: revision }),
+      registerConnectedServiceCredentialPlain: register,
+    });
+    await expect(storeConnectedServiceCredentialForAccount({ api, credentials: createCredentials(), record: existing, requireSameProviderAccount: true })).rejects.toThrow(/identity/);
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('uses decrypted identity rather than mutable relay metadata for encrypted reconnect protection', async () => {
+    const base = createRecord();
+    if (base.kind !== 'token') throw new Error('Expected token');
+    const previous = { ...base, token: { ...base.token, providerAccountId: 'previous-account' } };
+    const credentials = createCredentials();
+    if (credentials.encryption.type !== 'legacy') throw new Error('Expected legacy encryption');
+    const ciphertext = sealConnectedServiceCredentialCiphertext({ material: { type: 'legacy', secret: credentials.encryption.secret }, payload: previous, randomBytes: (length) => new Uint8Array(length).fill(6) });
+    const register = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
+    const api = createApi({
+      getConnectedServiceCredentialSealed: async () => ({
+        revisionSemantics: 'revisioned', credentialRevision: revision,
+        sealed: { format: 'account_scoped_v1', ciphertext },
+        metadata: { kind: 'token', providerAccountId: null },
+      }),
+      registerConnectedServiceCredentialSealed: register,
+    });
+    await expect(storeConnectedServiceCredentialForAccount({ api, credentials, record: base, requireSameProviderAccount: true })).rejects.toThrow(/identity/);
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown storage result when cancellation occurs after the credential POST is issued', async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const api = createApi({ registerConnectedServiceCredentialSealed: async (request) => {
+      observedSignal = request.signal;
+      controller.abort();
+      throw new Error('transport cancelled after send');
+    } });
+    await expect(storeConnectedServiceCredentialForAccount({ api, credentials: createCredentials(), record: createRecord(), signal: controller.signal })).rejects.toThrow(/storage result is unknown/);
+    expect(observedSignal).toBe(controller.signal);
+  });
+
+  it('does not post after the containing operation is cancelled during the revision read', async () => {
+    const controller = new AbortController();
+    const register = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
+    const api = createApi({
+      getConnectedServiceCredentialSealed: async () => { controller.abort(); return null; },
+      registerConnectedServiceCredentialSealed: register,
+    });
+    await expect(storeConnectedServiceCredentialForAccount({ api, credentials: createCredentials(), record: createRecord(), signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it.each(['unreadable', 'wrong_binding', 'invalid_schema'] as const)('refuses %s encrypted records before replacing a connected account', async (variant) => {
+    const credentials = createCredentials();
+    if (credentials.encryption.type !== 'legacy') throw new Error('Expected legacy encryption');
+    const payload = variant === 'wrong_binding' ? { ...createRecord(), profileId: 'other-profile' }
+      : variant === 'invalid_schema' ? { serviceId: 'anthropic', profileId: 'default' } : createRecord();
+    const ciphertext = variant === 'unreadable' ? 'unreadable'
+      : sealConnectedServiceCredentialCiphertext({ material: { type: 'legacy', secret: credentials.encryption.secret }, payload, randomBytes: (length) => new Uint8Array(length).fill(6) });
+    const register = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
+    const api = createApi({
+      getConnectedServiceCredentialSealed: async () => ({ revisionSemantics: 'revisioned', credentialRevision: revision, sealed: { format: 'account_scoped_v1', ciphertext }, metadata: { kind: 'token', providerAccountId: null } }),
+      registerConnectedServiceCredentialSealed: register,
+    });
+    await expect(storeConnectedServiceCredentialForAccount({ api, credentials, record: createRecord(), requireSameProviderAccount: true })).rejects.toThrow(/identity/);
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it('reuses one sealed ciphertext when an ambiguous write settles unchanged before retry', async () => {
     const getSealed = vi.fn(async () => null);
     const registerSealed = vi.fn()

@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
+import { AGY_OAUTH_SCOPES } from '@happier-dev/agents';
 
 import { decodeBase64, encodeBase64, openBoxBundle } from '@happier-dev/protocol';
 
@@ -23,6 +24,64 @@ afterEach(() => {
 });
 
 describe('registerConnectedServiceOauthExchangeRoutes', () => {
+  it.each([
+    ['ineligible', 'connect_oauth_account_ineligible'],
+    ['missing-project', 'connect_oauth_project_required'],
+  ])('returns an actionable redacted Antigravity %s result', async (scenario, errorCode) => {
+    const app = createTestApp();
+    let loaded = false;
+    const fetchMock: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/token')) return Response.json({ access_token: 'at', refresh_token: 'rt', scope: AGY_OAUTH_SCOPES.join(' ') });
+      if (url.endsWith('/userinfo')) return Response.json({ sub: 'account-a', email: 'a@example.test' });
+      if (url.endsWith(':onboardUser')) return Response.json({ done: true });
+      if (loaded || scenario === 'ineligible') return Response.json({ ineligibleTiers: [{ reasonMessage: 'private-provider-detail' }] });
+      loaded = true;
+      return Response.json({ allowedTiers: [{ id: 'free-tier' }] });
+    };
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v2/connect/antigravity/oauth/exchange', payload: {
+        publicKey: encodeBase64(tweetnacl.box.keyPair().publicKey, 'base64url'), code: 'code', verifier: 'verifier',
+        redirectUri: 'http://localhost:54545/', state: 'state',
+      } });
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ error: errorCode });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('serves native Antigravity OAuth through the authenticated V2 contract with required state and PKCE', async () => {
+    const app = createTestApp();
+    const fetchMock: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/token')) return Response.json({ access_token: 'at', refresh_token: 'rt', scope: AGY_OAUTH_SCOPES.join(' ') });
+      if (url.endsWith('/userinfo')) return Response.json({ sub: 'account-a', email: 'a@example.test', email_verified: true });
+      return Response.json({ cloudaicompanionProject: 'project-a', currentTier: { id: 'paid-tier' } });
+    };
+    vi.stubGlobal('fetch', fetchMock);
+    const keyPair = tweetnacl.box.keyPair();
+    const request = { publicKey: encodeBase64(keyPair.publicKey, 'base64url'), code: 'code', verifier: 'verifier',
+      redirectUri: 'http://localhost:54545/', state: 'state' };
+    try {
+      const result = await app.inject({ method: 'POST', url: '/v2/connect/antigravity/oauth/exchange', payload: request });
+      expect(result.statusCode).toBe(200);
+      const opened = openBoxBundle({ bundle: decodeBase64(JSON.parse(result.body).bundle, 'base64url'), recipientSecretKeyOrSeed: keyPair.secretKey });
+      expect(opened).toBeTruthy();
+      expect(JSON.parse(new TextDecoder().decode(opened!))).toMatchObject({ serviceId: 'antigravity',
+        idToken: null, providerAccountId: 'account-a', raw: { antigravity: { projectId: 'project-a' } } });
+      const missingState = await app.inject({ method: 'POST', url: '/v2/connect/antigravity/oauth/exchange', payload: { ...request, state: null } });
+      expect(missingState.statusCode).toBe(400);
+      expect(JSON.parse(missingState.body)).toEqual({ error: 'connect_oauth_state_mismatch' });
+      const { verifier: _verifier, ...withoutVerifier } = request;
+      const missingVerifier = await app.inject({ method: 'POST', url: '/v2/connect/antigravity/oauth/exchange', payload: withoutVerifier });
+      expect(missingVerifier.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('exchanges openai-codex tokens and returns a decryptable bundle', async () => {
     const app = createTestApp();
 

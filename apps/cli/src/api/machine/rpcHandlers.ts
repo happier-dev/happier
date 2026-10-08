@@ -81,6 +81,7 @@ import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
+import { registerMachineConnectedServiceImportRpcHandlers, type ConnectedServiceImportAccount } from './rpcHandlers.connectedServiceImport';
 import { registerMachineConnectedServiceQuotaRpcHandlers } from './rpcHandlers.connectedServiceQuotas';
 import {
   registerMachineSessionHandoffRpcHandlers,
@@ -258,6 +259,7 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  connectedServiceImportAccount?: ConnectedServiceImportAccount;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   promptAssetsHomedir?: () => string;
   promptAssetsHappierHomeDir?: () => string;
@@ -1170,6 +1172,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
     ...(actionOperationRuntime ? { actionOperations: actionOperationRuntime } : {}),
   });
+  registerMachineConnectedServiceImportRpcHandlers({ rpcHandlerManager, account: params.deps?.connectedServiceImportAccount });
   registerMachineConnectedServiceQuotaRpcHandlers({
     rpcHandlerManager,
   });

@@ -1,5 +1,6 @@
 import { URLSearchParams } from 'node:url';
 
+import { normalizeConnectedServiceOauthCredentialRawMetadata } from '@happier-dev/protocol';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 import type { ConnectedServiceOauthCredentialRawMetadata } from '@happier-dev/protocol';
 
@@ -103,9 +104,10 @@ function buildRefreshRequestBody(input: Readonly<{
 export async function refreshConnectedAccountOauthTokens(params: Readonly<{
   serviceId: ConnectedServiceId;
   refreshToken: string;
+  credentialRaw?: unknown;
   now: number;
 }>): Promise<ConnectedAccountOauthRefreshResult> {
-  const config = resolveConnectedAccountOauthConfig(params.serviceId, process.env);
+  const config = resolveConnectedAccountOauthConfig(params.serviceId, process.env, normalizeConnectedServiceOauthCredentialRawMetadata(params.credentialRaw));
   const request = buildRefreshRequestBody({
     refreshTokenBody: config.refreshTokenBody,
     clientId: config.clientId,

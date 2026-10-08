@@ -20,7 +20,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
-import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT, openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
@@ -37,6 +37,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
     applySettingsForScope?: (scope: AccountSettingsScope, settings: any, version: number) => void;
     getLocalSettings?: () => unknown;
     getPendingSettings?: () => Partial<Settings>;
+    invalidateProfile?: () => void;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const {
@@ -50,6 +51,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
         applySettingsForScope,
         getLocalSettings,
         getPendingSettings,
+        invalidateProfile,
         log,
     } = params;
 
@@ -60,6 +62,8 @@ export async function handleUpdateAccountSocketUpdate(params: {
         }
         applySettings(settings, version);
     };
+
+    const refetchConnectedServices = accountUpdate.connectedServicesProfileChanged === true && Boolean(invalidateProfile);
 
     // Build updated profile with new data
     const updatedProfile: Profile = {
@@ -75,7 +79,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 ? accountUpdate.connectedServices
                 : currentProfile.connectedServices,
         connectedServicesV2:
-            accountUpdate.connectedServicesV2 !== undefined
+            !refetchConnectedServices && accountUpdate.connectedServicesV2 !== undefined
                 ? accountUpdate.connectedServicesV2
                 : currentProfile.connectedServicesV2,
         timestamp: updateCreatedAt, // Update timestamp to latest
@@ -83,6 +87,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
 
     // Apply the updated profile to storage
     applyProfile(updatedProfile);
+    if (refetchConnectedServices) invalidateProfile?.();
 
     // Handle settings updates (new for profile sync)
     if (accountUpdate.settingsV2?.content || accountUpdate.settingsV2?.content === null) {
@@ -182,6 +187,7 @@ export async function fetchAndApplyProfile(params: {
         headers: {
             'Authorization': `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
+            Accept: ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT,
         },
     }, { includeAuth: false });
     if (!shouldContinue()) return;

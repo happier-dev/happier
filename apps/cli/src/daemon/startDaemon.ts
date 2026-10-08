@@ -430,6 +430,7 @@ import {
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import { resolveConnectedServicesQuotasDaemonEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
 import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
+import { reconcileConnectedServiceProjectionWithQuotaDiscovery } from './connectedServices/quotas/scheduleConnectedServiceQuotaDiscoveryFromProjection';
 import { readConnectedServiceRuntimeIdentityForQuotaFanout } from './connectedServices/quotas/identity/readConnectedServiceRuntimeIdentityForQuotaFanout';
 import type { RuntimeAccountIdentitySelectionInput } from './connectedServices/quotas/identity/runtimeAccountIdentityTypes';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
@@ -8455,82 +8456,89 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     connectedServiceCredentialRevisionsV1: notification.connectedServiceCredentialRevisionsV1,
                   });
                   notification.signal.throwIfAborted();
-                  const projectionDelta = diffConnectedServiceProjectionSnapshots(
-                    connectedServiceProjectionReconciliationBaseline,
-                    projectionSnapshot,
-                  );
-                  const isInitialProjection = connectedServiceProjectionReconciliationBaseline === null;
-                  if (
-                    isInitialProjection
-                    || projectionDelta.changedGroupScopes.length > 0
-                    || projectionDelta.changedCredentialBoundaries.length > 0
-                  ) {
-                    connectedServiceProjectionEpoch += 1;
-                  }
-                  latestConnectedServiceProjectionSnapshot = projectionSnapshot;
-                  const projectionRegistrations = connectedServiceRuntimeRegistry.listTargetRegistrations();
-                  // Changed projection scopes are owned by the global reconcilers below. The
-                  // registration sweep is only for an unchanged replay, where a late/re-registered
-                  // runtime still needs current truth without duplicating group effects or notices.
-                  if (
-                    projectionDelta.changedGroupScopes.length === 0
-                    && projectionDelta.changedCredentialBoundaries.length === 0
-                  ) {
-                    for (const registration of projectionRegistrations) {
-                      notification.signal.throwIfAborted();
-                      await reconcileConnectedServiceRuntimeTargetRegistrationNow(
-                        registration,
+                  return await reconcileConnectedServiceProjectionWithQuotaDiscovery({
+                    coordinator: connectedServiceQuotasCoordinator,
+                    loop: connectedServiceQuotasLoopHandle,
+                    projection: projectionSnapshot,
+                    reconcile: async () => {
+                      const projectionDelta = diffConnectedServiceProjectionSnapshots(
+                        connectedServiceProjectionReconciliationBaseline,
                         projectionSnapshot,
-                        notification.signal,
                       );
-                    }
-                  }
-                  if (projectionDelta.changedGroupScopes.length > 0) {
-                    await reconcileConnectedServiceAuthGroupGenerations({
-                      consumer: connectedServiceAuthGroupGenerationConsumer,
-                      listCurrentGroups: async (serviceId) => projectionSnapshot.groups.filter((group) => group.serviceId === serviceId),
-                      resolveCredentialRevision: projectionSnapshot.resolveCredentialRevision,
-                      listRuntimeTargets: () => projectionRegistrations.map((registration) => registration.target),
-                      isCurrentRuntimeTarget: (target) => projectionRegistrations.some((registration) => (
-                        registration.target === target
-                        && connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)
-                      )),
-                      executionAuthority: notification.executionAuthority,
-                      groupScopes: projectionDelta.changedGroupScopes,
-                      signal: notification.signal,
-                    });
-                  }
-                  notification.signal.throwIfAborted();
-                  if (projectionDelta.changedCredentialBoundaries.length > 0) {
-                    await reconcileConnectedServiceDirectCredentialRevisions({
-                      credentialBoundaries: projectionDelta.changedCredentialBoundaries,
-                      listRuntimeTargets: () => projectionRegistrations.map((registration) => registration.target),
-                      isCurrentRuntimeTarget: (target) => projectionRegistrations.some((registration) => (
-                        registration.target === target
-                        && connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)
-                      )),
-                      applyLiveCredentialBoundary: async (input) => {
-                        if (!connectedServiceRefreshCoordinator) return;
-                        await connectedServiceRefreshCoordinator.handleExternalCredentialUpdate(input);
-                      },
-                      executionAuthority: notification.executionAuthority,
-                      signal: notification.signal,
-                    });
-                  }
-                  notification.signal.throwIfAborted();
-                  // The global changed-scope owners just reconciled every currently registered
-                  // target. Stamp their exact current objects only after all work succeeds so an
-                  // identical replay is a no-op, while rejection leaves both epoch and projection
-                  // baseline eligible for retry.
-                  for (const registration of projectionRegistrations) {
-                    if (connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)) {
-                      lastReconciledProjectionEpochByRuntimeTarget.set(
-                        registration.target,
-                        connectedServiceProjectionEpoch,
-                      );
-                    }
-                  }
-                  connectedServiceProjectionReconciliationBaseline = projectionSnapshot;
+                      const isInitialProjection = connectedServiceProjectionReconciliationBaseline === null;
+                      if (
+                        isInitialProjection
+                        || projectionDelta.changedGroupScopes.length > 0
+                        || projectionDelta.changedCredentialBoundaries.length > 0
+                      ) {
+                        connectedServiceProjectionEpoch += 1;
+                      }
+                      latestConnectedServiceProjectionSnapshot = projectionSnapshot;
+                      const projectionRegistrations = connectedServiceRuntimeRegistry.listTargetRegistrations();
+                      // Changed projection scopes are owned by the global reconcilers below. The
+                      // registration sweep is only for an unchanged replay, where a late/re-registered
+                      // runtime still needs current truth without duplicating group effects or notices.
+                      if (
+                        projectionDelta.changedGroupScopes.length === 0
+                        && projectionDelta.changedCredentialBoundaries.length === 0
+                      ) {
+                        for (const registration of projectionRegistrations) {
+                          notification.signal.throwIfAborted();
+                          await reconcileConnectedServiceRuntimeTargetRegistrationNow(
+                            registration,
+                            projectionSnapshot,
+                            notification.signal,
+                          );
+                        }
+                      }
+                      if (projectionDelta.changedGroupScopes.length > 0) {
+                        await reconcileConnectedServiceAuthGroupGenerations({
+                          consumer: connectedServiceAuthGroupGenerationConsumer,
+                          listCurrentGroups: async (serviceId) => projectionSnapshot.groups.filter((group) => group.serviceId === serviceId),
+                          resolveCredentialRevision: projectionSnapshot.resolveCredentialRevision,
+                          listRuntimeTargets: () => projectionRegistrations.map((registration) => registration.target),
+                          isCurrentRuntimeTarget: (target) => projectionRegistrations.some((registration) => (
+                            registration.target === target
+                            && connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)
+                          )),
+                          executionAuthority: notification.executionAuthority,
+                          groupScopes: projectionDelta.changedGroupScopes,
+                          signal: notification.signal,
+                        });
+                      }
+                      notification.signal.throwIfAborted();
+                      if (projectionDelta.changedCredentialBoundaries.length > 0) {
+                        await reconcileConnectedServiceDirectCredentialRevisions({
+                          credentialBoundaries: projectionDelta.changedCredentialBoundaries,
+                          listRuntimeTargets: () => projectionRegistrations.map((registration) => registration.target),
+                          isCurrentRuntimeTarget: (target) => projectionRegistrations.some((registration) => (
+                            registration.target === target
+                            && connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)
+                          )),
+                          applyLiveCredentialBoundary: async (input) => {
+                            if (!connectedServiceRefreshCoordinator) return;
+                            await connectedServiceRefreshCoordinator.handleExternalCredentialUpdate(input);
+                          },
+                          executionAuthority: notification.executionAuthority,
+                          signal: notification.signal,
+                        });
+                      }
+                      notification.signal.throwIfAborted();
+                      // The global changed-scope owners just reconciled every currently registered
+                      // target. Stamp their exact current objects only after all work succeeds so an
+                      // identical replay is a no-op, while rejection leaves both epoch and projection
+                      // baseline eligible for retry.
+                      for (const registration of projectionRegistrations) {
+                        if (connectedServiceRuntimeRegistry.isCurrentTargetRegistration(registration)) {
+                          lastReconciledProjectionEpochByRuntimeTarget.set(
+                            registration.target,
+                            connectedServiceProjectionEpoch,
+                          );
+                        }
+                      }
+                      connectedServiceProjectionReconciliationBaseline = projectionSnapshot;
+                    },
+                  });
                 });
                 connectedServiceGenerationReconciliationTail = reconciliation.catch(() => {});
                 return reconciliation;

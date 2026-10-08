@@ -307,6 +307,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly recoveryCreditConsumeInFlightByKey = new Map<string, Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>>();
   private readonly startupCurrentSourceRefreshByKey = new Map<string, ConnectedServiceUsageSourceV1>();
   private readonly discoveredProfileIdsByServiceId = new Map<ConnectedServiceId, ReadonlySet<string>>();
+  private discoveredProfilesVersion = 0;
   private lastDiscoveryAt = 0;
 
   public constructor(params: Readonly<{
@@ -785,6 +786,27 @@ export class ConnectedServiceQuotasCoordinator {
 
   public notifyQuotaPersistenceConnectivityChanged(): void {
     this.quotaPersistenceScheduler.notifyConnectivityChanged();
+  }
+
+  public updateDiscoveredProfiles(profiles: readonly Readonly<{ serviceId: ConnectedServiceId; profileId: string }>[]): boolean {
+    if (!this.discoveryEnabled) return false;
+    const inventory = new Map<ConnectedServiceId, Set<string>>();
+    for (const { serviceId, profileId } of profiles) {
+      if (!this.quotaFetchersByServiceId.has(serviceId) && !this.subscriptionFetchersByServiceId.has(serviceId)) continue;
+      const ids = inventory.get(serviceId) ?? new Set<string>();
+      ids.add(profileId);
+      inventory.set(serviceId, ids);
+    }
+    let added = false;
+    for (const [serviceId, ids] of inventory) {
+      const previous = this.discoveredProfileIdsByServiceId.get(serviceId);
+      if ([...ids].some((id) => !previous?.has(id))) added = true;
+    }
+    this.discoveredProfilesVersion += 1;
+    this.discoveredProfileIdsByServiceId.clear();
+    for (const [serviceId, ids] of inventory) this.discoveredProfileIdsByServiceId.set(serviceId, ids);
+    if (added) this.lastDiscoveryAt = this.now();
+    return added;
   }
 
   public dispose(): void {
@@ -4124,6 +4146,7 @@ export class ConnectedServiceQuotasCoordinator {
     if (this.discoveryEnabled && typeof this.api.listConnectedServiceProfiles === 'function') {
       const discoveryDue = this.lastDiscoveryAt <= 0 || now - this.lastDiscoveryAt >= this.discoveryIntervalMs;
       if (discoveryDue) {
+        const discoveryVersion = this.discoveredProfilesVersion;
         let discoverySucceeded = true;
         for (const serviceId of new Set([...this.quotaFetchersByServiceId.keys(), ...this.subscriptionFetchersByServiceId.keys()])) {
           const profiles = await loadProfileHealth(serviceId);
@@ -4137,7 +4160,10 @@ export class ConnectedServiceQuotasCoordinator {
             if (!profileId) continue;
             usableProfileIds.add(profileId);
           }
-          this.discoveredProfileIdsByServiceId.set(serviceId, usableProfileIds);
+          // A live projection received while this read was pending owns the newer inventory.
+          if (discoveryVersion === this.discoveredProfilesVersion) {
+            this.discoveredProfileIdsByServiceId.set(serviceId, usableProfileIds);
+          }
         }
         if (discoverySucceeded) this.lastDiscoveryAt = now;
       }

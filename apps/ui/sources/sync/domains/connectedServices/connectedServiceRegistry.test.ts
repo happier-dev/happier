@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { getConnectedServiceRegistryEntry } from './connectedServiceRegistry';
 
 describe('connectedServiceRegistry', () => {
+  it('offers Antigravity browser authorization and existing-login import without token entry', () => {
+    const entry = getConnectedServiceRegistryEntry('antigravity');
+    expect(entry.supportsOauth).toBe(true);
+    expect(entry.oauthAddActionModes).toEqual(['paste', 'browser']);
+    expect(entry.importSources).toEqual(['acp', 'cli']);
+    expect(entry.supportsToken).not.toBe(true);
+  });
   it('exposes an explicit in-app browser oauth method for openai-codex (native)', () => {
     const entry = getConnectedServiceRegistryEntry('openai-codex');
     expect(entry.supportsOauth).toBe(true);

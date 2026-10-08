@@ -26,7 +26,9 @@ const defaultExchangeImpl = async (_credentials: any, params: any) => {
     providerEmail: null,
     providerAccountId: 'acct-1',
     expiresAt: 123,
-    raw: { ok: true },
+    raw: params.serviceId === 'antigravity'
+      ? { antigravity: { clientId: 'native-client', authMethod: 'oauth-personal', projectId: 'managed-project' } }
+      : { ok: true },
   });
   const plaintext = new TextEncoder().encode(plaintextJson);
   const bundle = sealBoxBundle({
@@ -70,16 +72,51 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
-vi.mock('@/utils/auth/oauthCore', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    generateOauthState: () => 'state-1',
-    generatePkceCodes: async () => ({ verifier: 'verifier-1', challenge: 'challenge-1' }),
-  };
-});
+
+function authorizationState(tree: Pick<renderer.ReactTestRenderer, 'find'>): string {
+  const node = tree.find((node) => typeof node.props.children === 'string' && node.props.children.includes('code_challenge=') && node.props.children.startsWith('https://'));
+  return new URL(node.props.children).searchParams.get('state')!;
+}
 
 describe('ConnectedServiceOauthPasteView', () => {
+  it('restarts authorization after project discovery fails, preserving the project and replacing the consumed code', async () => {
+    resetMocks();
+    exchangeSpy.mockRejectedValueOnce(new Error('connect_oauth_project_required'));
+    const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView serviceId="antigravity" profileId="work" onDone={vi.fn()} />);
+    await flushAsyncEffects();
+    const firstState = authorizationState(screen.tree);
+    await act(async () => { changeTextTestInstance(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.projectInput' }), 'managed-project'); });
+    await act(async () => { changeTextTestInstance(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' }), `http://localhost:54545/?code=consumed&state=${firstState}`); });
+    await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.validateRedirectButton' }));
+    await flushAsyncEffects();
+    expect(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' }).props.value).toBe('');
+    expect(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.projectInput' }).props.value).toBe('managed-project');
+    const nextState = authorizationState(screen.tree);
+    expect(nextState).not.toBe(firstState);
+    await act(async () => { changeTextTestInstance(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' }), `http://localhost:54545/?code=fresh&state=${nextState}`); });
+    await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.validateRedirectButton' }));
+    expect(exchangeSpy.mock.calls.map((call) => call[1].code)).toEqual(['consumed', 'fresh']);
+    expect(exchangeSpy.mock.calls[0][1].verifier).not.toBe(exchangeSpy.mock.calls[1][1].verifier);
+    expect(storeCredentialSpy).toHaveBeenCalledOnce();
+  });
+  it('connects Antigravity from a full remote return URL and rejects mismatched state before exchange', async () => {
+    resetMocks();
+    const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
+    const screen = await renderScreen(<ConnectedServiceOauthPasteView serviceId="antigravity" profileId="work" onDone={vi.fn()} />);
+    await flushAsyncEffects();
+    const input = screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    const state = authorizationState(screen.tree);
+    const projectInput = screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.projectInput' });
+    await act(async () => { changeTextTestInstance(projectInput, 'managed-project'); });
+    await act(async () => { changeTextTestInstance(input, 'http://localhost:54545/?code=code-1&state=wrong'); });
+    await act(async () => { await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.validateRedirectButton' })); });
+    expect(exchangeSpy).not.toHaveBeenCalled();
+    await act(async () => { changeTextTestInstance(input, `http://localhost:54545/?code=code-1&state=${state}`); });
+    await act(async () => { await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.oauthPaste.validateRedirectButton' })); });
+    expect(storeCredentialSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ serviceId: 'antigravity', profileId: 'work' }));
+    expect(exchangeSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ projectId: 'managed-project' }));
+  });
   async function flushAsyncEffects(): Promise<void> {
     // `ConnectedServiceOauthPasteView` initializes PKCE/state in a fire-and-forget effect.
     // Flush a couple microtasks so the `handlePaste` handler is armed with pkce/state.
@@ -111,7 +148,7 @@ describe('ConnectedServiceOauthPasteView', () => {
 
     const redirectInput = tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
     await act(async () => {
-      changeTextTestInstance(redirectInput, 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
+      changeTextTestInstance(redirectInput, `http://localhost:1455/auth/callback?code=code-1&state=${authorizationState(tree)}`);
     });
 
     const pasteItem = tree.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
@@ -124,9 +161,9 @@ describe('ConnectedServiceOauthPasteView', () => {
       expect.objectContaining({
         serviceId: 'openai-codex',
         code: 'code-1',
-        verifier: 'verifier-1',
+        verifier: expect.any(String),
         redirectUri: 'http://localhost:1455/auth/callback',
-        state: 'state-1',
+        state: authorizationState(tree),
       }),
     );
     expect(storeCredentialSpy).toHaveBeenCalledWith(
@@ -197,7 +234,7 @@ describe('ConnectedServiceOauthPasteView', () => {
 
     const redirectInput = tree.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
     await act(async () => {
-      changeTextTestInstance(redirectInput, 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
+      changeTextTestInstance(redirectInput, `http://localhost:1455/auth/callback?code=code-1&state=${authorizationState(tree)}`);
     });
 
     const pasteItem = tree.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');

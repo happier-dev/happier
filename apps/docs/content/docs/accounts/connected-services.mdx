@@ -29,6 +29,7 @@ Happier models different credential types as distinct connected services:
 - `claude-subscription`: Claude subscription auth
 - `anthropic`: Anthropic API key auth
 - `gemini`: Gemini OAuth auth
+- `antigravity`: Antigravity personal Google OAuth auth (development builds)
 - `github`: GitHub token auth for source-control workflows
 
 This split is intentional. Subscription auth and API-key auth have different provider behavior, billing paths, and backend materialization requirements, so Happier does not merge them into a single generic "Claude" or "OpenAI" credential type.
@@ -55,6 +56,7 @@ In the CLI:
 - `happier connect codex ...`
 - `happier connect claude ...`
 - `happier connect gemini`
+- `happier connect agy` (development builds)
 
 ## Model-capacity retries
 
@@ -141,6 +143,41 @@ Supported methods:
 - paste redirect URL
 - in-app browser on native only
 
+### Antigravity
+
+In **Settings → Features**, turn on **Experimental features**, then check that
+**Connected services** and **Connected services quotas** are enabled.
+
+In development builds, one Google sign-in connects both Antigravity coding sessions
+and quota display. Open Antigravity in **Settings → Connected services**, add a
+profile, follow the Google sign-in link, then paste the complete return URL. A
+localhost error page after sign-in is expected when your browser is on another
+computer; copy its address into Happier. An SSH tunnel is unnecessary.
+
+You can also import an existing personal login from an online Happier machine.
+Choose its ACP login or interactive CLI login. The equivalent CLI commands are:
+
+```bash
+happier connect agy --import --import-source acp --profile work
+happier connect agy --import --import-source cli --profile work
+happier connect agy --paste --profile work
+```
+
+Some older CLI logins can read quota but lack the permission needed for coding
+sessions. Happier asks you to sign in through Google once to upgrade that profile.
+Afterward, the same sign-in supports both features. If Google requires your own
+Cloud project, enter it in the app or pass `--project PROJECT_ID` in the CLI.
+
+Select the connected profile when starting an Antigravity session. Happier uses
+separate login files for that session and preserves the machine's native login.
+Resume keeps the same account; live account changes and automatic account rotation
+are unsupported. Business OAuth, API keys, and Agent Platform authentication remain
+machine-local options.
+
+Update the relay, app, and machine CLI together before adding Antigravity profiles.
+Older versions do not recognize this service and may reject account lists containing
+it. Antigravity and Gemini remain separate connected services.
+
 ### GitHub
 
 Supported methods:
@@ -176,6 +213,7 @@ Connected services are not global "works everywhere" credentials. Each backend d
 | Claude | `claude-subscription` (setup-token or OAuth), `anthropic` (API key) |
 | Codex | `openai-codex` (OAuth), `openai` (API key) |
 | Gemini | `gemini` (OAuth) |
+| Antigravity (development builds) | `antigravity` (personal OAuth with coding permission) |
 | OpenCode | `openai-codex` (OAuth), `openai` (API key), `claude-subscription` (setup-token only), `anthropic` (API key) |
 | Pi | `openai-codex` (OAuth), `openai` (API key), `claude-subscription` (OAuth or setup-token), `anthropic` (API key) |
 
@@ -406,8 +444,14 @@ Current quota snapshots are available for:
 - `openai-codex`
 - `claude-subscription`
 - `gemini`
+- `antigravity` (development builds)
 
 GitHub connected accounts do not currently expose quota meters in Happier.
+
+Antigravity reports remaining percentages and reset times rather than request
+counts. Missing limits stay unknown. Its shared weekly and five-hour limits appear
+in account details; session gauges use the selected model's reported limit. Quota
+refreshes only read Google usage information and do not send a coding request.
 
 They appear in:
 

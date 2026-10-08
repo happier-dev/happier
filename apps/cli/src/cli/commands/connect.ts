@@ -82,6 +82,8 @@ ${targetLines}
   happier connect help         Show this help message
   happier connect --all ...    Include experimental providers
   happier connect <target> --profile <id>      Store under a specific profile (default: default)
+  happier connect agy --import --import-source acp|cli    Import a login from this machine
+  happier connect agy --project <id>          Select a Google project if required
   happier connect <target> --paste             Headless mode: paste redirect URL
   happier connect <target> --device            Use device-code auth (Codex)
   happier connect codex --api-key              Store an OpenAI API key
@@ -130,6 +132,7 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
 
     const now = Date.now();
     let postConnectPayload: unknown | null = null;
+    let requiresBrowserReauthorization = false;
 
     const record = await (async () => {
       const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
@@ -162,12 +165,21 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
         });
       }
 
-      const oauth = await target.authenticate({
-        paste: options.paste,
-        device: options.device,
-        noOpen: options.noOpen,
-        timeoutSeconds: options.timeoutSeconds ?? undefined,
-      });
+      let oauth: unknown;
+      if (options.importExisting) {
+        if (!target.importCredentials) throw new Error('This provider does not support existing-login import');
+        const imported = await target.importCredentials({ source: options.importSource ?? 'acp', projectId: options.projectId });
+        oauth = imported.oauth;
+        requiresBrowserReauthorization = imported.requiresBrowserReauthorization;
+      } else {
+        oauth = await target.authenticate({
+          projectId: options.projectId,
+          paste: options.paste,
+          device: options.device,
+          noOpen: options.noOpen,
+          timeoutSeconds: options.timeoutSeconds ?? undefined,
+        });
+      }
       postConnectPayload = oauth;
 
       return buildConnectedAccountOauthCredentialRecord({
@@ -178,11 +190,16 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
       });
     })();
 
+    if (requiresBrowserReauthorization) {
+      console.log(warn('This login supports quota display. Reconnect with browser OAuth before launching official ACP sessions.'));
+    }
+
     console.log(info(`Registering ${target.displayName} credential with relay (${record.serviceId}/${options.profileId})`));
     await storeConnectedServiceCredentialForAccount({
       api,
       credentials,
       record,
+      requireSameProviderAccount: target.requireSameProviderAccount,
     });
 
     console.log(ok(`${target.displayName} credential registered with relay`));

@@ -28,6 +28,8 @@ const ConnectedServiceOauthExchangeErrorCodeSchema = ConnectedServiceErrorCodeSc
   CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant,
   CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient,
   CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
+  CONNECTED_SERVICE_ERROR_CODES.oauthProjectRequired,
+  CONNECTED_SERVICE_ERROR_CODES.oauthAccountIneligible,
 ]);
 
 const ConnectedServiceOauthExchangeErrorResponseSchema = z.union([
@@ -56,6 +58,7 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
         verifier: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_VERIFIER_MAX_LEN),
         redirectUri: z.string().url().max(CONNECTED_SERVICE_OAUTH_REDIRECT_URI_MAX_LEN),
         state: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_STATE_MAX_LEN).nullable().optional(),
+        projectId: z.string().trim().min(1).optional(),
       }),
       response: {
         200: z.object({ bundle: z.string().min(1) }),
@@ -75,6 +78,7 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
         verifier: request.body.verifier,
         redirectUri: request.body.redirectUri,
         state: request.body.state ?? null,
+        projectId: request.body.projectId,
         now: Date.now(),
       });
       return reply.send({ bundle: exchanged.bundleB64Url });

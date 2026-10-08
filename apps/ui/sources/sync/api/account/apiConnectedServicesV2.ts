@@ -194,47 +194,53 @@ export async function exchangeConnectedServiceOauthViaProxy(
     verifier: string;
     redirectUri: string;
     state?: string | null;
+    projectId?: string;
   }>,
 ): Promise<Readonly<{ bundle: string }>> {
-  return await backoff(async () => {
-    const response = await serverFetch(
-      `/v2/connect/${encodeURIComponent(params.serviceId)}/oauth/exchange`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${credentials.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          publicKey: params.publicKey,
-          code: params.code,
-          verifier: params.verifier,
-          redirectUri: params.redirectUri,
-          ...(params.state ? { state: params.state } : {}),
-        }),
+  // An authorization code is single-use. Neither HTTP nor outer backoff may replay it.
+  const response = await serverFetch(
+    `/v2/connect/${encodeURIComponent(params.serviceId)}/oauth/exchange`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+        'Content-Type': 'application/json',
       },
-      { includeAuth: false },
-    );
+      body: JSON.stringify({
+        publicKey: params.publicKey,
+        code: params.code,
+        verifier: params.verifier,
+        redirectUri: params.redirectUri,
+        ...(params.state ? { state: params.state } : {}),
+        ...(params.projectId ? { projectId: params.projectId } : {}),
+      }),
+    },
+    { includeAuth: false, retry: 'none' },
+  );
 
-    if (!response.ok) {
-      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-        const json = await response.json().catch(() => null);
-        throw createConnectedServiceApiError(json, {
-          status: response.status,
-          fallbackCode: 'connect_oauth_exchange_failed',
-        });
-      }
-      throw new Error(`Failed to exchange ${params.serviceId}: ${response.status}`);
+  if (!response.ok) {
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      const json = await response.json().catch(() => null);
+      throw createConnectedServiceApiError(json, {
+        status: response.status,
+        fallbackCode: response.status === 400
+          && json?.statusCode === 400
+          && typeof json?.message === 'string'
+          && json.message.includes('serviceId')
+          ? 'connect_oauth_service_unsupported'
+          : 'connect_oauth_exchange_failed',
+      });
     }
+    throw new Error(`Failed to exchange ${params.serviceId}: ${response.status}`);
+  }
 
-    const json = await response.json().catch(() => null);
-    const bundle = json && typeof (json as any).bundle === 'string' ? String((json as any).bundle) : '';
-    if (!bundle) {
-      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
-    }
+  const json = await response.json().catch(() => null);
+  const bundle = json && typeof (json as any).bundle === 'string' ? String((json as any).bundle) : '';
+  if (!bundle) {
+    throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+  }
 
-    return { bundle };
-  });
+  return { bundle };
 }
 
 type OpenAiCodexDeviceAuthStartCommon = Readonly<{

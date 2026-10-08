@@ -744,6 +744,11 @@ export {
   normalizeConnectedServiceOauthCredentialRawMetadata,
   type ConnectedServiceOauthCredentialRawMetadata,
 } from './connect/buildConnectedServiceCredentialRecord.js';
+export {
+  ANTIGRAVITY_ACCOUNT_PROFILE_ACCEPT,
+  AntigravityOauthCredentialMetadataSchema,
+  type AntigravityOauthCredentialMetadata,
+} from './providers/antigravity/credentialMetadata.js';
 
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
 export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
@@ -1498,6 +1503,14 @@ export {
   type CompletedConversationTurn,
   type SessionRollbackPlan,
 } from './sessionRollbackPlanning.js';
+export {
+    ConnectedServiceImportParamsSchema,
+    CONNECTED_SERVICE_IMPORT_TIMEOUT_MS,
+  ConnectedServiceImportResultSchema,
+  type ConnectedServiceImportParams,
+  type ConnectedServiceImportResult,
+} from './connect/connectedServiceImport.js';
+
 export {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,

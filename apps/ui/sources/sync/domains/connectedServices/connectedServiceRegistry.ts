@@ -6,6 +6,8 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   serviceId: ConnectedServiceId;
   connectCommand: string;
   supportsOauth: boolean;
+  /** Known login stores on the selected Happier machine; never arbitrary paths. */
+  importSources?: ReadonlyArray<'acp' | 'cli'>;
   /**
    * Optional list of OAuth "add profile" surface modes this service wants to expose
    * explicitly in the service detail Actions group.
@@ -52,6 +54,13 @@ export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry
     connectCommand: 'happier connect gemini',
     supportsOauth: true,
     oauthAddActionModes: ['paste', 'browser'],
+  },
+  {
+    serviceId: 'antigravity',
+    connectCommand: 'happier connect agy',
+    supportsOauth: true,
+    oauthAddActionModes: ['paste', 'browser'],
+    importSources: ['acp', 'cli'],
   },
   {
     serviceId: 'github',

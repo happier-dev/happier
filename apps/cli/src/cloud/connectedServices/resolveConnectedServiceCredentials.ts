@@ -37,7 +37,7 @@ export class ConnectedServiceCredentialResolutionError extends Error {
   }
 }
 
-function parseConnectedServiceCredentialRecord(params: Readonly<{
+export function parseConnectedServiceCredentialRecord(params: Readonly<{
   binding: { serviceId: ConnectedServiceId; profileId: string };
   value: unknown;
 }>): ConnectedServiceCredentialRecordV1 {
