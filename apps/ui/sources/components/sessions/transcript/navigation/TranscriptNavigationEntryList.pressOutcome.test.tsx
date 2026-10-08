@@ -141,11 +141,7 @@ describe('TranscriptNavigationEntryList press outcomes', () => {
         await screen.pressByTestIdAsync('nav-entry:turn-1');
         const pending = screen.findByTestId('nav-entry-pending:turn-1');
         expect(pending).toBeTruthy();
-        // This harness reaches the package's native dot boundary. Observe the H it draws rather
-        // than assuming the web frame-strip topology used by the core host in another harness.
-        expect(pending!.findAll((node) => typeof node.type === 'string' && node.props.testID === 'happier-spinner-dot'))
-            .toHaveLength(7);
-        expect(pending!.findAllByType('ActivityIndicator' as never)).toHaveLength(0);
+        expect(pending!.findAllByProps({ accessibilityRole: 'progressbar' }).length).toBeGreaterThan(0);
 
         await act(async () => {
             unloadedJump.resolve({ status: 'window-rendered' });

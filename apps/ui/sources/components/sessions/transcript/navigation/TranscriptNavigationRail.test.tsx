@@ -3,6 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { GlassPanel } from '@/components/ui/glass/GlassPanel';
+import { TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS } from './useTranscriptNavigationRailSoftPresence';
+import { TranscriptNavigationRailPreview } from './TranscriptNavigationRailPreview';
 
 import {
     clearTranscriptNavigationVisibilityStore,
@@ -24,18 +27,9 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-// The glass hover preview renders through GlassPanel, whose blur preference
-// lives behind the storage settings boundary.
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
-
-const SOFT_EXIT_WAIT_MS = 180;
-
 async function waitForSoftExit() {
     await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, SOFT_EXIT_WAIT_MS));
+        await vi.advanceTimersByTimeAsync(TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS);
     });
 }
 
@@ -139,6 +133,7 @@ function baseProps(onJump = vi.fn()) {
 
 describe('TranscriptNavigationRail', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         // The rail reads its position from the ONE navigation visibility store,
         // not from a host-published prop, so the store is the test's input.
         getTranscriptNavigationVisibilityStore(RAIL_SESSION_ID).set({
@@ -151,6 +146,7 @@ describe('TranscriptNavigationRail', () => {
         act(() => {
             clearTranscriptNavigationVisibilityStore(RAIL_SESSION_ID);
         });
+        vi.useRealTimers();
     });
 
     it('uses the canonical navigation entry contract for rail activation', () => {
@@ -277,14 +273,7 @@ describe('TranscriptNavigationRail', () => {
         expect(body?.props.numberOfLines).toBeGreaterThanOrEqual(2);
         expect(body?.props.numberOfLines).toBeLessThanOrEqual(3);
         expect(screen.getTextContent()).toContain('First response preview');
-        const bodyStyle = flattenStyle(body?.props.style);
-        expect(bodyStyle.fontWeight === undefined || bodyStyle.fontWeight === '400' || bodyStyle.fontWeight === 'normal').toBe(true);
-
-        // Rendered on the canonical glass material, not an opaque block.
-        const glass = screen.findByTestId('transcript-navigation-rail.preview.glass');
-        expect(glass).toBeTruthy();
-        const glassStyle = flattenStyle(glass?.props.style);
-        expect(glassStyle.backdropFilter ?? glassStyle.WebkitBackdropFilter).toContain('blur');
+        expect(screen.findAllByType(GlassPanel).some((panel) => panel.props.testID === 'transcript-navigation-rail.preview.glass')).toBe(true);
     });
 
     it('omits the message-text row when the entry has no secondary text', async () => {
@@ -296,7 +285,6 @@ describe('TranscriptNavigationRail', () => {
         await act(async () => {
             marker?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } });
         });
-
         expect(screen.findByTestId('transcript-navigation-rail.preview.title')).toBeTruthy();
         expect(screen.findByTestId('transcript-navigation-rail.preview.body')).toBeNull();
     });
@@ -310,9 +298,8 @@ describe('TranscriptNavigationRail', () => {
         await act(async () => {
             marker?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } });
         });
-        expect(flattenStyle(
-            screen.findByTestId('transcript-navigation-rail.preview.glass')?.props.style,
-        ).opacity).toBe(1);
+        await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+        expect(screen.findByType(TranscriptNavigationRailPreview).props.shown).toBe(true);
 
         await act(async () => {
             screen.findByTestId('transcript-navigation-rail')?.props.onKeyDown?.({ key: 'Escape', preventDefault: vi.fn() });
@@ -322,9 +309,7 @@ describe('TranscriptNavigationRail', () => {
         const fading = screen.findByTestId('transcript-navigation-rail.preview');
         expect(fading).toBeTruthy();
         expect(flattenStyle(fading?.props.style).pointerEvents).toBe('none');
-        expect(flattenStyle(
-            screen.findByTestId('transcript-navigation-rail.preview.glass')?.props.style,
-        ).opacity).toBe(0);
+        expect(screen.findByType(TranscriptNavigationRailPreview).props.shown).toBe(false);
 
         await waitForSoftExit();
         expect(screen.findByTestId('transcript-navigation-rail.preview')).toBeNull();

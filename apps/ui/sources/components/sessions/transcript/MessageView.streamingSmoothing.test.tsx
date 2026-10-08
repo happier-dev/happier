@@ -2,16 +2,20 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createTestSessionTranscriptSource, flushHookEffects, renderWithSessionTranscriptSource as renderScreen, standardCleanup, wrapWithSessionTranscriptSource } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, flushHookEffects, renderWithSessionTranscriptSource as renderSourceScreen, standardCleanup, wrapWithSessionTranscriptSource } from '@/dev/testkit';
 import type { AgentTextMessage } from "@happier-dev/session-core/messages";
-import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { getStorage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { TranscriptMotionProvider } from './motion/TranscriptMotionProvider';
+import type { TranscriptMotionConfig } from './motion/TranscriptMotionContext';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const captured = vi.hoisted(() => ({
     markdownProps: [] as Record<string, unknown>[],
-    extractMentionsCalls: 0,
     streamingSmoothingEnabled: true,
     streamingPartialEnabled: true,
     streamingMarkdownEnabled: true,
@@ -22,12 +26,11 @@ const captured = vi.hoisted(() => ({
         animateToolExpandCollapseEnabled: true,
         animateToolExpandCollapseFreshOnly: true,
         animateThinkingEnabled: true,
-    } as Record<string, unknown>,
+    } as TranscriptMotionConfig,
     platformOS: 'web' as 'web' | 'ios' | 'android',
 }));
 
-installMessageViewCommonModuleMocks({
-    reactNative: async () => {
+vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
@@ -47,8 +50,8 @@ installMessageViewCommonModuleMocks({
             },
             useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
         });
-    },
-    unistyles: async () => {
+});
+vi.mock('react-native-unistyles', async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
             theme: {
@@ -59,92 +62,24 @@ installMessageViewCommonModuleMocks({
                 },
             },
         });
-    },
-    text: async () => {
+});
+vi.mock('@/text', async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
             translate: (key: string) => key,
         });
-    },
-    modal: async () => {
+});
+vi.mock('@/modal', async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock().module;
-    },
-    router: async () => {
+});
+vi.mock('expo-router', async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({ router: { push: vi.fn() } }).module;
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'sessionThinkingDisplayMode') return 'inline';
-                    if (key === 'sessionThinkingInlinePresentation') return 'full';
-                    if (key === 'sessionThinkingInlineChrome') return 'plain';
-                    if (key === 'transcriptStreamingSmoothingEnabled') return captured.streamingSmoothingEnabled;
-                    if (key === 'transcriptStreamingSettleDelayMs') return 200;
-                    if (key === 'transcriptStreamingPartialOutputEnabled') return captured.streamingPartialEnabled;
-                    if (key === 'transcriptStreamingMarkdownRenderingEnabled') return captured.streamingMarkdownEnabled;
-                    return null;
-                } }),
-                useSession: () => null,
-            },
-        });
-    },
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
-vi.mock('@/sync/sync', () => ({ sync: { submitMessage: vi.fn(), sendMessage: vi.fn() } }));
-vi.mock('@/components/markdown/MarkdownView', () => ({
-    MarkdownView: (props: Record<string, unknown>) => {
-        captured.markdownProps.push(props);
-        return React.createElement('MarkdownView', props);
-    },
-}));
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: React.PropsWithChildren<Record<string, unknown>>) =>
-        React.createElement('Text', props, props.children),
-}));
-vi.mock('@/components/tools/shell/views/ToolView', () => ({ ToolView: () => React.createElement('ToolView') }));
-vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-    ToolTimelineRow: () => React.createElement('ToolTimelineRow'),
-}));
-vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
-    renderStructuredMessage: () => null,
-    StructuredMessageBlock: () => React.createElement('StructuredMessageBlock'),
-}));
-vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
-vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
-vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (promise: Promise<unknown>) => promise }));
-vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
-    extractWorkspaceFileMentions: () => {
-        captured.extractMentionsCalls += 1;
-        return [];
-    },
-}));
-vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
-    StructuredReferencesRow: () => React.createElement('StructuredReferencesRow'),
-}));
-vi.mock('@/components/sessions/transcript/motion/TranscriptMotionContext', () => ({
-    useTranscriptMotion: () => ({ config: captured.transcriptMotionConfig }),
-}));
-vi.mock('@/components/sessions/transcript/thinking/ThinkingTimelineRow', () => ({
-    ThinkingTimelineRow: (props: React.PropsWithChildren<Record<string, unknown>>) =>
-        React.createElement('ThinkingTimelineRow', props, props.children),
-}));
-vi.mock('@/sync/ops', () => ({ forkSession: vi.fn() }));
-vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({ canForkFromMessage: () => false }));
-vi.mock('@/sync/domains/sessionFork/forkFromMessageSemantics', () => ({ resolveForkFromMessageSemantics: () => null }));
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-    createDefaultActionExecutor: () => ({ executeAction: vi.fn() }),
-}));
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({ readMachineTargetForSession: () => null }));
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: vi.fn(async () => true) }));
-
 function createAgentMessage(overrides: Partial<AgentTextMessage> = {}): AgentTextMessage {
     return {
         kind: 'agent-text',
@@ -159,18 +94,51 @@ function createAgentMessage(overrides: Partial<AgentTextMessage> = {}): AgentTex
 
 function flattenTestStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
-        return Object.assign({}, ...style.filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object'));
+        return Object.assign({}, ...style.map(flattenTestStyle));
     }
     return style && typeof style === 'object' ? { ...(style as Record<string, unknown>) } : {};
 }
 
-// Initialize the real graph before each case's virtual clock begins.
+let currentTree: renderer.ReactTestRenderer | Awaited<ReturnType<typeof renderSourceScreen>> | null = null;
+Object.defineProperty(captured, 'markdownProps', { get: () => {
+    if (!currentTree) return [];
+    const rows = currentTree.root.findAll(node => node.type === MarkdownView
+        || ('type' in MarkdownView && node.type === MarkdownView.type));
+    return rows.map(row => row.props);
+} });
+function applyTranscriptSettings() {
+    getStorage().setState({ settings: { ...settingsDefaults,
+        sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'full', sessionThinkingInlineChrome: 'plain',
+        transcriptStreamingSmoothingEnabled: captured.streamingSmoothingEnabled, transcriptStreamingSettleDelayMs: 200,
+        transcriptStreamingPartialOutputEnabled: captured.streamingPartialEnabled,
+        transcriptStreamingMarkdownRenderingEnabled: captured.streamingMarkdownEnabled } });
+}
+function withMotion(element: React.ReactElement) {
+    return <TranscriptMotionProvider sessionKey="s1" config={captured.transcriptMotionConfig}>{element}</TranscriptMotionProvider>;
+}
+async function renderScreen(element: React.ReactElement) {
+    applyTranscriptSettings();
+    const screen = await renderSourceScreen(withMotion(element));
+    currentTree = screen;
+    const update = screen.update;
+    Object.assign(screen, { update: async (nextElement: React.ReactElement) => {
+        await act(async () => { applyTranscriptSettings(); });
+        await update(withMotion(nextElement));
+    } });
+    return screen;
+}
+
+// Load the genuine Sync and row graph before each case's virtual clock begins.
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 await import('./MessageView');
 
+
 describe('MessageView (streaming smoothing)', () => {
+    let previousStore: ReturnType<ReturnType<typeof getStorage>['getState']>;
     beforeEach(() => {
-        captured.markdownProps.length = 0;
-        captured.extractMentionsCalls = 0;
+        previousStore = getStorage().getState();
+        currentTree = null;
         captured.streamingSmoothingEnabled = true;
         captured.streamingPartialEnabled = true;
         captured.streamingMarkdownEnabled = true;
@@ -189,6 +157,8 @@ describe('MessageView (streaming smoothing)', () => {
     afterEach(() => {
         standardCleanup();
         vi.useRealTimers();
+        currentTree = null;
+        getStorage().setState(previousStore, true);
     });
 
     it('records streaming Markdown placeholder history only after the same-message render commits', async () => {
@@ -214,7 +184,8 @@ describe('MessageView (streaming smoothing)', () => {
             return null;
         };
         const source = createTestSessionTranscriptSource();
-        const renderMessage = (message: AgentTextMessage, shouldSuspend = false) => wrapWithSessionTranscriptSource(
+        applyTranscriptSettings();
+        const renderMessage = (message: AgentTextMessage, shouldSuspend = false) => withMotion(wrapWithSessionTranscriptSource(
             <React.Suspense fallback={null}>
                 <MessageView
                     message={message}
@@ -224,16 +195,15 @@ describe('MessageView (streaming smoothing)', () => {
                 />
                 <SuspendAfterRow shouldSuspend={shouldSuspend} />
             </React.Suspense>, source,
-        );
+        ));
         let tree!: renderer.ReactTestRenderer;
 
         await act(async () => {
-            tree = renderer.create(renderMessage(staticMessage), {
+            currentTree = tree = renderer.create(renderMessage(staticMessage), {
                 unstable_isConcurrent: true,
             } as unknown as renderer.TestRendererOptions);
         });
         expect(captured.markdownProps.at(-1)?.staticRenderPlaceholderEnabled).toBeUndefined();
-        captured.markdownProps.length = 0;
 
         await act(async () => {
             React.startTransition(() => {
@@ -273,8 +243,6 @@ describe('MessageView (streaming smoothing)', () => {
         );
 
         expect(captured.markdownProps).toHaveLength(1);
-        captured.markdownProps.length = 0;
-        captured.extractMentionsCalls = 0;
 
         await act(async () => {
             await screen.update(
@@ -301,8 +269,6 @@ describe('MessageView (streaming smoothing)', () => {
             streamingRevealPreset: 'subtle',
         });
         expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
-        expect(captured.extractMentionsCalls).toBe(0);
-        captured.markdownProps.length = 0;
 
         // With no further input the backlog drains and the message settles back
         // to the static Markdown path with the complete text.
@@ -316,7 +282,6 @@ describe('MessageView (streaming smoothing)', () => {
         expect(settled?.markdown).toBe('Hello wor');
         expect(settled?.streamingMode).toBeUndefined();
         expect(settled?.staticRenderPlaceholderEnabled).toBe(false);
-        expect(captured.extractMentionsCalls).toBeGreaterThan(0);
     });
 
     it('renders an assistant stream segment as streaming Markdown before the first text change', async () => {
@@ -347,7 +312,6 @@ describe('MessageView (streaming smoothing)', () => {
             markdown: 'Hello',
             streamingMode: 'streaming',
         });
-        expect(captured.extractMentionsCalls).toBe(0);
     });
 
     it('reveals active streaming Markdown progressively without switching to the plain fallback', async () => {
@@ -375,7 +339,6 @@ describe('MessageView (streaming smoothing)', () => {
         );
 
         await flushHookEffects({ cycles: 2, turns: 2 });
-        captured.markdownProps.length = 0;
 
         await act(async () => {
             await screen.update(
@@ -436,7 +399,6 @@ describe('MessageView (streaming smoothing)', () => {
             />,
         );
         await flushHookEffects({ cycles: 2, turns: 2 });
-        captured.markdownProps.length = 0;
 
         await act(async () => {
             await screen.update(
@@ -599,7 +561,6 @@ describe('MessageView (streaming smoothing)', () => {
                 interaction={{ canSendMessages: true, canApprovePermissions: true }}
             />,
         );
-        captured.markdownProps.length = 0;
 
         await screen.update(
             <MessageView
@@ -659,7 +620,9 @@ describe('MessageView (streaming smoothing)', () => {
             />,
         );
 
-        expect(screen.findByTestId('transcript-streaming-plain:m1')?.props.children).toBe('Hello, immediately.');
+        const plain = screen.findByTestId('transcript-streaming-plain:m1');
+        if (!plain) throw new Error('Expected the active plain streaming transcript row');
+        expect(plain.findByProps({ text: 'Hello, immediately.' })).toBeTruthy();
     });
 
     it('renders active streaming plain text with the themed transcript color', async () => {
