@@ -5,15 +5,19 @@ import { dirname, join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
-import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
+import { spawnSleepyDetachedProcess } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import type { DaemonServiceInstallPlan } from './plan';
+import type { InstalledDaemonServiceEntry } from './discoverInstalledDaemonServiceEntries';
+
+type InstalledServiceIdentity = Pick<InstalledDaemonServiceEntry, 'label' | 'path' | 'serverId' | 'activeServerId'>;
 
 type Preview = Readonly<{
   ok: boolean;
   plan: DaemonServiceInstallPlan;
   installConflict?: Readonly<{
     blocking: boolean;
-    competingServices: readonly Readonly<{ label: string }>[];
+    competingServices: readonly InstalledServiceIdentity[];
+    servicesToRemove: readonly InstalledServiceIdentity[];
   }>;
 }>;
 
@@ -30,7 +34,7 @@ async function withInstallFixture(
 ) {
   await withTempDir('happier-service-install-conflict-', async (home) => {
     const env = createEnvKeyScope([
-      'HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_PLATFORM',
+      'HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_DAEMON_SERVICE_PLATFORM',
       'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
       'HAPPIER_DAEMON_SERVICE_INSTANCE_ID', 'HAPPIER_DAEMON_SERVICE_CHANNEL',
       'HAPPIER_DAEMON_SERVICE_TARGET_MODE', 'HAPPIER_DAEMON_SERVICE_NODE_PATH',
@@ -40,6 +44,7 @@ async function withInstallFixture(
     try {
       env.patch({
         HAPPIER_HOME_DIR: join(home, '.happier'),
+        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
         HAPPIER_DAEMON_SERVICE_PLATFORM: platform,
         HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: home,
         HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(home, '.happier'),
@@ -52,7 +57,6 @@ async function withInstallFixture(
         HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY: undefined,
       });
       vi.resetModules();
-      mockCurrentProcessAsDaemonLifecycleOwner();
       await run(await import('./cli'), home);
     } finally {
       env.restore();
@@ -65,14 +69,19 @@ async function installDefinition(
   targetMode: 'pinned' | 'default-following',
 ) {
   const runtime = cli.resolveDaemonServiceCliRuntimeFromEnv({ channel, targetMode, processEnv: process.env });
-  const { planDaemonServiceInstall } = await import('./plan');
+  const { planDaemonServiceInstall, resolveDaemonServiceSystemdUnitLabel } = await import('./plan');
   const plan = planDaemonServiceInstall({ ...runtime, uid: runtime.uid ?? undefined });
   for (const file of plan.files) {
     mkdirSync(dirname(file.path), { recursive: true });
     writeFileSync(file.path, file.content, 'utf8');
   }
   const paths = cli.resolveDaemonServicePaths(runtime);
-  return { ...paths, label: runtime.platform === 'linux' ? paths.unitName : paths.label };
+  return {
+    ...paths,
+    label: runtime.platform === 'linux'
+      ? resolveDaemonServiceSystemdUnitLabel(runtime.instanceId, runtime.channel, runtime.targetMode)
+      : paths.label,
+  };
 }
 
 async function previewInstall(cli: typeof import('./cli'), flags: readonly string[] = []) {
@@ -98,7 +107,10 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
       const result = await previewInstall(cli);
       expect(result.installConflict).toMatchObject({
         blocking: true,
-        competingServices: [expect.objectContaining({ label: existing.label })],
+        competingServices: [expect.objectContaining({
+          label: existing.label, path: existing.installedPath,
+          serverId: 'default', activeServerId: 'cloud',
+        })],
       });
     });
   });
@@ -109,9 +121,13 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
       const result = await previewInstall(cli, ['--yes']);
       expect(result.installConflict).toMatchObject({
         blocking: false,
-        competingServices: [expect.objectContaining({ label: existing.label })],
+        competingServices: [expect.objectContaining({
+          label: existing.label, path: existing.installedPath,
+          serverId: 'default', activeServerId: 'cloud',
+        })],
+        servicesToRemove: [],
       });
-      expect(result.plan.commands.some(command => command.args.includes('disable') && command.args.includes(existing.label))).toBe(false);
+      expect(result.plan.commands.some(command => command.args.includes('disable') && command.args.includes(existing.unitName))).toBe(false);
     });
   });
 
@@ -119,8 +135,13 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
     await withInstallFixture('linux', async (cli) => {
       const existing = await installDefinition(cli, 'stable', 'pinned');
       const result = await previewInstall(cli, ['--replace-existing=all', '--yes']);
-      expect(result.installConflict?.blocking).toBe(false);
-      expect(result.plan.commands.some(command => command.args.includes('disable') && command.args.includes(existing.label))).toBe(true);
+      expect(result.installConflict).toMatchObject({
+        blocking: false,
+        servicesToRemove: [expect.objectContaining({
+          label: existing.label, path: existing.installedPath,
+          serverId: 'default', activeServerId: 'cloud',
+        })],
+      });
     });
   });
 
@@ -128,14 +149,19 @@ describe('runDaemonServiceCliCommand install conflict preflight', () => {
     await withInstallFixture('darwin', async (cli) => {
       const paths = await installDefinition(cli, 'preview', 'default-following');
       const { writeDaemonState } = await import('@/persistence');
-      await writeDaemonState({
-        pid: process.pid, httpPort: 43122, startedAt: Date.now(),
-        startedWithCliVersion: '0.0.0-other', startedWithPublicReleaseChannel: 'dev',
-        startupSource: 'background-service', serviceLabel: paths.label,
-      });
-      const result = await previewInstall(cli);
-      expect(result.ok).toBe(true);
-      expect(result.plan.commands.some(command => command.args[0] === 'bootstrap')).toBe(true);
+      const owner = spawnSleepyDetachedProcess(['/opt/happier/package-dist/index.mjs', 'daemon', 'start-sync']);
+      try {
+        await writeDaemonState({
+          pid: owner.pid, httpPort: 43122, startedAt: Date.now(),
+          startedWithCliVersion: '0.0.0-other', startedWithPublicReleaseChannel: 'dev',
+          startupSource: 'background-service', serviceLabel: paths.label,
+        });
+        const result = await previewInstall(cli);
+        expect(result.ok).toBe(true);
+        expect(result.plan.commands.some(command => command.args[0] === 'bootstrap')).toBe(true);
+      } finally {
+        await owner.kill();
+      }
     });
   });
 });

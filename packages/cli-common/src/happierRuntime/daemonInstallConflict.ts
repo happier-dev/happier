@@ -133,7 +133,7 @@ function isCompetingService(service: HappierService, target: DaemonServiceInstal
         if (service.platform !== target.platform) return false;
         const followedServerId = String(target.followedServerId ?? '').trim();
         if ((service.targetMode ?? 'pinned') === 'default-following' || !followedServerId) return true;
-        return service.instanceId === followedServerId;
+        return (service.activeServerId ?? service.instanceId) === followedServerId;
     }
     if (service.instanceId && service.instanceId === target.instanceId) {
         return true;

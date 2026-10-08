@@ -206,13 +206,23 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
         createDaemonService({
           id: 'service:stable:company',
           label: 'happier-daemon.company',
-          instanceId: 'company',
+          // A service named after the followed Home may actually be pinned elsewhere.
+          instanceId: 'cloud',
+          activeServerId: 'company',
           serverUrl: 'https://company.example.test',
           publicServerUrl: 'https://company.example.test',
         }),
         createDaemonService({
           id: 'service:stable:cloud',
-          label: 'happier-daemon.cloud',
+          label: 'happier-daemon.custom-cloud',
+          instanceId: 'custom-cloud',
+          activeServerId: 'cloud',
+        }),
+        createDaemonService({
+          id: 'service:preview:legacy-cloud',
+          label: 'happier-daemon.preview.cloud',
+          ring: 'preview',
+          // Retained definitions without a separate profile still use their instance.
           instanceId: 'cloud',
         }),
         createDaemonService({
@@ -228,11 +238,13 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     });
 
     expect(plan.competingServices.map((service) => service.label).sort()).toEqual([
-      'happier-daemon.cloud',
+      'happier-daemon.custom-cloud',
+      'happier-daemon.preview.cloud',
       'happier-daemon.preview.default',
     ]);
     expect(plan.servicesToRemove.map((service) => service.label).sort()).toEqual([
-      'happier-daemon.cloud',
+      'happier-daemon.custom-cloud',
+      'happier-daemon.preview.cloud',
       'happier-daemon.preview.default',
     ]);
   });
