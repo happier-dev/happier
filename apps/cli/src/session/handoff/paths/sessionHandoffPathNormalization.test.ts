@@ -11,6 +11,11 @@ import {
 } from './sessionHandoffPathNormalization';
 
 describe('sessionHandoffPathNormalization', () => {
+    it('compares UNC workspace roots case-insensitively across separator styles', () => {
+        expect(getPathRemainderWithinBase('\\\\Server\\Share\\Code\\My-App', '//server/share/code')).toBe('My-App');
+        expect(getPathRemainderWithinBase('\\\\Server\\Share\\Code2', '//server/share/code')).toBeNull();
+    });
+
     it('preserves the nested cwd spelling while comparing Windows roots case-insensitively', () => {
         expect(getPathRemainderWithinBase(
             'C:\\Users\\Alice\\Projects\\App\\Packages\\MixedCase',

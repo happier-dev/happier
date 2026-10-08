@@ -12391,7 +12391,7 @@ const ja = completeWorkspaceSyncTranslation({
         conflictNeedsAttention: 'この競合は変更されています。バージョンを選ぶ前に更新してください。',
         needsAttention: 'ワークスペース同期に対応が必要です。状態を更新して、もう一度お試しください。',
     },
-    start: { blocked: { targetMachine: '続行するには宛先コンピューターを選択してください。', targetMachineOffline: 'そのコンピューターは現在利用できません。再接続して、もう一度お試しください。', relationshipUnavailable: 'この同期関係は、この 2 つのフォルダーを対象としていません。別のワークスペースオプションを選択してください。', sourceFolder: 'このセッションのフォルダーは安全に同期できません。セッションだけを引き継ぐには「ファイルを移動しない」を選択してください。', destinationFolder: '安全に同期できる宛先フォルダーを選択してください。', workspaceOptions: '開始する前にワークスペースのオプションを確認してください。' } },
+    start: { blocked: { targetMachine: '続行するには宛先コンピューターを選択してください。', targetMachineOffline: 'そのコンピューターは現在利用できません。再接続して、もう一度お試しください。', relationshipUnavailable: 'この同期関係は、この 2 つのフォルダーを対象としていません。別のワークスペースオプションを選択してください。', sourceFolder: 'このセッションのフォルダーは安全に同期できません。セッションだけを引き継ぐには「ファイルを移動しない」を選択してください。', destinationFolder: '有効な宛先フォルダーを選択してください。', workspaceOptions: '開始する前にワークスペースのオプションを確認してください。' } },
     engine: { checking: 'このコンピューターのワークスペース同期を確認しています…' },
     actions: { refresh: '状態を更新', syncNow: '今すぐ同期', more: '同期の操作', pause: '一時停止', resume: '再開', terminate: '同期を停止', openOnMachine: ({ machine }) => `${machine} で開く`, openFolder: ({ label }) => `${label} フォルダーを開く`, keepLocal: 'ローカル版を保持', keepRemote: 'リモート版を保持', keepNamed: ({ side }) => `${side} のバージョンを保持` },
     terminate: { title: 'ワークスペース同期を削除しますか？', body: '同期を停止し、その関係を削除します。両方のワークスペースのファイルはそのまま残ります。' },

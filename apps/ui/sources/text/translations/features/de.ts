@@ -11908,7 +11908,7 @@ const de = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Dieser Computer ist derzeit nicht verfügbar. Verbinde ihn erneut und versuche es noch einmal.',
         relationshipUnavailable: 'Diese Synchronisierungsverbindung umfasst diese beiden Ordner nicht mehr. Wähle eine andere Arbeitsbereichsoption.',
         sourceFolder: 'Der Ordner dieser Sitzung kann nicht sicher synchronisiert werden. Wähle „Dateien nicht verschieben“, um nur die Sitzung zu übergeben.',
-        destinationFolder: 'Wähle einen Zielordner aus, der sicher synchronisiert werden kann.',
+        destinationFolder: 'Wähle einen gültigen Zielordner aus.',
         workspaceOptions: 'Prüfe die Arbeitsbereichsoptionen, bevor du beginnst.',
     } },
     engine: { checking: 'Arbeitsbereichssynchronisierung wird auf diesem Computer geprüft…' },

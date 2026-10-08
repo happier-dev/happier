@@ -12457,7 +12457,7 @@ const fr = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Cette machine est indisponible pour le moment. Reconnecte-la, puis réessaie.',
         relationshipUnavailable: 'Cette relation de synchronisation ne couvre plus ces deux dossiers. Choisis une autre option pour l’espace de travail.',
         sourceFolder: 'Le dossier de cette session ne peut pas être synchronisé en toute sécurité. Choisis « Ne pas déplacer les fichiers » pour transférer uniquement la session.',
-        destinationFolder: 'Choisis un dossier de destination qui peut être synchronisé en toute sécurité.',
+        destinationFolder: 'Choisis un dossier de destination valide.',
         workspaceOptions: 'Vérifie les options de l’espace de travail avant de commencer.',
     } },
     engine: { checking: 'Vérification de la synchronisation sur cette machine…' },

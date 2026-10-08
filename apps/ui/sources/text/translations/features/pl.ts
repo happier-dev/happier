@@ -12427,7 +12427,7 @@ const pl = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Ten komputer jest teraz niedostępny. Połącz go ponownie i spróbuj jeszcze raz.',
         relationshipUnavailable: 'Ta relacja synchronizacji nie obejmuje już tych dwóch folderów. Wybierz inną opcję obszaru roboczego.',
         sourceFolder: 'Folder tej sesji nie może być bezpiecznie synchronizowany. Wybierz „Nie przenoś plików”, aby przekazać tylko sesję.',
-        destinationFolder: 'Wybierz folder docelowy, który można bezpiecznie synchronizować.',
+        destinationFolder: 'Wybierz prawidłowy folder docelowy.',
         workspaceOptions: 'Sprawdź opcje obszaru roboczego przed rozpoczęciem.',
     } },
     engine: { checking: 'Sprawdzanie synchronizacji na tym komputerze…' },

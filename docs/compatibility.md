@@ -1044,6 +1044,23 @@ without an older-server feature probe or inventory-426 translation. Request fail
 remain failures rather than a fabricated empty inventory. This development cut does
 not activate dormant V5 or downgrade current requests to predecessor transition wire.
 
+### Same-machine session handoff (development)
+
+Same-machine handoff extends the current V3 operation without another transport or
+persisted shape. Path-backed Sessions require an explicit, different local target
+before the source stops. Managed Sessions retain their existing private-directory
+allocation. The existing local durable bundle path works without a network transfer
+carrier; the `sessions.handoff` feature decision still applies.
+
+Source cleanup shares the target job locally, requires completed target commit, and
+must not stop the successor by Session id. Abort preserves an already completed job.
+Tracked cancellation remains available during preparation and closes before target
+launch, which begins publishing the target's canonical Session metadata. The accepted
+launch then completes confirmation, commit, and cleanup through its existing nonce
+observation owner. This is development behavior, not a released rollback guarantee.
+Predecessor request adapters and cross-machine transfer contracts remain seam-owned;
+unsupported operation versions fail before execution rather than pretending to move.
+
 ### Workspace-sync handoff rollout
 
 Workspace handoff is operation-scoped across UI, daemon, and Machine RPC versions. A current

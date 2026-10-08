@@ -99,10 +99,17 @@ describe('resolveSessionHandoffStartReadiness', () => {
         expect(resolveSessionHandoffStartReadiness(input({
             workspaceEngineRequired: false,
             sourcePathAllowed: false,
-            targetPathAllowed: false,
+            targetPathAllowed: true,
             sourceEngineReadiness: { ...READY, phase: 'unavailable', errorCode: 'engine_unavailable' },
             targetEngineReadiness: { ...READY, phase: 'unavailable', errorCode: 'engine_unavailable' },
         }))).toEqual({ canStart: true });
+    });
+
+    it('requires an admissible destination even when no workspace action needs the engine', () => {
+        expect(resolveSessionHandoffStartReadiness(input({
+            workspaceEngineRequired: false,
+            targetPathAllowed: false,
+        }))).toEqual({ canStart: false, reason: 'target_path_unsafe' });
     });
 
     it('names the unsafe folder side instead of a generic failure', () => {

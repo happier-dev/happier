@@ -461,7 +461,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
               error: readNonEmptyString(record?.errorMessage) ?? 'session_handoff_resume_failed',
             };
       },
-      confirmTarget: async ({ sessionId: expectedSessionId }) => {
+      confirmTarget: async ({ sessionId: expectedSessionId }, signal) => {
         if (!spawnNonce) {
           return { ok: false, errorCode: 'session_handoff_target_unconfirmed', error: 'session_handoff_target_unconfirmed' };
         }
@@ -471,7 +471,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           sessionId: expectedSessionId,
           spawnNonce,
           spawnResult,
-          signal: hostInput.signal,
+          signal,
         });
         return settled.type === 'success' && settled.sessionId === expectedSessionId
           ? { ok: true }

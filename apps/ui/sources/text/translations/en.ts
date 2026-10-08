@@ -11467,7 +11467,7 @@ const enWorkspaceSync = {
             targetMachineOffline: 'That computer is unavailable right now. Reconnect it, then try again.',
             relationshipUnavailable: 'That workspace sync no longer covers these two folders. Choose another workspace option.',
             sourceFolder: 'This session’s folder can’t be synced safely. Choose “Don’t move files” to hand off the session only.',
-            destinationFolder: 'Choose a destination folder that can be synced safely.',
+            destinationFolder: 'Choose a valid destination folder.',
             workspaceOptions: 'Review the workspace options before starting.',
         },
     },

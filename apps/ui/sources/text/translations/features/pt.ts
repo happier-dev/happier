@@ -12414,7 +12414,7 @@ const pt = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Esse computador não está disponível agora. Volta a ligá-lo e tenta novamente.',
         relationshipUnavailable: 'Esta relação de sincronização já não abrange estas duas pastas. Escolhe outra opção para o espaço de trabalho.',
         sourceFolder: 'A pasta desta sessão não pode ser sincronizada com segurança. Escolhe “Não mover ficheiros” para transferir apenas a sessão.',
-        destinationFolder: 'Escolhe uma pasta de destino que possa ser sincronizada com segurança.',
+        destinationFolder: 'Escolhe uma pasta de destino válida.',
         workspaceOptions: 'Revê as opções do espaço de trabalho antes de começar.',
     } },
     engine: { checking: 'A verificar a sincronização neste computador…' },

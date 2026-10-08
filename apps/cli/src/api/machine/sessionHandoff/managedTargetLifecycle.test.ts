@@ -39,7 +39,7 @@ describe('managed handoff target lifecycle', () => {
       const committed = await ready('committed_operation');
       await writeFile(join(committed.directory, 'keep.txt'), 'committed files');
       expect(await createSessionHandoffCommitActionHandler(deps)({ handoffId: 'committed_operation', mode: 'target' })).toMatchObject({ status: { status: 'completed' } });
-      expect(await createSessionHandoffAbortActionHandler(deps)({ handoffId: 'committed_operation', reason: 'late cancellation' })).toMatchObject({ status: { status: 'aborted' } });
+      expect(await createSessionHandoffAbortActionHandler(deps)({ handoffId: 'committed_operation', reason: 'late cancellation' })).toMatchObject({ status: { status: 'completed' } });
       expect(await readFile(join(committed.directory, 'keep.txt'), 'utf8')).toBe('committed files');
       const abandoned = await ready('abandoned_operation', 'pending');
       expect(await createSessionHandoffAbortActionHandler(deps)({ handoffId: 'abandoned_operation', reason: 'cancel operation' })).toMatchObject({ status: { status: 'aborted' } });

@@ -27,6 +27,18 @@ You can start handoff from:
 
 Open the action, choose the destination machine, review the handoff options, and confirm.
 
+### Move to another directory on the same machine
+
+Development builds also let you select the current machine and choose a different working directory. This requires a daemon with same-machine handoff support; it is not available in older released builds.
+
+For example, a session started in `~/code` can continue in `~/code/my-app` with the same session id and conversation. Handoff restarts the Agent in the selected directory and updates the session's project grouping. Choose an explicit destination; the current directory is not a valid move.
+
+Workspace transfer defaults off for a same-machine move, so existing files stay where they are. You can still choose the existing copy or synchronization options. Moving a session into a child directory does not require copying the parent directory's contents.
+
+Managed, folderless Sessions keep their existing private-directory allocation flow. Selecting the current machine does not convert them into path-backed Sessions.
+
+The sidebar's **Move to folder** action organizes sessions within their project; it does not change the Agent's working directory.
+
 ## What handoff preserves
 
 When handoff succeeds:

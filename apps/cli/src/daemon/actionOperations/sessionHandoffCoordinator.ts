@@ -212,10 +212,10 @@ async function abortBoth(
   handoffId: string,
   reason: string,
 ): Promise<boolean> {
-  const responses = await Promise.allSettled([
-    input.abort({ machineId: input.input.targetMachineId, handoffId, reason }),
-    input.abort({ machineId: sourceMachineId, handoffId, reason }),
-  ]);
+  const machineIds = new Set([input.input.targetMachineId, sourceMachineId]);
+  const responses = await Promise.allSettled([...machineIds].map((machineId) =>
+    input.abort({ machineId, handoffId, reason }),
+  ));
   return responses.every((response) => {
     if (response.status !== 'fulfilled') return false;
     const parsed = SessionHandoffAbortResponseSchema.safeParse(response.value);
@@ -282,6 +282,7 @@ export async function coordinateTrackedSessionHandoff(
 ): Promise<ActionExecuteResult> {
   let cancellationSourceMachineId: string | null = null;
   let cancellationHandoffId: string | null = null;
+  let cancellationClosed = false;
   let preparedWorkspace: WorkspaceSyncHandoffPrepared | undefined;
   let finalizedWorkspace: WorkspaceSyncHandoffCommitted | undefined;
   let committedTarget: Readonly<{ handoffId: string; status: SessionHandoffStatus }> | null = null;
@@ -513,11 +514,16 @@ export async function coordinateTrackedSessionHandoff(
   }
 
   publishPhase(input.publishOwnerUpdate, 'resuming_target', 'Resuming target session');
+  input.signal.throwIfAborted();
+  // Resume publishes replacement runtime metadata during startup. There is no rollback
+  // contract after binding begins, so late cancellation must finish custody and commit.
+  cancellationClosed = true;
+  const completionSignal = new AbortController().signal;
   const resumed = await input.resumeTarget({
     sessionId: input.input.sessionId,
     targetMachineId: input.input.targetMachineId,
     prepared: prepared.data,
-  }, input.signal);
+  }, completionSignal);
   const resumeFailure = readFailure(resumed, 'session_handoff_resume_failed');
   if (resumeFailure || asRecord(resumed)?.ok !== true) {
     const failure = resumeFailure ?? {
@@ -535,7 +541,7 @@ export async function coordinateTrackedSessionHandoff(
     sessionId: input.input.sessionId,
     targetMachineId: input.input.targetMachineId,
     handoffId,
-  }, input.signal);
+  }, completionSignal);
   const confirmFailure = readFailure(confirmed, 'session_handoff_target_unconfirmed');
   if (confirmFailure || asRecord(confirmed)?.ok !== true) {
     const failure = confirmFailure ?? {
@@ -553,7 +559,7 @@ export async function coordinateTrackedSessionHandoff(
     machineId: input.input.targetMachineId,
     handoffId,
     mode: 'target',
-  }, input.signal);
+  }, completionSignal);
   const commitFailure = readFailure(committed, 'session_handoff_commit_failed');
   const committedResponse = SessionHandoffCommitResponseSchema.safeParse(committed);
   if (commitFailure || !committedResponse.success) {
@@ -575,7 +581,7 @@ export async function coordinateTrackedSessionHandoff(
       workspaceCommitted = await input.workspaceSyncAdapter.commit({
         operationId: workspaceOperationId,
         prepared: preparedWorkspace,
-        signal: input.signal,
+        signal: completionSignal,
       });
     } catch (error) {
       workspaceCleanupFailure = readThrownFailure(error, 'workspace_sync_commit_failed');
@@ -595,7 +601,7 @@ export async function coordinateTrackedSessionHandoff(
       machineId: source.sourceMachineId,
       handoffId,
       mode: 'source_cleanup',
-    }, input.signal);
+    }, completionSignal);
     const cleanupFailure = readFailure(cleanup, 'session_handoff_source_cleanup_failed');
     const cleanupResponse = SessionHandoffCommitResponseSchema.safeParse(cleanup);
     cleanupWarning = cleanupFailure ?? (!cleanupResponse.success
@@ -655,7 +661,7 @@ export async function coordinateTrackedSessionHandoff(
         },
       };
     }
-    if (!input.signal.aborted) {
+    if (!input.signal.aborted || cancellationClosed) {
       await abortWorkspace();
       if (workspaceAbortFailure !== undefined) {
         throw Object.assign(

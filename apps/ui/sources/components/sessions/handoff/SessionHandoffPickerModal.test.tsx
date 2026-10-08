@@ -224,6 +224,79 @@ describe('SessionHandoffPickerModal', () => {
         };
     });
 
+
+    it.each([
+        { sourcePath: '~/projects/happier', homeDir: '/Users/tester', equivalentPath: '/Users/tester//projects/happier/', destinationPath: '/Users/tester/projects/happier/child' },
+        { sourcePath: '~\\projects/happier', homeDir: 'C:\\Users\\tester\\', equivalentPath: 'c:/users/TESTER/projects\\happier/', destinationPath: 'C:\\Users\\tester2\\projects\\happier' },
+    ])('requires a distinct explicit directory for same-machine handoff ($homeDir)', async ({ sourcePath, homeDir, equivalentPath, destinationPath }) => {
+        const sourceMachine = createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: 'Source machine', host: 'source.local', homeDir } });
+        machineListByServerIdState[homeA.id].push(sourceMachine);
+        allMachinesState.push(sourceMachine);
+        sessionsByIdState.sess_1.metadata.path = sourcePath;
+        sessionsByIdState.sess_1.metadata.homeDir = homeDir;
+        const { applyWorkspaceSyncEngineReadinessEvent } = await import('@/sync/domains/sessionHandoff/workspaceSyncEngineReadinessStore');
+        applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId: 'machine_source' }, {
+            engine: { state: 'ready' }, carrier: { state: 'unavailable', errorCode: 'machine_carrier_unavailable' },
+        });
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={(next) => { chrome = next; }}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_target"
+            serverId={homeA.id}
+        />);
+        const selector = screen.tree.findByType(MachineSelector);
+        expect(selector.props.machines).toContainEqual(expect.objectContaining({ id: 'machine_source' }));
+        expect(selector.props.recentMachines).toContainEqual(expect.objectContaining({ id: 'machine_source' }));
+        await act(async () => { invokeTestInstanceHandler(selector, 'onSelect', sourceMachine); });
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void; accessibilityHint?: string }>;
+        expect(start().props.disabled).toBe(true);
+        expect(start().props.accessibilityHint).toBe('workspaceSync.start.blocked.destinationFolder');
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', equivalentPath); });
+        expect(start().props.disabled).toBe(true);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath); });
+        expect(start().props.disabled).toBe(false);
+        const modeMenu = () => screen.tree.findAllByType(DropdownMenu)
+            .find((node) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title')!;
+        expect(modeMenu().props.selectedId).toBe('none');
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_source', targetPath: destinationPath, workspaceAction: { kind: 'none' } }));
+        onResolve.mockClear();
+        await act(async () => { invokeTestInstanceHandler(modeMenu(), 'onSelect', 'copy_once'); });
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath + '/other'); });
+        expect(modeMenu().props.selectedId).toBe('copy_once');
+        expect(start().props.disabled).toBe(false);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ workspaceAction: expect.objectContaining({ kind: 'copy_once' }) }));
+    });
+
+    it('preserves daemon-owned private-directory allocation for a same-machine managed session', async () => {
+        const sourceMachine = createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now() });
+        machineListByServerIdState[homeA.id].push(sourceMachine);
+        allMachinesState.push(sourceMachine);
+        sessionsByIdState.sess_1.metadata.sessionDirectoryV1 = { v: 1, kind: 'managed' };
+        delete sessionsByIdState.sess_1.metadata.externalSessionV1;
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={(next) => { chrome = next; }} onResolve={onResolve} sessionId="sess_1" serverId={homeA.id} />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', sourceMachine); });
+        expect(screen.tree.findAll((node) => node.props.testID === 'path-selection-list:header:input')).toHaveLength(0);
+        const start = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
+        expect(start.props.disabled).toBe(false);
+        await act(async () => { start.props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_source', targetSessionStorageMode: 'persisted', workspaceAction: { kind: 'none' } }));
+        expect(onResolve.mock.calls[0]?.[0]).not.toHaveProperty('targetPath');
+    });
+
     it('does not load the target path browser until the user asks to choose a directory', async () => {
         await import('./SessionHandoffPickerModal');
 
@@ -1047,11 +1120,12 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
 
-    it('prefers the current session machineId over a divergent sourceMachineId prop when filtering picker targets', async () => {
+    it('keeps both machines selectable when the sourceMachineId prop differs from the current session', async () => {
         sessionsByIdState = {
             sess_1: {
                 id: 'sess_1',
@@ -1097,6 +1171,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1125,6 +1200,7 @@ describe('SessionHandoffPickerModal', () => {
         />);
 
         expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'A source' } },
             { id: 'machine_shared', metadata: { displayName: 'A target' } },
         ]);
     });
@@ -1205,6 +1281,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1277,7 +1354,7 @@ describe('SessionHandoffPickerModal', () => {
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
         const machineSelector = tree.findByType(MachineSelector);
-        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_target']);
+        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_source', 'machine_target']);
     });
 
     it('explains the disabled start state with the exact next step instead of an inert button', async () => {

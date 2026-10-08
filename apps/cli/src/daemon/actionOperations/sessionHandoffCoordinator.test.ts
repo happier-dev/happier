@@ -97,6 +97,47 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('tracked session handoff coordinator', () => {
+  it('finishes local launch and commit when cancellation arrives after binding begins', async () => {
+    const controller = new AbortController();
+    const { deps } = createDeps({
+      workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({
+        sync: {} as never,
+        // Session-only handoff has no target workspace bootstrap transport.
+        bootstrap: async () => { throw new Error('Unexpected target workspace bootstrap'); },
+      }),
+      resumeTarget: async (_request: unknown, signal: AbortSignal) => {
+        controller.abort();
+        signal.throwIfAborted();
+        return { ok: true };
+      },
+      confirmTarget: async (_request: unknown, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        return { ok: true };
+      },
+    });
+    const result = await coordinateTrackedSessionHandoff({ input: { sessionId: 'session-1', targetMachineId: 'source-machine', targetPath: '/repo/my-app', workspaceAction: { kind: 'none' } }, signal: controller.signal, ...deps });
+    expect(result).toMatchObject({ ok: true, result: { status: { status: 'completed' } } });
+    expect(deps.abort).not.toHaveBeenCalled();
+    expect(deps.cleanupSource).toHaveBeenCalledOnce();
+  });
+
+  it('cancels pending local preparation with one abort of the shared daemon job', async () => {
+    const controller = new AbortController();
+    const { deps } = createDeps({
+      workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({
+        sync: {} as never,
+        // Session-only handoff has no target workspace bootstrap transport.
+        bootstrap: async () => { throw new Error('Unexpected target workspace bootstrap'); },
+      }),
+      prepareTarget: async () => { controller.abort(); controller.signal.throwIfAborted(); },
+      abort: vi.fn(async () => ({ handoffId: 'handoff-1', status: { ...status('staging_target'), status: 'aborted' } })),
+    });
+    const result = await coordinateTrackedSessionHandoff({ input: { sessionId: 'session-1', targetMachineId: 'source-machine', targetPath: '/repo/my-app', workspaceAction: { kind: 'none' } }, signal: controller.signal, ...deps });
+    expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(deps.abort).toHaveBeenCalledOnce();
+    expect(deps.resumeTarget).not.toHaveBeenCalled();
+  });
+
   it('stops before target preparation when the final linked route blocks after source quiescence', async () => {
     const linkStatus = {
       relationshipId: 'source-hub', controllerMachineId: 'hub-machine', state: 'watching' as const,

@@ -70,7 +70,7 @@ export function createSessionHandoffAbortActionHandler(
     const parsed = SessionHandoffAbortRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    const persistedJob = await readPersistedPrepareJob({
+    let persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
       jobStore: prepareJobStore,
     });
@@ -79,29 +79,24 @@ export function createSessionHandoffAbortActionHandler(
 
     if (persistedJob) {
       const abortedAtMs = Date.now();
-      const status: SessionHandoffStatus = {
-        ...persistedJob.status,
-        status: 'aborted',
-      };
-      await prepareJobStore.write(buildPrepareJobRecord({
-        jobId: persistedJob.jobId,
-        handoffId: parsed.data.handoffId,
-        createdAtMs: persistedJob.createdAtMs,
-        updatedAtMs: abortedAtMs,
-        cancelRequestedAtMs: persistedJob.cancelRequestedAtMs ?? abortedAtMs,
-        abortedAtMs,
-        ...(persistedJob.failedAtMs ? { failedAtMs: persistedJob.failedAtMs } : {}),
-        ...(persistedJob.lastErrorMessage ? { lastErrorMessage: persistedJob.lastErrorMessage } : {}),
-        ...(persistedJob.lastErrorCode ? { lastErrorCode: persistedJob.lastErrorCode } : {}),
-        status,
-        ...(persistedJob.prepareTargetRequest ? { prepareTargetRequest: persistedJob.prepareTargetRequest } : {}),
-        ...(persistedJob.prepareTargetResult ? {
-          prepareTargetResult: {
-            ...persistedJob.prepareTargetResult,
-            status,
-          },
-        } : {}),
-      }));
+      const transitioned = await prepareJobStore.update(persistedJob.jobId, (current) => {
+        if (current.status.status === 'completed') return current;
+        const status: SessionHandoffStatus = { ...current.status, status: 'aborted' };
+        return {
+          ...current,
+          updatedAtMs: abortedAtMs,
+          cancelRequestedAtMs: current.cancelRequestedAtMs ?? abortedAtMs,
+          abortedAtMs,
+          status,
+          ...(current.prepareTargetResult ? {
+            prepareTargetResult: { ...current.prepareTargetResult, status },
+          } : {}),
+        };
+      });
+      if (transitioned?.status.status === 'completed') {
+        return { handoffId: parsed.data.handoffId, status: transitioned.status };
+      }
+      persistedJob = transitioned ?? persistedJob;
       const targetRequest = persistedJob.prepareTargetRequest;
       if (targetRequest?.targetDirectory?.kind === 'managed' && targetRequest.operationId && targetRequest.sessionId) {
         const activeServerDir = params.activeServerDir ?? configuration.activeServerDir;

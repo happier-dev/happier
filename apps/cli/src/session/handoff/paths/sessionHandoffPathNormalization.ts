@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, join, resolve } from 'node:path';
 
 function trimTrailingSeparators(path: string): string {
     return path.trim().replace(/[\\/]+$/, '');
@@ -9,12 +10,12 @@ function normalizeRelativePath(relativePath: string): string {
 }
 
 function isWindowsAbsolutePath(path: string): boolean {
-    return /^[a-zA-Z]:[\\/]/.test(path) || /^\\\\/.test(path);
+    return /^[a-zA-Z]:[\\/]/.test(path) || /^[\\/]{2}/.test(path);
 }
 
 function normalizePathForComparison(path: string): string {
     const normalizedPath = normalizeRelativePath(trimTrailingSeparators(path));
-    return isWindowsAbsolutePath(normalizedPath)
+    return isWindowsAbsolutePath(path)
         ? normalizedPath.toLowerCase()
         : normalizedPath;
 }
@@ -165,4 +166,18 @@ export function normalizeSessionHandoffTargetPathForLocalMachine(params: Readonl
     }
 
     return expanded;
+}
+
+export async function resolveSessionHandoffLocalDirectory(params: Readonly<{
+    path: string;
+    homeDir: string;
+}>): Promise<string | null> {
+    const expanded = expandHomeRelativePath(params);
+    if (!expanded || expanded.includes('\0') || !isAbsolute(expanded)) return null;
+    const absolute = resolve(expanded);
+    const canonical = await realpath(absolute).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return absolute;
+        throw error;
+    });
+    return normalizePathForComparison(canonical);
 }

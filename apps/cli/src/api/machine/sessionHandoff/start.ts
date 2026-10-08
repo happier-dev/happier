@@ -1,3 +1,5 @@
+import os from 'node:os';
+import { resolveSessionHandoffLocalDirectory, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
@@ -203,7 +205,10 @@ export function createSessionHandoffStartActionHandler(
         error: 'Session handoff is disabled on the selected server',
       } as const;
     }
-    const transport = resolveMachineTransferRoute({
+    const sameMachine = parsed.data.sourceMachineId === parsed.data.targetMachineId;
+    const transport = sameMachine
+      ? { kind: 'available' as const, strategy: 'direct_peer' as const }
+      : resolveMachineTransferRoute({
       serverFeatures,
       preferredStrategies: parsed.data.negotiatedTransportStrategy
         ? [parsed.data.negotiatedTransportStrategy, ...parsed.data.preferredTransportStrategies]
@@ -250,6 +255,14 @@ export function createSessionHandoffStartActionHandler(
     const metadata = await loadSessionMetadata(request.sessionId, request.sourceMachineId);
     if (!metadata) {
       return { ok: false, errorCode: 'session_not_found' } as const;
+    }
+    if (sameMachine && request.targetDirectory?.kind !== 'managed') {
+      const homeDir = resolveSessionHandoffLocalHomeDir({ activeServerDir, fallbackHomeDir: os.homedir() });
+      const targetDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof request.targetPath === 'string' ? request.targetPath : '', homeDir });
+      const sourceDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof metadata.path === 'string' ? metadata.path : '', homeDir });
+      if (!targetDirectory || !sourceDirectory || targetDirectory === sourceDirectory) {
+        return { ok: false, errorCode: 'invalid_target_path', error: 'Choose a different working directory for same-machine handoff' } as const;
+      }
     }
     // Storage authority is the SOURCE daemon's to derive, from the full owner
     // metadata it just loaded, and it is derived HERE — before the operation

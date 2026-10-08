@@ -80,6 +80,11 @@ export function createSessionHandoffCommitActionHandler(
     });
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     const currentStatus = persistedJob?.status;
+    const sameMachine = persistedSourceExport?.sourceMachineId !== undefined
+      && persistedSourceExport.sourceMachineId === persistedSourceExport.targetMachineId;
+    if (mode === 'source_cleanup' && sameMachine && currentStatus?.status !== 'completed') {
+      return { ok: false, errorCode: 'not_ready', error: 'Local target must be committed before source cleanup' } as const;
+    }
     if (
       mode === 'target'
       && currentStatus
@@ -98,7 +103,8 @@ export function createSessionHandoffCommitActionHandler(
     }
 
     if (mode === 'source_cleanup') {
-      if (persistedSourceExport?.sessionId && stopSessionForHandoff) {
+      // Start already stopped the source locally; this id now belongs to the target runner.
+      if (!sameMachine && persistedSourceExport?.sessionId && stopSessionForHandoff) {
         try {
           const stopResult = await stopSessionForHandoff(persistedSourceExport.sessionId);
           if (stopResult === 'failed') {

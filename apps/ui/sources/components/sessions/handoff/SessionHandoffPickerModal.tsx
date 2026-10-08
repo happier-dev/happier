@@ -58,6 +58,7 @@ import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePl
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getServerProfileLegacyServerIds } from '@/sync/domains/server/serverProfiles';
@@ -177,10 +178,9 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             const machineId = normalizeId(machine?.id);
             if (!machineId) return false;
             if (machine?.revokedAt) return false;
-            if (resolvedSourceMachineId && machineId === resolvedSourceMachineId) return false;
             return true;
         });
-    }, [allServerMachines, resolvedSourceMachineId]);
+    }, [allServerMachines]);
     React.useEffect(() => {
         // Machine storage is the authoritative hydration/event boundary. Its
         // subscription rerenders this picker when the first machine snapshot
@@ -197,9 +197,8 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [favoriteMachineIds, machines]);
 
     const recentMachines = React.useMemo(() => {
-        const allRecent = getRecentMachinesFromSessions({ machines, sessions });
-        return allRecent.filter((machine: any) => normalizeId(machine?.id) !== resolvedSourceMachineId);
-    }, [machines, resolvedSourceMachineId, sessions]);
+        return getRecentMachinesFromSessions({ machines, sessions });
+    }, [machines, sessions]);
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(null);
     const [targetPath, setTargetPath] = React.useState<string | null>(null);
@@ -242,7 +241,13 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         setSelectedRelationshipId(null);
         setSelectedLinkedWorkspace(false);
     }, [awaitingAdmission]);
-    const [workspaceSyncMode, setWorkspaceSyncMode] = React.useState<SessionHandoffWorkspaceMode>(sessionHandoffDefaults.workspaceSyncMode);
+    const isSameMachine = Boolean(resolvedSourceMachineId && selectedMachineId === resolvedSourceMachineId);
+    const normalizedSourcePath = normalizeLocalPathForComparison(resolvedSourceRootPath);
+    const normalizedTargetPath = normalizeLocalPathForComparison(resolvedTargetPath);
+    const sameMachineDestinationAllowed = Boolean(normalizedSourcePath && normalizedTargetPath && normalizedTargetPath !== normalizedSourcePath);
+    const [workspaceSyncModeOverride, setWorkspaceSyncMode] = React.useState<SessionHandoffWorkspaceMode | null>(null);
+    const workspaceSyncMode = workspaceSyncModeOverride
+        ?? (isSameMachine ? 'none' : sessionHandoffDefaults.workspaceSyncMode);
     const [advancedExpanded, setAdvancedExpanded] = React.useState(
         sessionHandoffDefaults.workspaceSyncMode === 'mirror_exactly' || sessionHandoffDefaults.workspaceSyncMode === 'keep_both_in_sync',
     );
@@ -362,7 +367,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         ),
         sourcePathAllowed: workspaceSourcePathSafety.allowed,
         // The target daemon allocates a no-folder session's private folder itself.
-        targetPathAllowed: sourceWithoutFolder || workspaceTargetPathSafety.allowed,
+        targetPathAllowed: sourceWithoutFolder || (
+            (!isSameMachine || sameMachineDestinationAllowed)
+            && (!workspaceEngineRequired || workspaceTargetPathSafety.allowed)
+        ),
         sourceEngineReadiness,
         targetEngineReadiness,
     });

@@ -12433,7 +12433,7 @@ const ca = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Aquest ordinador no està disponible ara mateix. Torna’l a connectar i torna-ho a provar.',
         relationshipUnavailable: 'Aquesta relació de sincronització ja no inclou aquestes dues carpetes. Tria una altra opció per a l’espai de treball.',
         sourceFolder: 'La carpeta d’aquesta sessió no es pot sincronitzar amb seguretat. Tria «No moguis els fitxers» per transferir només la sessió.',
-        destinationFolder: 'Tria una carpeta de destinació que es pugui sincronitzar amb seguretat.',
+        destinationFolder: 'Tria una carpeta de destinació vàlida.',
         workspaceOptions: 'Revisa les opcions de l’espai de treball abans de començar.',
     } },
     engine: { checking: 'S’està comprovant la sincronització en aquest ordinador…' },
