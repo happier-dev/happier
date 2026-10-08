@@ -1,4 +1,4 @@
-import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers.ts';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 

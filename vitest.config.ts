@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config'
 
-import { resolveVitestFeatureTestExcludeGlobs } from './scripts/testing/featureTestGating'
-import { resolveVitestWorkers } from './scripts/testing/vitestWorkers'
+import { resolveVitestFeatureTestExcludeGlobs } from './scripts/testing/featureTestGating.ts'
+import { resolveVitestWorkers } from './scripts/testing/vitestWorkers.ts'
 
 // Root-level Vitest config is intentionally minimal.
 // It exists mainly to prevent accidental test discovery under local/ephemeral

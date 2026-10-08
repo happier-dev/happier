@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig, mergeConfig } from 'vitest/config';
 
-import rootConfig from '../../vitest.config';
+import rootConfig from '../../vitest.config.ts';
 import { createWorkspacePackageSourcesPlugin } from '../../scripts/testing/vitestWorkspacePackageResolution.ts';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
