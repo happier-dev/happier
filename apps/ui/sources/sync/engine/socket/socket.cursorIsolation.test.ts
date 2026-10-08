@@ -8,9 +8,21 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { flushActivityUpdates, handleUpdateContainer } from './socket';
 
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { activatePendingQueueScope } from '../pending/pendingQueueV2.testHelpers';
 import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createDeferred } from '@/dev/testkit';
+import { V2SessionRecordSchema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+
+vi.mock('socket.io-client', async (importOriginal) => (
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness')
+).createSocketIoClientBoundary(importOriginal));
+
+installDisconnectedServerSocketBoundary();
 
 const initialStorageState = storage.getInitialState();
 let encryption: Encryption;
@@ -61,15 +73,53 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
 }
 
 describe('socket update handling cursor isolation', () => {
+    let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    let runtime: typeof import('@/sync/syncEngine')['sync'];
+    const sessionRequests: string[] = [];
+    let heldSessionDetail: Promise<Response> | null = null;
+
     beforeEach(async () => {
-        await loadSyncSingletonForTests();
         storage.setState(initialStorageState, true);
-        await activatePendingQueueScope({ serverId: 'socket-home', accountId: 'account-a' });
-        encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const secret = new Uint8Array(32).fill(7);
+        encryption = await Encryption.create(secret);
+        sessionRequests.length = 0;
+        heldSessionDetail = null;
+        account = await restoreServerAccountForTest({
+            serverUrl: 'https://socket-cursor.example',
+            credentials: { token: createAccountTokenForTests('account-a'), secret: encodeBase64(secret, 'base64url') },
+            request: async (input) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json({
+                    mode: 'e2ee', version: 1, updatedAt: 1,
+                    signingKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(deriveAccountSigningPublicKey(secret)),
+                    contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(encryption.contentDataKey),
+                    recipientEnvelopeReadiness: { status: 'available' },
+                });
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+                if (path.startsWith('/v2/sessions')) sessionRequests.push(path);
+                if (path === '/v2/sessions/s_new' && heldSessionDetail) return heldSessionDetail;
+                if (path === '/v2/sessions' || path === '/v2/sessions/active') {
+                    return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+                }
+                return Response.json({}, { status: 404 });
+            },
+        });
+        runtime = (await import('@/sync/syncEngine')).sync;
+        // Account restoration starts a real list bootstrap. Observe its settled
+        // publication before attributing any later request to this socket body.
+        await vi.waitFor(() => expect(
+            storage.getState().concurrentSessionListCacheByServerId[account.serverId]?.listObservation?.lastSuccessAt,
+        ).toEqual(expect.any(Number)));
+        sessionRequests.length = 0;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.useRealTimers();
+        await account.dispose();
+        vi.restoreAllMocks();
     });
 
     it('targets an absent envelope and clears pending availability when a valid socket envelope arrives', async () => {
@@ -137,7 +187,8 @@ describe('socket update handling cursor isolation', () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');
         const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
-        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const encryption = runtime.encryption;
+        if (!encryption) throw new Error('Expected the restored E2EE Account cipher');
         const writer = await Encryption.create(new Uint8Array(32).fill(7));
         const sessionDataKey = new Uint8Array(32).fill(8);
         await writer.initializeSessions(new Map([['s_new', sessionDataKey]]));
@@ -156,12 +207,8 @@ describe('socket update handling cursor isolation', () => {
             recipientPublicKey: encryption.contentDataKey,
             randomBytes: (length) => new Uint8Array(length).fill(3),
         });
-        const hydrateSessionById = vi.fn();
-        const params = buildBaseParams({
-            hydrateSessionById,
-            encryption,
-            applySessions: (sessions) => storage.getState().applySessions(sessions),
-        });
+        const detail = createDeferred<Response>();
+        heldSessionDetail = detail.promise;
         const updateData: ApiUpdateContainer = {
             id: 'u1',
             seq: 10,
@@ -184,29 +231,40 @@ describe('socket update handling cursor isolation', () => {
             },
         } satisfies ApiUpdateContainer;
 
-        await handleUpdateContainer({
-            ...params,
-            updateData,
-        });
+        const { t: _type, ...record } = updateData.body;
+        const detailResponse = Response.json({ session: V2SessionRecordSchema.parse({
+            ...record, share: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+                capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+        }) });
+        const socketOwner = runtime as unknown as { handleUpdate(update: unknown): Promise<void> };
+        try {
+            await socketOwner.handleUpdate(updateData);
 
-        const appliedSession = storage.getState().sessions.s_new;
-        expect(appliedSession).toMatchObject({
-            id: 's_new',
-            seq: 1,
-            encryptionMode: 'e2ee',
-            createdAt: 90,
-            updatedAt: 100,
-            meaningfulActivityAt: 95,
-            active: true,
-            activeAt: 100,
-            metadataVersion: 2,
-            agentStateVersion: 3,
-            presence: 'online',
-        });
-        expect(appliedSession?.metadata?.name).toBe('Wave 11 created elsewhere');
-        expect(hydrateSessionById).toHaveBeenCalledWith('s_new', 'socket-new-session-reconcile');
-        expect(params.invalidateSessions).not.toHaveBeenCalled();
-        expect(saveChangesCursorSpy).not.toHaveBeenCalled();
+            const appliedSession = storage.getState().sessions.s_new;
+            expect(appliedSession).toMatchObject({
+                id: 's_new',
+                seq: 1,
+                encryptionMode: 'e2ee',
+                createdAt: 90,
+                updatedAt: 100,
+                meaningfulActivityAt: 95,
+                active: true,
+                activeAt: 100,
+                metadataVersion: 2,
+                agentStateVersion: 3,
+            });
+            // Durable active/activeAt cannot manufacture device-observed runtime presence.
+            expect(appliedSession?.presence).toBeUndefined();
+            expect(appliedSession?.metadata?.name).toBe('Wave 11 created elsewhere');
+            await expect(encryption.getSessionEncryption('s_new')!.decryptRaw(metadataCiphertext)).resolves.toEqual(metadata);
+            await vi.waitFor(() => expect(sessionRequests).toContain('/v2/sessions/s_new'));
+            expect(sessionRequests.filter((path) => path !== '/v2/sessions/s_new'
+                && !path.startsWith('/v2/sessions/s_new/'))).toEqual([]);
+            expect(saveChangesCursorSpy).not.toHaveBeenCalled();
+        } finally {
+            detail.resolve(detailResponse);
+        }
     });
 
     it('falls back to targeted hydration when a new-session socket payload cannot be decrypted', async () => {

@@ -3,7 +3,8 @@ import React from 'react';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, type SessionMetadataTuplePatchV1 } from '@happier-dev/protocol';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { act } from 'react-test-renderer';
@@ -123,6 +124,7 @@ import type { Session } from './domains/state/storageTypes';
 import type { SyncMessageTransport } from './sync';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { HappyError } from '@/utils/errors/errors';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -3562,8 +3564,17 @@ installDisconnectedServerSocketBoundary((socket) => {
         accountTransport.emitted(event, ...args);
         return socket;
     });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) =>
-        accountTransport.ack(event, payload));
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+        // This external receiver does not implement daemon Session RPC. Refuse
+        // that neighboring protocol without consuming a message admission ACK.
+        if (event === SOCKET_RPC_EVENTS.CALL) return {
+            ok: false, error: 'Session method unavailable', errorCode: 'METHOD_NOT_AVAILABLE',
+        };
+        if (event !== 'message' && event !== 'update-metadata') return {
+            v: 1, ok: true, admittedSessionIds: [],
+        };
+        return accountTransport.ack(event, payload);
+    });
 });
 
 describe('sync.sendMessage rejection and auth through the applied Account', () => {
@@ -3574,9 +3585,10 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
     let runtime: typeof import('./syncEngine')['sync'];
     let authDenied: boolean;
     let authProbeStatuses: number[];
+    let metadataWrites: SessionMetadataTuplePatchV1[];
 
-    const request = async (url: RequestInfo | URL): Promise<Response> => {
-        const path = new URL(String(url)).pathname;
+    const request = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const path = new URL(String(url), 'https://optimistic-account.example.test').pathname;
         if (path === '/health') return Response.json({});
         if (path === '/v1/auth/ping') {
             const status = authDenied ? 401 : 200;
@@ -3591,6 +3603,30 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         });
         if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+        if (path.startsWith('/v2/sessions/')) {
+            const session = state.getState().sessions[decodeURIComponent(path.slice('/v2/sessions/'.length))];
+            if (session) {
+                if (init?.method === 'PATCH') {
+                    const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                    if (patch.mode !== 'owner_migration') throw new Error('Expected an owner metadata migration');
+                    metadataWrites.push(patch);
+                    return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({
+                        success: true, metadataLayoutVersion: 1,
+                        sharedMetadata: { version: patch.source.metadata.version + 1 },
+                        agentState: { version: patch.source.agentState.version + 1 },
+                    }));
+                }
+                // These metadata-writer cases use a supported legacy Session row;
+                // access negotiation and the tuple snapshot still run through HTTP.
+                const { ownerMetadata: _ownerMetadata, ...wire } = createPlainSessionCurrentProjectionRecordFixture({
+                    id: session.id, active: session.active, metadataVersion: session.metadataVersion,
+                    agentStateVersion: session.agentStateVersion,
+                });
+                return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({ ...wire,
+                    metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata),
+                }) });
+            }
+        }
         return Response.json({ error: 'not_found' }, { status: 404 });
     };
 
@@ -3602,6 +3638,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         vi.doUnmock('@/sync/runtime/orchestration/connectionManager');
         vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
         vi.doUnmock('@/sync/ops');
+        vi.doUnmock('@/agents/catalog/catalog');
         vi.doUnmock('@/agents/catalog/registryCore');
         vi.doUnmock('@/voice/context/voiceHooks');
         vi.doUnmock('@/log');
@@ -3613,6 +3650,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         accountTransport.emitted.mockReset();
         authDenied = false;
         authProbeStatuses = [];
+        metadataWrites = [];
         await loadSyncSingletonForTests();
         state = (await import('./domains/state/storage')).storage;
         restored = await restoreServerAccountForTest({
@@ -3661,7 +3699,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         const sessionId = 's_account_permission_frozen';
         state.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: restored!.home.id, active: true,
-            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9', permissionMode: 'default', permissionModeUpdatedAt: 1 },
         })]);
         state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
         state.getState().updateSessionPermissionMode(sessionId, 'yolo');
@@ -3676,18 +3714,38 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'frozen-permission' });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime).not.toBeNull();
+        const outboundSession = state.getState().sessions[sessionId];
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
+            localId: 'frozen-permission', accountLifetime: accountLifetime!,
+            serverId: accountLifetime!.scope.serverId, session: outboundSession,
+        });
 
-        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
+        expect(accountTransport.ack).toHaveBeenCalledWith('message', expect.objectContaining({
+            message: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({ permissionMode: 'yolo' }) }) },
+        }));
+        expect(metadataWrites).toEqual([expect.objectContaining({
+            mode: 'owner_migration',
+            target: expect.objectContaining({ ownerMetadata: expect.objectContaining({
+                t: 'plain', v: expect.objectContaining({ runtime: expect.objectContaining({
+                    permissionMode: 'yolo', permissionModeUpdatedAt: outboundSession.permissionModeUpdatedAt,
+                }) }),
+            }) }),
+        })]);
         expect(state.getState().sessions[sessionId].permissionMode).toBe('read-only');
-        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
+        const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
+        expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])).toMatchObject({
+            permissionMode: 'yolo', permissionModeUpdatedAt: outboundSession.permissionModeUpdatedAt,
+        });
     });
 
     it('publishes the admitted next-prompt permission through the real Account metadata writer', async () => {
         const sessionId = 's_account_permission_admitted';
         state.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: restored!.home.id, active: true,
-            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9', permissionMode: 'default', permissionModeUpdatedAt: 1 },
         })]);
         state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
         state.getState().updateSessionPermissionMode(sessionId, 'yolo');
@@ -3697,10 +3755,18 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'admitted-permission' });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime).not.toBeNull();
+        const outboundSession = state.getState().sessions[sessionId];
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
+            localId: 'admitted-permission', accountLifetime: accountLifetime!,
+            serverId: accountLifetime!.scope.serverId, session: outboundSession,
+        });
 
-        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(1);
-        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('yolo');
+        expect(metadataWrites).toEqual([expect.objectContaining({ mode: 'owner_migration' })]);
+        const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
+        expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])?.permissionMode).toBe('yolo');
     });
 
     it('removes the direct-send local pending row when the server rejects the message', async () => {
@@ -3768,7 +3834,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         expect(accountTransport.ack.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
             localId: 'p-retry-auth-probe', sentFrom: 'retry', messageRole: 'user',
         }));
-        expect(authProbeStatuses).toContain(401);
+        await vi.waitFor(() => expect(authProbeStatuses).toContain(401));
         expect(state.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
         expect(state.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
         expect(state.getState().syncError).toMatchObject({ kind: 'auth', retryable: false });

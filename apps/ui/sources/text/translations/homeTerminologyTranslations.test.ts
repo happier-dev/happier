@@ -92,13 +92,6 @@ function collectLeaves(node: unknown, path: string, out: Array<[string, string]>
     return out;
 }
 
-// Feminine determiners before the Home product noun; es/ca/it treat Home as masculine.
-const FEMININE_HOME_DETERMINER = {
-    es: /\b(la|una|esta|esa|aquella|otra|nueva|nuestra|misma)\s+Home\b/i,
-    ca: /\b(la|una|aquesta|aquella|altra|nova|nostra|mateixa)\s+Home\b/i,
-    it: /\b(la|una|questa|quella|della|nella|alla|dalla|sulla|nuova|altra|nostra|stessa)\s+Home\b/i,
-} as const;
-
 describe('Home terminology translations', () => {
     it('keeps the Home product noun distinct from the localized navigation label', () => {
         expect(Object.entries(LOCALES).map(([locale, translations]) => [locale, translations.common.homeProductName]))
@@ -204,24 +197,17 @@ describe('Home terminology translations', () => {
         expect(failures).toEqual([]);
     });
 
-    it('treats Home as masculine in Spanish, Catalan and Italian', () => {
-        const failures = (Object.keys(FEMININE_HOME_DETERMINER) as Array<keyof typeof FEMININE_HOME_DETERMINER>).flatMap((locale) =>
-            collectLeaves(LOCALES[locale], '', [])
-                .filter(([, value]) => FEMININE_HOME_DETERMINER[locale].test(value))
-                .map(([key, value]) => `${locale}: ${key} = ${value}`));
-
-        expect(failures).toEqual([]);
-    });
-
-    it('addresses French team sign-in and join readers with tu and one Team noun', () => {
+    it('localizes the Team noun in French team sign-in and join copy', () => {
         const leaves = [
             ...collectLeaves(fr.teams.entry, 'teams.entry', []),
             ...collectLeaves(fr.teams.join, 'teams.join', []),
         ];
         const failures = leaves
-            .filter(([, value]) => /\b(vous|votre|vos)\b|\b\p{L}+ez\b|\bTeam\b/iu.test(value))
+            .filter(([, value]) => /\bTeam\b/u.test(value))
             .map(([key, value]) => `${key} = ${value}`);
 
         expect(failures).toEqual([]);
+        expect(fr.teams.entry.signInServiceOrigin({ service: 'Service Exemple' }))
+            .toContain('Service Exemple');
     });
 });

@@ -85,6 +85,10 @@ export function installWebLockManagerMock(): WebLockManagerMockHandle {
 
 export function installLocalStorageMock(): LocalStorageMockHandle {
     const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const windowStorageTarget = typeof window !== 'undefined' && window !== globalThis ? window : null;
+    const previousWindowDescriptor = windowStorageTarget
+        ? Object.getOwnPropertyDescriptor(windowStorageTarget, 'localStorage')
+        : undefined;
     const store = new Map<string, string>();
     const getItemMock = vi.fn((key: string) => store.get(key) ?? null);
     const setItemMock = vi.fn((key: string, value: string) => {
@@ -111,6 +115,12 @@ export function installLocalStorageMock(): LocalStorageMockHandle {
         value: localStorageMock,
         configurable: true,
     });
+    if (windowStorageTarget) {
+        Object.defineProperty(windowStorageTarget, 'localStorage', {
+            value: localStorageMock,
+            configurable: true,
+        });
+    }
 
     return {
         store,
@@ -118,6 +128,13 @@ export function installLocalStorageMock(): LocalStorageMockHandle {
         setItemMock,
         removeItemMock,
         restore: () => {
+            if (windowStorageTarget) {
+                if (previousWindowDescriptor) {
+                    Object.defineProperty(windowStorageTarget, 'localStorage', previousWindowDescriptor);
+                } else {
+                    Reflect.deleteProperty(windowStorageTarget, 'localStorage');
+                }
+            }
             if (previousDescriptor) {
                 Object.defineProperty(globalThis, 'localStorage', previousDescriptor);
                 return;

@@ -8,6 +8,15 @@ const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:u
 let dispose: (() => void) | undefined;
 afterAll(() => { dispose?.(); });
 
+function trackSyncBridge(release: () => void): Readonly<{ dispose: () => void }> {
+    const retire = () => {
+        if (dispose === retire) dispose = undefined;
+        release();
+    };
+    dispose = retire;
+    return { dispose: retire };
+}
+
 /** Import after installing transport boundaries; return the canonical cache restorer for per-test cleanup. */
 export async function loadSyncSingletonForTests(): Promise<Readonly<{ dispose: () => void }>> {
     dispose?.();
@@ -17,7 +26,6 @@ export async function loadSyncSingletonForTests(): Promise<Readonly<{ dispose: (
         new NodeURL('../../../sync/sync.ts', import.meta.url),
         () => import('@/sync/sync'),
     );
-    dispose = bridge.dispose;
     // Before hooks treat returned functions as automatic cleanup; keep existing hook callers inert.
-    return { dispose: bridge.dispose };
+    return trackSyncBridge(bridge.dispose);
 }

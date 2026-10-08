@@ -12,8 +12,16 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { Encryption } from '@/sync/encryption/encryption';
 
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { activatePendingQueueScope } from '../pending/pendingQueueV2.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+vi.mock('socket.io-client', async (importOriginal) => (
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness')
+).createSocketIoClientBoundary(importOriginal));
+
+installDisconnectedServerSocketBoundary();
 
 let encryption: Encryption;
 const initialStorageState = storage.getState();
@@ -198,97 +206,107 @@ function buildUpdateSessionUpdate(params: {
 }
 
 describe('socket new-message + coalescer: materialized max seq', () => {
+    let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    let runtime: typeof import('@/sync/syncEngine')['sync'];
+    const transcriptRequests: string[] = [];
+
     beforeEach(async () => {
-        await loadSyncSingletonForTests();
         storage.setState(initialStorageState, true);
-        await activatePendingQueueScope({ serverId: 'socket-home', accountId: 'account-a' });
+        transcriptRequests.length = 0;
+        account = await restoreServerAccountForTest({
+            serverUrl: 'https://socket-coalescer.example', accountId: 'account-a',
+            request: async (input) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+                if (path.endsWith('/messages')) transcriptRequests.push(path);
+                return Response.json({}, { status: 404 });
+            },
+        });
+        runtime = (await import('@/sync/syncEngine')).sync;
         encryption = await Encryption.create(new Uint8Array(32).fill(7));
         await encryption.initializeSessions(new Map([['s1', new Uint8Array(32).fill(8)]]));
         vi.useFakeTimers();
         resetSessionSurfaceVisibilityForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         resetSessionSurfaceVisibilityForTests();
-        vi.restoreAllMocks();
         vi.useRealTimers();
+        await account.dispose();
+        vi.restoreAllMocks();
     });
 
     it('marks materializedMaxSeq for the active session leading batch immediately and waits for queued trailing batches', async () => {
-        markSessionSurfaceVisible('s1');
-        storage.setState((prev) => ({
-            ...prev,
-            sessions: { ...prev.sessions, s1: { ...buildSession('s1'), encryptionMode: 'plain' } },
-            settings: {
-                ...prev.settings,
+        const sessionId = 's1';
+        storage.getState().applySessions([createSessionFixture({
+            id: sessionId, serverId: account.serverId, active: true,
+            agentState: { controlledByUser: false, requests: {}, completedRequests: {} },
+        })]);
+        storage.getState().applyMessagesLoaded(sessionId);
+        markSessionSurfaceVisible(sessionId, account.serverId);
+        // Read the actual catch-up owner: a gap would lower this cursor, while
+        // a queued but unapplied message must not advance it.
+        const socketOwner = runtime as unknown as {
+            handleUpdate(update: unknown): Promise<void>;
+            readSessionMessagesCatchUpAfterSeq(sessionId: string): number;
+        };
+        storage.setState((prev) => ({ ...prev,
+            settings: { ...prev.settings, transcriptStreamingCoalesceEnabled: false },
+        }));
+        await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
+            sessionId, messageId: 'm1', messageSeq: 1, text: 'already materialized',
+        }));
+        expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(1);
+        storage.setState((prev) => ({ ...prev,
+            settings: { ...prev.settings,
                 transcriptStreamingCoalesceEnabled: true,
                 transcriptStreamingCoalesceWindowMs: 900,
                 transcriptStreamingCoalesceMaxBatchSize: 1_000,
             },
         }));
 
-        const applyMessages = vi.fn();
-        const applySessions = vi.fn();
-        const onMessageGapDetected = vi.fn();
-
-        let materializedMaxSeq = 1;
-        const markSessionMaterializedMaxSeq = vi.fn((sessionId: string, seq: number) => {
-            if (sessionId === 's1') {
-                materializedMaxSeq = Math.max(materializedMaxSeq, Math.trunc(seq));
-            }
+        const readMessageSeqs = () => Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .map((message) => message.seq).sort((left, right) => (left ?? 0) - (right ?? 0));
+        const publicationOrder: Array<{ seqs: ReturnType<typeof readMessageSeqs>; materialized: number }> = [];
+        let previousSeqs = readMessageSeqs().join(',');
+        const unsubscribe = storage.subscribe(() => {
+            const seqs = readMessageSeqs();
+            if (seqs.join(',') === previousSeqs) return;
+            previousSeqs = seqs.join(',');
+            publicationOrder.push({ seqs, materialized: socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId) });
         });
+        try {
+            await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
+                sessionId, messageId: 'm2', messageSeq: 2, text: 'leading',
+            }));
+            expect(readMessageSeqs()).toEqual([1, 2]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
 
-        const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption,
-            artifactDataKeys: new Map(),
-            applySessions,
-            fetchSessions: vi.fn(),
-            applyMessages,
-            onSessionVisible: vi.fn(),
-            isSessionMessagesLoaded: vi.fn(() => true),
-            getSessionMaterializedMaxSeq: vi.fn(() => materializedMaxSeq),
-            markSessionMaterializedMaxSeq,
-            onMessageGapDetected,
-            assumeUsers: vi.fn(async () => {}),
-            applyTodoSocketUpdates: vi.fn(async () => {}),
-            invalidateMachines: vi.fn(),
-            invalidateSessions: vi.fn(),
-            invalidateArtifacts: vi.fn(),
-            invalidateFriends: vi.fn(),
-            invalidateFriendRequests: vi.fn(),
-            invalidateFeed: vi.fn(),
-            invalidateAutomations: vi.fn(),
-            invalidateTodos: vi.fn(),
-            log: { log: vi.fn() },
-        };
-
-        const sessionEncryption = encryption.getSessionEncryption('s1');
-        if (!sessionEncryption) throw new Error('Expected the session key fixture');
-        const ciphertext = await sessionEncryption.encryptRawRecord({
-            role: 'user', content: { type: 'text', text: 'hi' },
-        });
-        await handleUpdateContainer({ ...baseParams, updateData: await buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2, ciphertext }) });
-        await handleUpdateContainer({ ...baseParams, updateData: await buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3, ciphertext }) });
-
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
-        expect(onMessageGapDetected).not.toHaveBeenCalled();
-
-        await vi.advanceTimersByTimeAsync(899);
-        expect(materializedMaxSeq).toBe(2);
-        await vi.advanceTimersByTimeAsync(1);
-
-        expect(applyMessages).toHaveBeenCalledTimes(2);
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);
-
-        const firstApplyOrder = applyMessages.mock.invocationCallOrder[0] ?? 0;
-        const firstMarkOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[0] ?? 0;
-        const secondApplyOrder = applyMessages.mock.invocationCallOrder[1] ?? 0;
-        const secondMarkOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[1] ?? 0;
-        expect(firstApplyOrder).toBeGreaterThan(0);
-        expect(firstMarkOrder).toBeGreaterThan(firstApplyOrder);
-        expect(secondApplyOrder).toBeGreaterThan(firstMarkOrder);
-        expect(secondMarkOrder).toBeGreaterThan(secondApplyOrder);
+            await socketOwner.handleUpdate(buildPlainNewMessageUpdate({
+                sessionId, messageId: 'm3', messageSeq: 3, text: 'trailing',
+            }));
+            expect(readMessageSeqs()).toEqual([1, 2]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
+            await vi.advanceTimersByTimeAsync(899);
+            expect(readMessageSeqs()).toEqual([1, 2]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(2);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(readMessageSeqs()).toEqual([1, 2, 3]);
+            expect(socketOwner.readSessionMessagesCatchUpAfterSeq(sessionId)).toBe(3);
+            // Each transcript publication precedes its materialized-currentness
+            // advance; no synthetic marker or callback count supplies this proof.
+            expect(publicationOrder).toEqual([
+                { seqs: [1, 2], materialized: 1 },
+                { seqs: [1, 2, 3], materialized: 2 },
+            ]);
+            expect(transcriptRequests).toEqual([]);
+        } finally {
+            unsubscribe();
+        }
     });
 
     it('defers the first off-screen new-message session projection until the coalescing window flushes', async () => {

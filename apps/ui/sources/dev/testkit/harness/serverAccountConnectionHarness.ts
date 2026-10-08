@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
 const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSocketBoundary | undefined }));
@@ -12,6 +12,10 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
     const createSocket = (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
         vi.spyOn(socket, 'connect').mockReturnValue(socket);
+        // Connected test sockets still use the real Socket's packet/ACK state,
+        // but this fixture never opens Engine.IO. Stop outbound packets at the
+        // SDK transport boundary instead of dereferencing a nonexistent engine.
+        vi.spyOn(socket.io, '_packet').mockImplementation(() => undefined);
         // This cold SDK fixture never opens an Engine.IO connection or creates
         // namespace/ACK teardown state. Deliver the external disconnect event
         // through the real listeners; Sync and Account lifetime teardown stay real.
@@ -55,11 +59,18 @@ export async function restoreServerAccountForTest(params: Readonly<{
     credentials?: AuthCredentials;
     request?: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>;
 }>) {
-    const { upsertServerProfileOnly, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    // Home-profile mutation itself uses the browser storage lock, before any
+    // credential write or Account restoration can run.
+    const webLocks = typeof globalThis.navigator?.locks?.request === 'function' ? null : installWebLockManagerMock();
+    const { upsertServerProfileOnly, setActiveServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    const { loadSyncSingletonForTests } = await import('./syncSingletonLoader');
+    await loadSyncSingletonForTests();
     const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    // Restore is the app's cold Account lifecycle, not a switch over a prior Sync Account.
+    await disconnectActiveServerConnection();
     // Home activation may start readiness immediately; install its HTTP
     // boundary before activation rather than racing a real network request.
     setRuntimeFetch(async (url, init) => {
@@ -67,7 +78,7 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (requestUrl.origin !== new URL(params.serverUrl).origin) {
             throw new Error(`Unexpected test Home request origin: ${requestUrl.origin}`);
         }
-        if (requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
+        if (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
         return params.request ? params.request(url, init) : new Response('{}', { status: 404 });
     });
     let home = await upsertServerProfileOnly({ serverUrl: params.serverUrl, name: 'Test Home' });
@@ -76,21 +87,29 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (!identifiedHome) throw new Error('Test Home identity could not be established');
         home = identifiedHome;
     }
-    await setActiveServer({ serverId: home.id });
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
-    // A restored Account owns credentials for this Home, not every staged Home.
-    const homeUrlKey = createServerUrlComparableKey(home.serverUrl);
-    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl => (
-        createServerUrlComparableKey(serverUrl) === homeUrlKey ? credentials : null
-    ));
+    // Exercise genuine credential custody. Only browser locking is replaced;
+    // other saved Homes retain their own credentials and lookup semantics.
+    const credentialWrite = await TokenStorage.setCredentialsForServerUrlWithRollback(
+        home.serverUrl, { serverId: params.serverIdentityId ?? home.id }, credentials,
+    );
+    if (!credentialWrite) {
+        webLocks?.restore();
+        throw new Error('Test Home credentials could not be persisted');
+    }
+    // Home activation can start a connection immediately; its credentials must already be present.
+    await setActiveServer({ serverId: home.id });
     await restoreConnectionToActiveServer(credentials);
     return {
         home,
+        /** Runtime/session scope uses the advertised identity; home.id remains the saved device profile id. */
+        serverId: getActiveServerSnapshot().serverId,
         credentials,
         async dispose() {
             await disconnectActiveServerConnection();
             resetRuntimeFetch();
-            credentialBoundary.mockRestore();
+            await credentialWrite.rollback();
+            webLocks?.restore();
         },
     };
 }
