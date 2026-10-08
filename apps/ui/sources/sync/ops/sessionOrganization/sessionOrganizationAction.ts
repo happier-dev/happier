@@ -11,9 +11,10 @@ import { upsertSessionFolder } from './upsertSessionFolder';
 import { upsertSessionTag } from './upsertSessionTag';
 import { deleteSessionFolder } from './deleteSessionFolder';
 import { deleteSessionTag } from './deleteSessionTag';
+import { setSessionFolderAssignment } from './setSessionFolderAssignment';
 
 export function isSessionOrganizationResourceAction(actionId: HomeDomainActionIdV1): boolean {
-    return ACTION_ID_FAMILIES_V1.session_organization_resources.some(id => id === actionId);
+    return actionId === 'session.folder.set' || ACTION_ID_FAMILIES_V1.session_organization_resources.some(id => id === actionId);
 }
 
 function projectDisplay<T extends Readonly<{ display: SessionOrganizationContentEnvelope | null; displayState: SessionOrganizationDisplayState }>>(row: T) {
@@ -35,6 +36,12 @@ export function createSessionOrganizationResourceAction(account: LazyActionAccou
             requestAtEndpoint: account.request, assertCurrent: account.assertCurrent };
         let result: unknown;
         switch (actionId) {
+            case 'session.folder.set': {
+                // The published Action schema validates both fields; its catalog type is action-agnostic.
+                const request = getActionSpec(actionId).inputSchema.parse(input) as Readonly<{ sessionId: string; folderId: string | null }>;
+                result = await setSessionFolderAssignment({ ...params, ...request });
+                break;
+            }
             case 'session.folders.create': case 'session.folders.rename':
                 result = { folder: projectDisplay(await upsertSessionFolder({ ...params,
                     request: CreateOrUpdateSessionOrganizationFolderRequestSchema.parse(input) })) }; break;

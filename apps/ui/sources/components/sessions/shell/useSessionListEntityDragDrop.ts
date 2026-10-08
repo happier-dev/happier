@@ -35,11 +35,14 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import { resolveSessionListDragTree, type CommitSessionListDragIntentContext, type SessionListDragAdmission } from './drag/commitSessionListDragIntent';
 import type { SessionListDragIntent, SessionListDragSnapshot } from './drag/_types';
-import { listSessionListEntityDropDestinations, resolveSessionListEntityDrop } from './drag/resolveSessionListEntityDrop';
+import { listSessionListEntityDropDestinations, readSessionListFolderAssignmentDestination, resolveSessionListFolderAssignmentDrop, resolveSessionListEntityDrop } from './drag/resolveSessionListEntityDrop';
 import {
     createSessionListOrganizationActionAdapter,
     registerMountedSessionListOrganizationAction,
 } from './drag/sessionListOrganizationAction';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListDragSnapshot } from './drag/sessionListDragSnapshot';
+import { treeRowId } from './drop-resolution/treeRowId';
 import { buildSessionListDragIntent } from './drag/sessionListDragIntent';
 import type { SessionListTreeRowMetadata } from './drop-resolution/sessionListTreeTypes';
 import {
@@ -136,6 +139,11 @@ export function readSessionListDestinationIntent(destination: PluginUiJsonValueV
     };
 }
 
+function previewForFolderAssignment(folderName: string | null) {
+    return folderName === null ? describeSessionListDropPreview({ kind: 'top-level' })
+        : describeSessionListDropPreview({ kind: 'folder', folderName });
+}
+
 function previewForDestination(intent: Pick<SessionListDragIntent, 'instructionKind'>, target: SessionListTreeRowMetadata | null) {
     if (intent.instructionKind === 'nest-into') {
         return target?.kind === 'session'
@@ -185,7 +193,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     scope: EntityDragScopeV1 | null;
     targetId: string | null;
     beginCarry: (snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard') => SessionListCarry | null;
-    prepareSource: (snapshot: SessionListDragSnapshot) => Readonly<{ sourceId: string; dispose: () => void }> | null;
+    prepareSource: (request: SessionListDragSnapshot | Readonly<{ sourceRowId: string }>) => Readonly<{ sourceId: string; dispose: () => void }> | null;
 }> {
     const runtime = useEntityDragDropRuntime();
     const activeScope = useActiveServerAccountScope();
@@ -262,6 +270,9 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 scope: current,
             });
         } else {
+            const assignment = readSessionListFolderAssignmentDestination(context.destination);
+            if (assignment) return resolveSessionListFolderAssignmentDrop({ item: context.item, folderId: assignment.folderId,
+                context: commitContext, preview: previewForFolderAssignment, reason: describeSessionListDropReason });
             intent = readSessionListDestinationIntent(context.destination, current);
         }
         if (!intent || intent.instructionKind === 'idle') return refuse(SESSION_LIST_NO_TARGET_CODE);
@@ -300,23 +311,36 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
             getBounds: () => inputRef.current.getListBounds(),
             listDestinations: (item) => {
                 const context = buildContext();
-                return context ? listSessionListEntityDropDestinations({ item, context, preview: previewForDestination }) : [];
+                return context ? listSessionListEntityDropDestinations({ item, context, preview: previewForDestination, folderPreview: previewForFolderAssignment }) : [];
             },
             resolve,
             execute,
         });
     }, [buildContext, execute, resolve, runtime, scope, targetId]);
 
-    const prepareSource = React.useCallback((snapshot: SessionListDragSnapshot) => {
+    const prepareSource = React.useCallback((request: SessionListDragSnapshot | Readonly<{ sourceRowId: string }>) => {
         sourceRef.current?.dispose();
         const current = scopeRef.current;
         if (!current) return null;
-        const item = itemForSnapshot(snapshot, current);
+        const context = buildContext();
+        if (!context) return null;
+        const sourceRowId = 'source' in request ? request.source.sourceRowId : request.sourceRowId;
+        const semanticRow = 'source' in request ? null : context.latestItems.find(
+            (candidate): candidate is Extract<SessionListIndexItem, { type: 'session' }> => candidate.type === 'session'
+                && candidate.serverId === current.serverId && treeRowId.session(current.serverId, candidate.sessionId) === sourceRowId,
+        );
+        const snapshot = 'source' in request ? request : semanticRow ? null : buildSessionListDragSnapshot({
+            items: context.latestItems, viewItems: context.latestItems, sessionDragKey: sourceRowId,
+            foldersFeatureEnabled: context.isFolderOrganizationEnabled?.(current.serverId) === true,
+        });
+        const item: EntityDragItemV1 | null = semanticRow
+            ? { kind: 'session', scope: current, address: { serverId: current.serverId, sessionId: semanticRow.sessionId } }
+            : snapshot ? itemForSnapshot(snapshot, current) : null;
         if (!item) return null;
-        const sourceId = `session-list-source:${current.serverId}:${current.accountId}:${snapshot.source.sourceRowId}`;
+        const sourceId = `session-list-source:${current.serverId}:${current.accountId}:${sourceRowId}`;
         let live = true;
         carriedSnapshotRef.current = snapshot;
-        const sourceMetadata = snapshot.source.treeSource.metadata as SessionListTreeRowMetadata;
+        const sourceMetadata = snapshot?.source.treeSource.metadata as SessionListTreeRowMetadata | undefined;
         const retireSource = runtime.registerSource({
             id: sourceId,
             scope: current,
@@ -325,14 +349,19 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 if (!live || scopeRef.current?.serverId !== current.serverId || scopeRef.current?.accountId !== current.accountId) return false;
                 const context = buildContext();
                 if (!context) return false;
+                if (!sourceMetadata && item.kind === 'session') return context.latestItems.some(candidate => candidate.type === 'session'
+                    && candidate.serverId === item.address.serverId && candidate.sessionId === item.address.sessionId);
+                if (!sourceMetadata) return false;
                 const row = resolveSessionListDragTree(context).rowMetadataById.get(sourceMetadata.rowId);
                 return row?.kind === sourceMetadata.kind && row.serverId === sourceMetadata.serverId;
             },
             describe: () => {
-                const title = rowName(sourceMetadata);
+                const session = item.kind === 'session' ? sessionsRecord()[item.address.sessionId] : undefined;
+                const title = sourceMetadata ? rowName(sourceMetadata)
+                    : session ? getSessionName(session, current.serverId) : semanticRow?.sessionId ?? '';
                 return title ? { title } : null;
             },
-            getBounds: () => inputRef.current.getSourceBounds?.(snapshot.source.sourceRowId) ?? null,
+            getBounds: () => inputRef.current.getSourceBounds?.(sourceRowId) ?? null,
         });
         const abort = new AbortController();
         factsRef.current?.dispose();

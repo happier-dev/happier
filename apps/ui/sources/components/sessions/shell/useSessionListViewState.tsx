@@ -1,3 +1,4 @@
+import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { resolveNewSessionGroupTarget } from './resolveSessionListHeaderActionHandlers';
 import {
     normalizeSessionAddress,
@@ -35,6 +36,7 @@ import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
 import { useSessionListNavigationActions } from './useSessionListNavigationActions';
 import { useSessionListRowInteractions } from './useSessionListRowInteractions';
 import { readSessionListDestinationIntent } from './useSessionListEntityDragDrop';
+import { readSessionListFolderAssignmentDestination } from './drag/resolveSessionListEntityDrop';
 import { useSessionListOrganizationWriters } from './useSessionListOrganizationWriters';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
@@ -120,7 +122,6 @@ import {
     deleteSessionFolder,
     renameSessionFolder,
     selectAvailableSessionFolders,
-    type SessionFolderMoveTarget,
     type SessionFolderWorkspaceRefV1,
     resolveDurableWorkspaceRefForSessionListHeader,
     type SessionFoldersV1,
@@ -207,7 +208,6 @@ const EMPTY_VIEWABLE_SESSION_ROW_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_KNOWN_TAGS: ReadonlyArray<string> = [];
 const EMPTY_LOCAL_TAG_SELECTIONS: ReadonlyArray<QualifiedTagAddress> = [];
 const EMPTY_MEMORY_MATCHED_SESSION_TARGETS: ReadonlyArray<SessionListMemorySearchTarget> = [];
-const EMPTY_SESSION_FOLDER_MOVE_TARGETS: readonly SessionFolderMoveTarget[] = [];
 
 export type RegisterSessionFolderDropTarget = (target: Readonly<{
     type: 'folder' | 'workspace-root';
@@ -388,18 +388,6 @@ function buildSessionFoldersSignature(value: SessionFoldersV1): string {
 /** A stable empty Home selection: not searching follows no Home's rows. */
 const NO_SEARCH_ROW_SERVER_IDS: readonly string[] = Object.freeze([]);
 
-export function buildSessionFolderMoveTargetSignature(
-    foldersSignature: string,
-    workspace: SessionFolderWorkspaceRefV1,
-    folderId: string | null | undefined,
-): string {
-    return JSON.stringify([
-        foldersSignature,
-        buildSessionFolderWorkspaceSignature(workspace),
-        folderId ?? '',
-    ]);
-}
-
 function buildRowLabelSignature(labels: ReadonlyMap<string, string>): string {
     if (labels.size === 0) return '';
     return JSON.stringify(Array.from(labels.entries()));
@@ -541,7 +529,7 @@ export function useSessionListViewStateFromPaneState(
     const sessionListFolderSortModeV1 = useSetting('sessionListFolderSortModeV1') === 'mixed' ? 'mixed' : 'foldersFirst';
     const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1') === 'tree' ? 'tree' : 'off';
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
-    const workspaceRefsV1 = useSetting('workspaceRefsV1');
+    const workspaceRefsV1 = useWorkspaceRefs();
     const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
     const workspaceFaviconsEnabled = useSetting('workspaceFaviconsEnabled') !== false;
     const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
@@ -1598,37 +1586,38 @@ export function useSessionListViewStateFromPaneState(
         return null;
     }, [rowLabelByTreeRowId]);
 
-    const handleMoveSessionToFolder = React.useCallback(async (sessionId: string, serverId: string, folderId: string | null) => {
-        await rowInteractions.moveToFolder(serverId, sessionId, folderId);
-    }, [rowInteractions.moveToFolder]);
-
     const openMoveSheetForTreeRow = React.useCallback(async (sourceRowId: string, sourceLabel: string) => {
-        let source: ReturnType<typeof rowInteractions.prepareTreeRowSource>;
-        try { source = rowInteractions.prepareTreeRowSource(sourceRowId); } catch { return; }
-        if (!source) return;
-        try {
-            await openMoveSheet({ sourceLabel, runtime: rowInteractions.entityDragDrop.runtime, sourceId: source.sourceId });
-        } finally { source.dispose(); }
+        await openMoveSheet({
+            sourceLabel,
+            runtime: rowInteractions.entityDragDrop.runtime,
+            prepareSource: () => rowInteractions.prepareTreeRowSource(sourceRowId),
+        });
     }, [openMoveSheet, rowInteractions.entityDragDrop.runtime, rowInteractions.prepareTreeRowSource]);
 
     const moveTreeRowToWorkspaceRoot = React.useCallback((sourceRowId: string, sourceLabel: string) => {
-        const scope = rowInteractions.entityDragDrop.scope;
-        if (!scope) return;
-        const source = rowInteractions.prepareTreeRowSource(sourceRowId);
-        if (!source) return;
-        const runtime = rowInteractions.entityDragDrop.runtime;
-        const destination = runtime.getDestinations(source.sourceId).find(entry => {
-            return entry.targetId === rowInteractions.entityDragDrop.targetId
-                && readSessionListDestinationIntent(entry.destination, scope)?.instructionKind === 'move-to-root';
+        runOrganizationMutation(async () => {
+            const scope = rowInteractions.entityDragDrop.scope;
+            if (!scope) return;
+            const source = rowInteractions.prepareTreeRowSource(sourceRowId);
+            if (!source) {
+                Modal.alert(t('sessionsList.moveToFolder'), t('sessionsList.moveSheetEmpty'));
+                return;
+            }
+            try {
+                const runtime = rowInteractions.entityDragDrop.runtime;
+                const destination = runtime.getDestinations(source.sourceId).find(entry => entry.targetId === rowInteractions.entityDragDrop.targetId
+                    && (readSessionListFolderAssignmentDestination(entry.destination)?.folderId === null
+                        || readSessionListDestinationIntent(entry.destination, scope)?.instructionKind === 'move-to-root'));
+                if (!destination || destination.admission.status !== 'allowed') return;
+                const outcome = await runtime.perform(source.sourceId, destination.targetId, destination.destination, 'chooser');
+                if (outcome?.status === 'applied') sessionListA11y.announceDropResult({ label: sourceLabel,
+                    destinationLabel: t('sessionsList.moveToWorkspaceRoot'), result: { instruction: { kind: 'move-to-root',
+                        containerId: sourceRowId, rootId: sourceRowId, depth: 0 }, visual: { kind: 'none' } } });
+            } finally {
+                source.dispose();
+            }
         });
-        if (!destination || destination.admission.status !== 'allowed') { source.dispose(); return; }
-        const intent = readSessionListDestinationIntent(destination.destination, scope);
-        void runtime.perform(source.sourceId, destination.targetId, destination.destination, 'chooser').then(outcome => {
-            if (outcome?.status === 'applied' && typeof intent?.containerId === 'string') sessionListA11y.announceDropResult({ label: sourceLabel,
-                destinationLabel: t('sessionsList.moveToWorkspaceRoot'), result: { instruction: { kind: 'move-to-root',
-                    containerId: intent.containerId, rootId: intent.containerId, depth: 0 }, visual: { kind: 'none' } } });
-        }).finally(source.dispose);
-    }, [rowInteractions.entityDragDrop.runtime, rowInteractions.entityDragDrop.scope, rowInteractions.entityDragDrop.targetId, rowInteractions.prepareTreeRowSource, sessionListA11y]);
+    }, [rowInteractions.entityDragDrop.runtime, rowInteractions.entityDragDrop.scope, rowInteractions.entityDragDrop.targetId, rowInteractions.prepareTreeRowSource, runOrganizationMutation, sessionListA11y]);
 
     const moveTreeRowByKeyboard = React.useCallback((
         sourceRowId: string,
@@ -1647,7 +1636,6 @@ export function useSessionListViewStateFromPaneState(
         openMoveSheetForTreeRow,
         moveTreeRowToWorkspaceRoot,
         moveTreeRowByKeyboard,
-        handleMoveSessionToFolder,
     });
 
     useKeyboardShortcutHandlers(React.useMemo(() => (
@@ -1815,36 +1803,6 @@ export function useSessionListViewStateFromPaneState(
         () => buildSessionFoldersSignature(availableSessionFoldersV1),
         [availableSessionFoldersV1],
     );
-    const folderMoveTargetsByRowIdRef = React.useRef(new Map<string, Readonly<{
-        signature: string;
-        value: readonly SessionFolderMoveTarget[];
-    }>>());
-    const resolveFolderMoveTargetsForItem = React.useCallback((
-        item: Extract<SessionListIndexItem, { type: 'session' }>,
-    ): readonly SessionFolderMoveTarget[] => {
-        const organizationEligibility = resolveSessionListItemOrganizationEligibility(item, {
-            foldersFeatureEnabled: isFolderActionsEnabledForServerId(item.serverId),
-        });
-        if (!organizationEligibility.canUseSessionFolders || !item.workspace) {
-            return EMPTY_SESSION_FOLDER_MOVE_TARGETS;
-        }
-        const rowId = resolveTreeRowIdForSessionItem(item);
-        const signature = buildSessionFolderMoveTargetSignature(
-            sessionFoldersSignature,
-            item.workspace,
-            item.folderId,
-        );
-        const cached = folderMoveTargetsByRowIdRef.current.get(rowId);
-        if (cached?.signature === signature) return cached.value;
-        const value = buildSessionFolderMoveTargets({
-            folders: availableSessionFoldersV1,
-            workspace: item.workspace,
-            currentFolderId: item.folderId ?? null,
-            workspaceRootTitle: t('sessionsList.workspaceRoot'),
-        });
-        folderMoveTargetsByRowIdRef.current.set(rowId, { signature, value });
-        return value;
-    }, [availableSessionFoldersV1, isFolderActionsEnabledForServerId, sessionFoldersSignature]);
     const sessionListBulkActionContext = React.useMemo<SessionBulkActionExecutionContext>(() => ({
         setSessionPin: async ({ target, pinned }) => {
             await setSessionPinForTarget(target, pinned);
@@ -1913,16 +1871,34 @@ export function useSessionListViewStateFromPaneState(
         const firstMovableItem = targets
             .filter((target) => target.canMoveToFolder === true)
             .map((target) => sessionListItemBySelectionKey.get(target.key) ?? null)
-            .find((item): item is Extract<SessionListIndexItem, { type: 'session' }> => Boolean(item && item.workspace && item.serverId));
+            .find((item): item is Extract<SessionListIndexItem, { type: 'session' }> => Boolean(item && item.workspace && item.serverId
+                && resolveSessionListItemOrganizationEligibility(item, { foldersFeatureEnabled: isFolderActionsEnabledForServerId(item.serverId) }).canUseSessionFolders));
         if (!firstMovableItem) return null;
         const destinationWorkspace = firstMovableItem.workspace;
         if (!destinationWorkspace) return null;
-        const moveTargets = resolveFolderMoveTargetsForItem(firstMovableItem)
+        const currentFolderIds = targets.flatMap((target) => {
+            if (target.canMoveToFolder !== true) return [];
+            const item = sessionListItemBySelectionKey.get(target.key);
+            if (!item || !resolveSessionListItemOrganizationEligibility(item, {
+                foldersFeatureEnabled: isFolderActionsEnabledForServerId(item.serverId),
+                destinationWorkspace,
+            }).canUseSessionFolders) return [];
+            return [item.folderId ?? null];
+        });
+        const moveTargets = buildSessionFolderMoveTargets({
+            folders: availableSessionFoldersV1,
+            workspace: destinationWorkspace,
+            currentFolderIds,
+            workspaceRootTitle: t('sessionsList.workspaceRoot'),
+        })
             .filter((target) => target.disabled !== true)
             .map((target) => target.folderId === null
                 ? { ...target, title: t('sessionsList.moveToWorkspaceRoot') }
                 : target);
-        if (moveTargets.length === 0) return null;
+        if (moveTargets.length === 0) {
+            Modal.alert(t('sessionsList.moveToFolder'), t('sessionsList.moveSheetEmpty'));
+            return null;
+        }
         const selectedTarget = await openSessionFolderSelection({
             sourceLabel: t('sessionsList.selectionMoveSheetSourceLabel', { count: targets.length }),
             targets: moveTargets,
@@ -1932,7 +1908,7 @@ export function useSessionListViewStateFromPaneState(
             folderId: selectedTarget.folderId,
             destinationWorkspace,
         };
-    }, [folderActionsEnabled, resolveFolderMoveTargetsForItem, sessionListItemBySelectionKey]);
+    }, [availableSessionFoldersV1, folderActionsEnabled, isFolderActionsEnabledForServerId, sessionListItemBySelectionKey]);
 
     const {
         scopeHintByLegacyWorkspaceKey,
@@ -2048,7 +2024,6 @@ export function useSessionListViewStateFromPaneState(
         const moveActionHandlers = getRowMoveActionHandlers({
             sourceRowId: treeRowIdForItem,
             sourceLabel: rowLabelByTreeRowId.get(treeRowIdForItem) ?? item.sessionId,
-            item,
         });
         const canUseSessionFolders = resolveSessionListItemOrganizationEligibility(item, {
             foldersFeatureEnabled: isFolderActionsEnabledForServerId(item.serverId),
@@ -2127,9 +2102,7 @@ export function useSessionListViewStateFromPaneState(
                 showServerBadge={shellFlags.showServerBadge}
                 workingIndicatorMode={sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner'}
                 workingTextMode={sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated'}
-                folderMoveTargets={resolveFolderMoveTargetsForItem(item)}
                 forkActionContext={forkActionContext}
-                onMoveToSessionFolder={canUseSessionFolders ? moveActionHandlers.onMoveToSessionFolder : undefined}
                 onMoveToFolder={canUseSessionFolders ? moveActionHandlers.onMoveToFolder : undefined}
                 onMoveToWorkspaceRoot={canUseSessionFolders ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
                 onMoveUp={canUseSessionFolders && rowDragPolicy.canReorderSiblings ? moveActionHandlers.onMoveUp : undefined}
@@ -2172,7 +2145,6 @@ export function useSessionListViewStateFromPaneState(
         rowInteractions.registerTreeRowBounds,
         rowInteractions.resolveTreeDropResult,
         rowInteractions.unregisterTreeRowBounds,
-        resolveFolderMoveTargetsForItem,
         sessionTagsEnabled,
         sessionListActiveColorMode,
         sessionListIdentityDisplay,

@@ -575,59 +575,6 @@ describe('SessionsList (inline reorder)', () => {
         expect(applySettings).not.toHaveBeenCalled();
     });
 
-    it('moves a session to a folder through the row menu with server-scoped credentials', async () => {
-        sessionFoldersV1 = {
-            v: 1,
-            folders: [{
-                id: 'folder-a',
-                workspace: workspaceA,
-                parentId: null,
-                name: 'Planning',
-                createdAt: 1,
-                updatedAt: 1,
-            }, {
-                id: 'folder-a-child',
-                workspace: workspaceA,
-                parentId: 'folder-a',
-                name: 'Review',
-                createdAt: 2,
-                updatedAt: 2,
-            }],
-        };
-
-        // The pane projection mounts empty folder destinations as well as the source row.
-        mockVisibleSessionListIndex = [
-            { type: 'header', title: 'Project', headerKind: 'project', groupKey,
-                workspace: workspaceA, workspaceKey: groupKey, serverId: 'server_a' },
-            ...sessionFoldersV1.folders.map((folder): SessionListIndexItem => ({
-                type: 'header', title: folder.name, headerKind: 'folder', folderId: folder.id,
-                folderDepth: folder.parentId ? 1 : 0, workspace: workspaceA, serverId: 'server_a',
-                groupKey: buildSessionFolderGroupKey({ serverId: 'server_a', workspace: workspaceA, folderId: folder.id }),
-            })),
-            ...defaultVisibleSessionListIndex.filter((item) => item.type === 'session'),
-        ];
-
-        const screen = await renderSessionsList();
-        const items = screen.findAll((node) => String(node.type) === 'SessionItem');
-        expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
-            expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
-            expect.objectContaining({ folderId: 'folder-a', title: 'Planning' }),
-            expect.objectContaining({ folderId: 'folder-a-child', title: 'Review', depth: 1 }),
-        ]));
-
-        await act(async () => {
-            await items[0].props.onMoveToSessionFolder('folder-a');
-        });
-
-        expect(home.requestsFor(folderAssignmentPath)).toEqual([expect.objectContaining({
-            serverId: homeA, serverUrl: 'https://server-a.example.test', input: { folderId: 'folder-a' }, token: home.findByServerUrl('https://server-a.example.test')?.token,
-        })]);
-        const { storage } = await import('@/sync/domains/state/storageStore');
-        expect(storage.getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toEqual({
-            sessionId: 'sess_a', folderId: 'folder-a',
-        });
-        await screen.unmount();
-    });
 
     it('renders one View options trigger in search chrome and keeps stopPropagation bound', async () => {
 

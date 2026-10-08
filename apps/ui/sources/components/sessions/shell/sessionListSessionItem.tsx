@@ -11,7 +11,6 @@ import type {
     UseSessionInlineDragResolvedDrop,
     UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
-import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
@@ -46,9 +45,7 @@ type SessionListSessionItemProps = Readonly<{
     compactMinimal: boolean;
     rowAttentionAnimationEnabled: boolean;
     agentSwitchingEnabled?: boolean;
-    folderMoveTargets: readonly SessionFolderMoveTarget[];
     forkActionContext?: SessionItemProps['forkActionContext'];
-    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
@@ -121,9 +118,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             compact={props.compact}
             compactMinimal={props.compactMinimal}
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
-            folderMoveTargets={props.folderMoveTargets}
             forkActionContext={props.forkActionContext}
-            onMoveToSessionFolder={props.onMoveToSessionFolder}
             onMoveToFolder={props.onMoveToFolder}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}

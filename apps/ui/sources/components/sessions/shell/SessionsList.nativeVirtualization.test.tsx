@@ -398,13 +398,13 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                useWorkspaceRefs: () => workspaceRefsV1,
                 useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
-                    if (key === 'workspaceRefsV1') return workspaceRefsV1;
                     if (key === 'workspacePathDisplayModeV1') return workspacePathDisplayModeV1;
                     return null;
                 } }),
@@ -414,7 +414,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 ),
                 useSettingMutable: createUseSettingMutableMockFromReader((key) => {
                     if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
-                    if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
                 }),
                 useLocalSetting: <K extends keyof LocalSettings>(key: K): LocalSettings[K] => ({
@@ -1801,13 +1800,10 @@ describe('SessionsList (native virtualization)', () => {
         expect(typeof first.props.onMoveToWorkspaceRoot).toBe('function');
         expect(typeof first.props.onMoveUp).toBe('function');
         expect(typeof first.props.onMoveDown).toBe('function');
-        expect(typeof first.props.onMoveToSessionFolder).toBe('function');
         const initialMoveToFolder = first.props.onMoveToFolder;
         const initialMoveToWorkspaceRoot = first.props.onMoveToWorkspaceRoot;
         const initialMoveUp = first.props.onMoveUp;
         const initialMoveDown = first.props.onMoveDown;
-        const initialMoveToSessionFolder = first.props.onMoveToSessionFolder;
-        const initialFolderMoveTargets = first.props.folderMoveTargets;
 
         mockVisibleSessionListViewData = mockVisibleSessionListViewData.map((item) => (
             item.type === 'session'
@@ -1821,8 +1817,6 @@ describe('SessionsList (native virtualization)', () => {
         expect(updated.props.onMoveToWorkspaceRoot).toBe(initialMoveToWorkspaceRoot);
         expect(updated.props.onMoveUp).toBe(initialMoveUp);
         expect(updated.props.onMoveDown).toBe(initialMoveDown);
-        expect(updated.props.onMoveToSessionFolder).toBe(initialMoveToSessionFolder);
-        expect(updated.props.folderMoveTargets).toBe(initialFolderMoveTargets);
     });
 
     it('classifies native virtualized-list items by row kind', async () => {

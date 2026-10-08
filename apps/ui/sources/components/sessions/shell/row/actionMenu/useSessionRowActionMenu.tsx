@@ -109,9 +109,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     onTogglePinned?: (() => void) | null;
     leadingMenuItems?: readonly DropdownMenuItem[];
     onSelectLeadingMenuItem?: (itemId: string) => boolean | Promise<boolean>;
-    folderMoveMenuItems?: readonly DropdownMenuItem[];
     onMoveToFolder?: () => void;
-    onSelectFolderMoveMenuItem?: (itemId: string) => void | Promise<void>;
     selectionModeAvailable?: boolean;
     selectionModeActive?: boolean;
     onEnterSelectionMode?: () => void;
@@ -280,14 +278,12 @@ export function useSessionRowActionMenu(params: Readonly<{
                 ...selectItem,
                 ...(params.leadingMenuItems ?? []),
             ],
-            folderMoveMenuItems: params.folderMoveMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
         });
     }, [
-        params.folderMoveMenuItems,
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
@@ -340,10 +336,6 @@ export function useSessionRowActionMenu(params: Readonly<{
             });
             return;
         }
-        if (itemId === 'session-folder-move-root' || itemId.startsWith('session-folder-move-')) {
-            await params.onSelectFolderMoveMenuItem?.(itemId);
-            return;
-        }
 
         const readState = resolveManualReadStateFromSessionActionId(itemId);
         if (readState) {
@@ -389,7 +381,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         params.onOpenFollowEditor,
         params.onMoveToFolder,
         params.onSelectLeadingMenuItem,
-        params.onSelectFolderMoveMenuItem,
         reminderPresets,
         applyReminderPresetIntent,
     ]);

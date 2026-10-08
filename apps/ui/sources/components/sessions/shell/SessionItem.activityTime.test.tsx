@@ -1672,7 +1672,6 @@ describe('SessionItem activity time', () => {
                 compact={false}
                 compactMinimal={false}
                 rowAttentionAnimationEnabled={true}
-                folderMoveTargets={[]}
             />,
         );
 

@@ -85,7 +85,6 @@ import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
-import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import { useIsTablet } from '@/utils/platform/responsive';
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
@@ -146,8 +145,6 @@ const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
 const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
 const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
 const SESSION_REPORTS_ROW_INDENT_STEP = 22;
-const SESSION_FOLDER_MOVE_MENU_INDENT_BASE = 16;
-const SESSION_FOLDER_MOVE_MENU_INDENT_STEP = 12;
 const SESSION_DELETE_DRAFT_MENU_ITEM_ID = 'session-draft.delete';
 
 let sessionForkStrategyFlowModulePromise:
@@ -211,8 +208,6 @@ export type SessionItemBaseProps = Readonly<{
     folderDepth?: number;
     /** Level under a lead in the `reportsTo` tree (ORC §3.8); 0 or absent draws the row at its own level. */
     reportsDepth?: number;
-    folderMoveTargets?: readonly SessionFolderMoveTarget[];
-    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
@@ -326,16 +321,6 @@ function resolveSessionItemEffectiveSession(input: Readonly<{
         return mergePendingBlockedCount(input.providedSession, pendingBlockedCount);
     }
     return mergePendingBlockedCount(input.rowSession, pendingBlockedCount);
-}
-
-function resolveSessionFolderMoveTargetRowContainerStyle(depth: number) {
-    const normalizedDepth = Math.max(0, Math.floor(Number.isFinite(depth) ? depth : 0));
-    if (normalizedDepth === 0) return undefined;
-    return { paddingLeft: SESSION_FOLDER_MOVE_MENU_INDENT_BASE + normalizedDepth * SESSION_FOLDER_MOVE_MENU_INDENT_STEP };
-}
-
-function resolveSessionFolderMoveTargetTestId(target: SessionFolderMoveTarget): string {
-    return `dropdown-option-move-to-folder_${target.folderId ?? 'null'}`;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -687,8 +672,6 @@ const SessionItemContent = React.memo(
         compactMinimal,
         folderDepth,
         reportsDepth,
-        folderMoveTargets,
-        onMoveToSessionFolder,
         onMoveToFolder,
         onMoveToWorkspaceRoot,
         onMoveUp,
@@ -953,19 +936,6 @@ const SessionItemContent = React.memo(
             if (e && typeof e.preventDefault === 'function') e.preventDefault();
         }, []);
 
-        const folderMoveMenuItems = React.useMemo((): DropdownMenuItem[] => (
-            (folderMoveTargets ?? []).map((target): DropdownMenuItem => ({
-                id: target.id,
-                testID: resolveSessionFolderMoveTargetTestId(target),
-                title: target.title,
-                icon: target.folderId
-                    ? <Icon name="folder" size={16} color={rowActionIconColor} />
-                    : <Icon name="tray" size={16} color={rowActionIconColor} />,
-                rowContainerStyle: resolveSessionFolderMoveTargetRowContainerStyle(target.depth),
-                disabled: target.disabled,
-            }))
-        ), [folderMoveTargets, rowActionIconColor]);
-
         const splitCanvasMenuItems = React.useMemo((): DropdownMenuItem[] => {
             if (splitCanvasRowActions.mode === 'open') {
                 return [
@@ -1124,17 +1094,6 @@ const SessionItemContent = React.memo(
             return handleSelectSplitCanvasMenuItem(itemId);
         }, [confirmDeleteDraft, copyFeedback, handleSelectSplitCanvasMenuItem, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, workspaceOpen]);
 
-        const handleSelectFolderMoveMenuItem = React.useCallback(async (itemId: string) => {
-            if (itemId === 'session-folder-move-root') {
-                await onMoveToSessionFolder?.(null);
-                return;
-            }
-            const target = folderMoveTargets?.find((candidate) => candidate.id === itemId);
-            if (target) {
-                await onMoveToSessionFolder?.(target.folderId);
-            }
-        }, [folderMoveTargets, onMoveToSessionFolder]);
-
         const handleEnterSelectionMode = React.useCallback(() => {
             if (!resolvedSelectionKey) return;
             rowSelection.replace();
@@ -1217,9 +1176,7 @@ const SessionItemContent = React.memo(
             onTogglePinned,
             leadingMenuItems,
             onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
-            folderMoveMenuItems,
             onMoveToFolder,
-            onSelectFolderMoveMenuItem: handleSelectFolderMoveMenuItem,
             selectionModeAvailable: Boolean(resolvedSelectionKey),
             selectionModeActive: rowSelection.isSelectionMode,
             onEnterSelectionMode: handleEnterSelectionMode,

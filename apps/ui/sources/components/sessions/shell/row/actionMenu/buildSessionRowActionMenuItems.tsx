@@ -95,25 +95,12 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
 
     for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'rowMenu' })) {
         if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
-            const folderMoveMenuItems = params.folderMoveMenuItems ?? [];
-            if (params.canMoveToFolder === false && folderMoveMenuItems.length === 0) {
-                continue;
-            }
-
+            if (params.canMoveToFolder === false) continue;
             moveToFolderItem = {
                 id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
                 title: t('sessionsList.moveToFolder'),
                 icon: <Icon name="folder" size={16} color={params.iconColor} />,
-                disabled: params.canMoveToFolder === false
-                    ? !folderMoveMenuItems.some((item) => item.disabled !== true)
-                    : false,
-                submenu: params.canMoveToFolder === false
-                    ? {
-                        items: folderMoveMenuItems,
-                        search: folderMoveMenuItems.length > 8,
-                        searchPlaceholder: t('sessionsList.moveToFolder'),
-                    }
-                    : undefined,
+                disabled: false,
             };
             continue;
         }

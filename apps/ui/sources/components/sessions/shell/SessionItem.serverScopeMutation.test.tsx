@@ -658,119 +658,6 @@ describe('SessionItem server-scoped mutations', () => {
         )).toBe(false);
     });
 
-    it('offers session folder move targets in the context menu', async () => {
-        const moveToFolder = vi.fn();
-        const SessionItem = await importSessionItem();
-        type FolderAwareSessionItemProps = ModelBackedSessionItemTestProps & {
-            folderMoveTargets?: ReadonlyArray<{
-                id: string;
-                folderId: string | null;
-                title: string;
-                depth: number;
-                disabled?: boolean;
-            }>;
-            onMoveToSessionFolder?: (folderId: string | null) => void;
-        };
-        const FolderAwareSessionItem = SessionItem as React.ComponentType<FolderAwareSessionItemProps>;
-
-        const session = createSessionFixture({
-            id: 'sess_folder_move',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: false,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 0,
-        });
-
-        const screen = await renderScreen(
-            <FolderAwareSessionItem
-                session={session}
-                serverId="server_folder"
-                serverName="Server Folder"
-                showServerBadge={true}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-                folderMoveTargets={[
-                    {
-                        id: 'session-folder-move-root',
-                        folderId: null,
-                        title: 'Workspace root',
-                        depth: 0,
-                        disabled: false,
-                    },
-                    {
-                        id: 'session-folder-move-planning',
-                        folderId: 'planning',
-                        title: 'Planning',
-                        depth: 0,
-                        disabled: false,
-                    },
-                    {
-                        id: 'session-folder-move-planning-review',
-                        folderId: 'planning-review',
-                        title: 'Review',
-                        depth: 1,
-                        disabled: false,
-                    },
-                ]}
-                onMoveToSessionFolder={moveToFolder}
-            />,
-        );
-
-        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID),
-        );
-        expect(contextMenu).toBeTruthy();
-        expect(contextMenu!.props.items.some((item: any) => item?.id === 'session-folder-move-planning')).toBe(false);
-
-        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID);
-        expect(moveToFolderItem).toEqual(expect.objectContaining({
-            id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
-            title: 'sessionsList.moveToFolder',
-        }));
-        expect(moveToFolderItem.submenu.items).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                id: 'session-folder-move-root',
-                testID: 'dropdown-option-move-to-folder_null',
-                title: 'Workspace root',
-            }),
-            expect.objectContaining({
-                id: 'session-folder-move-planning',
-                testID: 'dropdown-option-move-to-folder_planning',
-                title: 'Planning',
-            }),
-            expect.objectContaining({
-                id: 'session-folder-move-planning-review',
-                testID: 'dropdown-option-move-to-folder_planning-review',
-                title: 'Review',
-                rowContainerStyle: expect.objectContaining({ paddingLeft: expect.any(Number) }),
-            }),
-        ]));
-        const rootMoveItem = moveToFolderItem.submenu.items.find((item: any) => item.id === 'session-folder-move-root');
-        expect(rootMoveItem.rowContainerStyle).toBeUndefined();
-
-        await act(async () => {
-            contextMenu!.props.onSelect('session-folder-move-planning');
-        });
-        expect(moveToFolder).toHaveBeenCalledWith('planning');
-
-        await act(async () => {
-            contextMenu!.props.onSelect('session-folder-move-root');
-        });
-        expect(moveToFolder).toHaveBeenCalledWith(null);
-    });
-
     it('routes the move-to-folder menu item and accessibility actions through the accessible move callbacks', async () => {
         const onMoveToFolder = vi.fn();
         const onMoveToWorkspaceRoot = vi.fn();
@@ -806,15 +693,6 @@ describe('SessionItem server-scoped mutations', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                folderMoveTargets={[
-                    {
-                        id: 'session-folder-move-root',
-                        folderId: null,
-                        title: 'Workspace root',
-                        depth: 0,
-                        disabled: false,
-                    },
-                ]}
                 onMoveToFolder={onMoveToFolder}
                 onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
                 onMoveUp={onMoveUp}

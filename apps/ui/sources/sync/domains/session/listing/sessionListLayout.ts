@@ -177,6 +177,8 @@ function projectRecentActivitySessionItem(params: Readonly<{
         ...(item.serverId ? { serverId: item.serverId } : {}),
         ...(item.serverName ? { serverName: item.serverName } : {}),
         ...(item.storageKind ? { storageKind: item.storageKind } : {}),
+        ...(item.workspace ? { workspace: item.workspace } : {}),
+        ...(item.folderId !== undefined ? { folderId: item.folderId } : {}),
         ...(item.archivedAt != null ? { archivedAt: item.archivedAt } : {}),
         ...(item.keepVisibleWhenInactive ? { keepVisibleWhenInactive: true } : {}),
         ...(item.contextualSearchReasons ? { contextualSearchReasons: item.contextualSearchReasons } : {}),

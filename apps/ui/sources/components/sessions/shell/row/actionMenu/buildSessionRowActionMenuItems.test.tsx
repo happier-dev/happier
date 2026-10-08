@@ -62,7 +62,7 @@ function makeViewOnlySession(overrides?: Partial<SessionListRenderableSession>):
 }
 
 describe('buildSessionRowMoreMenuItems', () => {
-    it('composes leading row actions with shared session actions and folder targets', () => {
+    it('composes leading row actions with shared session actions and the folder chooser', () => {
         const target = createSessionActionTarget({
             session: makeSession(),
             serverId: 'server_1',
@@ -77,10 +77,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             leadingItems: [
                 { id: SESSION_ROW_ACTION_SELECT_ID, title: 'Select', icon: React.createElement('Icon') },
             ],
-            canMoveToFolder: false,
-            folderMoveMenuItems: [
-                { id: 'session-folder-move-root', title: 'Workspace root', icon: React.createElement('Icon') },
-            ],
+            canMoveToFolder: true,
         });
 
         expect(items.map((item) => item.id)).toEqual([
@@ -96,11 +93,6 @@ describe('buildSessionRowMoreMenuItems', () => {
         expect(items.at(-1)).toEqual(expect.objectContaining({
             id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
             disabled: false,
-            submenu: expect.objectContaining({
-                items: [
-                    expect.objectContaining({ id: 'session-folder-move-root' }),
-                ],
-            }),
         }));
     });
 
@@ -117,7 +109,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
         });
 
         expect(items.some((item) => item.id === SESSION_ACTION_MOVE_TO_FOLDER_ID)).toBe(false);
@@ -137,7 +128,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
             leadingItems: [{ id: 'session.fork', title: 'Fork session' }],
             reminderPresets: [{ rule: { kind: 'relative_day', daysAhead: 1, minuteOfDay: 840 } }],
         });
@@ -177,7 +167,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
         }).map((item) => item.id);
 
         expect(ids).toContain('attention-reminder');
