@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
+import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
 
 import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -17,12 +18,15 @@ function artifact(
     header: NonNullable<DecryptedArtifact['header']>,
     body?: unknown,
 ): DecryptedArtifact {
+    const resolvedHeader = typeof body === 'undefined'
+        ? header
+        : { ...header, ...buildApprovalRequestArtifactHeaderV1(ApprovalRequestV1Schema.parse(body)) };
     return {
         id,
-        header,
-        title: header.title ?? null,
-        sessions: header.sessions,
-        draft: header.draft,
+        header: resolvedHeader,
+        title: resolvedHeader.title ?? null,
+        sessions: resolvedHeader.sessions,
+        draft: resolvedHeader.draft,
         body: typeof body === 'undefined' ? undefined : JSON.stringify(body),
         headerVersion: 1,
         bodyVersion: typeof body === 'undefined' ? undefined : 1,
@@ -155,6 +159,48 @@ describe('useOpenApprovalSessionReferences', () => {
 
             expect(hook.getCurrent()).toBe(first);
             expect(renderCount).toBe(1);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const open = state.artifacts.open;
+                    if (!open?.isDecrypted || !open.header) throw new Error('Approval fixture must have a readable header');
+                    return {
+                        artifacts: {
+                            ...state.artifacts,
+                            open: {
+                                ...open,
+                                header: { ...open.header, serverId: 'server-b' },
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent()).toEqual([{
+                kind: 'exact',
+                address: { serverId: 'server-b', sessionId: 'session-a' },
+            }]);
+            expect(hook.getCurrent()).not.toBe(first);
+            expect(renderCount).toBe(2);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const open = state.artifacts.open;
+                    if (!open?.isDecrypted || !open.header) throw new Error('Approval fixture must have a readable header');
+                    return {
+                        artifacts: {
+                            ...state.artifacts,
+                            open: {
+                                ...open,
+                                header: { ...open.header, approvalStatus: 'approved' },
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent()).toEqual([]);
+            expect(renderCount).toBe(3);
 
             await hook.unmount();
         } finally {

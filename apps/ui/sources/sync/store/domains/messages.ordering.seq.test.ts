@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { createMessagesDomain } from './messages';
+import { storage } from '@/sync/domains/state/storageStore';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../../engine/pending/pendingQueueV2.testHelpers';
 
-vi.mock('../../domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-active', serverUrl: 'https://example.com', generation: 1 }),
-}));
+// Keep one real Sync bridge for this store suite; cases reset state, not the
+// process module graph.
+await loadSyncSingletonForTests();
 
 function withSessionListRows(rows: Record<string, unknown>) {
     return {
@@ -15,31 +17,8 @@ function withSessionListRows(rows: Record<string, unknown>) {
 }
 
 function createHarness(initial: any) {
-    let state: any = {
-        sessions: {},
-        sessionPending: {},
-        sessionMessages: {},
-        ...withSessionListRows({
-            }),
-        sessionListRowsByServerId: {},
-        sessionListIndexByServerId: {},
-        concurrentSessionListCacheByServerId: {},
-        machines: {},
-        machineDisplayById: {},
-        profile: { id: 'account_a' },
-        settings: {},
-        getProjectForSession: () => null,
-        ...initial,
-    };
-
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
-
-    const domain = createMessagesDomain({ get, set } as any);
-    return { get, domain };
+    storage.setState(initial);
+    return { get: storage.getState, domain: storage.getState() };
 }
 
 function buildStreamSegmentMeta(updatedAtMs: number) {
@@ -55,9 +34,12 @@ function buildStreamSegmentMeta(updatedAtMs: number) {
     };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'server-active', accountId: 'account_a' });
     syncPerformanceTelemetry.configure({ enabled: false });
 });
+afterEach(() => storage.setState(storage.getInitialState(), true));
 
 describe('messages domain: ordering', () => {
     it('keeps an already-loaded transcript entry referentially stable when marked loaded again', () => {
@@ -614,7 +596,8 @@ describe('messages domain: ordering', () => {
         const thinkingId = get().sessionMessages.s1.latestThinkingMessageId;
         expect(typeof thinkingId).toBe('string');
         expect(thinkingId).not.toHaveLength(0);
-        const thinkingMessage = get().sessionMessages.s1.messagesById[thinkingId!] as any;
+        if (thinkingId === null) throw new Error('Thinking message must have a stable id');
+        const thinkingMessage = get().sessionMessages.s1.messagesById[thinkingId] as any;
         expect(thinkingMessage?.kind).toBe('agent-text');
         expect(thinkingMessage?.isThinking).toBe(true);
         expect(get().sessionMessages.s1.latestThinkingMessageActivityAtMs).toBe(1_000);
@@ -667,8 +650,10 @@ describe('messages domain: ordering', () => {
         expect(get().sessionMessages.s1.latestThinkingMessageId).toBe(thinkingId);
         expect(get().sessionMessages.s1.latestThinkingMessageActivityAtMs).toBe(3_000);
         expect(get().sessionMessages.s1.messagesById).not.toBe(beforeRevision);
-        expect(beforeRevision[thinkingId]).toBe(thinkingMessage);
-        expect(beforeRevision[thinkingId].text).toBe('step 1');
+        const previousThinkingMessage = beforeRevision[thinkingId];
+        expect(previousThinkingMessage).toBe(thinkingMessage);
+        if (previousThinkingMessage.kind !== 'agent-text') throw new Error('Thinking message must remain agent text');
+        expect(previousThinkingMessage.text).toBe('step 1');
 
         nowSpy.mockRestore();
     });
@@ -725,7 +710,7 @@ describe('messages domain: ordering', () => {
             expect(event?.fields.messages).toBe(2);
             expect(event?.fields.processed).toBe(2);
             expect(event?.fields.changed).toBe(2);
-            expect(event?.fields.uniqueInsertedOrMoved).toBe(2);
+            expect(event?.fields.idsChanged).toBe(1);
             expect(event?.fields.stateChanged).toBe(1);
 
             const reducerEvent = syncPerformanceTelemetry
@@ -740,13 +725,12 @@ describe('messages domain: ordering', () => {
                 .events.find((candidate) => candidate.name === 'sync.store.messages.index');
             expect(indexEvent?.count).toBe(1);
             expect(indexEvent?.fields.processed).toBe(2);
-            expect(indexEvent?.fields.uniqueInsertedOrMoved).toBe(2);
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
         }
     });
 
-    it('uses append-only index work for higher-seq streaming messages', () => {
+    it('appends higher-seq streaming messages without replacing existing transcript entries', () => {
         const messageCount = 1_000;
         const existingIds = Array.from({ length: messageCount }, (_, index) => `m${index + 1}`);
         const messagesById = Object.fromEntries(existingIds.map((id, index) => [
@@ -826,6 +810,7 @@ describe('messages domain: ordering', () => {
         syncPerformanceTelemetry.reset();
 
         try {
+            const previousMessagesById = get().sessionMessages.s1.messagesById;
             domain.applyMessages('s1', [
                 {
                     id: 'm1001',
@@ -839,10 +824,18 @@ describe('messages domain: ordering', () => {
             ]);
 
             expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(messageCount + 1);
+            const ids = get().sessionMessages.s1.messageIdsOldestFirst;
+            expect(ids.slice(0, messageCount)).toEqual(existingIds);
+            expect(get().sessionMessages.s1.messagesById[ids[messageCount]!]).toMatchObject({
+                kind: 'agent-text', seq: messageCount + 1, text: 'next',
+            });
+            for (const id of existingIds) {
+                expect(get().sessionMessages.s1.messagesById[id]).toBe(previousMessagesById[id]);
+            }
             const indexEvent = syncPerformanceTelemetry
                 .snapshot()
                 .events.find((candidate) => candidate.name === 'sync.store.messages.index');
-            expect(indexEvent?.fields.appendOnly).toBe(1);
+            expect(indexEvent?.fields.processed).toBe(1);
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
         }

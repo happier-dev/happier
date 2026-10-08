@@ -9,6 +9,7 @@ import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTar
 import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
+    derivePendingRequestFlagsFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -48,8 +49,7 @@ export function getPendingQueueWakeResumeOptions(opts: {
     // strand pending-queue messages until the user sends another message (or the state refreshes).
     const isSessionActive = session.active === true && session.presence === 'online';
     if (isSessionActive) {
-        const requests = session.agentState?.requests;
-        const hasRuntimeRequests = Boolean(requests && Object.keys(requests).length > 0);
+        const pendingRequestFlags = derivePendingRequestFlagsFromSession(session);
         const inputReadiness = deriveSessionInputReadinessState({
             active: session.active,
             activeAt: session.activeAt,
@@ -60,8 +60,8 @@ export function getPendingQueueWakeResumeOptions(opts: {
             hasPendingUserMessages: typeof session.pendingCount === 'number' && session.pendingCount > 0,
             latestTurnStatus: session.latestTurnStatus,
             latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
-            hasPendingPermissionRequests: hasRuntimeRequests,
-            hasPendingUserActionRequests: hasRuntimeRequests,
+            hasPendingPermissionRequests: pendingRequestFlags.hasPendingPermissionRequests,
+            hasPendingUserActionRequests: pendingRequestFlags.hasPendingUserActionRequests,
             pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
         }, Date.now());
         if (!inputReadiness.canWakePendingQueue) return null;

@@ -373,6 +373,56 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
+    it('does not wake while the current list projection proves a pending permission before private state hydration', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session = createSessionFixture({
+            id: 's1', updatedAt: 999_500, active: true, presence: 'online', latestTurnStatus: 'completed',
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0,
+            pendingRequestObservedAt: 999_000, agentState: null,
+            metadata: { machineId: 'm1', path: '/tmp', host: 'tester.local', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        });
+
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
+    });
+
+    it('does not wake past a fresh unresolved permission in hydrated private state', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session = createSessionFixture({
+            id: 's1', active: true, presence: 'online', latestTurnStatus: 'completed',
+            agentState: { requests: { r1: { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' }, createdAt: 999_000 } } },
+            metadata: { machineId: 'm1', path: '/tmp', host: 'tester.local', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        });
+
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
+    });
+
+    it('does not mistake a covered completed request for a current unresolved permission', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const request = { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' }, createdAt: 999_000 };
+        const session = createSessionFixture({
+            id: 's1', active: true, presence: 'online', latestTurnStatus: 'completed',
+            agentState: { requests: { r1: request }, completedRequests: {
+                r1: { ...request, status: 'approved', completedAt: 999_500 },
+            } },
+            metadata: { machineId: 'm1', path: '/tmp', host: 'tester.local', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        });
+
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } }))
+            .toMatchObject({ sessionId: 's1', machineId: 'm1', resume: 'c1' });
+    });
+
+    it('retires a known stale permission observation after foreground completion', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session = createSessionFixture({
+            id: 's1', active: true, presence: 'online', latestTurnStatus: 'completed',
+            agentState: { requests: { r1: { tool: 'Bash', kind: 'permission', arguments: { command: 'pwd' }, createdAt: 1 } } },
+            metadata: { machineId: 'm1', path: '/tmp', host: 'tester.local', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        });
+
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } }))
+            .toMatchObject({ sessionId: 's1', machineId: 'm1', resume: 'c1' });
+    });
+
     it('returns null when the caller cannot wake the target machine', () => {
         const session: any = {
             thinking: false,
