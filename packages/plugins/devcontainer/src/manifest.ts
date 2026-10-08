@@ -2,26 +2,34 @@ import { Buffer } from 'node:buffer';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
-  defineMachineProvisionerSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
+  defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
+  MachineProvisionerOptionsResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
-import { DevcontainerLaunchSchema, DevcontainerResourceSchema } from './machine/schemas.js';
+import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema } from './machine/schemas.js';
+import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
 
 export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerLaunchSchema, resource: DevcontainerResourceSchema });
+export const DEVCONTAINER_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ resource: DevcontainerResourceSchema,
+  nativeOperation: DevcontainerNativeOperationSchema });
 const processAccess = 'devcontainer-process';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 function code(error: unknown) { return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'provider_unavailable'; }
 async function provider(context: PluginInvocationContext) {
+  return createDevcontainerProvider(await nativeTools(context));
+}
+async function nativeTools(context: PluginInvocationContext) {
   const statuses = await Promise.all(['docker', 'devcontainer'].map(id => context.services.managedServices.dependencies.status(id, { signal: context.signal })));
   const [docker, devcontainer] = statuses;
   if (!docker || !devcontainer || (docker.state !== 'ready' && docker.state !== 'updateAvailable')
     || (devcontainer.state !== 'ready' && devcontainer.state !== 'updateAvailable') || !docker.executable || !devcontainer.executable) {
     throw Object.assign(new Error('Devcontainer prerequisites are unavailable'), { code: 'provider_unavailable' });
   }
-  return createDevcontainerProvider({ exec: context.services.exec, docker: docker.executable,
-    devcontainer: devcontainer.executable, signal: context.signal, observedAt: context.invokedAtMs });
+  return { exec: context.services.exec, docker: docker.executable,
+    devcontainer: devcontainer.executable, signal: context.signal, observedAt: context.invokedAtMs,
+    environment: readDevcontainerNativeEnvironment() };
 }
 function bytes(value: string) {
   const decoded = Buffer.from(value, 'base64');
@@ -35,8 +43,9 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   prerequisites: [{ kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: 'devcontainer' }],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
-  actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'putFile' },
+  reconciliation: { nativeOperationSchema: DevcontainerNativeOperationSchema.jsonSchema, action: 'reconcile' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const DEVCONTAINER_PLUGIN = definePlugin({
@@ -51,12 +60,18 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
   },
   machineProvisioners: { [DEVCONTAINER_PROVISIONER_ID]: DEVCONTAINER_MACHINE_PROVISIONER },
   actions: {
+    options: { ...defaults, title: 'Review Devcontainer effects', dangerLevel: 'safe',
+      inputSchema: DevcontainerReviewQuerySchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+      async run(input, context) {
+        const reviewed = await readDevcontainerEffectReview(await nativeTools(context), input);
+        return { choices: [{ id: reviewed.launch.configPath, title: 'Devcontainer', available: true, ...reviewed }] };
+      } },
     check: { ...defaults, title: 'Check Devcontainer availability', dangerLevel: 'safe', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.checkInput,
       resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await (await provider(context)).check(); } catch (error) { return { available: false, code: code(error) }; } } },
     acquire: { ...defaults, title: 'Realize Devcontainer child', dangerLevel: 'writesLocal', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.acquireInput,
-      resultSchema: DEVCONTAINER_ROLE_SCHEMAS.acquireResult,
-      async run(input, context) { try { return await (await provider(context)).acquire(input.launch); }
+      resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
+      async run(input, context) { try { return await (await provider(context)).acquire(input.launch, input.managedId ?? ''); }
         catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath, reason: code(error) } }; } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
@@ -78,7 +93,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
         catch (error) { return { kind: 'unknown' as const, code: code(error) }; } } },
     rebuild: { ...defaults, title: 'Rebuild exact Devcontainer installation', dangerLevel: 'destructive',
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildInput, resultSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildResult,
-      async run(input, context) { return (await provider(context)).rebuild(input.resource); } },
+      async run(input, context) { return (await provider(context)).rebuild(input.resource, input.reviewedEffectDigest); } },
+    reconcile: { ...defaults, title: 'Observe Devcontainer replacement', dangerLevel: 'safe',
+      inputSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.input, resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
+      async run(input, context) { return (await provider(context)).reconcile(input.nativeOperation); } },
     exec: { ...defaults, title: 'Execute private child bootstrap IO', dangerLevel: 'writesLocal',
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) {

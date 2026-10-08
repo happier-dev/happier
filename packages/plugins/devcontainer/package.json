@@ -18,6 +18,6 @@
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run"
   },
-  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0" },
+  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0", "json5": "^2.2.3" },
   "devDependencies": { "@types/node": "^22.0.0", "vitest": "^3.2.4" }
 }
