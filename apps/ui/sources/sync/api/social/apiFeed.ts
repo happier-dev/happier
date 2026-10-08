@@ -3,7 +3,7 @@ import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
 import { FeedResponse, FeedResponseSchema, FeedItem } from '@/sync/domains/social/feedTypes';
 import { log } from '@/log';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 
 /**
  * Fetch user's feed with pagination
@@ -18,6 +18,7 @@ export async function fetchFeed(
         request?: ServerFetch;
     }
 ): Promise<{ items: FeedItem[]; hasMore: boolean }> {
+    const request = options?.request ?? createServerFetchForActiveServer();
     const run = async () => {
         const params = new URLSearchParams();
         if (options?.limit) params.set('limit', options.limit.toString());
@@ -27,7 +28,6 @@ export async function fetchFeed(
         const url = `/v1/feed${params.toString() ? `?${params}` : ''}`;
         log.log(`📰 Fetching feed: ${url}`);
         
-        const request = options?.request ?? serverFetch;
         const response = await request(url, {
             method: 'GET',
             headers: {

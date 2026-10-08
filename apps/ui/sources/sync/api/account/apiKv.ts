@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 
 //
 // Types
@@ -75,8 +75,9 @@ export async function kvGet(
     key: string,
     options: Pick<KvListParams, 'request' | 'retry'> = {},
 ): Promise<KvItem | null> {
+    const request = options.request ?? createServerFetchForActiveServer();
     const run = async () => {
-        const response = await (options.request ?? serverFetch)(`/v1/kv/${encodeURIComponent(key)}`, {
+        const response = await request(`/v1/kv/${encodeURIComponent(key)}`, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
@@ -113,6 +114,7 @@ export async function kvList(
     credentials: AuthCredentials,
     params: KvListParams = {}
 ): Promise<KvListResponse> {
+    const request = params.request ?? createServerFetchForActiveServer();
     const queryParams = new URLSearchParams();
     if (params.prefix) {
         queryParams.append('prefix', params.prefix);
@@ -127,7 +129,6 @@ export async function kvList(
         : '/v1/kv';
 
     const run = async () => {
-        const request = params.request ?? serverFetch;
         const response = await request(url, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
@@ -174,8 +175,9 @@ export async function kvBulkGet(
         throw new Error('Cannot bulk get more than 100 keys at once');
     }
 
+    const request = createServerFetchForActiveServer();
     return await backoff(async () => {
-        const response = await serverFetch('/v1/kv/bulk', {
+        const response = await request('/v1/kv/bulk', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -221,8 +223,9 @@ export async function kvMutate(
         throw new Error('Cannot mutate more than 100 keys at once');
     }
 
+    const request = options.request ?? createServerFetchForActiveServer();
     const run = async () => {
-        const response = await (options.request ?? serverFetch)('/v1/kv', {
+        const response = await request('/v1/kv', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,

@@ -18,7 +18,11 @@ function buildTokenWithSub(sub: string): string {
 }
 
 describe('apiAccountEncryptionMode retry modes', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
         runtimeFetchSpy.mockReset();
         vi.resetModules();
         vi.useRealTimers();
@@ -29,7 +33,7 @@ describe('apiAccountEncryptionMode retry modes', () => {
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
-        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'device' });
 
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');

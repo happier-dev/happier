@@ -12,6 +12,25 @@ We intentionally avoid the full REST verb palette because many operations span m
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`.
 
+### UI HTTP request ownership (0.3 development source)
+
+`apps/ui/sources/sync/http/client.ts` owns HTTP admission, authentication,
+reachability and cancellation through `requestAtEndpoint`. Account, Artifact,
+social and focused-Home push operations capture their focused Home once through
+`createServerFetchForActiveServer`, before starting their containing retry or
+compatibility-fallback operation. Explicit endpoint transports remain captured
+through `createServerFetchAtEndpoint`; supplied scoped requests retain their own
+authority. Neither wrapper is another retry or credential owner.
+
+An obsolete focused-Home basis raises `StaleServerGenerationError` with
+`retryable: false`; a containing retry must not send its captured bearer to the
+newly focused Home. A prepared Account socket write may preserve an empty HTTP
+401 after its own conditional removal of the rejected stored token retires the
+request configuration. This exception discards the response body and never
+retries the mutation. Credential replacement or target replacement still takes
+the stale-response path. Session-viewer socket reconnects retain their Session
+role and do not register Account presence or Machine RPC handlers.
+
 ### Home authentication entry (0.3 development source)
 
 `POST /v1/auth/entry` is the public, stateless discovery endpoint for the

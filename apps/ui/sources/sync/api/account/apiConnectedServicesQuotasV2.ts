@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-  serverFetch,
+  createServerFetchForActiveServer,
   type ExpectedActiveServerFetchBasis,
 } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
@@ -42,8 +42,9 @@ export async function getConnectedServiceQuotaSnapshotSealed(
     refreshRequestedAt?: number;
   };
 } | null>> {
+  const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await request(
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas`,
       {
         method: 'GET',
@@ -93,8 +94,9 @@ export async function requestConnectedServiceQuotaSnapshotRefresh(
     expectedActiveServer?: ExpectedActiveServerFetchBasis;
   }>,
 ): Promise<boolean> {
+  const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await request(
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas/refresh`,
       {
         method: 'POST',

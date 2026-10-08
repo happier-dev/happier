@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import type {
     UsageAnalyticsQueryRequest,
     UsageAnalyticsQueryResponse,
@@ -114,6 +114,7 @@ export async function queryUsage(
     credentials: AuthCredentials,
     params: UsageQueryParams = {}
 ): Promise<UsageResponse> {
+    const requestUsage = createServerFetchForActiveServer();
     return await backoff(async () => {
         const request: UsageAnalyticsQueryRequest = {
             dateRange: typeof params.startTime === 'number' || typeof params.endTime === 'number'
@@ -152,7 +153,7 @@ export async function queryUsage(
             topLimit: 20,
         };
 
-        const response = await serverFetch('/v2/usage/query', {
+        const response = await requestUsage('/v2/usage/query', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -171,7 +172,7 @@ export async function queryUsage(
             }
 
             if (response.status === 404 && message !== 'Session not found') {
-                return await queryLegacyUsage(credentials, params);
+                return await queryLegacyUsage(credentials, params, requestUsage);
             }
             if (response.status === 404 && params.sessionId) {
                 throw new HappyError('Session not found', false, { status: 404, kind: 'config' });
@@ -190,9 +191,10 @@ export async function queryUsage(
 async function queryLegacyUsage(
     credentials: AuthCredentials,
     params: UsageQueryParams,
+    request: ServerFetch,
 ): Promise<UsageDataPoint[]> {
     const legacyGroupBy: UsageLegacyPeriodGranularity = params.groupBy === 'hour' ? 'hour' : 'day';
-    const response = await serverFetch('/v1/usage/query', {
+    const response = await request('/v1/usage/query', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${credentials.token}`,

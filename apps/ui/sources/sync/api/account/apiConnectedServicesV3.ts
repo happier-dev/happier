@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
@@ -21,8 +21,9 @@ export async function getConnectedServiceCredentialPlain(
 ): Promise<Readonly<{
   content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }>;
 }> & ConnectedServiceCredentialRevisionBoundaryV1> {
+  const request = options.request ?? createServerFetchForActiveServer();
   return await backoff(async () => {
-    const response = await (options.request ?? serverFetch)(
+    const response = await request(
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
       {
         method: 'GET',

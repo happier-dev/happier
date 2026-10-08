@@ -1,38 +1,33 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlMock(...args),
-    },
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                        Platform: { OS: 'web' },
-                        AppState: {
-                            get currentState() {
-                                return appState.currentState;
-                            },
-                        },
-                    }
-    );
-});
+installTokenStorageWebPlatformMocks();
+let storageBoundary: ReturnType<typeof installLocalStorageMock>;
+let locksBoundary: ReturnType<typeof installWebLockManagerMock>;
 
 describe('apiPush endpoint supervision', () => {
-    afterEach(() => {
+    beforeEach(() => {
+        storageBoundary = installLocalStorageMock();
+        locksBoundary = installWebLockManagerMock();
+    });
+
+    afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
         runtimeFetchMock.mockReset();
-        getCredentialsForServerUrlMock.mockReset();
-        appState.currentState = 'active';
+        locksBoundary.restore();
+        storageBoundary.restore();
+        vi.unstubAllGlobals();
         vi.resetModules();
         vi.useRealTimers();
     });
@@ -41,9 +36,8 @@ describe('apiPush endpoint supervision', () => {
         const globalFetch = vi.fn(() => {
             throw new Error('raw global fetch should not be called');
         });
-        (globalThis as unknown as { fetch?: unknown }).fetch = globalFetch as unknown;
+        vi.stubGlobal('fetch', globalFetch);
 
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-1', secret: 'secret' });
         runtimeFetchMock.mockImplementation(async (url: unknown) => {
             const asString = String(url ?? '');
             if (asString.endsWith('/v1/push-tokens')) {
@@ -67,7 +61,11 @@ describe('apiPush endpoint supervision', () => {
     });
 
     it('uses the provided serverId when supervising an explicit apiEndpoint', async () => {
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-1', secret: 'secret' });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const home = await upsertServerProfile({ serverUrl: 'https://other.example.test', name: 'server-123' });
+        const targetToken = createAccountTokenForTests('token-1');
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: targetToken })).toBe(true);
         runtimeFetchMock.mockImplementation(async (url: unknown) => {
             const asString = String(url ?? '');
             if (asString.endsWith('/v1/push-tokens')) {
@@ -83,7 +81,7 @@ describe('apiPush endpoint supervision', () => {
                 { token: 'token-1', secret: 'secret' },
                 'push-token-1',
                 {
-                    serverId: 'server-123',
+                    serverId: home.id,
                     apiEndpoint: 'https://other.example.test',
                     clientServerUrl: 'https://client.example.test',
                     retry: 'none',
@@ -91,12 +89,8 @@ describe('apiPush endpoint supervision', () => {
             ),
         ).resolves.toBeUndefined();
 
-        const calls = getCredentialsForServerUrlMock.mock.calls as Array<[unknown, unknown]>;
-        expect(
-            calls.some((call) => {
-                const options = call[1] as { serverId?: unknown } | undefined;
-                return options?.serverId === 'server-123';
-            }),
-        ).toBe(true);
+        const registrations = runtimeFetchMock.mock.calls.filter(([url]) => String(url).endsWith('/v1/push-tokens'));
+        expect(registrations).toHaveLength(1);
+        expect(new Headers(registrations[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${targetToken}`);
     });
 });

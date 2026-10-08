@@ -1,33 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HappyError } from '@/utils/errors/errors';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  return {
-    ...actual,
-    backoff: actual.createBackoff({
-      minDelay: 0,
-      maxDelay: 0,
-      maxFailureCount: 2,
-    }),
-  };
-});
+import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
+import { getAccountEncryptionModeCacheRevision } from './apiAccountEncryptionMode';
 
-const mocks = vi.hoisted(() => {
-  return {
-    invalidateAccountEncryptionModeCache: vi.fn(),
-    serverFetch: vi.fn(),
-  };
-});
-
-vi.mock('@/sync/http/client', () => ({
-  serverFetch: mocks.serverFetch,
-}));
-
-vi.mock('./apiAccountEncryptionMode', () => ({
-  invalidateAccountEncryptionModeCache: mocks.invalidateAccountEncryptionModeCache,
-}));
+const fetchBoundary = vi.fn<typeof fetch>();
+let cacheRevision: number;
 
 import {
   AccountEncryptionMigrateRequestSchema,
@@ -64,13 +43,27 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('migrateAccountEncryptionMode', () => {
-  beforeEach(() => {
-    mocks.invalidateAccountEncryptionModeCache.mockReset();
-    mocks.serverFetch.mockReset();
+  beforeEach(async () => {
+    fetchBoundary.mockReset();
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://migration.example.test' });
+    cacheRevision = getAccountEncryptionModeCacheRevision();
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (isServerFetchConnectivityProbeRequest(input)) return Response.json({});
+      return await fetchBoundary(input, init);
+    });
+  });
+
+  afterEach(async () => {
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
+    vi.unstubAllGlobals();
   });
 
   it('invalidates cached account mode after a successful migration', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(
+    fetchBoundary.mockResolvedValueOnce(
       jsonResponse({
         success: true,
         mode: 'plain',
@@ -86,7 +79,7 @@ describe('migrateAccountEncryptionMode', () => {
       ),
     ).resolves.toMatchObject({ success: true, mode: 'plain' });
 
-    expect(mocks.invalidateAccountEncryptionModeCache).toHaveBeenCalledTimes(1);
+    expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision + 1);
   });
 
   it('retains committed authoring-memory rows through the canonical migration response adapter', async () => {
@@ -97,9 +90,9 @@ describe('migrateAccountEncryptionMode', () => {
     const result = { success: true, mode: 'plain', accountVersion: 4, settingsVersion: 1,
       authoringMemory: { rows: [{ key: 'lastUsedProfile', revision: 4, content }] },
     };
-    mocks.serverFetch.mockResolvedValueOnce(jsonResponse(result));
+    fetchBoundary.mockResolvedValueOnce(jsonResponse(result));
     await expect(migrateAccountEncryptionMode({ token: 't' }, request)).resolves.toEqual(result);
-    expect(JSON.parse(mocks.serverFetch.mock.calls[0]![1].body)).toEqual(request);
+    expect(JSON.parse(String(fetchBoundary.mock.calls[0]![1]?.body))).toEqual(request);
   });
 
   it('retries a lost response with byte-identical migration request bytes', async () => {
@@ -107,17 +100,13 @@ describe('migrateAccountEncryptionMode', () => {
       new Error('response was lost after the server committed'),
       { retryable: true },
     );
-    mocks.serverFetch
+    fetchBoundary
       .mockImplementationOnce(async () => {
-        expect(
-          mocks.invalidateAccountEncryptionModeCache,
-        ).not.toHaveBeenCalled();
+        expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision);
         throw lostResponse;
       })
       .mockImplementationOnce(async () => {
-        expect(
-          mocks.invalidateAccountEncryptionModeCache,
-        ).not.toHaveBeenCalled();
+        expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision);
         return jsonResponse({
           success: true,
           mode: 'plain',
@@ -135,26 +124,18 @@ describe('migrateAccountEncryptionMode', () => {
       settingsVersion: 1,
     });
 
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
-    const firstRequest = mocks.serverFetch.mock.calls[0]?.[1];
-    const secondRequest = mocks.serverFetch.mock.calls[1]?.[1];
-    expect(firstRequest).toEqual({
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer migration-token',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(PLAIN_REQUEST),
-    });
-    expect(secondRequest).toEqual(firstRequest);
+    expect(fetchBoundary).toHaveBeenCalledTimes(2);
+    const firstRequest = fetchBoundary.mock.calls[0]?.[1];
+    const secondRequest = fetchBoundary.mock.calls[1]?.[1];
+    for (const [input, init] of fetchBoundary.mock.calls) {
+      expect(String(input)).toBe('https://migration.example.test/v1/account/encryption/migrate');
+      expect(init?.method).toBe('POST');
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer migration-token');
+      expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json');
+    }
+    expect(firstRequest?.body).toBe(JSON.stringify(PLAIN_REQUEST));
     expect(secondRequest?.body).toBe(firstRequest?.body);
-    expect(mocks.serverFetch.mock.calls[0]?.[2]).toEqual({
-      includeAuth: false,
-    });
-    expect(mocks.serverFetch.mock.calls[1]?.[2]).toEqual({
-      includeAuth: false,
-    });
-    expect(mocks.invalidateAccountEncryptionModeCache).toHaveBeenCalledTimes(1);
+    expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision + 1);
   });
 
   it('performs one direct POST when the caller owns migration retries', async () => {
@@ -162,7 +143,7 @@ describe('migrateAccountEncryptionMode', () => {
       new Error('response was lost after the server committed'),
       { retryable: true },
     );
-    mocks.serverFetch
+    fetchBoundary
       .mockRejectedValueOnce(lostResponse)
       .mockResolvedValueOnce(
         jsonResponse(
@@ -179,18 +160,13 @@ describe('migrateAccountEncryptionMode', () => {
       ),
     ).rejects.toBe(lostResponse);
 
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
-    expect(mocks.serverFetch.mock.calls[0]?.[2]).toEqual({
-      includeAuth: false,
-      retry: 'none',
-    });
-    expect(
-      mocks.invalidateAccountEncryptionModeCache,
-    ).not.toHaveBeenCalled();
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
+    expect(fetchBoundary.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision);
   });
 
   it('rejects an incomplete success response without fabricating Account currentness', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(
+    fetchBoundary.mockResolvedValueOnce(
       jsonResponse({
         success: true,
         mode: 'plain',
@@ -209,20 +185,18 @@ describe('migrateAccountEncryptionMode', () => {
         === 'account-encryption-migration-response-incompatible'
         && err.status === 200;
     });
-    expect(
-      mocks.invalidateAccountEncryptionModeCache,
-    ).not.toHaveBeenCalled();
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+    expect(getAccountEncryptionModeCacheRevision()).toBe(cacheRevision);
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 
   it('submits the current migration without an older-server capability probe', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ success: true, mode: 'plain', accountVersion: 4, settingsVersion: 1 }));
+    fetchBoundary.mockResolvedValueOnce(jsonResponse({ success: true, mode: 'plain', accountVersion: 4, settingsVersion: 1 }));
     await expect(migrateAccountEncryptionMode({ token: 't' }, PLAIN_REQUEST)).resolves.toMatchObject({ success: true, mode: 'plain' });
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 
   it('submits an E2EE migration through the same current transport', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ success: true, mode: 'e2ee', accountVersion: 4, settingsVersion: 1 }));
+    fetchBoundary.mockResolvedValueOnce(jsonResponse({ success: true, mode: 'e2ee', accountVersion: 4, settingsVersion: 1 }));
     await expect(
       migrateAccountEncryptionMode(
         { token: 't' },
@@ -246,11 +220,11 @@ describe('migrateAccountEncryptionMode', () => {
         }),
       ),
     ).resolves.toMatchObject({ success: true, mode: 'e2ee' });
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces restore_required as a typed error code', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(
+    fetchBoundary.mockResolvedValueOnce(
       jsonResponse({ error: 'invalid-params', reason: 'restore_required' }, 400),
     );
 
@@ -280,11 +254,11 @@ describe('migrateAccountEncryptionMode', () => {
       if (!(err instanceof HappyError)) return false;
       return err.code === 'restore_required' && err.status === 400;
     });
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces metadata_privacy_upgrade_required as a typed error code', async () => {
-    mocks.serverFetch.mockResolvedValueOnce(
+    fetchBoundary.mockResolvedValueOnce(
       jsonResponse({ error: 'metadata_privacy_upgrade_required' }, 400),
     );
 
@@ -298,7 +272,7 @@ describe('migrateAccountEncryptionMode', () => {
       return err.code === 'metadata_privacy_upgrade_required'
         && err.status === 400;
     });
-    expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchBoundary).toHaveBeenCalledTimes(1);
   });
 
 });

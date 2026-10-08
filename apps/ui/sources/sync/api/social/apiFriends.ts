@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import {
     UserProfile,
@@ -36,8 +36,11 @@ export async function searchUsersPageByUsername(
     username: string,
     options?: UserSearchOptions,
 ): Promise<Readonly<{ users: readonly UserProfile[]; nextCursor: string | null }>> {
+    const request = options?.request ?? (() => {
+        const focusedRequest = createServerFetchForActiveServer();
+        return (path: string, init?: RequestInit) => focusedRequest(path, init, { includeAuth: false });
+    })();
     const load = async () => {
-        const request = options?.request ?? ((path: string, init?: RequestInit) => serverFetch(path, init, { includeAuth: false }));
         const query = new URLSearchParams({ query: username });
         if (options?.cursor) query.set('cursor', options.cursor);
         if (options?.purpose) query.set('purpose', options.purpose);
@@ -88,8 +91,8 @@ export async function getUserProfile(
     userId: string,
     opts: FriendsListOptions = {},
 ): Promise<UserProfile | null> {
+    const request = opts.request ?? createServerFetchForActiveServer();
     const run = async () => {
-        const request = opts.request ?? serverFetch;
         const response = await request(
             `/v1/user/${userId}`,
             {
@@ -144,9 +147,10 @@ export async function getUserProfiles(
 ): Promise<UserProfile[]> {
     if (userIds.length === 0) return [];
 
+    const request = opts.request ?? createServerFetchForActiveServer();
     // Fetch profiles individually and filter out nulls
     const profiles = await Promise.all(
-        userIds.map(id => getUserProfile(credentials, id, opts))
+        userIds.map(id => getUserProfile(credentials, id, { ...opts, request }))
     );
     
     return profiles.filter((profile): profile is UserProfile => profile !== null);
@@ -159,8 +163,9 @@ export async function sendFriendRequest(
     credentials: AuthCredentials,
     recipientId: string
 ): Promise<UserProfile | null> {
+    const request = createServerFetchForActiveServer();
     return await backoff(async () => {
-        const response = await serverFetch('/v1/friends/add', {
+        const response = await request('/v1/friends/add', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -215,6 +220,7 @@ export async function getFriendsList(
     credentials: AuthCredentials,
     opts: FriendsListOptions = {},
 ): Promise<UserProfile[]> {
+    const request = opts.request ?? createServerFetchForActiveServer();
     const run = async () => {
         const init: RequestInit = {
             method: 'GET',
@@ -223,8 +229,8 @@ export async function getFriendsList(
             },
         };
         const response = opts.request
-            ? await opts.request('/v1/friends', init)
-            : await serverFetch('/v1/friends', init, { includeAuth: false });
+            ? await request('/v1/friends', init)
+            : await request('/v1/friends', init, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -266,8 +272,9 @@ export async function removeFriend(
     credentials: AuthCredentials,
     friendId: string
 ): Promise<UserProfile | null> {
+    const request = createServerFetchForActiveServer();
     return await backoff(async () => {
-        const response = await serverFetch('/v1/friends/remove', {
+        const response = await request('/v1/friends/remove', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,

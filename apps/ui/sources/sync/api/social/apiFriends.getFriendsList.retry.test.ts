@@ -6,10 +6,6 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
 }));
 
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -21,7 +17,11 @@ function buildTokenWithSub(sub: string): string {
 }
 
 describe('getFriendsList retry semantics', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
         runtimeFetchSpy.mockReset();
         vi.resetModules();
         vi.useRealTimers();
@@ -32,7 +32,7 @@ describe('getFriendsList retry semantics', () => {
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
-        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'device' });
 
         runtimeFetchSpy.mockImplementation(async (input: unknown) => {
             const url = String(input ?? '');

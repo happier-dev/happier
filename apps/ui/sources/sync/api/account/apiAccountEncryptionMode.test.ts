@@ -1,47 +1,42 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-  return {
-    ...actual,
-    backoff: immediate,
-  };
-});
-
-afterEach(() => {
+afterEach(async () => {
+  const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+  await resetServerReachabilitySupervisors();
+  const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+  await stopAllEndpointSupervisorsForTests();
   vi.unstubAllGlobals();
   vi.resetModules();
-  vi.doUnmock('@/sync/http/client');
 });
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-  vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerHomeCarrier: () => null,
-    getActiveServerSnapshot: () => ({
-      serverId: 'test',
-      serverUrl: 'https://api.example.test',
-      kind: 'custom',
-      generation: 1,
-    }),
-  }));
+beforeEach(async () => {
+  const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+  await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
+});
+
+function installNetworkBoundary(respond: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  const fetchMock = vi.fn(respond);
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (isServerFetchConnectivityProbeRequest(input)) return Response.json({});
+    return await fetchMock(input, init);
+  });
+  return fetchMock;
 }
 
 describe('apiAccountEncryptionMode', () => {
   it('reads strict migration currentness without fabricating missing fields', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = installNetworkBoundary(async () => new Response(JSON.stringify({
       mode: 'plain',
       version: 17,
       signingKeyFingerprint: null,
       contentKeyFingerprint: null,
       updatedAt: 42,
     }), { status: 200 }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionCurrentness } = await import(
       './apiAccountEncryptionMode'
@@ -56,20 +51,17 @@ describe('apiAccountEncryptionMode', () => {
       contentKeyFingerprint: null,
       updatedAt: 42,
     });
-    expect(serverFetch).toHaveBeenCalledWith(
-      '/v1/account/encryption/currentness',
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/v1/account/encryption/currentness',
       expect.objectContaining({ method: 'GET' }),
-      { includeAuth: false },
     );
   });
 
   it('refuses migration currentness from an older response instead of defaulting it', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = installNetworkBoundary(async () => new Response(JSON.stringify({
       mode: 'plain',
       updatedAt: 42,
     }), { status: 200 }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionCurrentness } = await import(
       './apiAccountEncryptionMode'
@@ -83,37 +75,24 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('reads currentness through the supplied server-scoped request without consulting active-server transport', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn();
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
-    const request = vi.fn(async () => new Response(JSON.stringify({
-      mode: 'e2ee',
-      version: 19,
-      signingKeyFingerprint: 'signing-19',
-      contentKeyFingerprint: 'content-19',
-      updatedAt: 43,
-    }), { status: 200 }));
-
-    const { fetchAccountEncryptionCurrentness } = await import(
-      './apiAccountEncryptionMode'
-    );
-
-    await expect(fetchAccountEncryptionCurrentness(credentials, {
-      request,
-    })).resolves.toMatchObject({
-      mode: 'e2ee',
-      version: 19,
-      contentKeyFingerprint: 'content-19',
+    const fetchMock = installNetworkBoundary(async () => Response.json({
+      mode: 'e2ee', version: 19, signingKeyFingerprint: 'signing-19',
+      contentKeyFingerprint: 'content-19', updatedAt: 43,
+    }));
+    const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+    const request = createServerFetchAtEndpoint({ endpointUrl: 'https://captured.example.test', credentials });
+    const { fetchAccountEncryptionCurrentness } = await import('./apiAccountEncryptionMode');
+    await expect(fetchAccountEncryptionCurrentness(credentials, { request })).resolves.toMatchObject({
+      mode: 'e2ee', version: 19, contentKeyFingerprint: 'content-19',
     });
-    expect(request).toHaveBeenCalledWith(
-      '/v1/account/encryption/currentness',
+    expect(fetchMock.mock.calls.every(([input]) => new URL(String(input)).origin === 'https://captured.example.test')).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://captured.example.test/v1/account/encryption/currentness',
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(serverFetch).not.toHaveBeenCalled();
   });
 
   it('fails closed to e2ee when the server does not implement /v1/account/encryption', async () => {
-    mockServerConfig();
     vi.stubGlobal('fetch', (vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.endsWith('/health')) {
@@ -134,11 +113,9 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('preserves the explicit Account recovery response as a typed recovery error', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = installNetworkBoundary(async () => new Response(JSON.stringify({
       error: 'account-encryption-recovery-required',
     }), { status: 400 }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
@@ -150,11 +127,9 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('keeps a generic migration-required response fail-closed instead of offering Secret Key recovery', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = installNetworkBoundary(async () => new Response(JSON.stringify({
       error: 'migration-required',
     }), { status: 400 }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
@@ -168,9 +143,7 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('answers the last read mode synchronously, and nothing before a read', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async () => new Response(JSON.stringify({ mode: 'plain', updatedAt: 42 }), { status: 200 }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
+    const fetchMock = installNetworkBoundary(async () => new Response(JSON.stringify({ mode: 'plain', updatedAt: 42 }), { status: 200 }));
 
     const { fetchAccountEncryptionMode, getCachedAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
@@ -178,25 +151,23 @@ describe('apiAccountEncryptionMode', () => {
     await fetchAccountEncryptionMode(credentials);
     expect(getCachedAccountEncryptionMode(credentials)).toBe('plain');
     // A synchronous read never asks the server.
-    expect(serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('coalesces concurrent account-mode GETs for the same server and credentials', async () => {
-    mockServerConfig();
     let resolveFetch!: (response: Response) => void;
     const responsePromise = new Promise<Response>((resolve) => {
       resolveFetch = resolve;
     });
-    const serverFetch = vi.fn(async () => await responsePromise);
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
+    const fetchMock = installNetworkBoundary(async () => await responsePromise);
 
     const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
     const first = fetchAccountEncryptionMode(credentials);
     const second = fetchAccountEncryptionMode(credentials);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    expect(serverFetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     resolveFetch(new Response(JSON.stringify({ mode: 'plain', updatedAt: 42 }), { status: 200 }));
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -206,12 +177,10 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('does not coalesce account-mode GETs across distinct credential scopes that share a bearer token', async () => {
-    mockServerConfig();
     const responses: Array<(response: Response) => void> = [];
-    const serverFetch = vi.fn(() => new Promise<Response>((resolve) => {
+    const fetchMock = installNetworkBoundary(() => new Promise<Response>((resolve) => {
       responses.push(resolve);
     }));
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
@@ -223,9 +192,9 @@ describe('apiAccountEncryptionMode', () => {
       token: 'shared-bearer-token',
       secret: 'account-b-secret',
     });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
-    expect(serverFetch).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const resolve of responses) {
       resolve(new Response(JSON.stringify({ mode: 'plain', updatedAt: 42 }), { status: 200 }));
     }
@@ -236,19 +205,17 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('does not reuse a cached account mode after updating the account mode', async () => {
-    mockServerConfig();
-    const serverFetch = vi.fn(async (_path: string, init?: RequestInit) => {
+    const fetchMock = installNetworkBoundary(async (_path: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'PATCH') {
         return new Response(JSON.stringify({ mode: 'plain', updatedAt: 2 }), { status: 200 });
       }
       return new Response(JSON.stringify({
-        mode: serverFetch.mock.calls.filter(([path]) => path === '/v1/account/encryption').length === 1
+        mode: fetchMock.mock.calls.filter(([path]) => new URL(String(path)).pathname === '/v1/account/encryption').length === 1
           ? 'e2ee'
           : 'plain',
         updatedAt: Date.now(),
       }), { status: 200 });
     });
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionMode, updateAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
@@ -256,15 +223,13 @@ describe('apiAccountEncryptionMode', () => {
     await expect(updateAccountEncryptionMode(credentials, 'plain')).resolves.toMatchObject({ mode: 'plain' });
     await expect(fetchAccountEncryptionMode(credentials)).resolves.toMatchObject({ mode: 'plain' });
 
-    const getCalls = serverFetch.mock.calls.filter(([path, init]) =>
-      path === '/v1/account/encryption' && (init as RequestInit | undefined)?.method === 'GET',
+    const getCalls = fetchMock.mock.calls.filter(([path, init]) =>
+      new URL(String(path)).pathname === '/v1/account/encryption' && (init as RequestInit | undefined)?.method === 'GET',
     );
     expect(getCalls).toHaveLength(2);
   });
 
   it('publishes a new cache revision whenever the incumbent mode cache is invalidated', async () => {
-    mockServerConfig();
-    vi.doMock('@/sync/http/client', () => ({ serverFetch: vi.fn() }));
 
     const {
       getAccountEncryptionModeCacheRevision,
@@ -285,13 +250,12 @@ describe('apiAccountEncryptionMode', () => {
   });
 
   it('does not let a stale in-flight account mode GET repopulate cache after an update invalidates it', async () => {
-    mockServerConfig();
     let resolveFirstGet!: (response: Response) => void;
     const firstGetResponse = new Promise<Response>((resolve) => {
       resolveFirstGet = resolve;
     });
     let getCount = 0;
-    const serverFetch = vi.fn(async (_path: string, init?: RequestInit) => {
+    const fetchMock = installNetworkBoundary(async (_path: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'PATCH') {
         return new Response(JSON.stringify({ mode: 'plain', updatedAt: 2 }), { status: 200 });
       }
@@ -301,12 +265,11 @@ describe('apiAccountEncryptionMode', () => {
       }
       return new Response(JSON.stringify({ mode: 'plain', updatedAt: 3 }), { status: 200 });
     });
-    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
 
     const { fetchAccountEncryptionMode, updateAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
 
     const staleFetch = fetchAccountEncryptionMode(credentials);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     await expect(updateAccountEncryptionMode(credentials, 'plain')).resolves.toMatchObject({ mode: 'plain' });
 
@@ -314,8 +277,8 @@ describe('apiAccountEncryptionMode', () => {
     await expect(staleFetch).resolves.toMatchObject({ mode: 'e2ee' });
     await expect(fetchAccountEncryptionMode(credentials)).resolves.toMatchObject({ mode: 'plain', updatedAt: 3 });
 
-    const getCalls = serverFetch.mock.calls.filter(([path, init]) =>
-      path === '/v1/account/encryption' && (init as RequestInit | undefined)?.method === 'GET',
+    const getCalls = fetchMock.mock.calls.filter(([path, init]) =>
+      new URL(String(path)).pathname === '/v1/account/encryption' && (init as RequestInit | undefined)?.method === 'GET',
     );
     expect(getCalls).toHaveLength(2);
   });

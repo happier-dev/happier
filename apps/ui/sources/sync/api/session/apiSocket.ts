@@ -40,6 +40,7 @@ import {
 } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
+    areServerProfileIdentifiersEquivalent,
     getServerProfileById,
     subscribeActiveServerRuntimeOrigin,
 } from '@/sync/domains/server/serverProfiles';
@@ -74,6 +75,7 @@ import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrie
 import { fetchAccountEncryptionCurrentness, getAccountEncryptionModeCacheRevision } from '@/sync/api/account/apiAccountEncryptionMode';
 import { MachineLiveStreamPayloadErrorV1, type MachineLiveStreamContentV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import { createMachineLiveStreamSocketTransport } from '@/sync/domains/machines/peer/mediation/stream/socketTransport';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
@@ -326,7 +328,7 @@ class ApiSocket {
             if (!this.scopedConnectionSupervisor) {
                 this.scopedConnectionSupervisor = createManagedConnectionSupervisor({
                     ...DEFAULT_MANAGED_CONNECTION_POLICY,
-                    createTransport: () => { this.ensureSocketTransport(); return this.socketTransport!; },
+                    createTransport: () => { this.ensureSocketTransport(true); return this.socketTransport!; },
                     probeReadiness: async () => {
                         if (this.config !== config || config.isCurrent?.() === false) return { status: 'auth_failed' };
                         try {
@@ -838,211 +840,248 @@ class ApiSocket {
         const serverId = config.serverId ?? snapshot.serverId;
         const generation = config.generation ?? snapshot.generation;
         const url = `${endpoint}${path}`;
+        const method = String(options?.method ?? 'GET').toUpperCase();
         let credentialsToken: string;
         let issueRequest: () => Promise<InFlightHttpRequestResult>;
         let isCurrent: () => boolean;
         let acceptsRecoveredConfiguration: ((recovery: RecoveredHttpRequestConfiguration) => boolean) | null = null;
+        let acceptsRejectedConfiguration: (() => boolean) | null = null;
+        let unsubscribeCredentialChanges: (() => void) | null = null;
 
-        if (hasPreparedTarget) {
-            const capturedServerId = config.serverId!;
-            const capturedGeneration = config.generation!;
-            const capturedToken = config.token;
-            const capturedRuntimeOrigin = config.runtimeOrigin;
-            const capturedCarrier = config.carrier;
-            const capturedHomeCarrier = config.homeCarrier ?? null;
-            const requestConfigurationAbortController = this.requestConfigurationAbortController;
-            let recoveredToken: string | null = null;
-            const isPreparedConfigCurrent = () => (
-                this.config === config
-                && this.config.endpoint === endpoint
-                && this.config.serverId === capturedServerId
-                && this.config.generation === capturedGeneration
-                && this.config.token === capturedToken
-                && this.config.runtimeOrigin === capturedRuntimeOrigin
-                && this.config.carrier === capturedCarrier
-                && (this.config.homeCarrier ?? null) === capturedHomeCarrier
-                && this.requestConfigurationAbortController === requestConfigurationAbortController
-                && !requestConfigurationAbortController.signal.aborted
-            );
-            acceptsRecoveredConfiguration = (recovery) => (
-                recovery.rejectedToken === capturedToken
-                && this.config === config
-                && this.config.endpoint === endpoint
-                && this.config.serverId === capturedServerId
-                && this.config.generation === capturedGeneration
-                && this.config.runtimeOrigin === capturedRuntimeOrigin
-                && this.config.carrier === capturedCarrier
-                && (this.config.homeCarrier ?? null) === capturedHomeCarrier
-                && this.config.token === recovery.recoveredToken
-                && recovery.isCurrent()
-            );
-            if (capturedCarrier === 'iroh' && !capturedRuntimeOrigin && !capturedHomeCarrier) {
-                throw new ServerScopedTransportUnavailableError();
-            }
-            // The socket configuration remains the bearer authority, but a
-            // target-scoped credential lookup is still an asynchronous
-            // lifecycle boundary. A credential change may synchronously
-            // reconfigure the socket while that lookup is in progress; fence
-            // before any request can issue with the captured configuration.
-            await TokenStorage.getCredentialsForServerUrl(endpoint, {
-                serverId: capturedServerId,
-            });
-            if (!isPreparedConfigCurrent()) {
-                throw new StaleServerGenerationError();
-            }
-            const requestAtPreparedTarget = createServerFetchAtEndpoint({
-                endpointUrl: endpoint,
-                ...(capturedRuntimeOrigin ? { runtimeOrigin: capturedRuntimeOrigin } : {}),
-                ...(capturedHomeCarrier ? { homeCarrier: capturedHomeCarrier } : {}),
-                credentials: { token: capturedToken },
-                serverId: capturedServerId,
-                signal: requestConfigurationAbortController.signal,
-                superviseReachability: true,
-                recoverStoredCredentials: true,
-                isCurrent: isPreparedConfigCurrent,
-                onRecoveredCredentials: (credentials) => {
-                    if (!isPreparedConfigCurrent()) return false;
-                    recoveredToken = credentials.token;
-                    return true;
-                },
-            });
-            isCurrent = isPreparedConfigCurrent;
-            if (!isCurrent()) {
-                throw new StaleServerGenerationError();
-            }
-            credentialsToken = capturedToken;
-            issueRequest = async () => {
-                try {
-                    const response = await requestAtPreparedTarget(path, options, requestOptions);
-                    let recovery: RecoveredHttpRequestConfiguration | undefined;
-                    if (recoveredToken && recoveredToken !== capturedToken) {
-                        if (!isPreparedConfigCurrent()) throw new StaleServerGenerationError();
-                        const isRecoveredConfigurationCurrent = this.adoptRecoveredHttpToken({
-                            config,
-                            rejectedToken: capturedToken,
-                            recoveredToken,
-                        });
-                        if (!isRecoveredConfigurationCurrent) throw new StaleServerGenerationError();
-                        recovery = {
-                            rejectedToken: capturedToken,
-                            recoveredToken,
-                            isCurrent: isRecoveredConfigurationCurrent,
-                        };
-                    }
-                    return { response, ...(recovery ? { recovery } : {}) };
-                } catch (error) {
-                    if (!isCurrent()) throw new StaleServerGenerationError();
-                    throw error;
-                }
-            };
-        } else {
-            // Legacy configuration without an immutable prepared target retains
-            // its historical active-Home lookup behavior. Production Sync
-            // initialization always supplies the prepared branch above.
-            if (
-                serverId !== snapshot.serverId
-                || generation !== snapshot.generation
-            ) {
-                throw new StaleServerGenerationError();
-            }
-            const endpointComparableKey = createServerUrlComparableKey(endpoint);
-            const activeServerComparableKey = createServerUrlComparableKey(snapshot.serverUrl);
-            const serverLookupOptions =
-                endpointComparableKey
-                && activeServerComparableKey
-                && endpointComparableKey === activeServerComparableKey
-                && serverId
-                    ? { serverId }
-                    : undefined;
-            const credentials = await TokenStorage.getCredentialsForServerUrl(endpoint, serverLookupOptions);
-            if (!credentials) {
-                throw new Error('No authentication credentials');
-            }
-            const afterCredentialRead = getActiveServerSnapshot();
-            if (
-                afterCredentialRead.serverId !== serverId
-                || afterCredentialRead.generation !== generation
-            ) {
-                throw new StaleServerGenerationError();
-            }
-            credentialsToken = credentials.token;
-            isCurrent = () => {
-                const current = getActiveServerSnapshot();
-                return current.generation === generation && current.serverId === serverId;
-            };
-            issueRequest = async () => ({
-                response: await serverFetch(
-                    url,
-                    {
-                        ...options,
-                        headers: (() => {
-                            const headers = new Headers(options?.headers);
-                            headers.set('Authorization', `Bearer ${credentials.token}`);
-                            return headers;
-                        })(),
-                    },
-                    { includeAuth: false, ...requestOptions },
-                ),
-            });
-        }
-
-        const method = String(options?.method ?? 'GET').toUpperCase();
-        const hasBody = options?.body != null;
-        const hasSignal = Boolean(options?.signal);
-
-        const canDedupe =
-            (method === 'GET' || method === 'HEAD')
-            && !hasBody
-            && !hasSignal
-            && options?.cache !== 'no-store';
-
-        const requestKey = canDedupe
-            // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share
-            // a single in-flight fetch even if the active server generation changes while bootstrapping.
-            ? `${serverId ?? ''}:${method}:${url}:tk:${getOrCreateTokenCacheKey(credentialsToken)}`
-            : null;
-
-        let result: InFlightHttpRequestResult;
-        if (requestKey) {
-            const existing = this.inFlightHttpRequestsByKey.get(requestKey);
-            if (existing) {
-                result = await existing;
-            } else {
-                const promise = issueRequest();
-                this.inFlightHttpRequestsByKey.set(requestKey, promise);
-                try {
-                    result = await promise;
-                } finally {
-                    this.inFlightHttpRequestsByKey.delete(requestKey);
-                }
-            }
-            // Always return a clone when de-duping to keep bodies readable per caller.
-            result = { ...result, response: result.response.clone() };
-        } else {
-            result = await issueRequest();
-        }
-
-        if (!isCurrent() && !(result.recovery && acceptsRecoveredConfiguration?.(result.recovery))) {
-            throw new StaleServerGenerationError();
-        }
-
-        const response = result.response;
-
-        // Best-effort server time calibration using the HTTP Date header ("server now").
-        // This avoids deriving "now" from potentially stale resource timestamps (e.g. session.updatedAt).
         try {
-            const dateHeader = response.headers.get('date');
-            if (dateHeader) {
-                const serverNow = Date.parse(dateHeader);
-                if (!Number.isNaN(serverNow)) {
-                    observeServerTimestamp(serverNow);
+            if (hasPreparedTarget) {
+                const capturedServerId = config.serverId!;
+                const capturedGeneration = config.generation!;
+                const capturedToken = config.token;
+                const capturedRuntimeOrigin = config.runtimeOrigin;
+                const capturedCarrier = config.carrier;
+                const capturedHomeCarrier = config.homeCarrier ?? null;
+                const requestConfigurationAbortController = this.requestConfigurationAbortController;
+                let recoveredToken: string | null = null;
+                const isPreparedConfigOwned = () => (
+                    this.config === config
+                    && this.config.endpoint === endpoint
+                    && this.config.serverId === capturedServerId
+                    && this.config.generation === capturedGeneration
+                    && this.config.token === capturedToken
+                    && this.config.runtimeOrigin === capturedRuntimeOrigin
+                    && this.config.carrier === capturedCarrier
+                    && (this.config.homeCarrier ?? null) === capturedHomeCarrier
+                    && this.requestConfigurationAbortController === requestConfigurationAbortController
+                );
+                const isPreparedConfigCurrent = () => (
+                    isPreparedConfigOwned()
+                    && !requestConfigurationAbortController.signal.aborted
+                );
+                let ownRejectedCredentialRemoved = false;
+                let credentialReplaced = false;
+                if (method !== 'GET' && method !== 'HEAD') {
+                    unsubscribeCredentialChanges = subscribeHomeCredentialChange((event) => {
+                        if (event.kind === 'credentials_set'
+                            && areServerProfileIdentifiersEquivalent(event.serverId, capturedServerId)) {
+                            credentialReplaced = true;
+                        }
+                    });
+                    acceptsRejectedConfiguration = () => (
+                        ownRejectedCredentialRemoved
+                        && !credentialReplaced
+                        && isPreparedConfigOwned()
+                        && requestConfigurationAbortController.signal.aborted
+                        && requestConfigurationAbortController.signal.reason === 'credentials-changed'
+                    );
                 }
+                acceptsRecoveredConfiguration = (recovery) => (
+                    recovery.rejectedToken === capturedToken
+                    && this.config === config
+                    && this.config.endpoint === endpoint
+                    && this.config.serverId === capturedServerId
+                    && this.config.generation === capturedGeneration
+                    && this.config.runtimeOrigin === capturedRuntimeOrigin
+                    && this.config.carrier === capturedCarrier
+                    && (this.config.homeCarrier ?? null) === capturedHomeCarrier
+                    && this.config.token === recovery.recoveredToken
+                    && recovery.isCurrent()
+                );
+                if (capturedCarrier === 'iroh' && !capturedRuntimeOrigin && !capturedHomeCarrier) {
+                    throw new ServerScopedTransportUnavailableError();
+                }
+                // The socket configuration remains the bearer authority, but a
+                // target-scoped credential lookup is still an asynchronous
+                // lifecycle boundary. A credential change may synchronously
+                // reconfigure the socket while that lookup is in progress; fence
+                // before any request can issue with the captured configuration.
+                await TokenStorage.getCredentialsForServerUrl(endpoint, {
+                    serverId: capturedServerId,
+                });
+                if (!isPreparedConfigCurrent()) {
+                    throw new StaleServerGenerationError();
+                }
+                const requestAtPreparedTarget = createServerFetchAtEndpoint({
+                    endpointUrl: endpoint,
+                    ...(capturedRuntimeOrigin ? { runtimeOrigin: capturedRuntimeOrigin } : {}),
+                    ...(capturedHomeCarrier ? { homeCarrier: capturedHomeCarrier } : {}),
+                    credentials: { token: capturedToken },
+                    serverId: capturedServerId,
+                    signal: requestConfigurationAbortController.signal,
+                    superviseReachability: true,
+                    recoverStoredCredentials: true,
+                    isCurrent: isPreparedConfigCurrent,
+                    ...(acceptsRejectedConfiguration ? {
+                        onRejectedStoredCredentials: (rejectedToken: string) => {
+                            ownRejectedCredentialRemoved = rejectedToken === capturedToken;
+                        },
+                    } : {}),
+                    onRecoveredCredentials: (credentials) => {
+                        if (!isPreparedConfigCurrent()) return false;
+                        recoveredToken = credentials.token;
+                        return true;
+                    },
+                });
+                isCurrent = isPreparedConfigCurrent;
+                if (!isCurrent()) {
+                    throw new StaleServerGenerationError();
+                }
+                credentialsToken = capturedToken;
+                issueRequest = async () => {
+                    try {
+                        const response = await requestAtPreparedTarget(path, options, requestOptions);
+                        let recovery: RecoveredHttpRequestConfiguration | undefined;
+                        if (recoveredToken && recoveredToken !== capturedToken) {
+                            if (!isPreparedConfigCurrent()) throw new StaleServerGenerationError();
+                            const isRecoveredConfigurationCurrent = this.adoptRecoveredHttpToken({
+                                config,
+                                rejectedToken: capturedToken,
+                                recoveredToken,
+                            });
+                            if (!isRecoveredConfigurationCurrent) throw new StaleServerGenerationError();
+                            recovery = {
+                                rejectedToken: capturedToken,
+                                recoveredToken,
+                                isCurrent: isRecoveredConfigurationCurrent,
+                            };
+                        }
+                        return { response, ...(recovery ? { recovery } : {}) };
+                    } catch (error) {
+                        if (!isCurrent()) throw new StaleServerGenerationError();
+                        throw error;
+                    }
+                };
+            } else {
+                // Legacy configuration without an immutable prepared target retains
+                // its historical active-Home lookup behavior. Production Sync
+                // initialization always supplies the prepared branch above.
+                if (
+                    serverId !== snapshot.serverId
+                    || generation !== snapshot.generation
+                ) {
+                    throw new StaleServerGenerationError();
+                }
+                const endpointComparableKey = createServerUrlComparableKey(endpoint);
+                const activeServerComparableKey = createServerUrlComparableKey(snapshot.serverUrl);
+                const serverLookupOptions =
+                    endpointComparableKey
+                    && activeServerComparableKey
+                    && endpointComparableKey === activeServerComparableKey
+                    && serverId
+                        ? { serverId }
+                        : undefined;
+                const credentials = await TokenStorage.getCredentialsForServerUrl(endpoint, serverLookupOptions);
+                if (!credentials) {
+                    throw new Error('No authentication credentials');
+                }
+                const afterCredentialRead = getActiveServerSnapshot();
+                if (
+                    afterCredentialRead.serverId !== serverId
+                    || afterCredentialRead.generation !== generation
+                ) {
+                    throw new StaleServerGenerationError();
+                }
+                credentialsToken = credentials.token;
+                isCurrent = () => {
+                    const current = getActiveServerSnapshot();
+                    return current.generation === generation && current.serverId === serverId;
+                };
+                issueRequest = async () => ({
+                    response: await serverFetch(
+                        url,
+                        {
+                            ...options,
+                            headers: (() => {
+                                const headers = new Headers(options?.headers);
+                                headers.set('Authorization', `Bearer ${credentials.token}`);
+                                return headers;
+                            })(),
+                        },
+                        { includeAuth: false, ...requestOptions },
+                    ),
+                });
             }
-        } catch {
-            // Best-effort only
-        }
 
-        return response;
+            const hasBody = options?.body != null;
+            const hasSignal = Boolean(options?.signal);
+
+            const canDedupe =
+                (method === 'GET' || method === 'HEAD')
+                && !hasBody
+                && !hasSignal
+                && options?.cache !== 'no-store';
+
+            const requestKey = canDedupe
+                // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share
+                // a single in-flight fetch even if the active server generation changes while bootstrapping.
+                ? `${serverId ?? ''}:${method}:${url}:tk:${getOrCreateTokenCacheKey(credentialsToken)}`
+                : null;
+
+            let result: InFlightHttpRequestResult;
+            if (requestKey) {
+                const existing = this.inFlightHttpRequestsByKey.get(requestKey);
+                if (existing) {
+                    result = await existing;
+                } else {
+                    const promise = issueRequest();
+                    this.inFlightHttpRequestsByKey.set(requestKey, promise);
+                    try {
+                        result = await promise;
+                    } finally {
+                        this.inFlightHttpRequestsByKey.delete(requestKey);
+                    }
+                }
+                // Always return a clone when de-duping to keep bodies readable per caller.
+                result = { ...result, response: result.response.clone() };
+            } else {
+                result = await issueRequest();
+            }
+
+            if (!isCurrent() && !(result.recovery && acceptsRecoveredConfiguration?.(result.recovery))) {
+                // The exact write was definitively refused before its own rejected
+                // bearer was removed. Preserve that no-commit outcome, never its
+                // old body or authority; any replacement still takes the stale path.
+                if (result.response.status === 401 && acceptsRejectedConfiguration?.()) {
+                    return new Response(null, { status: 401 });
+                }
+                throw new StaleServerGenerationError();
+            }
+
+            const response = result.response;
+
+            // Best-effort server time calibration using the HTTP Date header ("server now").
+            // This avoids deriving "now" from potentially stale resource timestamps (e.g. session.updatedAt).
+            try {
+                const dateHeader = response.headers.get('date');
+                if (dateHeader) {
+                    const serverNow = Date.parse(dateHeader);
+                    if (!Number.isNaN(serverNow)) {
+                        observeServerTimestamp(serverNow);
+                    }
+                }
+            } catch {
+                // Best-effort only
+            }
+
+            return response;
+        } finally {
+            unsubscribeCredentialChanges?.();
+        }
     }
 
     //
@@ -1153,7 +1192,7 @@ class ApiSocket {
         });
     }
 
-    private ensureSocketTransport(): void {
+    private ensureSocketTransport(forceNew = false): void {
         if (!this.config) return;
         const snapshot = this.config.request ? { serverId: this.config.serverId ?? this.config.endpoint,
             serverUrl: this.config.endpoint, generation: this.config.generation ?? 0,
@@ -1181,7 +1220,9 @@ class ApiSocket {
                 ? JSON.stringify([socketRole.clientType, socketRole.sessionId, socketRole.machineId ?? null])
                 : JSON.stringify([socketRole.clientType, socketRole.machineId]);
         const key = `${transportEndpoint}|${this.config.token}|${homeCarrier?.endpointId ?? ''}|${roleKey}`;
-        if (this.socketTransport && this.socketTransportKey === key && this.socket) {
+        // A managed reconnect asks for a new disposable transport after retiring
+        // the previous one, even when its captured Session authority is unchanged.
+        if (!forceNew && this.socketTransport && this.socketTransportKey === key && this.socket) {
             return;
         }
 
@@ -1255,8 +1296,12 @@ class ApiSocket {
                 if (this.config !== transportConfig || transportConfig?.isCurrent?.() === false) return;
                 if (!event.intentional && event.reason === 'io server disconnect' && transportConfig?.request) {
                     // Revocation and expiry are server-forced disconnects, not transient transport loss.
-                    if (this.scopedConnectionSupervisor?.reportProbeResult) {
-                        this.scopedConnectionSupervisor.reportProbeResult({ status: 'auth_failed', statusCode: 401 });
+                    const supervisor = this.scopedConnectionSupervisor;
+                    if (supervisor?.reportProbeResult) {
+                        supervisor.reportProbeResult(
+                            { status: 'auth_failed', statusCode: 401 },
+                            supervisor.captureProbeReportScope?.(),
+                        );
                     } else {
                         transportConfig.onCredentialRejected?.();
                     }

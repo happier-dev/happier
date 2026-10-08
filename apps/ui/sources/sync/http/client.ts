@@ -32,6 +32,8 @@ import { normalizeRequestBodyHeaders } from './requestBodyHeaders';
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 export class StaleServerGenerationError extends Error {
+    public readonly retryable = false;
+
     constructor() {
         super('Ignored response from a stale server generation');
         this.name = 'StaleServerGenerationError';
@@ -131,6 +133,8 @@ type EndpointRequestContext = Readonly<{
     isCurrent?: () => boolean;
     /** Lets the caller adopt a recovered target credential before the retry completes. */
     onRecoveredCredentials?: (credentials: AuthCredentials) => boolean;
+    /** Observes this write's successful conditional removal of its rejected stored token. */
+    onRejectedStoredCredentials?: (rejectedToken: string) => void;
     credentials?: AuthCredentials | null;
     signal?: AbortSignal;
 }>;
@@ -570,6 +574,7 @@ async function requestAtEndpoint(
                             const serverSwitchAbort = context.active
                                 && (reason === 'server-switch' || abortSequence !== localAbortSequence);
                             if (serverSwitchAbort) {
+                                assertRequestContextCurrent(context);
                                 throw new ServerFetchAbortedForServerSwitchError();
                             }
                             if (didWriteTimeout) {
@@ -629,6 +634,7 @@ async function requestAtEndpoint(
                     const serverSwitchAbort = context.active
                         && (reason === 'server-switch' || abortSequence !== localAbortSequence);
                     if (serverSwitchAbort) {
+                        assertRequestContextCurrent(context);
                         throw new ServerFetchAbortedForServerSwitchError();
                     }
                     if (didWriteTimeout) {
@@ -743,14 +749,20 @@ async function requestAtEndpoint(
                 // ignore
             }
             if (invalidatedStoredCredentials) {
-                notifyAuthCredentialsInvalidated({
-                    kind: 'credentials_removed',
-                    serverId: context.serverId,
-                    serverUrl: context.endpointUrl,
-                    ...(context.generation === undefined
-                        ? {}
-                        : { generation: context.generation }),
-                });
+                try {
+                    if (method !== 'GET' && method !== 'HEAD') {
+                        context.onRejectedStoredCredentials?.(usedToken);
+                    }
+                } finally {
+                    notifyAuthCredentialsInvalidated({
+                        kind: 'credentials_removed',
+                        serverId: context.serverId,
+                        serverUrl: context.endpointUrl,
+                        ...(context.generation === undefined
+                            ? {}
+                            : { generation: context.generation }),
+                    });
+                }
             }
 
             // Only retry idempotent requests to avoid surprising duplication.
@@ -859,6 +871,8 @@ export function createServerFetchAtEndpoint(
         isCurrent?: () => boolean;
         /** Allows a caller to adopt the replacement target credential before retrying. */
         onRecoveredCredentials?: (credentials: AuthCredentials) => boolean;
+        /** Observes this write's successful conditional removal of its rejected stored token. */
+        onRejectedStoredCredentials?: (rejectedToken: string) => void;
     }>,
 ): ServerFetch {
     const endpointUrl = normalizeEndpointBase(params.endpointUrl);
@@ -873,6 +887,7 @@ export function createServerFetchAtEndpoint(
         ...(params.recoverStoredCredentials === true ? { recoverStoredCredentials: true } : {}),
         ...(params.isCurrent ? { isCurrent: params.isCurrent } : {}),
         ...(params.onRecoveredCredentials ? { onRecoveredCredentials: params.onRecoveredCredentials } : {}),
+        ...(params.onRejectedStoredCredentials ? { onRejectedStoredCredentials: params.onRejectedStoredCredentials } : {}),
         useStoredCredentials: params.credentials === undefined,
         ...(params.homeCarrier ? { homeCarrier: params.homeCarrier } : {}),
         ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),
@@ -880,6 +895,21 @@ export function createServerFetchAtEndpoint(
     };
 
     return async (path, init, options) => await requestAtEndpoint(context, path, init, options);
+}
+
+/**
+ * Capture the focused Home once for a containing operation. Retries and compatibility
+ * fallbacks retain that admitted basis; request options cannot retarget it.
+ */
+export function createServerFetchForActiveServer(
+    expectedActiveServer?: ExpectedActiveServerFetchBasis,
+): ServerFetch {
+    const basis = expectedActiveServer ?? getActiveServerSnapshot();
+    const captured = { serverId: basis.serverId, generation: basis.generation };
+    return async (path, init, options) => await serverFetch(path, init, {
+        ...options,
+        expectedActiveServer: captured,
+    });
 }
 
 /** Focused-Home compatibility wrapper. All request policy remains in `requestAtEndpoint`. */

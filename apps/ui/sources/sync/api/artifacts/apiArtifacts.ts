@@ -2,7 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse } from '@/sync/domains/artifacts/artifactTypes';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, serverFetch, type ServerFetch } from '@/sync/http/client';
 import { encodeBase64 } from '@/encryption/base64';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1,
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
@@ -245,13 +245,14 @@ export async function fetchArtifacts(
     credentials: AuthCredentials,
     opts: ArtifactApiOptions = {},
 ): Promise<Artifact[]> {
+    const request = opts.request ?? createServerFetchForActiveServer();
     const run = async () => {
         const query = new URLSearchParams();
         if (opts.limit !== undefined) query.set('limit', String(opts.limit));
         if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
         if (opts.includeBody) query.set('includeBody', 'true');
         const search = query.toString();
-        const response = await (opts.request ?? serverFetch)(`/v1/artifacts${search ? `?${search}` : ''}`, {
+        const response = await request(`/v1/artifacts${search ? `?${search}` : ''}`, {
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -296,11 +297,9 @@ export async function fetchArtifact(
     artifactId: string,
     opts: ArtifactApiOptions = {},
 ): Promise<Artifact> {
+    const request = opts.request ?? createServerFetchForActiveServer();
     const run = async () => {
-        const response = await (opts.request ?? ((path, init, requestOptions) => serverFetch(path, init, {
-            includeAuth: false,
-            retry: requestOptions?.retry,
-        })))(`/v1/artifacts/${artifactId}`, {
+        const response = await request(`/v1/artifacts/${artifactId}`, {
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -343,13 +342,18 @@ export async function createArtifact(
     request: ArtifactCreateRequest,
     opts: ArtifactApiOptions = {},
 ): Promise<Artifact> {
+    const artifactRequest = opts.request ?? (() => {
+        const focusedRequest = createServerFetchForActiveServer();
+        return ((path, init, options) => focusedRequest(path, init, { includeAuth: false, ...options })) satisfies ServerFetch;
+    })();
+    const scopedOptions = { ...opts, request: artifactRequest };
     const run = async () => {
         const path = request.blob ? '/v1/artifacts/content/binary' : '/v1/artifacts';
         const response = request.blob?.content
             ? await uploadArtifactContent(credentials, { kind: 'create', artifactId: request.id, blobId: request.blob.blobId,
                 header: request.header, body: request.body, dataEncryptionKey: request.dataEncryptionKey,
-                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, opts)
-            : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
+                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, scopedOptions)
+            : await artifactRequest(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
@@ -388,6 +392,11 @@ export async function updateArtifact(
     request: ArtifactUpdateRequest,
     opts: ArtifactApiOptions = {},
 ): Promise<ArtifactUpdateResponse> {
+    const artifactRequest = opts.request ?? (() => {
+        const focusedRequest = createServerFetchForActiveServer();
+        return ((path, init, options) => focusedRequest(path, init, { includeAuth: false, ...options })) satisfies ServerFetch;
+    })();
+    const scopedOptions = { ...opts, request: artifactRequest };
     const run = async () => {
         const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${request.blob !== undefined ? '/content/binary' : ''}`;
         if (request.blob?.content && (request.body === undefined || request.expectedBodyVersion === undefined)) {
@@ -397,8 +406,8 @@ export async function updateArtifact(
             ? await uploadArtifactContent(credentials, { kind: 'update', artifactId, blobId: request.blob.blobId,
                 header: request.header, expectedHeaderVersion: request.expectedHeaderVersion,
                 body: request.body, expectedBodyVersion: request.expectedBodyVersion,
-                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, opts)
-            : await (opts.request ?? ((path, init) => serverFetch(path, init, { includeAuth: false })))(path, {
+                provenance: request.provenance, provenanceDataEncryptionKey: request.provenanceDataEncryptionKey }, request.blob.content, scopedOptions)
+            : await artifactRequest(path, {
             method: 'POST',
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {
@@ -437,11 +446,12 @@ export async function deleteArtifact(
     artifactId: string,
     opts: ArtifactApiOptions & Readonly<{ expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }> }> = {},
 ): Promise<void> {
+    const request = opts.request ?? createServerFetchForActiveServer();
     const run = async () => {
         opts.signal?.throwIfAborted();
         const revision = opts.expectedRevision;
         const path = `/v1/artifacts/${encodeURIComponent(artifactId)}${revision ? `/revision/${revision.headerVersion}/${revision.bodyVersion}` : ''}`;
-        const response = await (opts.request ?? serverFetch)(path, {
+        const response = await request(path, {
             method: 'DELETE',
             ...(opts.signal ? { signal: opts.signal } : {}),
             headers: {

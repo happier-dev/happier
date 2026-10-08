@@ -18,7 +18,11 @@ function buildTokenWithSub(sub: string): string {
 }
 
 describe('apiArtifacts retry modes', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
         runtimeFetchSpy.mockReset();
         vi.resetModules();
         vi.useRealTimers();
@@ -29,7 +33,7 @@ describe('apiArtifacts retry modes', () => {
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
-        await upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'device' });
         runtimeFetchSpy.mockImplementation(async (url: unknown) => {
             const href = String(url ?? '');
             if (href.endsWith('/health')) return new Response('{}', { status: 200 });
@@ -60,10 +64,12 @@ describe('apiArtifacts retry modes', () => {
     it('reads a complete revision inventory through the captured request and rejects an incomplete response', async () => {
         const { fetchArtifactRevisions } = await import('./apiArtifacts');
         const revision = { bodyVersion: 2, body: 'retained-body', createdAt: 100, sizeBytes: 42 };
-        const request = vi.fn(async () => new Response(JSON.stringify({ revisions: [revision], retentionCount: 10 })));
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://captured.example.test', credentials: { token: 'captured-token' } });
+        runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ revisions: [revision], retentionCount: 10 })));
         await expect(fetchArtifactRevisions({ token: 'captured-token' }, 'artifact-id', { request }))
             .resolves.toEqual({ revisions: [revision], retentionCount: 10 });
-        request.mockResolvedValueOnce(new Response(JSON.stringify({ retentionCount: 10 })));
+        runtimeFetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ retentionCount: 10 })));
         await expect(fetchArtifactRevisions({ token: 'captured-token' }, 'artifact-id', { request })).rejects.toThrow();
     });
 
@@ -73,7 +79,9 @@ describe('apiArtifacts retry modes', () => {
     ])('rejects owner Account-mode $encryptionMode content-marker disagreement before opening content', async ({ encryptionMode, dataEncryptionKey }) => {
         const { fetchArtifact } = await import('./apiArtifacts');
         const { ARTIFACT_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol');
-        const request = vi.fn(async () => Response.json({ id: 'document', ownerAccountId: 'owner', access: 'owner',
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://captured.example.test', credentials: { token: 'captured-token' } });
+        runtimeFetchSpy.mockImplementation(async () => Response.json({ id: 'document', ownerAccountId: 'owner', access: 'owner',
             encryptionMode, dataEncryptionKey: dataEncryptionKey === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : dataEncryptionKey,
             header: 'stored-header', headerVersion: 1, body: 'stored-body', bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }));
         await expect(fetchArtifact({ token: 'captured-token' }, 'document', { request, retry: 'none' }))

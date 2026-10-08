@@ -17,7 +17,7 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 async function activateTestHome() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 }
 
 function makeSnapshot(): ProviderAccountUsageSnapshotV1 {

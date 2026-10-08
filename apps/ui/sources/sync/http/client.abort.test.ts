@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
+installTokenStorageWebPlatformMocks();
+let storageBoundary: ReturnType<typeof installLocalStorageMock>;
+let locksBoundary: ReturnType<typeof installWebLockManagerMock>;
+
 beforeEach(async () => {
+    storageBoundary = installLocalStorageMock();
+    locksBoundary = installWebLockManagerMock();
     await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'HTTP Home' });
-    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('abort-account') });
+    expect(await TokenStorage.setCredentials({ token: createAccountTokenForTests('abort-account') })).toBe(true);
 });
 
 afterEach(async () => {
@@ -16,6 +24,8 @@ afterEach(async () => {
     await stopAllEndpointSupervisorsForTests();
     const { resetRuntimeFetch } = await import('./client');
     resetRuntimeFetch();
+    locksBoundary.restore();
+    storageBoundary.restore();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
@@ -49,7 +59,29 @@ describe('serverFetch abort handling', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('aborts in-flight requests when abortServerFetches is called', async () => {
+    it('retains the captured basis despite mutable caller input and successor request options', async () => {
+        const admitted = getActiveServerSnapshot();
+        const basis = { serverId: admitted.serverId, generation: admitted.generation };
+        const { createServerFetchForActiveServer } = await import('./client');
+        const request = createServerFetchForActiveServer(basis);
+        await upsertAndActivateServer({ serverUrl: 'https://server-b.example.test', name: 'Other Home' });
+        const successor = getActiveServerSnapshot();
+        Object.assign(basis, { serverId: successor.serverId, generation: successor.generation });
+        const fetchMock = vi.fn(async () => Response.json({}));
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        await expect(request('/v1/account/profile', {
+            headers: { Authorization: 'Bearer captured-bearer' },
+        }, { includeAuth: false, retry: 'none', expectedActiveServer: successor })).rejects.toMatchObject({
+            name: 'StaleServerGenerationError', retryable: false,
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { changeHome: false, expectedError: 'ServerFetchAbortedForServerSwitchError' },
+        { changeHome: true, expectedError: 'StaleServerGenerationError' },
+    ])('classifies in-flight cancellation with Home movement=$changeHome', async ({ changeHome, expectedError }) => {
         let observeIssued!: () => void;
         const issued = new Promise<void>((resolve) => { observeIssued = resolve; });
         const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -78,8 +110,9 @@ describe('serverFetch abort handling', () => {
 
         const { abortServerFetches, serverFetch } = await import('./client');
         const pending = serverFetch('/v1/health', undefined, { retry: 'none' });
-        const rejected = expect(pending).rejects.toMatchObject({ name: 'ServerFetchAbortedForServerSwitchError' });
+        const rejected = expect(pending).rejects.toMatchObject({ name: expectedError });
         await issued;
+        if (changeHome) await upsertAndActivateServer({ serverUrl: 'https://server-b.example.test', name: 'Other Home' });
         abortServerFetches();
         await rejected;
     });
@@ -117,7 +150,7 @@ describe('serverFetch abort handling', () => {
 
         const { createServerFetchAtEndpoint } = await import('./client');
         const request = createServerFetchAtEndpoint({ endpointUrl: 'api.example.test', credentials: { token: createAccountTokenForTests('abort-account') } });
-        await expect(request('/v1/account/profile', undefined, { retry: 'none' })).rejects.toThrow(/refused authenticated request/i);
+        await expect(request('/v1/account/profile', undefined, { retry: 'none' })).rejects.toThrow('Invalid explicit endpoint URL');
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -131,7 +164,7 @@ describe('serverFetch abort handling', () => {
             '/v1/account/profile',
             { headers: { Authorization: 'Bearer share-token' } },
             { includeAuth: false, retry: 'none' },
-        )).rejects.toThrow(/refused authenticated request/i);
+        )).rejects.toThrow('Invalid explicit endpoint URL');
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });

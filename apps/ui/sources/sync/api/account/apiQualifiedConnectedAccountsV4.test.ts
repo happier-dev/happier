@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
@@ -7,14 +7,6 @@ import {
     QualifiedConnectedAccountServiceRefSchema,
 } from '@happier-dev/protocol';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-    return {
-        ...actual,
-        backoff: async <T,>(callback: () => Promise<T>): Promise<T> => await callback(),
-    };
-});
-
 const credentials: AuthCredentials = { token: 'token', secret: 'secret' };
 const service = {
     pluginId: 'acme.connected-accounts-conformance',
@@ -22,17 +14,11 @@ const service = {
 } as const;
 const groupRef = { service, groupId: 'primary' } as const;
 
-function mockServerConfig() {
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerHomeCarrier: () => null,
-        getActiveServerSnapshot: () => ({
-            serverId: 'test',
-            serverUrl: 'https://api.example.test',
-            kind: 'custom',
-            generation: 1,
-        }),
-    }));
-}
+beforeEach(async () => {
+    vi.resetModules();
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'device' });
+});
 
 function isServerReadinessProbe(pathname: string): boolean {
     return pathname === '/health' || pathname === '/v1/auth/ping';
@@ -85,14 +71,17 @@ function makeGroup(overrides: Record<string, unknown> = {}) {
     };
 }
 
-afterEach(() => {
+afterEach(async () => {
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
     vi.unstubAllGlobals();
     vi.resetModules();
 });
 
 describe('apiQualifiedConnectedAccountsV4', () => {
     it('deletes a pool and removes its member without declaring an empty JSON body', async () => {
-        mockServerConfig();
         // Fastify's JSON parser rejects a bodyless DELETE with JSON content-type
         // before the qualified mutation handler can inspect its query parameters.
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -143,7 +132,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
     });
 
     it('lists groups for a novel qualified service without flattening its identity', async () => {
-        mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
             if (isServerReadinessProbe(url.pathname)) {
@@ -169,7 +157,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
     });
 
     it('threads the current runtime-state revision through member, policy, and active-account mutations', async () => {
-        mockServerConfig();
         const observed: Array<{ path: string; method: string; body: unknown }> = [];
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = new URL(String(input));
@@ -261,7 +248,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
     });
 
     it('surfaces revision conflicts and unsupported peers without a legacy mutation fallback', async () => {
-        mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = new URL(String(input));
             if (isServerReadinessProbe(url.pathname)) {

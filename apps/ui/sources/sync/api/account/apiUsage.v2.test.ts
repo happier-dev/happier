@@ -12,7 +12,7 @@ const credentials: AuthCredentials = { token: 'test-token', secret: 'test-secret
 describe('apiUsage v2 analytics query', () => {
     it('queries the v2 analytics endpoint with structured date range and breakdowns', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 
         const fetchMock = vi.fn(async () => ({
             ok: true,
@@ -43,7 +43,7 @@ describe('apiUsage v2 analytics query', () => {
         const body = JSON.parse(String(options?.body));
         expect(body).toMatchObject({
             granularity: 'day',
-            timeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
+            timeZoneOffsetMinutes: new Date().getTimezoneOffset() === 0 ? 0 : -new Date().getTimezoneOffset(),
             includeSeries: true,
             includeInsights: true,
             includeActivity: true,
@@ -55,7 +55,7 @@ describe('apiUsage v2 analytics query', () => {
         });
         expect(body).toHaveProperty('dateRange');
         expect(body).toHaveProperty('breakdowns');
-        expect(body.breakdowns).toEqual(expect.arrayContaining(['provider', 'model', 'backendMode', 'source']));
+        expect(body.breakdowns).toEqual(expect.arrayContaining(['agent', 'model', 'backendMode', 'source']));
         expect(body).not.toHaveProperty('startTime');
         expect(body).not.toHaveProperty('endTime');
         expect(body).not.toHaveProperty('groupBy');
@@ -63,7 +63,7 @@ describe('apiUsage v2 analytics query', () => {
 
     it('falls back to the legacy v1 usage query when the v2 analytics endpoint is unavailable', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
@@ -113,7 +113,7 @@ describe('apiUsage v2 analytics query', () => {
 
     it('uses a year-long date range with month granularity for the year filter and downgrades legacy fallback grouping to day', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 
         vi.spyOn(Date, 'now').mockReturnValue(1_735_689_600_000);
 

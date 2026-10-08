@@ -9,6 +9,7 @@ import type { z } from 'zod';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
   serverFetch,
+  createServerFetchForActiveServer,
   type ServerFetch,
   type ExpectedActiveServerFetchBasis,
 } from '@/sync/http/client';
@@ -30,8 +31,9 @@ async function readQualifiedSnapshot<T>(params: Readonly<{
   expectedActiveServer?: ExpectedActiveServerFetchBasis;
   request?: ServerFetch;
 }>): Promise<T> {
+  const request = params.request ?? createServerFetchForActiveServer(params.expectedActiveServer);
   return await backoff(async () => {
-    const response = await (params.request ?? serverFetch)(
+    const response = await request(
       params.path,
       {
         method: 'GET',

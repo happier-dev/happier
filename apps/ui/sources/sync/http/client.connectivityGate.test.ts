@@ -4,6 +4,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
+const connectivityToken = createAccountTokenForTests('connectivity-account');
+
 beforeEach(async () => {
     await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Connectivity Home' });
 });
@@ -33,7 +35,7 @@ afterEach(async () => {
 function installTokenStorageBoundary(params: { failGetCredentials?: boolean } = {}) {
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => {
         if (params.failGetCredentials) throw new Error('Unexpected credential read');
-        return { token: createAccountTokenForTests('connectivity-account') };
+        return { token: connectivityToken };
     });
 }
 
@@ -78,7 +80,7 @@ describe('serverFetch connectivity supervision', () => {
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });
 
-    it('marks connectivity timeouts as non-retryable (prevents nested backoff loops)', async () => {
+    it('classifies connectivity timeouts through the shared retry owner', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -89,12 +91,12 @@ describe('serverFetch connectivity supervision', () => {
 
         const { serverFetch } = await import('./client');
         const promise = serverFetch('/v1/account/profile');
-        const assertion = expect(promise).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-            retryable: false,
-        });
+        const assertion = expect(promise).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
+        const error = promise.catch((failure: unknown) => failure);
         await vi.advanceTimersByTimeAsync(5);
         await assertion;
+        const { shouldRetryError } = await import('@/sync/runtime/connectivity/transientConnectivityErrors');
+        expect(shouldRetryError(await error)).toBe(true);
     });
 
     it('still gates reachability when includeAuth=false but a bearer Authorization header is provided', async () => {
@@ -165,7 +167,7 @@ describe('serverFetch connectivity supervision', () => {
         const { waitForServerReachable, subscribeServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
             serverUrl: 'https://api.example.test',
-            token: 'token-a',
+            token: connectivityToken,
             timeoutMs: 5_000,
             acceptAuthFailed: true,
         });
@@ -173,7 +175,7 @@ describe('serverFetch connectivity supervision', () => {
         let lastPhase = '';
         const unsubscribe = subscribeServerReachabilityState('https://api.example.test', (state) => {
             lastPhase = state.phase;
-        });
+        }, connectivityToken);
         expect(lastPhase).toBe('auth_failed');
 
         const { serverFetch } = await import('./client');
@@ -238,7 +240,7 @@ describe('serverFetch connectivity supervision', () => {
         expect(probeCalls).toHaveLength(1);
     });
 
-    it('does not get retried by default backoff when reachability times out', async () => {
+    it('lets enclosing backoff recover a connectivity timeout without restarting the offline probe', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -257,16 +259,23 @@ describe('serverFetch connectivity supervision', () => {
         });
 
         const { serverFetch } = await import('./client');
-        const promise = backoff(() => serverFetch('/v1/account/profile'));
-        const assertion = expect(promise).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
+        let attempts = 0;
+        const promise = backoff(async () => {
+            attempts += 1;
+            // The containing operation owns recovery; this request continues
+            // using the existing offline supervisor rather than forcing a probe.
+            if (attempts === 3) return 'recovered';
+            return await serverFetch('/v1/account/profile');
+        });
+        const assertion = expect(promise).resolves.toBe('recovered');
 
-        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(12);
         await assertion;
 
-        // If the error were treated as retryable, the backoff loop would schedule a retry and re-run the probe.
-        await vi.advanceTimersByTimeAsync(10);
+        expect(attempts).toBe(3);
         const probeCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/auth/ping'));
         expect(probeCalls).toHaveLength(1);
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });
 
     it('does not mark the server unreachable when a request is aborted by the caller', async () => {
@@ -300,7 +309,7 @@ describe('serverFetch connectivity supervision', () => {
         const { subscribeServerReachabilityState, waitForServerReachable } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
             serverUrl: 'https://api.example.test',
-            token: 'token-a',
+            token: connectivityToken,
             timeoutMs: 5_000,
             acceptAuthFailed: true,
         });
@@ -308,7 +317,7 @@ describe('serverFetch connectivity supervision', () => {
         let lastReachabilityPhase = '';
         const unsubscribe = subscribeServerReachabilityState('https://api.example.test', (state) => {
             lastReachabilityPhase = state.phase;
-        });
+        }, connectivityToken);
         expect(lastReachabilityPhase).toBe('online');
 
         const { serverFetch } = await import('./client');

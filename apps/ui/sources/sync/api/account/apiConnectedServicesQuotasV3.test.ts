@@ -12,7 +12,7 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 async function activateTestHome() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 }
 
 describe('apiConnectedServicesQuotasV3', () => {
@@ -65,6 +65,10 @@ describe('apiConnectedServicesQuotasV3', () => {
       if (url === 'https://api.example.test/v3/connect/openai-codex/profiles/work/quotas') {
         requestSignal = init?.signal ?? undefined;
         return new Promise<Response>((_resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
           init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
         });
       }

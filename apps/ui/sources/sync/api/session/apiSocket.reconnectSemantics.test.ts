@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 const ioSpy = vi.hoisted(() => vi.fn());
 let activeSocket: typeof import('./apiSocket')['apiSocket'] | undefined;
+const ownedSubscriptions: Array<() => unknown> = [];
 const reachability = vi.hoisted(() => ({
     listeners: new Map<string, (state: ManagedConnectionState) => void>(),
     invalidate: vi.fn(async (..._args: unknown[]) => {}),
@@ -53,9 +53,10 @@ async function connect(socket: ReturnType<typeof createSocketIoBoundaryStub>['so
 describe('apiSocket reconnect semantics', () => {
     afterEach(() => {
         activeSocket?.disconnect(); activeSocket = undefined;
+        for (const unsubscribe of ownedSubscriptions.splice(0)) unsubscribe();
         reachability.listeners.clear(); reachability.invalidate.mockClear();
         reachability.restart.mockClear(); reachability.report.mockClear();
-        ioSpy.mockReset(); vi.resetModules(); vi.useRealTimers();
+        ioSpy.mockReset(); vi.useRealTimers();
     });
 
     it.each(['revoked', 'invalid-token'] as const)('retires the explicit frame authority on %s without Account supervision', async (failure) => {
@@ -78,6 +79,37 @@ describe('apiSocket reconnect semantics', () => {
         expect(reachability.invalidate).not.toHaveBeenCalled();
     });
 
+    it('ignores a retired frame socket disconnect after its replacement authority connects', async () => {
+        const predecessor = createSocketIoBoundaryStub();
+        ioSpy.mockReturnValue(predecessor.socket);
+        const { apiSocket } = await import('./apiSocket');
+        activeSocket = apiSocket;
+        const predecessorRejected = vi.fn();
+        apiSocket.initialize({ endpoint, token: 'hap_v1_predecessor', serverId: 'home-a', generation: 1,
+            socketRole: { clientType: 'session-scoped', sessionId: 'predecessor-session' },
+            request: async () => Response.json({ cursor: 0 }),
+            isCurrent: () => true, onCredentialRejected: predecessorRejected,
+        }, null);
+        await vi.waitFor(() => expect(predecessor.socket.connected).toBe(true));
+
+        const replacement = createSocketIoBoundaryStub();
+        ioSpy.mockReturnValue(replacement.socket);
+        const replacementRejected = vi.fn();
+        apiSocket.initialize({ endpoint, token: 'hap_v1_replacement', serverId: 'home-b', generation: 2,
+            socketRole: { clientType: 'session-scoped', sessionId: 'replacement-session' },
+            request: async () => Response.json({ cursor: 0 }),
+            isCurrent: () => true, onCredentialRejected: replacementRejected,
+        }, null);
+        await vi.waitFor(() => expect(replacement.socket.connected).toBe(true));
+        predecessor.trigger('disconnect', 'io server disconnect');
+
+        expect(replacement.socket.connected).toBe(true);
+        expect(apiSocket.getSessionScopedTarget()).toBe('replacement-session');
+        expect(predecessorRejected).not.toHaveBeenCalled();
+        expect(replacementRejected).not.toHaveBeenCalled();
+        expect(reachability.listeners.size).toBe(0);
+    });
+
     it('publishes rendered Session presence on the existing focused Home socket', async () => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'self' })).toString('base64')}.signature`;
         const { apiSocket, socket } = await boot({ token });
@@ -96,7 +128,7 @@ describe('apiSocket reconnect semantics', () => {
 
     it('fires onReconnected only after an unintentional transport outage cycle', async () => {
         const { apiSocket, socket, trigger } = await boot();
-        const onReconnected = vi.fn(); apiSocket.onReconnected(onReconnected);
+        const onReconnected = vi.fn(); ownedSubscriptions.push(apiSocket.onReconnected(onReconnected));
         await connect(socket); expect(onReconnected).not.toHaveBeenCalled();
         trigger('disconnect', 'transport close');
         emitReachability('offline'); await connect(socket);
@@ -126,7 +158,7 @@ describe('apiSocket reconnect semantics', () => {
             machineId: 'machine-1', linkGeneration: 'generation-1', demand: 'open' }]);
         const config = { endpoint, token: 'token-1', serverId };
         apiSocket.initialize(config, null);
-        const handler = vi.fn(); apiSocket.onMessage('ephemeral', handler);
+        const handler = vi.fn(); ownedSubscriptions.push(apiSocket.onMessage('ephemeral', handler));
         await connect(socket); config.serverId = 'later-home'; socket.emit.mockClear();
         const payload = { type: 'machine-activity', id: 'machine-1', active: true, activeAt: 1_000 };
         trigger('ephemeral', payload);
@@ -148,7 +180,7 @@ describe('apiSocket reconnect semantics', () => {
 
     it('does not fire onReconnected after an intentional disconnect cycle', async () => {
         const { apiSocket, socket } = await boot();
-        const onReconnected = vi.fn(); apiSocket.onReconnected(onReconnected);
+        const onReconnected = vi.fn(); ownedSubscriptions.push(apiSocket.onReconnected(onReconnected));
         await connect(socket); apiSocket.disconnect(); apiSocket.connect(); await connect(socket);
         expect(onReconnected).not.toHaveBeenCalled();
     });
@@ -163,6 +195,7 @@ describe('apiSocket reconnect semantics', () => {
 
     it('rejects Session RPC before emission when reachability is auth_failed', async () => {
         const { apiSocket, socket } = await boot(); await connect(socket); emitReachability('auth_failed');
+        const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
         const { storage } = await import('@/sync/domains/state/storage');
         storage.getState().applySessions([createSessionFixture()]);
         const request = apiSocket.sessionRPC('session-1', 'send_message', { text: 'hello' }, { timeoutMs: 5 });
@@ -175,6 +208,7 @@ describe('apiSocket reconnect semantics', () => {
 
     it('marks a disconnected Session RPC as not sent before any network emission', async () => {
         const { apiSocket, socket } = await boot(); await connect(socket);
+        const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
         const { storage } = await import('@/sync/domains/state/storage');
         storage.getState().applySessions([createSessionFixture()]);
         apiSocket.disconnect();
@@ -187,6 +221,7 @@ describe('apiSocket reconnect semantics', () => {
 
     it.each(['online', 'auth_failed'] as const)('coerces ack timeout only when reachability settles to %s', async (phase) => {
         const { apiSocket, socket } = await boot(); await connect(socket);
+        const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
         const { storage } = await import('@/sync/domains/state/storage');
         storage.getState().applySessions([createSessionFixture()]);
         socket.emitWithAck.mockRejectedValue(new Error('operation has timed out'));
@@ -199,14 +234,14 @@ describe('apiSocket reconnect semantics', () => {
     });
 
     it('publishes managed connection phases alongside legacy status', async () => {
-        const { apiSocket, socket } = await boot(); const listener = vi.fn(); apiSocket.onConnectionStateChange(listener);
+        const { apiSocket, socket } = await boot(); const listener = vi.fn(); ownedSubscriptions.push(apiSocket.onConnectionStateChange(listener));
         emitReachability('connecting'); await connect(socket);
         expect(listener.mock.calls.map(([value]) => value.phase)).toEqual(expect.arrayContaining(['idle', 'connecting', 'online']));
     });
 
     it('keeps connected status when connect is called while already online', async () => {
         const { apiSocket, socket } = await boot(); await connect(socket);
-        const listener = vi.fn(); apiSocket.onStatusChange(listener); listener.mockClear();
+        const listener = vi.fn(); ownedSubscriptions.push(apiSocket.onStatusChange(listener)); listener.mockClear();
         apiSocket.connect();
         expect(listener).not.toHaveBeenCalledWith('connecting');
     });
