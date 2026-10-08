@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -157,6 +156,7 @@ describe('SettingsView desktop route', () => {
 
     it('renders the desktop settings entry and routes to the desktop settings page', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         // The System group renders in a deferred overview stage (`SettingsBelowFoldSections`).

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -208,6 +207,7 @@ await import('./SettingsView');
 describe('SettingsView (runs entry)', () => {
     async function renderSettingsViewUnderTest() {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         return renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
     }
 

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -209,6 +208,7 @@ vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', 
 }));
 
 const { SettingsView } = await import('./SettingsView');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 describe('SettingsView (web)', () => {
     afterEach(() => {

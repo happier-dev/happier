@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -243,6 +242,7 @@ describe('SettingsView (native connect terminal)', () => {
     it('shows terminal connect actions on native platforms', async () => {
         vi.resetModules();
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
@@ -268,6 +268,7 @@ describe('SettingsView (native connect terminal)', () => {
         settingsViewScanProcessAuthUrlSpy.mockResolvedValueOnce(true);
 
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
 
         const manualItem = findPressableByTestId(tree, 'settings-connect-terminal-enter-url');
@@ -290,6 +291,7 @@ describe('SettingsView (native connect terminal)', () => {
 
         vi.resetModules();
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
         vi.useFakeTimers();
         try {
@@ -314,6 +316,7 @@ describe('SettingsView (native connect terminal)', () => {
     it('defers below-fold settings sections until after interactions settle', async () => {
         vi.resetModules();
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
         vi.useFakeTimers();
         try {

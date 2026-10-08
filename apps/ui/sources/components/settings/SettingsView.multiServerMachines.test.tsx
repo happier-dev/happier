@@ -1,32 +1,14 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
-const settingsViewMultiServerMachinesState = vi.hoisted(() => ({
-    sharedDeviceInventorySettings: { privacy: { shareDeviceInventory: true } },
-    localSettingMutable: [false, vi.fn()] as const,
-    settingMutable: [{ v: 1, actions: {} }, vi.fn()] as const,
-    profile: {
-        id: 'prof_1',
-        timestamp: 0,
-        firstName: null,
-        lastName: null,
-        username: null,
-        avatar: null,
-        linkedProviders: [],
-        connectedServices: [],
-        connectedServicesV2: [],
-        connectedServiceCredentialRevisionsV1: [],
-    },
-}));
-
 const activeSelectionMachineGroupsState = vi.hoisted(() => ({
     value: {
         hasAnyVisibleMachines: true,
@@ -97,17 +79,7 @@ installSettingsViewCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
-            useSettings: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
-            useEntitlement: () => false,
-            useProfile: () => settingsViewMultiServerMachinesState.profile,
-            useLocalSettingMutable: () => settingsViewMultiServerMachinesState.localSettingMutable,
-            useSettingMutable: () => settingsViewMultiServerMachinesState.settingMutable,
-        });
-    },
+    storage: async (importOriginal) => await importOriginal<typeof import('@/sync/domains/state/storage')>(),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -209,9 +181,14 @@ afterEach(() => {
     routerPushSpy.mockClear();
 });
 
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+});
+
 describe('SettingsView (multi-server machines)', () => {
     it('replaces the inline machines list with a dedicated machines settings entry', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;

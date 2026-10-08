@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -219,6 +218,7 @@ describe('SettingsView plugin marketplace entry', () => {
     it('routes the curated plugin discovery entry to the new descriptor-only surface', async () => {
         vi.useFakeTimers();
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         await flushHookEffects({ cycles: 4, advanceTimersMs: 1000 });

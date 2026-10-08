@@ -83,9 +83,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -106,10 +107,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -205,9 +202,10 @@ afterEach(() => {
 describe('SettingsView ACP catalog entry', () => {
     it('does not include a detached ACP backends entry in the main settings screen', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
         let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+        tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
 
         const items = tree.findAllByType('Item' as any);
         const acpItem = items.find((item: any) => item?.props?.title === 'settings.acpCatalog');
