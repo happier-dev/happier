@@ -379,7 +379,7 @@ describe('plugin registry transaction service', () => {
     })).resolves.toMatchObject({ status: 'committed', pendingSurfaces: ['cleanup'], message: 'cleanup failed' });
   });
 
-  it('projects transaction lifecycle error inputs through the redacted head bound', async () => {
+  it('redacts transaction lifecycle credentials without discarding ordinary failure text', async () => {
     const rawFailure = [
       'BEGIN_FAILURE client_secret=registry-lifecycle-secret',
       '🙂'.repeat(1_200),
@@ -389,8 +389,7 @@ describe('plugin registry transaction service', () => {
       const actual = message ?? '';
       expect(actual).toMatch(/^BEGIN_FAILURE/u);
       expect(actual).not.toContain('registry-lifecycle-secret');
-      expect(actual).not.toContain('END_STACK');
-      expect(Buffer.byteLength(actual, 'utf8')).toBeLessThanOrEqual(2_048);
+      expect(actual).toContain('END_STACK');
     };
     const { coordinator, current } = await setup();
     const service = createPluginRegistryTransactionService({ coordinator });

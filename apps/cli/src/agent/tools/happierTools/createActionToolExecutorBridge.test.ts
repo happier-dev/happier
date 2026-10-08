@@ -28,6 +28,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ActionsSettingsV1Schema,
   createActionExecutor,
+  markSessionListQueryResultV1,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import { SessionBoardGetInputV1Schema } from '@happier-dev/protocol/sessions/board';
@@ -41,7 +42,7 @@ import { createActionToolExecutorBridge } from './createActionToolExecutorBridge
 describe('createActionToolExecutorBridge', () => {
   it('defaults normal agent listing to the led subtree and retains an explicitly restricted corpus', async () => {
     // The list port is the authenticated server HTTP boundary; the bridge and executor stay real.
-    const sessionList = vi.fn(async () => ({
+    const sessionList = vi.fn(async () => markSessionListQueryResultV1({
       sessions: [], nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false,
     }));
@@ -51,13 +52,14 @@ describe('createActionToolExecutorBridge', () => {
       isActionApprovalRequired: () => false,
     });
     const bridge = createActionToolExecutorBridge({ surface: 'agent', executor });
-    await expect(bridge.executeActionByToolName('session_list', {}, 'lead')).resolves.toMatchObject({ ok: true });
+    const result = await bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'lead');
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ underSessionId: 'lead' }) }));
     const restricted = createActionToolExecutorBridge({
       surface: 'agent', executor, resolveSessionListAccess: () => 'current_session',
     });
     sessionList.mockClear();
-    await expect(restricted.executeActionByToolName('session_list', { underSessionId: 'lead' }, 'lead'))
+    await expect(restricted.executeActionByToolName('action_execute', { actionId: 'session.list', input: { underSessionId: 'lead' } }, 'lead'))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(sessionList).not.toHaveBeenCalled();
   });

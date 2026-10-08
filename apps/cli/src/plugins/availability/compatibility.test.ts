@@ -98,7 +98,8 @@ describe('evaluatePluginCompatibilityProjection', () => {
   });
 
   it('reports a bounded non-echoing reason for an incompatible generated UI artifact', () => {
-    const untrustedContributionId = `generated-ui-${'x'.repeat(32_769)}`;
+    // Keep the authored path segment portable so this reaches host API admission.
+    const untrustedContributionId = `generated-ui-${'x'.repeat(200)}`;
     const evaluation = evaluatePluginCompatibilityProjection(
       projectionWithIncompatibleUiArtifact(untrustedContributionId),
     );

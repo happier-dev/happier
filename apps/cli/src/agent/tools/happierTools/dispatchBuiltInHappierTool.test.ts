@@ -35,6 +35,7 @@ import {
   ActionsSettingsV1Schema,
   ActionDefinitionV1Schema,
   createActionExecutor,
+  SessionSpawnNewInputV2Schema,
 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -251,14 +252,14 @@ describe('built-in Happier tools', () => {
     if (!definition.inputSchema) throw new Error('Expected spawn input schema');
     // Exercise the published schema, including references, rather than requiring inline serialization.
     const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(definition.inputSchema);
-    const input = {
+    const input = SessionSpawnNewInputV2Schema.parse({
       executionTarget: { serverId: 'active', machineId: 'machine-1' },
       directory: { kind: 'path', path: '/workspace/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      organizationPlacement: { tagIds: [] },
+      organizationPlacement: { folderId: null, tagIds: [] },
       agentSessionStartupInstructionsV1: { v: 1, id: 'fixture.instructions', revision: 1, instructions: 'Inspect the workspace.' },
-    };
-    expect(validate(input)).toBe(true);
+    });
+    expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
     expect(validate({ ...input, executionTarget: { ...input.executionTarget, serverId: 'x'.repeat(192) } })).toBe(false);
     expect(validate({ ...input, organizationPlacement: { tagIds: Array.from({ length: 501 }, (_, i) => `tag-${i}`) } })).toBe(false);
     for (const revision of [0, 2_147_483_648]) {

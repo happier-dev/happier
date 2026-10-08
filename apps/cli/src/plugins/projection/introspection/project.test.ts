@@ -78,7 +78,7 @@ describe('plugin contribution lifecycle introspection', () => {
     expect(message).not.toContain('/Users/alice/private/store');
   });
 
-  it('projects persistent diagnostic failure text through the shared redacted head bound', () => {
+  it('redacts persistent diagnostic credentials without discarding ordinary failure text', () => {
     const record = enrichPluginDiagnosticRecord({
       code: 'target_absent',
       severity: 'error',
@@ -102,8 +102,7 @@ describe('plugin contribution lifecycle introspection', () => {
     expect(message).not.toContain('introspection-secret');
     expect(message).not.toContain('introspection-userinfo');
     expect(message).not.toContain('introspection-query-secret');
-    expect(message).not.toContain('END_STACK');
-    expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(message).toContain('END_STACK');
   });
 
   it('accounts for all public catalog entries exactly once', () => {
