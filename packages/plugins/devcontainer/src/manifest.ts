@@ -34,8 +34,8 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   platforms: ['darwin', 'linux', 'win32'],
   prerequisites: [{ kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: 'devcontainer' }],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
-  retention: { supportedIntents: ['start', 'stop', 'delete'] },
-  actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+  retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
+  actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'putFile' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -76,6 +76,9 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) { try { return await (await provider(context)).destroy(input.resource); }
         catch (error) { return { kind: 'unknown' as const, code: code(error) }; } } },
+    rebuild: { ...defaults, title: 'Rebuild exact Devcontainer installation', dangerLevel: 'destructive',
+      inputSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildInput, resultSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildResult,
+      async run(input, context) { return (await provider(context)).rebuild(input.resource); } },
     exec: { ...defaults, title: 'Execute private child bootstrap IO', dangerLevel: 'writesLocal',
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) {

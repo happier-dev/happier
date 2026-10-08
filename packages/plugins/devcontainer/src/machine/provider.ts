@@ -102,6 +102,25 @@ export function createDevcontainerProvider(input: Readonly<{
     }
     return { resource, running: state.Running && !state.Paused, paused: state.Paused };
   }
+  async function realize(launch: DevcontainerLaunch, recoveryReference = launch.configPath) {
+    try {
+      // Only admitted acquire/rebuild roles reach evaluation of host and child
+      // hooks. Discovery and retained-resource inspection never evaluate them.
+      const up = record(json(await run(input.devcontainer, ['up', ...flags(launch)])));
+      if (typeof up.containerId === 'string' && /^[a-f0-9]{64}$/u.test(up.containerId)) recoveryReference = up.containerId;
+      if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
+        || typeof up.remoteUser !== 'string' || typeof up.remoteWorkspaceFolder !== 'string') fail('native_realization_unknown');
+      const native = await inspectContainer(up.containerId);
+      if (!native || record(native.State).Running !== true || record(native.State).Paused !== false) fail('native_realization_unknown');
+      assertLabels(native, launch);
+      const observed = await namespace(launch, up.containerId);
+      const resource = DevcontainerResourceSchema.parse({ ...launch, containerId: up.containerId, ...observed, ...storage(native, observed.workspaceRoot) });
+      return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource,
+        devcontainerObservation: { nativeResourceId: resource.containerId, user: resource.user,
+          workspaceFolder: resource.workspaceRoot, storage: resource.storage },
+      } };
+    } catch (error) { return { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) } }; }
+  }
   return {
     async check() {
       try {
@@ -111,22 +130,29 @@ export function createDevcontainerProvider(input: Readonly<{
       } catch (error) { return { available: false, code: code(error) }; }
     },
     async acquire(rawLaunch: DevcontainerLaunch) {
-      const launch = DevcontainerLaunchSchema.parse(rawLaunch);
-      let recoveryReference = launch.configPath;
+      return realize(DevcontainerLaunchSchema.parse(rawLaunch));
+    },
+    async rebuild(raw: DevcontainerResource) {
+      let issued = false;
       try {
-        // Host initialize/build/Compose/Features/lifecycle hooks begin only in
-        // this admitted effect role, never in discovery/check/inspect.
-        const up = record(json(await run(input.devcontainer, ['up', ...flags(launch)])));
-        if (typeof up.containerId === 'string' && /^[a-f0-9]{64}$/u.test(up.containerId)) recoveryReference = up.containerId;
-        if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
-          || typeof up.remoteUser !== 'string' || typeof up.remoteWorkspaceFolder !== 'string') fail('native_realization_unknown');
-        const native = await inspectContainer(up.containerId);
-        if (!native || record(native.State).Running !== true || record(native.State).Paused !== false) fail('native_realization_unknown');
-        assertLabels(native, launch);
-        const observed = await namespace(launch, up.containerId);
-        const resource = DevcontainerResourceSchema.parse({ ...launch, containerId: up.containerId, ...observed, ...storage(native, String(observed.workspaceRoot)) });
-        return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } };
-      } catch (error) { return { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) } }; }
+        const { resource } = await exact(raw);
+        const matching = output(await run(input.docker, ['ps', '--all', '--no-trunc',
+          '--filter', `label=devcontainer.local_folder=${resource.workspaceFolder}`,
+          '--filter', `label=devcontainer.config_file=${resource.configPath}`, '--format', '{{.ID}}']))
+          .trim().split(/\r?\n/u).filter(Boolean);
+        if (matching.length !== 1 || matching[0] !== resource.containerId) fail('resource_mismatch');
+        issued = true;
+        // The CLI's remove-existing flag selects by labels (or Compose
+        // project/service), so deletion uses the retained exact Docker id.
+        // No --volumes: bind sources and external volumes retain their owners.
+        if (!completed(await run(input.docker, ['rm', '--force', resource.containerId]))) {
+          return { kind: 'unknown' as const, recovery: { reference: resource.containerId, reason: 'native_rebuild_unknown' } };
+        }
+        return await realize(resource, resource.containerId);
+      } catch (error) {
+        if (!issued) return { kind: 'refused' as const, code: code(error) };
+        return { kind: 'unknown' as const, recovery: { reference: raw.containerId, reason: code(error) } };
+      }
     },
     async bootstrap(resource: DevcontainerResource) {
       await exact(resource, true);

@@ -12,22 +12,26 @@ function result(value: unknown, exitCode = 0): PluginProcessResult {
     stdout: new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)), stderr: new Uint8Array(),
     stdoutTruncated: false, stderrTruncated: false };
 }
-function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean }> = {}) {
+function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string }> = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = overrides.running ?? true;
+  let observedId = overrides.id ?? containerId;
+  let removed = false;
   const exec: Pick<ExecService, 'run'> = { run: async request => {
     requests.push(request);
     if (request.args?.[0] === 'up') {
       if (request.args.includes('--expect-existing-container')) running = true;
-      return overrides.up ?? result({ outcome: 'success', containerId, remoteUser: 'coder', remoteWorkspaceFolder: '/work/custom' });
+      if (removed) observedId = overrides.replacementId ?? 'b'.repeat(64);
+      return overrides.up ?? result({ outcome: 'success', containerId: observedId, remoteUser: 'coder', remoteWorkspaceFolder: '/work/custom' });
     }
     if (request.args?.[0] === 'exec') return request.stdin !== undefined && overrides.canceledWrite
       ? { ...result(''), termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'abort' } } }
       : result(overrides.namespace ?? 'coder\n/work/custom\n');
     if (request.args?.[0] === 'stop') running = false;
-    if (request.args?.[0] === 'ps') return overrides.inventory ?? result('');
+    if (request.args?.[0] === 'rm') removed = true;
+    if (request.args?.[0] === 'ps') return overrides.inventory ?? result(request.args.some(arg => arg.startsWith('label=')) ? `${observedId}\n` : '');
     if (request.args?.[0] === 'inspect' && overrides.absent) return result('', 1);
-    if (request.args?.[0] === 'inspect') return result([{ Id: overrides.id ?? containerId, State: { Running: running, Paused: overrides.paused ?? false },
+    if (request.args?.[0] === 'inspect') return result([{ Id: observedId, State: { Running: running, Paused: overrides.paused ?? false },
       Config: { Labels: { 'devcontainer.local_folder': launch.workspaceFolder, 'devcontainer.config_file': launch.configPath } },
       Mounts: overrides.mounts ?? [{ Type: 'bind', Source: '/host/project', Destination: '/work/custom' },
         { Type: 'volume', Name: 'retained-data', Destination: '/data' }] }]);
@@ -40,10 +44,37 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
 }
 
 describe('Devcontainer native roles', () => {
+  it('rebuilds the exact retained installation and returns replacement identity with retained bind and external volume facts', async () => {
+    const { provider, requests } = native();
+    expect(await provider.rebuild(resource)).toEqual({ kind: 'bound', resource: {
+      contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
+      value: { ...resource, containerId: 'b'.repeat(64) },
+      devcontainerObservation: { nativeResourceId: 'b'.repeat(64), user: resource.user,
+        workspaceFolder: resource.workspaceRoot, storage: resource.storage },
+    } });
+    expect(requests.find(request => request.args?.[0] === 'rm')?.args).toEqual(['rm', '--force', containerId]);
+    expect(requests.find(request => request.args?.[0] === 'up')?.args).toEqual([
+      'up', '--workspace-folder', launch.workspaceFolder, '--config', launch.configPath,
+    ]);
+    expect(requests.some(request => request.args?.some(arg => ['down', '--volumes', '--remove-orphans'].includes(arg)))).toBe(false);
+  });
+
+  it('refuses stale rebuild identity before effect and retains unknown replacement after interrupted native realization', async () => {
+    const stale = native({ id: 'c'.repeat(64) });
+    expect(await stale.provider.rebuild(resource)).toEqual({ kind: 'refused', code: 'resource_mismatch' });
+    expect(stale.requests.some(request => request.args?.[0] === 'up')).toBe(false);
+    const interrupted = native({ up: result({ outcome: 'error' }, 1) });
+    expect(await interrupted.provider.rebuild(resource)).toMatchObject({ kind: 'unknown' });
+    expect(interrupted.requests.filter(request => request.args?.[0] === 'up')).toHaveLength(1);
+  });
+
   it('uses native custom user/root and inspected bind/volume facts for the retained resource', async () => {
     const { provider, requests } = native();
     expect(await provider.acquire(launch)).toEqual({ kind: 'bound', resource: {
-      contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: resource } });
+      contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: resource,
+      devcontainerObservation: { nativeResourceId: containerId, user: resource.user,
+        workspaceFolder: resource.workspaceRoot, storage: resource.storage },
+    } });
     expect(requests.find(request => request.args?.[0] === 'up')?.args).not.toContain('--remove-existing-container');
     expect(requests.find(request => request.args?.[0] === 'exec')?.args).toContain(containerId);
   });
