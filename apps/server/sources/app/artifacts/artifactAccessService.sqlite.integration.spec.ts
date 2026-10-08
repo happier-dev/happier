@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import type { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactPrivateRevisionMetadataV1Schema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0, openSessionDataKeyBundleV0, computeContentPublicKeyFingerprint } from "@happier-dev/protocol";
@@ -9,6 +10,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
+import { publicShareRoutes } from "@/app/api/routes/share/publicShareRoutes";
 import { auth } from "@/app/auth/auth";
 import { artifactUpdateHandler } from "@/app/api/socket/artifactUpdateHandler";
 import { createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
@@ -38,6 +40,46 @@ describe("Artifact document grants (real SQLite)", () => {
     }
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+
+    it('projects retained public audience on authenticated reads with public sharing disabled, until expiry or deletion', async () => {
+        const owner = await plainAccount();
+        const stranger = await plainAccount();
+        const artifact = await plainArtifact(owner.id);
+        const publication = await db.publicSessionShare.create({ data: {
+            artifactId: artifact.id, createdByUserId: owner.id, keyDerivation: 'fragment_v1',
+            tokenHash: createHash('sha256').update(crypto.randomUUID()).digest(),
+            maxUses: 1, useCount: 1,
+        } });
+        const previous = process.env.HAPPIER_BUILD_FEATURES_DENY;
+        process.env.HAPPIER_BUILD_FEATURES_DENY = 'sharing.public';
+        try {
+            await withAuthenticatedTestApp(app => { artifactsRoutes(app); publicShareRoutes(app); }, async app => {
+                const headers = { 'x-test-user-id': owner.id, ...protocolHeaders };
+                const detailUrl = `/v1/artifacts/${artifact.id}`;
+                const readAudience = async (expected: 'retained' | 'none') => {
+                    const response = await app.inject({ method: 'GET', url: detailUrl, headers });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ publicAudience: expected });
+                };
+                expect((await app.inject({ method: 'GET',
+                    url: `/v1/public-shares?subjectKind=artifact&subjectId=${artifact.id}`, headers })).statusCode).toBe(404);
+                await readAudience('retained');
+                for (const url of [detailUrl, `${detailUrl}/access/grants`]) {
+                    expect((await app.inject({ method: 'GET', url, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+                    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+                }
+                await db.publicSessionShare.update({ where: { id: publication.id }, data: { expiresAt: new Date(0) } });
+                await readAudience('none');
+                await db.publicSessionShare.update({ where: { id: publication.id }, data: { expiresAt: null } });
+                await readAudience('retained');
+                await db.publicSessionShare.delete({ where: { id: publication.id } });
+                await readAudience('none');
+            });
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.HAPPIER_BUILD_FEATURES_DENY = previous;
+        }
+    });
 
     it.each(['plain', 'e2ee'] as const)('publishes revision-bound private attribution in the real %s header-only HTTP inventory', async mode => {
         const ownerKeys = tweetnacl.box.keyPair();

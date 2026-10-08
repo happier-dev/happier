@@ -23,6 +23,7 @@ import { isEffectiveTeamMembership } from "@/app/teams/memberships/effectiveMemb
 import { isEffectiveTeamGroupMembership } from "@/app/teams/groups/effectiveGroupMembership";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
+import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublication";
 
 export interface ArtifactAccess {
     ownerAccountId: string;
@@ -230,12 +231,15 @@ export async function readArtifactHeaderForCallerInTx(tx: Tx, input: Readonly<{
 /** Open only server at-rest Plain content; E2EE stays opaque with the caller's envelope. */
 export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactId: string;
-}>): Promise<ArtifactReadResult> {
+}>): Promise<Readonly<{ ok: true; artifact: ArtifactForCaller & { publicAudience: "retained" | "none" } }> | ArtifactReadFailure> {
     const header = await readArtifactHeaderForCallerInTx(tx, input);
     if (!header.ok) return header;
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: { body: true, bodyVersion: true, dataEncryptionKey: true, provenance: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    return projectArtifactBody(header.artifact, row);
+    const read = projectArtifactBody(header.artifact, row);
+    if (!read.ok) return read;
+    const publication = await tx.publicSessionShare.findUnique({ where: { artifactId: input.artifactId }, select: { expiresAt: true } });
+    return { ok: true, artifact: { ...read.artifact, publicAudience: isPublicSessionShareActive(publication) ? "retained" : "none" } };
 }
 
 /** Batch list projection preserves the endpoint's existing keyset and page size without per-row queries. */
