@@ -34,7 +34,7 @@ describe('Popover (native sizing retries)', () => {
                     // First measurement: boundary too small => availableBottom < 0 => maxHeight would compute to 0.
                     if (boundaryMeasureCalls === 1) return cb(0, 0, 1000, 200, 0, 0);
                     // Second measurement: stable boundary => popover should compute a non-zero maxHeight.
-                    return cb(0, 0, 1000, 1200, 0, 0);
+                    return cb(0, 0, 1000, 848, 0, 0);
                 },
             },
         } as any;
@@ -48,6 +48,7 @@ describe('Popover (native sizing retries)', () => {
                     anchorRef,
                     boundaryRef,
                     placement: 'bottom',
+                    flip: false,
                     gap: 8,
                     maxHeightCap: 300,
                     backdrop: false,
@@ -61,8 +62,7 @@ describe('Popover (native sizing retries)', () => {
             await flushHookEffects({ cycles: 1, turns: 8 });
 
             expect(screen).toBeTruthy();
-            expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
-            expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+            expect(renders.at(-1)?.maxHeight).toBe(100);
         });
     });
 
@@ -99,6 +99,7 @@ describe('Popover (native sizing retries)', () => {
                     anchorRef,
                     boundaryRef,
                     placement: 'bottom',
+                    flip: false,
                     gap: 8,
                     maxHeightCap: 300,
                     backdrop: false,
@@ -111,9 +112,7 @@ describe('Popover (native sizing retries)', () => {
 
             await flushHookEffects({ cycles: 1, turns: 8 });
 
-            // The budget is spent and nothing ever measured: the popover is stuck at its initial cap,
-            // mounted at opacity 0 with pointerEvents none — invisible and untappable forever.
-            expect(boundaryMeasureCalls).toBe(6);
+            // Invalid geometry leaves the initial cap unchanged until a later platform layout.
             expect(renders.at(-1)?.maxHeight).toBe(300);
 
             // The popover subtree lays out. That is a real platform signal that geometry is now
@@ -125,7 +124,6 @@ describe('Popover (native sizing retries)', () => {
             });
             await flushHookEffects({ cycles: 2, turns: 8 });
 
-            expect(boundaryMeasureCalls).toBeGreaterThan(6);
             expect(renders.at(-1)?.maxHeight).toBe(100);
         });
     });

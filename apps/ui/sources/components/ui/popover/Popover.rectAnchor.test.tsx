@@ -61,7 +61,7 @@ describe('Popover (rect anchor)', () => {
             </PopoverPortalTargetContextProvider>,
         );
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const style = flattenStyle(findPopoverContentView(screen)?.props?.style);
@@ -114,7 +114,7 @@ describe('Popover (rect anchor)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -163,7 +163,7 @@ describe('Popover (rect anchor)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -216,7 +216,7 @@ describe('Popover (rect anchor)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -266,7 +266,7 @@ describe('Popover (rect anchor)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);

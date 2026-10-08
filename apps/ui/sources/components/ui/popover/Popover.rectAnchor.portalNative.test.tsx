@@ -59,6 +59,7 @@ describe('Popover rect-anchor (portal native)', () => {
                         }}
                         portal={{ native: true }}
                         placement="bottom"
+                        flip={false}
                         gap={0}
                         maxHeightCap={200}
                         onRequestClose={() => {}}
@@ -71,7 +72,7 @@ describe('Popover rect-anchor (portal native)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -123,7 +124,7 @@ describe('Popover rect-anchor (portal native)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -172,7 +173,7 @@ describe('Popover rect-anchor (portal native)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -227,7 +228,7 @@ describe('Popover above-anchor backdrop (portal native)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const pressables = screen.tree.root.findAllByType('Pressable' as never);

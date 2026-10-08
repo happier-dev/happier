@@ -140,6 +140,7 @@ describe('Popover (native keyboard)', () => {
                         placement="bottom"
                         gap={0}
                         maxHeightCap={320}
+                        flip={false}
                         onRequestClose={() => {}}
                     >
                         {() => React.createElement('PopoverChild')}
