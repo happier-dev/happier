@@ -234,6 +234,24 @@ binary is eligible for 0.3 updates. Remove the guard only when no supported
 eligible binary can lack the SDK; delivering native modules still requires a
 native app build.
 
+### Voice duration settings (0.3 development)
+
+The canonical Local conversation and Local direct settings schemas accept
+positive integer speech-request timeouts, retaining only the JavaScript timer
+maximum of 2,147,483,647 milliseconds. Local conversation accepts positive
+integer idle-agent TTLs in seconds without a Happier upper bound. There is no
+protocol minimum of sixty seconds for idle TTLs or one thousand milliseconds
+for speech requests.
+
+The released `ui-web-v0.2.15` and `ui-mobile-v0.2.15` readers at
+`88d45f33a5e5faf3235f621ee168a6f0ca58762d` admit idle TTLs of
+60–21,600 seconds and speech-request timeouts of 1,000–60,000 milliseconds.
+Their parser rejects an out-of-range Local adapter and retains its defaults.
+On 2026-10-08 the maintainer explicitly approved longer values and removal of
+unsupported lower bounds, accepting this older-client defaulting consequence.
+Current readers still accept settings within the released ranges; current
+writes preserve admitted values without a transition, shim or parallel policy.
+
 ### Voice presence settings (development)
 
 The device-local `voicePresenceContainer` chooses `top_bar`, `island`, or `orb`.

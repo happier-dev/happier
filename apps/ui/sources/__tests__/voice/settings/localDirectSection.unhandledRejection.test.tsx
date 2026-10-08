@@ -60,9 +60,9 @@ import { readLocalDirectVoiceSettings, voiceSettingsParse } from '@/sync/domains
 
 describe('LocalDirectSection', () => {
   // The network timeout used to be edited through an async `Modal.prompt`, whose rejection leaked as an
-  // unhandledRejection. It is now an inline field: typing and leaving it commits a clamped value, with no
+  // unhandledRejection. It is now an inline field: typing and leaving it commits the admitted value, with no
   // prompt and nothing left pending.
-  it('commits the network timeout inline, clamped, without a prompt or an unhandledRejection', async () => {
+  it('commits the network timeout inline beyond sixty seconds without a prompt or an unhandledRejection', async () => {
     const unhandledSpy = vi.fn();
     process.on('unhandledRejection', unhandledSpy);
     const setVoice = vi.fn();
@@ -87,7 +87,7 @@ describe('LocalDirectSection', () => {
 
     expect(modalPrompt).not.toHaveBeenCalled();
     expect(setVoice).toHaveBeenCalledTimes(1);
-    expect(readLocalDirectVoiceSettings(setVoice.mock.calls[0]![0]).networkTimeoutMs).toBe(60000);
+    expect(readLocalDirectVoiceSettings(setVoice.mock.calls[0]![0]).networkTimeoutMs).toBe(999999000);
     expect(unhandledSpy).not.toHaveBeenCalled();
   });
 

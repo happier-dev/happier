@@ -219,7 +219,12 @@ For replies and messages the Voice agent sends, model selection can come from:
 
 When a backend exposes a dynamic model list, Happier uses that live list in the dropdown instead of forcing manual text entry.
 
-The advanced idle-agent setting accepts 60–21,600 seconds (one minute to six hours).
+In 0.3 development, the advanced idle-agent setting accepts any positive whole
+number of seconds, including durations longer than six hours. Speech-request
+timeouts also accept values longer than sixty seconds, up to the JavaScript
+timer maximum of 2,147,483,647 milliseconds. A 0.2 client reading settings outside
+its former ranges (60–21,600 seconds for idle agents and 1,000–60,000 milliseconds
+for speech requests) falls back to its Local voice adapter defaults.
 Stopping an idle Voice agent does not delete an ordinary working session. A model
 for messages it sends controls instruction generation; it does not create Git commits.
 

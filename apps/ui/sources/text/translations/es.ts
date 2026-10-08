@@ -12782,9 +12782,9 @@ settingsSession: {
       mediatorVerbosityBalanced: "Equilibrado",
       mediatorIdleTtl: "TTL de inactividad del mediador",
       mediatorIdleTtlSubtitle:
-        "Detener automáticamente tras inactividad (60–21600s)",
-      mediatorIdleTtlDescription: "Introduce un número entre 60 y 21600.",
-      mediatorIdleTtlInvalid: "Introduce un número entre 60 y 21600.",
+        "Detener automáticamente tras inactividad",
+      mediatorIdleTtlDescription: "Introduce un número entero positivo de segundos.",
+      mediatorIdleTtlInvalid: "Introduce un número entero positivo de segundos.",
       mediatorChatModelSource: "Origen del modelo (chat)",
       mediatorChatModelSourceSubtitle:
         "Usar el modelo de la sesión o un modelo rápido personalizado",
