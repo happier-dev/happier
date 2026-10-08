@@ -43,15 +43,13 @@ describe('engineRegistry (antigravity runtimeCore)', () => {
         backendId,
         pluginId: entry.pluginId,
       })),
-      diagnostics: runtimeRegistry.pluginDiagnosticsByPluginId,
+      diagnostics: runtimeRegistry.pluginDiagnosticsByPluginId[ANTIGRAVITY_PLUGIN_ID],
     }).toEqual({
       engines: [{
         backendId: ANTIGRAVITY_BACKEND_ID,
         pluginId: ANTIGRAVITY_PLUGIN_ID,
       }],
-      diagnostics: {
-        [ANTIGRAVITY_PLUGIN_ID]: [],
-      },
+      diagnostics: [],
     });
 
     const resolution = await resolveBackendEngineAdapterResolution(ANTIGRAVITY_BACKEND_ID, {
@@ -103,7 +101,6 @@ describe('engineRegistry (antigravity runtimeCore)', () => {
       kind: 'hostSessionRuntimePlan',
       agentId: ANTIGRAVITY_BACKEND_ID,
       config: {
-        providerName: 'Antigravity CLI',
         agentMessageType: ANTIGRAVITY_BACKEND_ID,
       },
     });

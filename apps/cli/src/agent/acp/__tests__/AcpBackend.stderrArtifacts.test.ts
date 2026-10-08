@@ -175,7 +175,12 @@ describe('AcpBackend subprocess stderr artifacts', () => {
           const startup = backend.startSession();
           const rejected = expect(startup).rejects.toThrow(/PermissionError: \[Errno 1\]/);
           await Promise.all([stderrReceived, initializeStarted]);
-          await vi.advanceTimersByTimeAsync(10);
+          // The owner retries initialize with its normal backoff; exhaust that
+          // real lifecycle on the clock boundary, not just its first deadline.
+          await vi.runAllTimersAsync();
+          // Artifact-stream close precedes OS process cleanup; timers created
+          // after that real I/O must run on the real process-supervision clock.
+          vi.useRealTimers();
           await rejected;
         } finally {
           vi.useRealTimers();

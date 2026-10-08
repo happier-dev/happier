@@ -1,15 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol';
 
-const { configurationMock } = vi.hoisted(() => ({
-  configurationMock: { activeServerDir: '' },
-}));
-
-vi.mock('@/configuration', () => ({ configuration: configurationMock }));
+import { configuration } from '@/configuration';
 
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 import { importAcpReplaySidechainV1 } from '../importAcpReplaySidechain';
@@ -40,12 +34,12 @@ async function readQueuedMutations(path: string): Promise<Array<{
 
 describe('ACP replay sidechain durable outbox integration', () => {
   beforeEach(async () => {
-    configurationMock.activeServerDir = await mkdtemp(join(tmpdir(), 'happier-acp-replay-outbox-'));
+    // vitestSetup owns an isolated real CLI home and its cleanup for this file.
+    await resetSessionClientDurableMutationOutboxStateForTests();
   });
 
   afterEach(async () => {
     await resetSessionClientDurableMutationOutboxStateForTests();
-    await rm(configurationMock.activeServerDir, { recursive: true, force: true });
   });
 
   it('retries disconnected replay rows after restart without duplicating stable semantic rows', async () => {
@@ -86,7 +80,7 @@ describe('ACP replay sidechain durable outbox integration', () => {
     await importAcpReplaySidechainV1(input);
 
     const paths = resolveSessionClientDurableMutationJournalPaths({
-      activeServerDir: configurationMock.activeServerDir,
+      activeServerDir: configuration.activeServerDir,
       custody: 'runtime',
       sessionId,
     });
