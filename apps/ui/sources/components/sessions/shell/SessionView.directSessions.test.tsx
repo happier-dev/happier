@@ -782,7 +782,7 @@ describe('SessionView (direct sessions)', () => {
     beforeEach(async () => {
       useCanonicalDraftScope();
       settingsState.current = {
-        enabledAgentIds: ['claude', 'codex', 'gemini'],
+        backendEnabledByTargetKey: Object.fromEntries(['claude', 'codex', 'gemini'].map((id) => [targetKey(id), true])),
         featureToggles: { sessions: true, 'sessions.agentSwitching': true },
       };
       const features = createRootLayoutFeaturesResponse();
@@ -792,10 +792,20 @@ describe('SessionView (direct sessions)', () => {
       homes.answer(canonicalDraftScope.serverId, '/v1/features', { body: features });
       homes.answer(canonicalDraftScope.serverId, '/v1/features/authenticated', { body: features });
       const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
-      storageState.sessions.s1 = { ...storageState.sessions.s1, metadata };
+      storageState.sessions.s1 = {
+        ...storageState.sessions.s1, metadata,
+        accessLevel: 'owner',
+        access: createSessionAccessFixture('owner', { approveRuntimePermissions: false }),
+      };
+      storageState.machines['machine-1'] = createMachineFixture({ activeAt: Date.now() });
       applyDirectSessionFixtures();
       const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-      await getServerFeaturesSnapshot({ serverId: canonicalDraftScope.serverId, force: true });
+      const snapshot = await getServerFeaturesSnapshot({ serverId: canonicalDraftScope.serverId, force: true });
+      const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('@/sync/domains/features/featureDecisionRuntime');
+      expect(resolveRuntimeFeatureDecisionFromSnapshot({
+        featureId: 'sessions.agentSwitching', settings: storage.getState().settings, snapshot,
+        scope: { scopeKind: 'spawn', serverId: canonicalDraftScope.serverId },
+      })).toMatchObject({ state: 'enabled' });
     });
 
     it('consumes the accepted submission and offers selectable Agents after remount', async () => {
@@ -892,7 +902,7 @@ describe('SessionView (direct sessions)', () => {
   }
 
   function clearCanonicalSessionDraft() {
-    deleteSessionDraft({
+    return deleteSessionDraft({
       scope: canonicalDraftScope,
       address: { kind: 'session', sessionId: 's1' },
     });
@@ -1630,7 +1640,7 @@ describe('SessionView (direct sessions)', () => {
 
   afterEach(async () => {
     standardCleanup();
-    clearCanonicalSessionDraft();
+    await clearCanonicalSessionDraft();
     resetSessionDraftRepositoryForTests();
     vi.clearAllTimers();
     vi.useRealTimers();
@@ -5584,7 +5594,7 @@ describe('SessionView (direct sessions)', () => {
       expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
     } finally {
       releaseSubmit.resolve();
-      clearCanonicalSessionDraft();
+      await clearCanonicalSessionDraft();
     }
   });
 

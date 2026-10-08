@@ -19,6 +19,18 @@ describe('prepared session directory authority', () => {
         })).toEqual({ directory: '/project', directoryKind: 'path' });
     });
 
+    it.each([
+        { sourceKind: 'path', targetKind: 'managed', expectedKind: 'managed' },
+        { sourceKind: 'managed', targetKind: 'path', expectedKind: 'path' },
+        { sourceKind: 'managed', targetKind: undefined, expectedKind: 'path' },
+    ] as const)('uses replacement runtime directory authority ($sourceKind → $expectedKind)', ({ sourceKind, targetKind, expectedKind }) => {
+        expect(resolvePreparedSessionDirectory({
+            options: { directory: '/project/my-app', directoryKind: targetKind, attachMetadataIdentityPolicy: 'replace_with_runtime_identity' },
+            normalizedExistingSessionId: 'session-1', existingSessionWorkspacePath: '/project',
+            ownerMetadata: { v: 1, workspace: { path: '/project', ...(sourceKind === 'managed' ? { sessionDirectoryV1: { v: 1, kind: 'managed' } } : {}) } },
+        })).toEqual({ directory: '/project/my-app', directoryKind: expectedKind });
+    });
+
     it('keeps trusted fresh managed routing for a committed child row before its marker is published', () => {
         const sessionCreationTag = SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`);
         expect(resolvePreparedSessionDirectory({

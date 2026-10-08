@@ -95,8 +95,8 @@ export function resolveSessionHandoffStartReadiness(input: Readonly<{
             ?? engineBlock(input.sourceEngineReadiness, input.machineCarrierRequired);
         if (blocked) return blocked;
         if (!input.sourcePathAllowed) return { canStart: false, reason: 'source_path_unsafe' };
-        if (!input.targetPathAllowed) return { canStart: false, reason: 'target_path_unsafe' };
     }
+    if (!input.targetPathAllowed) return { canStart: false, reason: 'target_path_unsafe' };
     if (!input.workspaceActionResolved) {
         return { canStart: false, reason: 'workspace_action_incomplete' };
     }

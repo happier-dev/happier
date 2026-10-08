@@ -12460,7 +12460,7 @@ const es = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Ese equipo no está disponible ahora. Vuelve a conectarlo e inténtalo de nuevo.',
         relationshipUnavailable: 'Esta relación de sincronización ya no incluye estas dos carpetas. Elige otra opción para el espacio de trabajo.',
         sourceFolder: 'La carpeta de esta sesión no se puede sincronizar de forma segura. Elige «No mover archivos» para transferir solo la sesión.',
-        destinationFolder: 'Elige una carpeta de destino que se pueda sincronizar de forma segura.',
+        destinationFolder: 'Elige una carpeta de destino válida.',
         workspaceOptions: 'Revisa las opciones del espacio de trabajo antes de comenzar.',
     } },
     engine: { checking: 'Comprobando la sincronización en este equipo…' },

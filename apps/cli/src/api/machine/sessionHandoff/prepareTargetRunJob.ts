@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
@@ -16,6 +17,7 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import { ensureSessionHandoffWorkspaceCwd } from '../../../session/handoff/paths/sessionHandoffWorkspaceCwd';
+import { expandHomeRelativePath, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { createManagedSessionDirectories } from '../../../session/creation/managedSessionDirectories';
 
 import {
@@ -329,7 +331,12 @@ export async function runSessionHandoffPrepareTargetJob(
 
       const targetPath = managedIdentity
         ? (await managedDirectories.allocateForHandoff(managedIdentity)).directory
-        : request.targetPath;
+        : request.sourceMachineId === request.targetMachineId
+          ? expandHomeRelativePath({
+            path: request.targetPath,
+            homeDir: resolveSessionHandoffLocalHomeDir({ activeServerDir, fallbackHomeDir: homedir() }),
+          })
+          : request.targetPath;
       managedAllocationPrepared = managedIdentity !== null;
       if (managedIdentity) {
         await materializePrepareManagedWorkspaceSeed({ request, targetPath, actualTransportStrategy,
@@ -341,7 +348,7 @@ export async function runSessionHandoffPrepareTargetJob(
         await ensureSessionHandoffWorkspaceCwd({
           workspaceRootPath: request.workspaceRootPath,
           sessionRelativeCwd: request.workspaceSessionRelativeCwd,
-          targetPath: request.targetPath,
+          targetPath,
         });
       }
       const imported = await importSessionBundle(
