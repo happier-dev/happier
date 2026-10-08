@@ -52,7 +52,7 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     expect(directSessionAgentNames).not.toContain('subagents_delegate_start');
   });
 
-  it('does not project fail-closed runtime actions as MCP tools', () => {
+  it('does not synthesize undeclared runtime MCP tools', () => {
     const mcpToolNames = new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES);
     const directMcpToolNames = new Set(listBuiltInHappierTools({
       surface: 'mcp',
@@ -60,16 +60,19 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
     }).map((tool) => tool.name));
 
-    for (const runtimeActionId of RUNTIME_ACTION_IDS_V1) {
+    const closedRuntimeActions = RUNTIME_ACTION_IDS_V1.filter((id) => getActionSpec(id).surfaces.mcp === false);
+    expect(closedRuntimeActions.length).toBeGreaterThan(0);
+    for (const runtimeActionId of closedRuntimeActions) {
       const spec = getActionSpec(runtimeActionId);
-      expect(spec.surfaces.mcp).toBe(false);
       if (spec.bindings?.mcpToolName) {
-        expect(mcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
-        expect(directMcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
+        expect(directMcpToolNames.has(spec.bindings.mcpToolName), runtimeActionId).toBe(false);
       }
     }
-    expect(mcpToolNames.has('browser_navigate')).toBe(false);
+    const navigate = getActionSpec('browser.navigate');
+    expect(navigate.surfaces.mcp).toBe(false);
+    expect(navigate.bindings?.mcpToolName).toBeUndefined();
     expect(directMcpToolNames.has('browser_navigate')).toBe(false);
+    expect(mcpToolNames.has('browser_navigate')).toBe(false);
   });
 
   it('reuses ActionSpec inputSchema objects for mcp start actions (no schema drift)', () => {

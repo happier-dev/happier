@@ -6,6 +6,7 @@ import type { MockInstance } from 'vitest';
 import {
     readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     SessionMetadataTuplePatchV1Schema,
+    SessionCurrentProjectionRecordV1Schema,
     type ExternalSessionTranscriptRawMessageV1,
 } from '@happier-dev/protocol';
 
@@ -19,6 +20,7 @@ import {
     createSessionNotificationContextFixture,
 } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
@@ -57,15 +59,16 @@ function createStoredSessionRecord(sessionId: string, ownerMetadata: unknown) {
         metadata: ownerMetadata,
         agentState: null,
     });
-    return {
+    return SessionCurrentProjectionRecordV1Schema.parse({
         ...createSessionNotificationContextFixture(sessionId),
         encryptionMode: 'plain' as const,
         metadataLayoutVersion: fields.metadataLayoutVersion,
         metadata: fields.sharedMetadata.ciphertext,
         ownerMetadata: fields.ownerMetadata,
+        share: null,
         agentState: fields.agentState,
         agentStateVersion: 0,
-    };
+    });
 }
 const rawSession = createStoredSessionRecord('session-background-follow', metadata);
 const resource = {
@@ -117,6 +120,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
     let httpApp: FastifyInstance;
     let restoreHttpAdapter: () => void;
     let patchSpy: MockInstance<typeof axios.patch>;
+    let publishMetadata: typeof axios.patch;
     let serverSession: ReturnType<typeof createStoredSessionRecord>;
     let beforeSessionResponse: (() => Promise<void>) | null;
     let afterMetadataPublication: (() => void) | null;
@@ -190,6 +194,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             app: httpApp,
             origin: new URL(resolveServerHttpBaseUrl()).origin,
         });
+        publishMetadata = axios.patch.bind(axios);
         patchSpy = vi.spyOn(axios, 'patch');
     });
 
@@ -329,10 +334,12 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         expect(patchSpy).not.toHaveBeenCalled();
     });
 
-    it('revalidates an exact hosted owner during gap recovery without persisting a second link', async () => {
+    it('revalidates an exact hosted owner during gap recovery without persisting a second link', async () => withTempDir('happier-hosted-follow-codex-', async (homePath) => {
+        vi.stubEnv('CODEX_HOME', homePath);
         const hostedSource = {
             kind: 'codexHome' as const,
             home: 'user' as const,
+            homePath,
         };
         const hostedMetadata = {
             machineId: 'machine-hosted-follow',
@@ -434,7 +441,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         expect(pageTranscript).toHaveBeenCalledOnce();
         expect(lease.readAcceptedCursor?.()).toBe('cursor-hosted-resynced');
         expect(readPersistedMetadata()).not.toHaveProperty('externalSessionV1');
-    });
+    }));
 
     it.each([
         'source_replaced',
@@ -488,8 +495,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         const progressPublication = new Promise<void>((resolve) => {
             releaseProgressPublication = resolve;
         });
-        const publish = patchSpy.getMockImplementation();
-        if (!publish) throw new Error('HTTP patch transport unavailable');
+        const publish = publishMetadata;
         patchSpy.mockImplementationOnce(async (...args) => {
             await progressPublication;
             return await publish(...args);

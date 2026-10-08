@@ -1,9 +1,11 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { ExternalShareableTranscriptSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 
 import { createAccountEncryptionCurrentnessFixture, createSessionListResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const credentials = { token: 'token', encryption: null } as const;
+const sessionId = 'c1234567890123456789012345';
 const transcriptResponse = vi.fn<() => Promise<unknown>>();
 let get: MockInstance<typeof axios.get>;
 
@@ -21,10 +23,10 @@ describe('getSessionTranscript', () => {
       if (path === '/v1/account/encryption/currentness') {
         return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       }
-      const session = createSessionRecordFixture({ id: 'sess-1', encryptionMode: 'plain' });
+      const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain' });
       if (path === '/v2/sessions') return { status: 200, data: createSessionListResponseFixture([session]) };
-      if (path === '/v2/sessions/sess-1') return { status: 200, data: { session } };
-      if (path === '/v1/sessions/sess-1/messages') return { status: 200, data: await transcriptResponse() };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+      if (path === `/v1/sessions/${sessionId}/messages`) return { status: 200, data: await transcriptResponse() };
       throw new Error(`Unexpected HTTP path: ${path}`);
     });
   });
@@ -65,7 +67,7 @@ describe('getSessionTranscript', () => {
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       callerPluginId: 'com.example.channel',
       cursor: '0',
@@ -88,7 +90,7 @@ describe('getSessionTranscript', () => {
   it('uses same-snapshot referenced user rows for an out-of-page final without a second transcript read', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const admittedUser = {
-      id: 'm1', seq: 1, localId: 'local-1', sidechainId: null, messageRole: 'user', createdAt: 1,
+      id: 'm1', seq: 1, localId: 'local-1', messageRole: 'user', createdAt: 1, updatedAt: 1,
       externalShareableActor: 'machine',
       content: { t: 'plain', v: {
         role: 'user', content: { type: 'text', text: 'hello' },
@@ -110,7 +112,7 @@ describe('getSessionTranscript', () => {
       nextBeforeSeq: null,
       nextAfterSeq: null,
       publicationBlocked: false,
-      externalShareableSnapshot: {
+      externalShareableSnapshot: ExternalShareableTranscriptSnapshotV1Schema.parse({
         turns: [{
           turnId: 'turn-1', status: 'completed', startedAt: 1, updatedAt: 102,
           transcriptAnchors: {
@@ -118,12 +120,12 @@ describe('getSessionTranscript', () => {
           },
         }],
         referencedUserRows: [admittedUser],
-      },
+      }),
     });
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       callerPluginId: 'com.example.channel',
       cursor: '100',
@@ -163,7 +165,7 @@ describe('getSessionTranscript', () => {
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       cursor: '0',
     });
@@ -195,7 +197,7 @@ describe('getSessionTranscript', () => {
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       cursor: '0',
     });
@@ -224,7 +226,7 @@ describe('getSessionTranscript', () => {
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       cursor: '0',
     });
@@ -251,7 +253,7 @@ describe('getSessionTranscript', () => {
     });
     const request: Parameters<typeof getSessionTranscript>[0] & Readonly<{ signal: AbortSignal }> = {
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       signal: cancellation.signal,
     };
@@ -279,7 +281,7 @@ describe('getSessionTranscript', () => {
 
     await expect(getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       projection: 'externalShareableV1',
       signal: cancellation.signal,
     })).rejects.toMatchObject({ name: 'AbortError' });
@@ -302,7 +304,7 @@ describe('getSessionTranscript', () => {
       nextAfterSeq: null,
     });
 
-    const result = await getSessionTranscript({ credentials, idOrPrefix: 'sess-1' });
+    const result = await getSessionTranscript({ credentials, idOrPrefix: sessionId });
 
     expect(result).toMatchObject({
       ok: true,
@@ -330,7 +332,7 @@ describe('getSessionTranscript', () => {
       nextAfterSeq: null,
     });
 
-    const result = await getSessionTranscript({ credentials, idOrPrefix: 'sess-1', maxCharsPerMessage: 3 });
+    const result = await getSessionTranscript({ credentials, idOrPrefix: sessionId, maxCharsPerMessage: 3 });
 
     expect(result).toMatchObject({
       ok: true,
@@ -367,7 +369,7 @@ describe('getSessionTranscript', () => {
 
     const result = await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       includeTools: true,
     });
 
@@ -403,7 +405,7 @@ describe('getSessionTranscript', () => {
 
     await getSessionTranscript({
       credentials,
-      idOrPrefix: 'sess-1',
+      idOrPrefix: sessionId,
       limit: 5,
       includeRaw: true,
       includeTools: true,

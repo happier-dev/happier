@@ -304,7 +304,9 @@ describe('Session awareness Action acquisition', () => {
     });
     expect(previews).toBe(rows.length);
     expect(peak).toBeLessThanOrEqual(4);
-    expect(previewQueries.every((query) => query.toString() === 'limit=1&scope=main&roles=user%2Cagent')).toBe(true);
+    for (const query of previewQueries) {
+      expect(Object.fromEntries(query)).toEqual({ limit: '1', scope: 'main', roles: 'user,agent' });
+    }
     expect(result.sessions.map((session) => session.id)).toEqual(rows.map((row) => row.id));
   });
 });
