@@ -187,6 +187,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             />
         );
         const screen = await renderScreen(element(true), {
+            flushOptions: { frames: 1 },
             createNodeMock: (node) => (node.props as Readonly<{ testID?: string }>).testID === 'plugin-hosted-web-frame'
                 ? { getBoundingClientRect: () => ({ x: 10, y: 20, width: 300, height: 200 }) }
                 : {},
@@ -236,6 +237,7 @@ describe('PluginHostedArtifactDesktopViewHost', () => {
             onNativeArtifactLoadError={onNativeArtifactLoadError}
             testID="plugin-hosted-web-frame"
         />, {
+            flushOptions: { frames: 1 },
             createNodeMock: (node) => (node.props as Readonly<{ testID?: string }>).testID === 'plugin-hosted-web-frame'
                 ? { getBoundingClientRect: () => ({ x: 10, y: 20, width: 300, height: 200 }) }
                 : {},

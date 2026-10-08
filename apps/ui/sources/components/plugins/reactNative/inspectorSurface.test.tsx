@@ -266,7 +266,9 @@ describe('inspector renderSurface (real source, mounted)', () => {
         expect(findByTestId(renderer!, 'inspector-error')[0]?.props).toMatchObject({
             tone: 'danger',
             title: 'Plugin inventory unavailable',
-            description: 'Host API is unavailable.',
+            // Unexpected transport failures expose the canonical public code,
+            // not the handler's private diagnostic text.
+            description: 'internal_error',
         });
     });
 });

@@ -19,6 +19,7 @@ const scrollOwner = vi.hoisted(() => ({
 }));
 
 installFilesContentCommonModuleMocks({
+    text: async () => vi.importActual('@/text'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -67,12 +68,6 @@ vi.mock('@legendapp/list/react-native', async () => {
     };
 });
 
-vi.mock('@expo/vector-icons', () => ({ Octicons: 'Octicons', Ionicons: 'Ionicons' }));
-vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text', TextInput: 'TextInput' }));
-vi.mock('@/components/ui/media/FileIcon', () => ({ FileIcon: 'FileIcon' }));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: 'Item' }));
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
-
 const theme = {
     colors: {
         border: { default: '#ddd' },
@@ -87,12 +82,6 @@ function makeFile(name: string) {
 
 function countLists(tree: renderer.ReactTestRenderer): number {
     return tree.root.findAll((node) => String(node.type) === 'LegendList').length;
-}
-
-function textOf(tree: renderer.ReactTestRenderer): string[] {
-    return tree.root
-        .findAll((node) => String(node.type) === 'Text')
-        .map((node) => String(node.props.children ?? ''));
 }
 
 describe('SearchResultsList scroll owner stability', () => {
@@ -122,18 +111,19 @@ describe('SearchResultsList scroll owner stability', () => {
         // Searching: the spinner is list content, not a replacement for the list.
         expect(countLists(tree)).toBe(1);
         expect(scrollOwner.mounts).toBe(1);
-        expect(textOf(tree)).toContain('files.searching');
+        expect(rendered.findHostByTestId('files-search-searching')).not.toBeNull();
 
         await rendered.update(
             <SearchResultsList {...props({ searchResults: [makeFile('a.ts'), makeFile('b.ts')] }) as any} />,
         );
-        expect(tree.root.findAll((node) => String(node.type) === 'Item')).toHaveLength(2);
+        expect(rendered.getTextContent()).toContain('a.ts');
+        expect(rendered.getTextContent()).toContain('b.ts');
 
         // The user scrolled the results; that position lives on the list instance.
         scrollOwner.offset = 320;
 
         await rendered.update(<SearchResultsList {...props({ searchQuery: 'zzz' }) as any} />);
-        expect(textOf(tree)).toContain('files.noFilesFound');
+        expect(rendered.findHostByTestId('files-search-no-results')).not.toBeNull();
 
         await rendered.update(
             <SearchResultsList {...props({ searchResults: [makeFile('a.ts')] }) as any} />,
@@ -159,9 +149,8 @@ describe('SearchResultsList scroll owner stability', () => {
         )).tree;
 
         const list = tree.root.find((node) => String(node.type) === 'LegendList');
-        const copy = list
-            .findAll((node) => String(node.type) === 'Text')
-            .map((node) => String(node.props.children ?? ''));
-        expect(copy).toContain('files.noFilesInProject');
+        expect(list.findAll((node) => (
+            typeof node.type === 'string' && node.props.testID === 'files-search-empty'
+        ))).not.toHaveLength(0);
     });
 });
