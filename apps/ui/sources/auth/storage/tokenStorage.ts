@@ -1861,23 +1861,32 @@ async function readCredentialRawByKey(
     }
 }
 
-async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
+async function writeCredentialRawByKey(
+    key: string,
+    raw: string,
+    storageWriteFailure: 'absent' | 'surface' = 'absent',
+): Promise<boolean> {
     try {
         await writeDeviceLocalStorageString(key, raw);
         if (Platform.OS !== 'web') credentialsCacheByKey.set(key, raw);
         return true;
     } catch (error) {
+        if (storageWriteFailure === 'surface') throw error;
         console.error('Error setting credentials:', error);
         return false;
     }
 }
 
-async function removeCredentialByKey(key: string): Promise<boolean> {
+async function removeCredentialByKey(
+    key: string,
+    storageWriteFailure: 'absent' | 'surface' = 'absent',
+): Promise<boolean> {
     try {
         await removeDeviceLocalStorageString(key);
         if (Platform.OS !== 'web') credentialsCacheByKey.delete(key);
         return true;
     } catch (error) {
+        if (storageWriteFailure === 'surface') throw error;
         console.error('Error removing credentials:', error);
         return false;
     }
@@ -2705,16 +2714,16 @@ async function writeHomeCredentialsForServerScope(
         let mutated = false;
         // Remove what this write created only while its content is still ours;
         // a key rewritten concurrently belongs to its new writer.
-        const currentPrimaryRaw = await readCredentialRawByKey(keys.primary);
+        const currentPrimaryRaw = await readCredentialRawByKey(keys.primary, 'surface');
         const ownsPrimary = currentPrimaryRaw === json;
         if (ownsPrimary) {
             restored = previousPrimaryRaw !== null
-                ? await writeCredentialRawByKey(keys.primary, previousPrimaryRaw)
-                : await removeCredentialByKey(keys.primary);
+                ? await writeCredentialRawByKey(keys.primary, previousPrimaryRaw, 'surface')
+                : await removeCredentialByKey(keys.primary, 'surface');
             mutated = restored;
         }
         const currentLegacyRaws = await Promise.all(
-            keys.legacy.map((legacyKey) => readCredentialRawByKey(legacyKey)),
+            keys.legacy.map((legacyKey) => readCredentialRawByKey(legacyKey, 'surface')),
         );
         // Alias restoration is one ownership decision. If any alias no longer
         // has the exact empty state left by this write, a newer layout writer
@@ -2724,7 +2733,7 @@ async function writeHomeCredentialsForServerScope(
             for (let index = 0; index < keys.legacy.length; index += 1) {
                 const previousRaw = previousLegacyRaws[index] ?? null;
                 if (previousRaw === null) continue;
-                const legacyRestored = await writeCredentialRawByKey(keys.legacy[index]!, previousRaw);
+                const legacyRestored = await writeCredentialRawByKey(keys.legacy[index]!, previousRaw, 'surface');
                 restored = legacyRestored && restored;
                 mutated = legacyRestored || mutated;
             }
