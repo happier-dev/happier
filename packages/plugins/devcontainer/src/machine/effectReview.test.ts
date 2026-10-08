@@ -36,6 +36,7 @@ async function reviewBoundary() {
   const composeNamespace = { inherited: 'uncontrolled-project', enabled: false };
   const composeExternalEnvironment: { key?: string } = {};
   const incumbent = { present: false };
+  const malformedObservation = { enabled: false };
   const nativeHookEnvironment: { key?: string; merged?: boolean; prefix?: string; child?: boolean; imageKey?: string } = {};
   const imageCache: { present: boolean; config: Record<string, unknown> } = { present: true, config: { Labels: {} } };
   const featureMetadata = { postCreateCommand: 'locked-feature-setup' };
@@ -49,6 +50,7 @@ async function reviewBoundary() {
     services: { exec: { run: async (request: Parameters<ExecService['run']>[0]) => {
       requests.push(request);
       if (request.args?.[0] === 'read-configuration') {
+        if (malformedObservation.enabled) return result({ ...nativeConfiguration, configuration: [], mergedConfiguration: {} });
         // Native CLI provided id-labels bypass the workspace-label incumbent fallback.
         if (incumbent.present && !request.args.includes('happier.managed-machine= ')) {
           return result({ ...nativeConfiguration, mergedConfiguration: { postCreateCommands: ['incumbent-only-hook'] } });
@@ -100,7 +102,7 @@ async function reviewBoundary() {
       kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: id },
     } }) } } },
   } as unknown as PluginInvocationContext;
-  return { workspaceFolder, configPath, nativeConfiguration, compose, composeNamespace, composeExternalEnvironment, incumbent, nativeHookEnvironment, imageCache, featureMetadata, requests, handlers, context };
+  return { workspaceFolder, configPath, nativeConfiguration, compose, composeNamespace, composeExternalEnvironment, incumbent, malformedObservation, nativeHookEnvironment, imageCache, featureMetadata, requests, handlers, context };
 }
 
 describe('Devcontainer public passive effect review', () => {
@@ -121,6 +123,14 @@ describe('Devcontainer public passive effect review', () => {
     expect(JSON.stringify(options)).not.toContain('private-value');
     expect(boundary.requests.map(request => request.args?.[0])).toEqual(['read-configuration', 'image']);
     expect(boundary.requests[0]?.args).toEqual(expect.arrayContaining(['--include-merged-configuration', '--include-features-configuration']));
+  });
+
+  it('rejects a malformed native configuration observation instead of offering an incomplete review', async () => {
+    const boundary = await reviewBoundary();
+    boundary.malformedObservation.enabled = true;
+    await expect(boundary.handlers.get('options')!({ workspaceFolder: boundary.workspaceFolder,
+      configPath: boundary.configPath }, boundary.context)).rejects.toMatchObject({ code: 'native_observation_unavailable' });
+    expect(boundary.requests.map(request => request.args?.[0])).toEqual(['read-configuration']);
   });
 
   it('forwards the same inherited native environment for passive review and realization, including arbitrary localEnv and Compose selection', async () => {

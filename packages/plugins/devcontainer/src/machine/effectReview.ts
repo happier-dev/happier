@@ -41,8 +41,11 @@ function parameterizeComposeIdentities(compose: Record<string, unknown>, source:
   };
 }
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return isRecord(value) ? value : {};
 }
 function nativeJson(result: PluginProcessResult): unknown {
   if (result.termination.requestedBy.kind !== 'none' || result.termination.observed.kind !== 'exit'
@@ -126,7 +129,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   // and reject blank values, so this existing-label exclusion cannot select a
   // managed row. Provided labels bypass incumbent fallback (CLI utils:668–673).
   // It is only a passive source selector, never a Machine/resource identity.
-  if (!native.configuration || !native.mergedConfiguration || !native.workspace) fail('native_observation_unavailable');
+  if (!isRecord(native.configuration) || !isRecord(native.mergedConfiguration) || !isRecord(native.workspace)) fail('native_observation_unavailable');
   const configuration = record(native.configuration);
   const merged = record(native.mergedConfiguration);
   const workspace = record(native.workspace);
