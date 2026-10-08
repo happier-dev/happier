@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccessV1.js';
@@ -15,11 +16,11 @@ export { SessionListMetadataUpgradeRequiredCountSchema } from '../control/listRe
  * carry the complete responsibility pair so omission cannot be mistaken for
  * an authoritative unassigned value.
  */
-export const SessionCurrentProjectionRecordV1Schema = V2SessionRecordSchema.and(z.object({
+export const SessionCurrentProjectionRecordV1Schema = lazyZodSchema(() => V2SessionRecordSchema.safeExtend({
   effectiveAccess: SessionEffectiveAccessV1Schema,
   responsibleAccountId: z.string().min(1).nullable(),
   responsibleAccount: V2SessionRecordSchema.shape.responsibleAccount.unwrap(),
-}).passthrough());
+}));
 
 export type SessionCurrentProjectionRecordV1 = Readonly<z.infer<typeof SessionCurrentProjectionRecordV1Schema>>;
 
@@ -28,15 +29,15 @@ export type SessionCurrentProjectionRecordV1 = Readonly<z.infer<typeof SessionCu
  * established V2 projection policy; pagination authority stays explicit at
  * this boundary so consumers cannot lose either independent continuation.
  */
-export const SessionListQueryResponseV1Schema = z.object({
-  sessions: z.array(SessionCurrentProjectionRecordV1Schema.and(z.object({
+export const SessionListQueryResponseV1Schema = lazyZodSchema(() => z.object({
+  sessions: z.array(SessionCurrentProjectionRecordV1Schema.safeExtend({
     viewer: SessionViewerProjectionV1Schema,
-  }).passthrough())),
+  })),
   nextCursor: z.string().nullable(),
   hasNext: z.boolean(),
   attentionNextCursor: z.string().nullable(),
   attentionHasNext: z.boolean(),
   metadataUpgradeRequiredCount: SessionListMetadataUpgradeRequiredCountSchema.optional(),
-}).strict();
+}).strict());
 
 export type SessionListQueryResponseV1 = Readonly<z.infer<typeof SessionListQueryResponseV1Schema>>;

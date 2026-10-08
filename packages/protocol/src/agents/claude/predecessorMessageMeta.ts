@@ -1,6 +1,9 @@
+import type { z } from 'zod';
 import {
     CLAUDE_REMOTE_DEBUG_CATEGORIES,
     CLAUDE_SETTING_SOURCES_V2,
+    CLAUDE_UNIFIED_TERMINAL_HOSTS,
+    CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES,
     normalizeClaudeRemoteAdvancedOptionsJson,
     normalizeClaudeUnifiedTerminalHost,
     normalizeClaudeUnifiedTerminalResumeChoice,
@@ -28,6 +31,39 @@ export type ClaudePredecessorMessageMetaDefaults = Readonly<{
 type ClaudeSettingKey = keyof ClaudePredecessorMessageMetaDefaults;
 type ClaudeSettingSourcesV2 = readonly (typeof CLAUDE_SETTING_SOURCES_V2)[number][];
 type ClaudeDebugCategories = readonly (typeof CLAUDE_REMOTE_DEBUG_CATEGORIES)[number][];
+
+/**
+ * Typed persisted fields emitted by the bridge and Claude UI declaration and consumed by the
+ * predecessor Claude CLI. Keep this projection at the Agent compatibility
+ * owner; generic Message metadata must not become an arbitrary opaque bag.
+ * Refreshed against ../0.2@639a32ec0e832dedb35d5a5809c36717c568225f
+ * (inspected clean producer and reader paths, 2026-10-08).
+ */
+export function createClaudePredecessorMessageMetaShape(zod: typeof z) {
+    return {
+        claudeRemoteAgentSdkEnabled: zod.boolean().optional(),
+        claudeUnifiedTerminalEnabled: zod.boolean().optional(),
+        claudeUnifiedTerminalHost: zod.enum(CLAUDE_UNIFIED_TERMINAL_HOSTS).optional(),
+        claudeUnifiedTerminalResumeChoice: zod.enum(CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES).optional(),
+        claudeRemoteSettingSourcesV2: zod.array(zod.enum(CLAUDE_SETTING_SOURCES_V2)).optional(),
+        claudeRemoteSettingSources: zod.enum(['project', 'user_project', 'none']).optional(),
+        claudeCodeExperimentalAgentTeamsEnabled: zod.boolean().optional(),
+        claudeLocalPermissionBridgeEnabled: zod.boolean().optional(),
+        claudeLocalPermissionBridgeWaitIndefinitely: zod.boolean().optional(),
+        claudeLocalPermissionBridgeTimeoutSeconds: zod.number().optional(),
+        claudeRemoteEnableFileCheckpointing: zod.boolean().optional(),
+        claudeRemoteMaxThinkingTokens: zod.number().nullable().optional(),
+        claudeRemoteDisableTodos: zod.boolean().optional(),
+        claudeRemoteStrictMcpServerConfig: zod.boolean().optional(),
+        claudeRemoteDebugEnabled: zod.boolean().optional(),
+        claudeRemoteVerboseEnabled: zod.boolean().optional(),
+        claudeRemoteDebugCategories: zod.array(zod.enum(CLAUDE_REMOTE_DEBUG_CATEGORIES)).optional(),
+        claudeRemoteAdvancedOptionsJson: zod.string().optional(),
+        // The declaration producer and predecessor reader own effort semantics;
+        // this projection retains their named string without a second level catalog.
+        reasoningEffort: zod.string().optional(),
+    };
+}
 
 /**
  * Current UI -> predecessor Claude CLI message metadata compatibility writer.

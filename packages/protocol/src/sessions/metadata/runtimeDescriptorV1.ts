@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import {
   PluginContributionIdentityV1Schema,
   resolveAgentIdFromPersistedContributionIdentityV1,
@@ -98,17 +100,20 @@ function normalizeDeployedRuntimeDescriptorV1(value: unknown): unknown {
 }
 
 function createRuntimeDescriptorAgentSchema(zod: typeof z) {
-  return zod.object({
+  const schema = zod.object({
     agentExtra: createRuntimeDescriptorAgentExtraV1Schema(zod).optional(),
   }).passthrough();
+  // This is Agent-owned recovery data, not a generic Session-domain projection.
+  return defineStoredReadProjection(schema, () => schema);
 }
 
 function createRuntimeDescriptorAgentExtraV1Schema(zod: typeof z) {
-  return zod.object({
+  const schema = zod.object({
     owner: zod.string().min(1),
     schemaId: zod.string().min(1),
     v: zod.number().int().min(1),
   }).passthrough();
+  return defineStoredReadProjection(schema, () => schema);
 }
 
 export function createRuntimeDescriptorV1Schema(zod: typeof z) {
@@ -133,7 +138,7 @@ export const RuntimeDescriptorV1Schema = createRuntimeDescriptorV1Schema(z);
  * Provider Session ids, host paths/endpoints, runtime handles and unknown fields
  * are therefore rejected at this boundary.
  */
-export const PortableRuntimeDescriptorV1Schema = z.object({
+export const PortableRuntimeDescriptorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: z.string().trim().min(1),
   agent: z.object({
@@ -143,7 +148,7 @@ export const PortableRuntimeDescriptorV1Schema = z.object({
     connectedServiceProfileId: z.string().trim().min(1).optional(),
     connectedServiceGroupId: z.string().trim().min(1).optional(),
   }).strict(),
-}).strict();
+}).strict());
 export type PortableRuntimeDescriptorV1 = z.infer<typeof PortableRuntimeDescriptorV1Schema>;
 
 export function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorV1 | null {

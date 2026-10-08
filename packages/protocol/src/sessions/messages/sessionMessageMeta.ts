@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { createClaudePredecessorMessageMetaShape } from '../../agents/claude/predecessorMessageMeta.js';
 
 import { createSentFromSchema } from '../../sentFrom.js';
 import { createSessionPermissionModeSchema } from '../metadata/sessionPermissionModes.js';
@@ -40,7 +42,7 @@ const SESSION_USER_MESSAGE_DELIVERY_INTENTS = new Set<SessionUserMessageDelivery
 ]);
 
 /** Optional segment details are best-effort; only the version and kind identify a segment. */
-export const SessionMessageStreamSegmentV1Schema = z.object({
+export const SessionMessageStreamSegmentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   segmentKind: z.enum(['assistant', 'thinking']),
   segmentLocalId: z.string().min(1).nullish().catch(undefined),
@@ -48,7 +50,7 @@ export const SessionMessageStreamSegmentV1Schema = z.object({
   startedAtMs: z.number().nullish().catch(undefined),
   updatedAtMs: z.number().nullish().catch(undefined),
   interruptedReason: z.string().optional().catch(undefined),
-}).strict();
+}).strict());
 
 export const SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY = 'happierDeliveryIntentV1';
 export const SESSION_TOOL_ANSWER_DELIVERY_KIND = 'tool-answer-delivery.v1';
@@ -101,6 +103,7 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
   ]);
   return zod
     .object({
+      ...createClaudePredecessorMessageMetaShape(zod),
       sentFrom: createSentFromSchema(zod).optional(),
       /**
        * High-level origin of the message, used by agents to avoid treating
