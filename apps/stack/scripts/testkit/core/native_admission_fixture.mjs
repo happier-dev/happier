@@ -13,6 +13,13 @@ export async function installNativeAdmissionFixture({ root, admissionRoot = join
   const proc = join(checkout, 'apps/stack/scripts/utils/proc');
   const targets = join(checkout, 'apps/stack/scripts/utils/dev_targets');
   await Promise.all([mkdir(bin, { recursive: true }), mkdir(proc, { recursive: true }), mkdir(targets, { recursive: true })]);
+  // This is physical filesystem input, not an installed SDK or readiness fact.
+  // The real disk owner measures these owned bytes with du/df; without any
+  // dependency footprint it rejects before the CPU/memory contract is reached.
+  const footprint = join(checkout, 'node_modules');
+  await mkdir(footprint, { recursive: true });
+  await writeFile(join(footprint, 'native-admission-disk-input.fixture'),
+    'Owned filesystem bytes for native admission resource observations only.\n');
   const launcher = join(bin, 'hstack-exec');
   await Promise.all([
     copyFile(join(sourceRoot, 'apps/stack/bin/hstack-exec'), launcher),

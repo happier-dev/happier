@@ -155,6 +155,19 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--', 'node', '-e', 'console.log("validation")', '--class=compilation'], expectedHeavyClass: 'validation' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'node', '-e', 'console.log("focused")'], expectedHeavyClass: 'validation' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=unclassified-build', '--', 'node', '-e', 'console.log("build")'], expectedHeavyClass: 'compilation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--no-wait', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'vitest'], expectedComponent: 'apps/ui', expectedBootstrap: '1', expectedHeavyClass: 'validation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'typecheck'], expectedComponent: 'apps/cli', expectedBootstrap: '1', expectedHeavyClass: 'compilation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--unsupported-option', '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'vitest'], expectedComponent: '.', expectedBootstrap: '0', expectedHeavyClass: 'validation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'bash', '-c', 'corepack yarn --cwd apps/ui vitest'], expectedComponent: '.', expectedBootstrap: '0', expectedHeavyClass: 'validation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'test:unit'], expectedComponent: 'apps/ui', expectedBootstrap: '1', expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit:vitest'], expectedKind: 'source-test' },
+    { args: ['node', 'apps/ui/scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], expectedComponent: 'apps/ui', expectedKind: 'source-test' },
+    { args: ['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], cwd: 'apps/cli', expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit'], expectedKind: 'runtime' },
+    { args: ['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.integration.config.ts'], cwd: 'apps/ui', expectedKind: 'runtime' },
+    { args: ['node', 'custom/runVitestShards.mjs'], cwd: 'apps/ui', expectedKind: 'runtime' },
+    { args: ['node', 'scripts/runVitestShards.mjs'], cwd: 'apps/stack', expectedKind: 'runtime' },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode', 'check'] },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode=write'] },
     { args: ['node', '--experimental-strip-types', 'other/generateBundledPluginEntries.ts', '--mode=check'] },
@@ -205,11 +218,14 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['yarn', 'install'] },
     { args: ['nodejs', 'node_modules\\vitest\\vitest.mjs', 'run'], cwd: 'apps/cli' },
   ];
-  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement, expectedPreparationBuildMode } of cases) {
+  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement, expectedPreparationBuildMode, expectedComponent, expectedBootstrap, expectedKind } of cases) {
     const policy = resolveRemoteCommandPolicy(args, { cwd });
     if (expectedHeavyClass !== undefined) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
     if (expectedPlacement) assert.equal(policy.placement, expectedPlacement, args.join(' '));
     if (expectedPreparationBuildMode) assert.equal(policy.preparationBuildMode, expectedPreparationBuildMode, args.join(' '));
+    if (expectedComponent) assert.equal(policy.component, expectedComponent, args.join(' '));
+    if (expectedBootstrap) assert.equal(policy.bootstrap, expectedBootstrap, args.join(' '));
+    if (expectedKind) assert.equal(policy.kind, expectedKind, args.join(' '));
     const keys = Object.keys(policy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord

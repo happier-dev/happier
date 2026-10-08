@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import {
@@ -293,10 +294,12 @@ if (args[0] === '--version') {
     await writeFile(executablePath, packageManagerFixture);
     await chmod(executablePath, 0o755);
   }
-  await bootstrapRemoteDependencies({
+  const uiUnitPolicy = resolveRemoteCommandPolicy(['hstack-exec', '--heavyweight-admission',
+    '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'test:unit']);
+  const bootstrapOptions = {
     repoDir,
-    validationKind: 'source-test',
-    componentRelativeDir: 'apps/ui',
+    validationKind: uiUnitPolicy.kind,
+    componentRelativeDir: uiUnitPolicy.component,
     env: {
       ...process.env,
       PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
@@ -306,7 +309,9 @@ if (args[0] === '--version') {
       HAPPIER_TEST_UI_PATCH_INPUT: patchInputDir,
       HAPPIER_TEST_UI_PATCH_OUTPUT: requiredOutputPath,
     },
-  });
+  };
+  assert.equal(bootstrapOptions.validationKind, 'source-test', 'the public UI unit owner must reach source preparation');
+  await bootstrapRemoteDependencies(bootstrapOptions);
 
   // This is the payload's dependency read after bootstrap returns, not a
   // postinstall call-count assertion or a separately repaired fixture.
@@ -318,6 +323,15 @@ if (args[0] === '--version') {
   })).required, false);
   assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
     'UI source-test preparation must not claim a full runtime dependency install');
+  // A subsequent package-manager link can remove installed patch output while
+  // the authored inputs and existing dependency admission remain unchanged.
+  await rm(requiredOutputPath);
+  assert.equal((await inspectDependencyRefresh({
+    installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
+  })).required, false);
+  await bootstrapRemoteDependencies(bootstrapOptions);
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), preparedModule,
+    'warm preparation must verify and repair the actual module the UI loads');
   await assert.rejects(stat(join(repoDir, 'packages', 'cli-common', 'dist')), { code: 'ENOENT' },
     'source-test preparation must not compile the Stack dependency-owner closure');
 });

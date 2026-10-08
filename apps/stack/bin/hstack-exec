@@ -301,9 +301,9 @@ heavyweight_count_reserved_memory() {
   heavyweight_reserved_memory=0
   for heavyweight_reserved_entry in "$heavyweight_admission_root/owners"/*; do
     [ -d "$heavyweight_reserved_entry" ] || continue
-    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token < "$heavyweight_reserved_entry/process" 2>/dev/null || continue
+    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token 2>/dev/null < "$heavyweight_reserved_entry/process" || continue
     if ! heavyweight_process_is_current "$heavyweight_reserved_pid" "$heavyweight_reserved_token"; then
-      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" "$heavyweight_reserved_entry/phase" 2>/dev/null || true
+      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" "$heavyweight_reserved_entry/phase" "$heavyweight_reserved_entry/disk" 2>/dev/null || true
       rmdir -- "$heavyweight_reserved_entry" 2>/dev/null || true
       continue
     fi
@@ -373,7 +373,7 @@ heavyweight_cleanup_records() {
   [ -n "${heavyweight_admission_root-}" ] || return 0
   for heavyweight_entry in "$heavyweight_admission_root/owners"/*; do
     [ -d "$heavyweight_entry" ] || continue
-    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || continue
+    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token 2>/dev/null < "$heavyweight_entry/process" || continue
     if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
       rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" "$heavyweight_entry/phase" "$heavyweight_entry/disk" 2>/dev/null || true
       rmdir -- "$heavyweight_entry" 2>/dev/null || true
