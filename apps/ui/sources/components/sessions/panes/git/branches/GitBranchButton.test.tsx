@@ -15,6 +15,10 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
+vi.mock('@/components/ui/popover', async (importOriginal) => (
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal)
+));
+
 import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN, SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ScmBranchListEntry } from '@happier-dev/protocol';
 import { createDeferred } from '@/dev/testkit';
@@ -31,26 +35,11 @@ const rpc = vi.fn(async (method: string, _input: unknown): Promise<unknown> => {
     if (method === RPC_METHODS.SCM_STASH_CREATE) return { success: true, stashCreated: true, stashRef: 'stash@{0}' };
     return { success: false, errorCode: 'FEATURE_UNSUPPORTED' };
 });
-function configureSocket(socket: import('socket.io-client').Socket) {
-    vi.mocked(socket.connect).mockImplementation(() => {
-        socket.connected = true;
-        for (const listener of socket.listeners('connect')) listener();
-        return socket;
-    });
-    vi.spyOn(socket, 'emit').mockReturnValue(socket);
-    vi.spyOn(socket, 'disconnect').mockImplementation(() => {
-        socket.connected = false;
-        for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
-        return socket;
-    });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
-        if (event !== 'rpc-call' || !payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
-            throw new Error('Unexpected Socket RPC envelope');
-        }
-        return { ok: true, result: await rpc(payload.method.slice(payload.method.indexOf(':') + 1), payload.params) };
-    });
-}
-const runtime = installSessionPaneRuntimeTestHarness({ configureSocket });
+// Hoist the external Socket boundary before static SCM owners bind their transport.
+vi.mock('socket.io-client', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
+));
+const runtime = installSessionPaneRuntimeTestHarness({ rpc });
 function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {
         fetchedAt: 1, projectKey: 'm1:/repo',
@@ -145,7 +134,9 @@ describe('GitBranchButton', () => {
         const screen = await renderBranch();
         await menu(screen);
         await select(screen, 'branch:feature/test');
-        expect(rpc).toHaveBeenCalledWith(RPC_METHODS.SCM_BRANCH_CHECKOUT, expect.objectContaining({ name: 'feature/test', strategy: 'bring_changes' }));
+        expect(rpc).toHaveBeenCalledWith(RPC_METHODS.SCM_BRANCH_CHECKOUT,
+            expect.objectContaining({ name: 'feature/test', strategy: 'bring_changes' }), 'm1',
+            { serverUrl: 'https://session-pane.test', targetId: 'm1' });
         expect(storage.getState().getSessionProjectScmOperationLog('s1', runtime.serverId)[0]).toMatchObject({ operation: 'branch_switch', status: 'success' });
     });
 
@@ -159,7 +150,7 @@ describe('GitBranchButton', () => {
         await select(screen, 'branch:feature/test');
         expect(rpc).toHaveBeenCalledWith(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, expect.objectContaining({
             cwd: '/repo', confirmed: true, confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
-        }));
+        }), 'm1', { serverUrl: 'https://session-pane.test', targetId: 'm1' });
         expect(rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_BRANCH_CHECKOUT)).toHaveLength(2);
         expect(storage.getState().getSessionProjectScmOperationLog('s1', runtime.serverId)[0]).toMatchObject({ operation: 'branch_switch', status: 'success' });
         const { Modal } = await import('@/modal');

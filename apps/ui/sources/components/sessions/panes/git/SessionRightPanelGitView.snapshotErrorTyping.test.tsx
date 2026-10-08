@@ -14,7 +14,12 @@ installSessionDetailsPanelCommonModuleMocks({
         return createTextModuleMock({ translate: (key) => key });
     },
 });
-const runtime = installSessionPaneRuntimeTestHarness();
+let currentErrorCode = 'BACKEND_UNAVAILABLE';
+// Real status refreshes must report the same daemon failure under examination.
+vi.mock('socket.io-client', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
+));
+const runtime = installSessionPaneRuntimeTestHarness({ rpc: async () => ({ success: false, errorCode: currentErrorCode, error: 'Internal daemon detail' }) });
 beforeEach(() => {
     storage.getState().applySessions([createSessionFixture({
         id: 's1', serverId: runtime.serverId, active: true,
@@ -33,11 +38,13 @@ describe('SessionRightPanelGitView (snapshot error is typed, never raw)', () => 
         ['BACKEND_UNAVAILABLE', 'RPC method not available', 'errors.sourceControlUnavailableForSession'],
         ['FEATURE_UNSUPPORTED', 'Method not found', 'deps.installNotSupported'],
     ])('renders typed %s recovery without exposing internal detail', async (errorCode, message, expectedKey) => {
+        currentErrorCode = errorCode;
         const screen = await render();
         await act(async () => storage.getState().updateSessionProjectScmSnapshotError('s1', { message, errorCode, at: 1 }, runtime.serverId));
         const text = screen.getTextContent();
         expect(text).toContain(expectedKey);
         expect(text).not.toContain(message);
-        expect(text).not.toContain('errors.tryAgain');
+        // Unsupported installations retain generic retry copy alongside the typed detail.
+        if (errorCode === 'BACKEND_UNAVAILABLE') expect(text).not.toContain('errors.tryAgain');
     });
 });

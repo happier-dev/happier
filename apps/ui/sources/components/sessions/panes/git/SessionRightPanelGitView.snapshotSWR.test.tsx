@@ -23,26 +23,11 @@ const rpc = vi.fn(async (method: string, _input: unknown) => {
     if (method === RPC_METHODS.SCM_LOG_LIST) return { success: true, entries: [] };
     return { success: false, errorCode: 'FEATURE_UNSUPPORTED' };
 });
-function configureSocket(socket: import('socket.io-client').Socket) {
-    vi.mocked(socket.connect).mockImplementation(() => {
-        socket.connected = true;
-        for (const listener of socket.listeners('connect')) listener();
-        return socket;
-    });
-    vi.spyOn(socket, 'emit').mockReturnValue(socket);
-    vi.spyOn(socket, 'disconnect').mockImplementation(() => {
-        socket.connected = false;
-        for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
-        return socket;
-    });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
-        if (event !== 'rpc-call' || !payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
-            throw new Error('Unexpected Socket RPC envelope');
-        }
-        return { ok: true, result: await rpc(payload.method.slice(payload.method.indexOf(':') + 1), payload.params) };
-    });
-}
-const runtime = installSessionPaneRuntimeTestHarness({ configureSocket });
+// Hoist the external Socket boundary before static SCM owners bind their transport.
+vi.mock('socket.io-client', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
+));
+const runtime = installSessionPaneRuntimeTestHarness({ rpc });
 function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {
         fetchedAt: 1, projectKey: 'm1:/repo',
