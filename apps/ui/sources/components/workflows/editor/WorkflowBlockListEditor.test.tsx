@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -56,21 +57,14 @@ vi.mock('@/components/plugins/surfaces/PluginContextualResourceStoreProvider', (
     PluginContextualResourceStoreProvider: (props: Readonly<{ children?: React.ReactNode }>) =>
         React.createElement(React.Fragment, null, props.children),
 }));
-// The canonical SelectionList popover is a portal/virtualized-list boundary:
-// the step it is handed and each option's selection are the behaviour under test.
-vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopover', () => ({
-    AgentInputSelectionListPopover: (props: Record<string, unknown>) => (
-        props.open === true ? React.createElement('SelectionListPopover', props) : null
-    ),
-}));
-// The saved-workflow list is a network read; the library owner above it stays real.
-vi.mock('@/sync/domains/workflows/workflowDefinitionActions', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
-    listWorkflowDefinitions: async () => ({ definitions: [] }),
-}));
+// Supply recycler geometry only; the real picker owns options and navigation.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItems: true }).module;
+});
 vi.mock('@/components/ui/popover/Popover', () => ({
-    Popover: (props: { open: boolean; children: (render: unknown) => React.ReactNode }) =>
-        (props.open ? React.createElement(React.Fragment, null, props.children({})) : null),
+    Popover: (props: { open: boolean; children: (render: { maxHeight: number }) => React.ReactNode }) =>
+        (props.open ? React.createElement(React.Fragment, null, props.children({ maxHeight: 480 })) : null),
 }));
 
 // Module transform is paid once, outside any single case's time budget.
@@ -110,22 +104,25 @@ function buildDraft(harness: Harness, blocks?: Parameters<Harness['createWorkflo
     );
 }
 
-type AddOption = Readonly<{ id: string; label: string; onSelect?: () => void; openStep?: AddStep; disabled?: boolean }>;
-type AddStep = Readonly<{ sections: ReadonlyArray<Readonly<{ id: string; options: readonly AddOption[] }>> }>;
+type AddStep = SelectionListStep;
+function staticSections(step: AddStep) {
+    return step.sections.filter(section => section.kind === 'static');
+}
 
 /** Opens a scope's Add menu and returns the step the canonical popover was handed. */
 async function openAddMenu(screen: Awaited<ReturnType<typeof renderScreen>>, addTestID: string): Promise<AddStep> {
     await screen.pressByTestIdAsync(addTestID);
-    const popover = screen.root.findAll((node) => (node.type as unknown) === 'SelectionListPopover').at(-1);
-    if (!popover) throw new Error('Add menu did not open');
-    return popover.props.rootStep as AddStep;
+    const picker = screen.findAllByType(SelectionList).at(-1);
+    if (!picker) throw new Error('Add menu did not open');
+    const step: AddStep = picker.props.rootStep;
+    return step;
 }
 
 /** Chooses an Add option by id, walking into a pushed step when `path` names one. */
 async function chooseAdd(screen: Awaited<ReturnType<typeof renderScreen>>, addTestID: string, path: readonly string[]): Promise<void> {
     let step = await openAddMenu(screen, addTestID);
     for (let index = 0; index < path.length; index += 1) {
-        const option = step.sections.flatMap((section) => section.options).find((candidate) => candidate.id === path[index]);
+        const option = staticSections(step).flatMap((section) => section.options).find((candidate) => candidate.id === path[index]);
         if (!option) throw new Error(`No Add option ${path[index]}`);
         if (index < path.length - 1) {
             if (!option.openStep) throw new Error(`${path[index]} opens no step`);
@@ -524,17 +521,17 @@ describe('workflow block list editor', () => {
         const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
         const root = await openAddMenu(screen, 'workflow-editor-add-root');
-        expect(root.sections.map((section) => section.options.map((option) => option.label))).toEqual([
+        expect(staticSections(root).map((section) => section.options.map((option) => option.label))).toEqual([
             ['workflows.editor.addStep', 'workflows.page.blocks.menuRun', 'workflows.page.blocks.menuAction', 'workflows.actionTitles.callWebhook', 'workflows.actionTitles.runCommand', 'workflows.page.blocks.menuWait'],
             ['workflows.editor.addParallel', 'workflows.editor.addLoop', 'workflows.editor.addIf'],
         ]);
-        const actionStep = root.sections[0]!.options.find((option) => option.id === 'workflow-editor-add-root-action')?.openStep;
-        const actionIds = actionStep?.sections.flatMap((section) => section.options.map((option) => option.id)) ?? [];
+        const actionStep = staticSections(root)[0]!.options.find((option) => option.id === 'workflow-editor-add-root-action')?.openStep;
+        const actionIds = actionStep ? staticSections(actionStep).flatMap((section) => section.options.map((option) => option.id)) : [];
         expect(actionIds).toContain('workflow-editor-add-root-action:notifications.notify_me');
         // Composition is the Run a workflow step, never a workflow.run.* Action.
         expect(actionIds.some((id) => id.includes(':workflow.run.'))).toBe(false);
         await act(async () => {
-            actionStep?.sections[0]?.options.find((option) => option.id === 'workflow-editor-add-root-action:notifications.notify_me')?.onSelect?.();
+            if (actionStep) staticSections(actionStep)[0]?.options.find((option) => option.id === 'workflow-editor-add-root-action:notifications.notify_me')?.onSelect?.();
         });
         expect(changes.at(-1)?.blocks.at(-1)).toMatchObject({ kind: 'action', actionId: 'notifications.notify_me', input: {} });
 
@@ -636,13 +633,13 @@ describe('workflow block list editor', () => {
         expect(screen.findHostByTestId('workflow-editor-insert-after-a')).not.toBeNull();
         expect(screen.findHostByTestId('workflow-editor-insert-after-b')).toBeNull();
         const inserter = () => screen.findHostByTestId('workflow-editor-insert-after-a')!;
-        const insetStyle = () => NativeStyleSheet.flatten(inserter().props.style({ pressed: false }));
-        expect(insetStyle()?.opacity).toBe(0);
-        const restingBorder = insetStyle()?.borderColor;
+        // Opacity is the visibility contract; decorative focus-ring colors are
+        // owned by HappierPressable rather than this insertion-position test.
+        const visibleOpacity = () => NativeStyleSheet.flatten(inserter().props.style({ pressed: false }))?.opacity;
+        expect(visibleOpacity()).toBe(0);
+        expect(inserter().props.role ?? inserter().props.accessibilityRole).toBe('button');
         await act(async () => { inserter().props.onFocus({ target: { matches: () => true } }); });
-        expect(insetStyle()?.opacity ?? 1).toBeGreaterThan(0);
-        expect(insetStyle()?.borderWidth).toBeGreaterThan(0);
-        expect(insetStyle()?.borderColor).not.toBe(restingBorder);
+        expect(visibleOpacity() ?? 1).toBeGreaterThan(0);
 
         await chooseAdd(screen, 'workflow-editor-insert-after-a', ['workflow-editor-insert-after-a-wait']);
         const ids = changes.at(-1)!.blocks.map((block) => block.kind);

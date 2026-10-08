@@ -1,17 +1,32 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveRoleSelectionV1, type RoleOverrideV1 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { getStorage } from '@/sync/domains/state/storageStore';
 import { WorkflowAcceptedRunRoles, WorkflowRunRoles } from './WorkflowRunRoles';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
-const execute = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-a' }), isAppliedActiveServerRuntimeAvailable: () => true,
-}));
+const artifactRequests: string[] = [];
+installSessionPaneRuntimeTestHarness({ request: async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path !== '/v1/artifacts') return null;
+    artifactRequests.push(path);
+    return Response.json([]);
+} });
+let disposeExecutorLoader: (() => void) | undefined;
+beforeEach(async () => {
+    disposeExecutorLoader = await installRealActionExecutorModuleLoader();
+    // Account restoration starts the real background Artifact sync. Settle its
+    // initial HTTP request before observing reads caused by the role surface.
+    await vi.waitFor(() => expect(artifactRequests.length).toBeGreaterThan(0));
+    artifactRequests.length = 0;
+});
+afterEach(() => { disposeExecutorLoader?.(); artifactRequests.length = 0; });
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('socket.io-client', async (importOriginal) => (
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness')
+).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key: string) => key }));
 
@@ -20,11 +35,6 @@ const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role:
 }] });
 
 describe('workflow run role controls', () => {
-    beforeEach(() => {
-        getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
-        execute.mockReset();
-        execute.mockResolvedValue({ ok: true, result: { items: [] } });
-    });
 
     it('edits one run-layer field and Use your role removes only that role override', async () => {
         const onChange = vi.fn();
@@ -52,7 +62,7 @@ describe('workflow run role controls', () => {
         const screen = await renderScreen(<WorkflowAcceptedRunRoles leaves={[{ sourceKey: '$root', blockId: 'analyze', kind: 'step',
             selection: {}, authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' }, role: acceptedRole.selection }]} />);
         expect(screen.getTextContent()).toContain('Accepted builder');
-        expect(execute).not.toHaveBeenCalled();
+        expect(artifactRequests).toEqual([]);
         expect(screen.findByTestId('run-role-portable_builder-engine')).toBeNull();
     });
 });

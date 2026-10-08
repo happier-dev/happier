@@ -1,6 +1,11 @@
 import { vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { AccountSettingsStoredContentEnvelopeSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 // File identities belong to Node, not Vite's client asset URL transform.
 const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
@@ -21,10 +26,16 @@ export type ServedHomeRequest = Readonly<{
     body: unknown;
 }>;
 
-type HomeSpec = Readonly<{ key: string; serverUrl: string; accountId: string }>;
+type HomeSpec = Readonly<{
+    key: string; serverUrl: string; accountId: string; serverIdentityId?: string;
+    /** Actual Home HTTP profile fields; its identity always comes from the authenticated bearer. */
+    profile?: Partial<Omit<ReturnType<typeof AccountProfileSchema.parse>, 'id'>>;
+    /** Actual initial settings document served before Account bootstrap starts. */
+    settings?: Partial<Settings>;
+}>;
 
 function tokenFor(accountId: string): string {
-    return `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    return `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
 }
 
 function accountOf(init: RequestInit | undefined): string | null {
@@ -33,7 +44,10 @@ function accountOf(init: RequestInit | undefined): string | null {
     const payload = token?.split('.')[1];
     if (!payload) return null;
     try {
-        return (JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { sub?: string }).sub ?? null;
+        const parsed: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+        if (!parsed || typeof parsed !== 'object') return null;
+        const subject = Reflect.get(parsed, 'sub');
+        return typeof subject === 'string' ? subject : null;
     } catch {
         return null;
     }
@@ -51,70 +65,140 @@ export async function installRealActionExecutorModuleLoader(): Promise<() => voi
 /**
  * Real Homes behind a fake network: every Home is a real server profile and every Action, account
  * context, scoped transport and credential reader runs for real. Only the HTTP boundary (one
- * `runtimeFetch`) and the stored credentials (one plain-mode token per Home, switchable to another
- * Account) are replaced. The last Home listed is the focused one.
+ * `runtimeFetch`) is replaced. Plain-mode credentials persist through their actual device owner,
+ * and the last Home listed has a genuinely restored focused Account.
  */
 export async function serveActionHomes(params: Readonly<{
     homes: readonly HomeSpec[];
-    route: (request: ServedHomeRequest) => Response | Promise<Response> | undefined;
+    route: (request: ServedHomeRequest) => Response | Promise<Response | undefined> | undefined;
 }>) {
+    if (params.homes.length === 0) throw new Error('An Action journey requires a Home');
+    const webLocks = typeof globalThis.navigator?.locks?.request === 'function' ? null : installWebLockManagerMock();
+    const { loadSyncSingletonForTests } = await import('./syncSingletonLoader');
+    await loadSyncSingletonForTests();
     // Metro's call-time require must resolve to the SAME real executor module as Vitest's imports.
     // Node's loader otherwise bypasses the workspace aliases and transport fixtures (vitestRnShim).
     // This bridges module loading only; no Action logic or front-door result is substituted.
     const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
-    const [{ upsertAndActivateServer }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch }, { getStorage }] = await Promise.all([
+    const [{ upsertServerProfileOnly, setActiveServer, getActiveServerSnapshot }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch },
+        { restoreConnectionToActiveServer, disconnectActiveServerConnection }, { resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl }] = await Promise.all([
         import('@/sync/domains/server/serverRuntime'),
         import('@/auth/storage/tokenStorage'),
         import('@/utils/system/runtimeFetch'),
-        import('@/sync/domains/state/storage'),
+        import('@/sync/runtime/orchestration/connectionManager'),
+        import('@/sync/domains/server/serverProfiles'),
     ]);
-    const accounts = new Map<string, string>();
+    await disconnectActiveServerConnection();
+    const settingsByAccount = new Map<string, { content: ReturnType<typeof AccountSettingsStoredContentEnvelopeSchema.parse>; version: number }>();
     const byOrigin = new Map<string, string>();
-    const homes: Record<string, Readonly<{ id: string; serverUrl: string }>> = {};
-    for (const spec of params.homes) {
-        const home = await upsertAndActivateServer({ serverUrl: spec.serverUrl, scope: 'tab' });
-        homes[spec.key] = { id: home.id, serverUrl: home.serverUrl };
-        accounts.set(spec.key, spec.accountId);
-        byOrigin.set(new URL(home.serverUrl).origin, spec.key);
-    }
+    const homes: Record<string, Readonly<{ id: string; profileId: string; serverUrl: string }>> = {};
+    const writes: Array<NonNullable<Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>>> = [];
     const focused = params.homes.at(-1)!;
-    const focusedScope = { serverId: homes[focused.key]!.id, accountId: focused.accountId };
-    getStorage().setState({ settingsScope: focusedScope, profileScope: focusedScope });
-    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl: string) => {
-        const key = byOrigin.get(new URL(serverUrl).origin);
-        const accountId = key ? accounts.get(key) : undefined;
-        return accountId ? { token: tokenFor(accountId) } : null;
-    });
     const requests: ServedHomeRequest[] = [];
+    const httpRequests: ServedHomeRequest[] = [];
+    // Activation can start readiness and Account restoration immediately. All
+    // transport answers and genuine credentials must exist before that event.
     setRuntimeFetch(async (url, init) => {
         const target = new URL(String(url));
-        if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
         const home = byOrigin.get(target.origin);
         if (!home) throw new Error(`Request to an unknown Home: ${target.origin}`);
-        if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-        if (target.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
         const request: ServedHomeRequest = {
-            home,
-            method: init?.method ?? 'GET',
-            path: target.pathname,
-            url: target,
-            accountId: accountOf(init),
-            body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+            home, method: init?.method ?? 'GET', path: target.pathname, url: target,
+            accountId: accountOf(init), body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
         };
+        httpRequests.push(request);
+        if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
+        if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (target.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (target.pathname === '/v1/account/profile') {
+            const accountId = accountOf(init);
+            return accountId ? Response.json(AccountProfileSchema.parse({ ...params.homes.find(spec => spec.key === home)?.profile, id: accountId }))
+                : Response.json({ error: 'Not authenticated' }, { status: 401 });
+        }
+        if (target.pathname === '/v2/account/settings') {
+            const accountId = accountOf(init);
+            if (!accountId) return Response.json({ error: 'Not authenticated' }, { status: 401 });
+            const settingsKey = JSON.stringify([home, accountId]);
+            let settings = settingsByAccount.get(settingsKey);
+            if (!settings) {
+                settings = { content: AccountSettingsStoredContentEnvelopeSchema.parse({
+                    t: 'plain', v: params.homes.find(spec => spec.key === home)?.settings ?? {},
+                }), version: 1 };
+                settingsByAccount.set(settingsKey, settings);
+            }
+            if (init?.method !== 'POST') return Response.json(settings);
+            const input: unknown = JSON.parse(String(init.body));
+            if (!input || typeof input !== 'object' || !('expectedVersion' in input) || !('content' in input)) {
+                return Response.json({ error: 'settings_invalid' }, { status: 400 });
+            }
+            if (input.expectedVersion !== settings.version) return Response.json(AccountSettingsV2UpdateResponseSchema.parse({
+                success: false, error: 'version-mismatch', currentVersion: settings.version, currentContent: settings.content,
+            }));
+            const content = AccountSettingsStoredContentEnvelopeSchema.safeParse(input.content);
+            if (!content.success || content.data.t !== 'plain') return Response.json({ error: 'settings_invalid' }, { status: 400 });
+            settings.content = content.data;
+            settings.version += 1;
+            return Response.json({ success: true, version: settings.version });
+        }
         requests.push(request);
         return await params.route(request) ?? Response.json({ error: 'not_found' }, { status: 404 });
     });
+    let disposed = false;
+    const dispose = async () => {
+        if (disposed) return;
+        disposed = true;
+        try {
+            await disconnectActiveServerConnection();
+            const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+            await stopAllEndpointSupervisorsForTests();
+        } finally {
+            restoreExecutorModuleLoader();
+            resetRuntimeFetch();
+            try {
+                for (const write of writes.splice(0).reverse()) await write.rollback();
+            } finally {
+                webLocks?.restore();
+            }
+        }
+    };
+    try {
+        for (const spec of params.homes) {
+            let profile = await upsertServerProfileOnly({ serverUrl: spec.serverUrl });
+            if (spec.serverIdentityId) {
+                const identified = await setServerProfileIdentityForUrl(profile.serverUrl, spec.serverIdentityId);
+                if (!identified) throw new Error(`Home identity could not be established: ${spec.key}`);
+                profile = identified;
+            }
+            const id = resolveServerProfileScopeIdForIdentifier(profile.id);
+            homes[spec.key] = { id, profileId: profile.id, serverUrl: profile.serverUrl };
+            byOrigin.set(new URL(profile.serverUrl).origin, spec.key);
+            const write = await TokenStorage.setCredentialsForServerUrlWithRollback(profile.serverUrl, { serverId: id }, { token: tokenFor(spec.accountId) });
+            if (!write) throw new Error(`Home credentials could not be persisted: ${spec.key}`);
+            writes.push(write);
+        }
+        await setActiveServer({ serverId: homes[focused.key]!.profileId });
+        await restoreConnectionToActiveServer({ token: tokenFor(focused.accountId) });
+    } catch (error) {
+        await dispose();
+        throw error;
+    }
     return {
         homes,
         requests,
+        /** Includes real bootstrap/profile/settings CAS traffic; requests retains its domain-only contract. */
+        httpRequests,
         /** The Home now signs in as another Account (a sign-out and sign-in elsewhere). */
-        switchAccount(key: string, accountId: string) {
-            accounts.set(key, accountId);
+        async switchAccount(key: string, accountId: string) {
+            if (disposed) throw new Error('The Action Homes have been disposed');
+            const home = homes[key];
+            if (!home) throw new Error(`No Action Home saved for ${key}`);
+            const isFocused = getActiveServerSnapshot().serverId === home.id;
+            if (isFocused) await disconnectActiveServerConnection();
+            const write = await TokenStorage.setCredentialsForServerUrlWithRollback(home.serverUrl, { serverId: home.id }, { token: tokenFor(accountId) });
+            if (!write) throw new Error(`Home credentials could not be replaced: ${key}`);
+            writes.push(write);
+            if (isFocused) await restoreConnectionToActiveServer({ token: tokenFor(accountId) });
         },
-        dispose() {
-            restoreExecutorModuleLoader();
-            resetRuntimeFetch();
-            credentials.mockRestore();
-        },
+        dispose,
     };
 }

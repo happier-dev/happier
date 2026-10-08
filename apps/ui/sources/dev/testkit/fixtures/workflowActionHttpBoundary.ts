@@ -1,4 +1,3 @@
-import { vi } from 'vitest';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     AutomationDefinitionListResponseSchema, FeaturesResponseSchema, WorkflowDefinitionListResultV1Schema,
@@ -15,6 +14,14 @@ import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createRootLayoutFeaturesResponse } from './featureFixtures';
 import { createWorkflowDefinitionFixture } from './workflowRunFixtures';
 import { installRealActionExecutorModuleLoader } from '../harness/actionHomesHttpHarness';
+import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import {
+    AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema, AccountSettingsV2UpdateResponseSchema,
+} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { parseToken } from '@/utils/auth/parseToken';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
 function record(value: unknown): Record<string, unknown> {
@@ -36,9 +43,12 @@ export async function installWorkflowActionHttpBoundary(params: Readonly<{
 }>) {
     const restoreExecutorLoader = await installRealActionExecutorModuleLoader();
     const accountId = params.accountId ?? (() => storage.getState().profileScope?.accountId ?? 'account-a');
-    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => ({
-        token: `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: accountId() })), 'base64url')}.signature`,
-    }));
+    const home = getActiveServerSnapshot();
+    const webLocks = typeof globalThis.navigator?.locks?.request === 'function' ? null : installWebLockManagerMock();
+    const writes: Array<NonNullable<Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>>>> = [];
+    let credentials = { token: '' };
+    let disposed = false;
+    const settingsByAccount = new Map<string, ReturnType<typeof AccountSettingsV2GetResponseSchema.parse>>();
     const base = createRootLayoutFeaturesResponse();
     const features = FeaturesResponseSchema.parse({ ...base,
         features: { ...base.features, workflows: { enabled: true }, automations: { ...base.features.automations, enabled: true } },
@@ -53,13 +63,34 @@ export async function installWorkflowActionHttpBoundary(params: Readonly<{
         if (response.ok !== true) throw new Error(String(response.errorCode ?? 'fixture_request_failed'));
         return response.result;
     };
-    setRuntimeFetch(async (url, init) => {
+    const request: RuntimeFetch = async (url, init) => {
+        if (disposed) throw new Error('Workflow HTTP boundary is disposed');
         const target = new URL(String(url));
-        const requestAccountId = accountId();
+        if (target.origin !== new URL(home.serverUrl).origin) throw new Error(`Unexpected Workflow Home: ${target.origin}`);
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
         if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return json(features);
+        const authorization = new Headers(init?.headers).get('authorization');
+        let requestAccountId: string | null = null;
+        try { requestAccountId = authorization?.startsWith('Bearer ') ? parseToken(authorization.slice(7)) : null; } catch { /* Invalid bearer remains unauthenticated. */ }
+        if (!requestAccountId) return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
+        if (target.pathname === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: requestAccountId }));
         if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
-        if (target.pathname === '/v2/account/settings') return json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (target.pathname === '/v2/account/settings') {
+            let settings = settingsByAccount.get(requestAccountId);
+            if (!settings) {
+                settings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 });
+                settingsByAccount.set(requestAccountId, settings);
+            }
+            if (init?.method !== 'POST') return json(settings);
+            const update = AccountSettingsV2UpdateRequestSchema.safeParse(JSON.parse(String(init.body)));
+            if (!update.success || update.data.content?.t !== 'plain') return new Response('{}', { status: 400 });
+            if (update.data.expectedVersion !== settings.version) return json(AccountSettingsV2UpdateResponseSchema.parse({
+                success: false, error: 'version-mismatch', currentVersion: settings.version, currentContent: settings.content,
+            }));
+            settings = { content: update.data.content, version: settings.version + 1 };
+            settingsByAccount.set(requestAccountId, settings);
+            return json(AccountSettingsV2UpdateResponseSchema.parse({ success: true, version: settings.version }));
+        }
         if (target.pathname === '/v1/account/encryption/currentness') return json({ mode: 'plain', version: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
@@ -70,7 +101,7 @@ export async function installWorkflowActionHttpBoundary(params: Readonly<{
                 defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
             });
             const rows: Artifact[] = page.definitions.map((item, index) => ({
-                id: item.definitionId, ownerAccountId: requestAccountId, access: 'owner', encryptionMode: 'plain',
+                id: item.definitionId, ownerAccountId: item.ownerAccountId ?? requestAccountId, access: item.access ?? 'owner', encryptionMode: 'plain',
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                 header: encodePlainArtifactStoredContent('contentUnavailableReason' in item && item.contentUnavailableReason === 'invalid_header'
                     ? { kind: item.kind } : { kind: item.kind, definitionId: item.definitionId,
@@ -126,9 +157,46 @@ export async function installWorkflowActionHttpBoundary(params: Readonly<{
                 ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), acceptedEnvelopesByRunId, keyCensusByRunId });
         }
         throw new Error(`Unexpected HTTP fixture route ${target.pathname}`);
-    });
+    };
+    setRuntimeFetch(request);
+    const refreshAccount = async () => {
+        if (disposed) throw new Error('Workflow HTTP boundary is disposed');
+        const nextAccountId = accountId();
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const isAppliedHome = getActiveServerAccountScope()?.serverId === home.serverId;
+        const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        if (isAppliedHome) await disconnectActiveServerConnection();
+        const next = { token: `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: nextAccountId })), 'base64url')}.signature` };
+        const write = await TokenStorage.setCredentialsForServerUrlWithRollback(home.serverUrl, { serverId: home.serverId }, next);
+        if (!write) throw new Error('Workflow Home credentials could not be persisted');
+        writes.push(write);
+        credentials = next;
+        if (isAppliedHome) await restoreConnectionToActiveServer(next);
+    };
+    await refreshAccount();
     return {
-        prime() { primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features } }); },
-        dispose() { restoreExecutorLoader(); resetRuntimeFetch(); credentials.mockRestore(); deleteServerFeaturesSnapshot(); },
+        request,
+        serverId: home.serverId,
+        serverUrl: home.serverUrl,
+        get credentials() { return credentials; },
+        refreshAccount,
+        prime() { primeServerFeaturesSnapshot({ serverId: home.serverId, snapshot: { status: 'ready', features } }); },
+        async dispose() {
+            if (disposed) return;
+            disposed = true;
+            try {
+                const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+                if (getActiveServerAccountScope()?.serverId === home.serverId) {
+                    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+                    await disconnectActiveServerConnection();
+                }
+            } finally {
+                restoreExecutorLoader();
+                resetRuntimeFetch();
+                deleteServerFeaturesSnapshot({ serverId: home.serverId });
+                try { for (const write of writes.splice(0).reverse()) await write.rollback(); }
+                finally { webLocks?.restore(); }
+            }
+        },
     };
 }
