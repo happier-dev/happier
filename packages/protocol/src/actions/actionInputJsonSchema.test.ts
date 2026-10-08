@@ -3,6 +3,8 @@ import { z } from 'zod';
 import * as m from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationDefinitionCreateRequestSchema } from '../automations/automationApiV3.js';
+import { compileActionInputJsonSchema } from './actionInputJsonSchemaValidation.js';
+import { compilePluginJsonSchema, createPluginJsonSchemaZodObjectAdapter } from '../plugins/actions/jsonSchemaValidation.js';
 
 import {
   ActionJsonSchemaProjectionError,
@@ -10,6 +12,52 @@ import {
 } from './actionInputJsonSchema.js';
 
 describe('actionInputJsonSchema', () => {
+  it('validates its published recursive dialect while keeping Plugin admission draft-07-only', () => {
+    const item = z.object({ name: z.string().min(1) }).strict();
+    const input = z.object({ first: item, second: item, tuple: z.tuple([z.string(), z.number()]) }).strict();
+    const published = zodSchemaToJsonSchemaObject(input);
+    const validate = compileActionInputJsonSchema(published);
+    expect(validate({ first: { name: 'one' }, second: { name: 'two' }, tuple: ['text', 1] })).toBe(true);
+    expect(validate({ first: { name: '' }, second: { name: 'two' }, tuple: ['text', 1] })).toBe(false);
+    expect(validate({ first: { name: 'one' }, second: { name: 'two' }, tuple: [1, 'text'] })).toBe(false);
+    expect(() => compilePluginJsonSchema(published)).toThrow();
+  });
+
+  it('refuses non-local references in unused published Action definitions without interpreting literal JSON as schema', () => {
+    for (const $ref of ['https://example.test/schema.json', 'other.json#/node', '#anchor']) {
+      expect(() => compileActionInputJsonSchema({
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'string', $defs: { unused: { $ref } },
+      })).toThrow();
+    }
+    const validate = compileActionInputJsonSchema({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      const: { $ref: 'https://example.test/literal' },
+    });
+    expect(validate({ $ref: 'https://example.test/literal' })).toBe(true);
+    expect(() => compileActionInputJsonSchema({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'string', $async: true,
+    })).toThrow();
+  });
+
+  it('retains Protocol strict JSON equality and UTF8 semantics in the published Action dialect', () => {
+    const native = createPluginJsonSchemaZodObjectAdapter({
+      type: 'object', properties: {
+        text: { type: 'string', 'x-happier-max-utf8-bytes': 4 },
+        values: { type: 'array', uniqueItems: true, items: { enum: [{ a: 1, b: 2 }] } },
+      }, required: ['text', 'values'], additionalProperties: false,
+    });
+    const validate = compileActionInputJsonSchema(zodSchemaToJsonSchemaObject(native));
+    expect(validate({ text: 'éé', values: [{ b: 2, a: 1 }] })).toBe(true);
+    expect(validate({ text: 'ééé', values: [{ a: 1, b: 2 }] })).toBe(false);
+    expect(validate({ text: 'éé', values: [{ a: 1, b: 2 }, { b: 2, a: 1 }] })).toBe(false);
+    expect(() => compileActionInputJsonSchema({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'string', 'x-happier-unbounded-bytes': 4,
+    })).toThrow();
+  });
+
   it('preserves the canonical JSON Schema constraints and descriptions that Action inputs advertise', () => {
     const schema = z.object({
       name: z.string().min(2).max(12).regex(/^[a-z]+$/).describe('Lowercase action name'),

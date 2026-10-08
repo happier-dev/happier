@@ -4,7 +4,8 @@ import { isAgentStartActionV1, resolveActionAgentStartRequestsV1 } from '../acti
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '../automations/automationStoredContentEnvelopeV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import type { ActionCaller } from '../actions/executor/types.js';
-import { compilePluginJsonSchema, describePluginJsonSchemaValueIssues } from '../plugins/actions/jsonSchemaValidation.js';
+import { describePluginJsonSchemaValueIssues } from '../plugins/actions/jsonSchemaValidation.js';
+import { compileActionInputJsonSchema } from '../actions/actionInputJsonSchemaValidation.js';
 import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
 import type { ResolveRoleSelectionV1Input } from '../prompts/roles/resolveRoleSelectionV1.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
@@ -515,7 +516,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           throw error;
         }
         if (contract.inputSchema === null || typeof contract.inputSchema !== 'object' || Array.isArray(contract.inputSchema)) return invalidInput(leaf.id);
-        const validate = compilePluginJsonSchema(contract.inputSchema);
+        const validate = compileActionInputJsonSchema(contract.inputSchema);
         if (!hasDeferredBinding && !validate(sidecar.actionInput)) return invalidInput(leaf.id,
           describePluginJsonSchemaValueIssues(validate).map((issue) => ({ code: 'invalid_input', blockId: leaf.id,
             path: `/blocks/${leaf.id}/input${issue.pointer}`, message: issue.message, severity: 'error' })));
