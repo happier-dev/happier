@@ -5,6 +5,7 @@ import type { ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
 import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
+import { FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
 import {
   AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS,
   isAgentInitiatedApprovalRequiredByDefault,
@@ -31,6 +32,61 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it('keeps semantic filesystem RPC effects Ask-first without changing the general internal RPC exemption', () => {
+    const context = { surface: 'rpc', authority: 'account_automation' } as const;
+    for (const actionId of FILESYSTEM_ACTION_IDS) {
+      const args = { actionId, spec: getActionSpec(actionId), context, settings: EMPTY_SETTINGS };
+      expect(resolveActionApprovalRouting(args).required, actionId).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context), actionId).toBe(true);
+      const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['rpc'] } });
+      expect(resolveActionApprovalRouting({ ...args, settings: waived }).required, actionId).toBe(false);
+      expect(resolveActionApprovalRouting({ ...args, settings: waived,
+        context: { surface: 'agent', authority: 'account_automation' },
+      }).required, actionId).toBe(true);
+      const required = normalizeActionsSettingsV1({ ...waived,
+        actions: { [actionId]: { approvalRequiredSurfaces: ['rpc'] } },
+      });
+      expect(resolveActionApprovalRouting({ ...args, settings: required }).required, actionId).toBe(true);
+    }
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.delete', spec: getActionSpec('artifact.delete'),
+      context, settings: EMPTY_SETTINGS }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId: 'daemon.filesystem.readFile', spec: getActionSpec('daemon.filesystem.readFile'),
+      context, settings: EMPTY_SETTINGS }).required).toBe(false);
+  });
+
+  it('keeps public managed-creation cancellation Ask-first on UI with only the canonical surface waiver', () => {
+    const actionId = 'machines.managed.cancel' as const;
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    const args = { actionId, spec: getActionSpec(actionId),
+      input: { homeId: 'home', managedId: 'waiting', expectedIntentRevision: 0 }, context };
+    expect(resolveActionApprovalRouting(args)).toMatchObject({ required: true, flow: 'deferred' });
+    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    expect(resolveActionApprovalRouting({ ...args, settings }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, settings,
+      context: { surface: 'agent', authority: 'account_automation' },
+    }).required).toBe(true);
+  });
+  it('uses admitted contextual danger for present-user UI approval while preserving surface overrides', () => {
+    const actionId = 'artifact.update' as const;
+    const context = { surface: 'ui' as const, authority: 'present_user' as const };
+    const args = { actionId, spec: getActionSpec(actionId), context, settings: EMPTY_SETTINGS };
+    // The key-holding host classifies the admitted document from current exposure;
+    // the policy must not assume that this UI already presented a separate review.
+    expect(resolveActionApprovalRouting({ ...args, defaultSafety: 'danger' })).toMatchObject({
+      required: true, flow: 'deferred',
+    });
+    expect(resolveActionApprovalRouting({ ...args, defaultSafety: 'safe' }).required).toBe(false);
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    expect(resolveActionApprovalRouting({ ...args, defaultSafety: 'danger', settings: waived }).required).toBe(false);
+    const required = normalizeActionsSettingsV1({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
+      approvalWaivedSurfaces: { [actionId]: ['ui'] },
+    });
+    expect(resolveActionApprovalRouting({ ...args, defaultSafety: 'safe', settings: required }).required).toBe(true);
+    // Ordinary direct UI reviews retain their incumbent admission when no
+    // contextual classification was supplied by the host.
+    expect(resolveActionApprovalRouting(args).required).toBe(false);
+  });
   it('returns durable CLI approvals while keeping Agent and MCP decision waiters blocking', () => {
     for (const actionId of ['connectedServices.pools.create', 'artifact.update'] as const) {
       const spec = getActionSpec(actionId);
@@ -43,6 +99,23 @@ describe('isApprovalRequiredByActionsSettings', () => {
           context: { surface, authority: 'account_automation' } })).toEqual({ required: true, flow: 'blocking', result: 'required' });
       }
     }
+  });
+
+  it('keeps the current managed Power Ask on a retained host operation while ordinary CLI remains deferred', () => {
+    const actionId = 'machines.managed.power.set' as const;
+    const args = { actionId, spec: getActionSpec(actionId), settings: EMPTY_SETTINGS,
+      input: { homeId: 'home', managedId: 'managed', intent: 'stop', when: 'now', expectedRevision: 2 },
+      context: { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } } as const,
+    };
+    expect(resolveActionApprovalRouting(args)).toMatchObject({ required: true, flow: 'deferred' });
+    // This flag is supplied by the executor's private actual-operation port,
+    // not by Action input, requester context or an approval bypass.
+    const retained = { ...args, retainHostOperationApproval: true };
+    expect(resolveActionApprovalRouting(retained)).toMatchObject({ required: true, flow: 'blocking' });
+    const waived = normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { [actionId]: ['cli'] },
+    });
+    expect(resolveActionApprovalRouting({ ...retained, settings: waived }).required).toBe(false);
   });
 
   it('requires agent and MCP permission-answer approval by default and honors explicit waivers', () => {

@@ -10,6 +10,7 @@ import type {
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import { readWidgetActionSurfaceV1, readWidgetActionDestinationV1 } from '../widgets/actionsV1.js';
+import { isFilesystemActionId } from './filesystemActionFamily.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
@@ -28,6 +29,8 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   defaultSafety?: ActionSpec['safety'];
   /** Fresh computer-owner consent, never a caller-authored grant. */
   computerConsentGranted?: boolean;
+  /** Exact live host operation proved by the executor's private factory port. */
+  retainHostOperationApproval?: boolean;
 }>;
 
 function isApprovalAction(actionId: ActionId): boolean {
@@ -158,10 +161,30 @@ const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_ID_SET: ReadonlySet<ActionId> = n
  *   widgets-platform §4 — the same configurable policy owns their UI approval.
  */
 const PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET: ReadonlySet<ActionId> = new Set<ActionId>([
+  'connectedServices.accounts.revoke',
+  'action.operations.cancel',
+  // Public admitted-creation CAS does not have a separate UI confirmation host.
+  'machines.managed.cancel',
   'session.responsibility.set',
   'session.reports_to.set',
   'session.board.item.upsert',
   'session.board.layout.update',
+  'projects.worker.preferences.set',
+  'projects.worker.copy.retire',
+  'projects.worker.preferences.reset',
+  'projects.manifest.update',
+  'projects.service.placement.set',
+  'machines.worker.policy.set',
+  // Machine sharing uses this same configurable Ask-first policy, not a
+  // ShareSheet-local confirmation or retained disclosure acknowledgement.
+  'machines.access.grant.set',
+  'machines.access.grant.remove',
+  'machines.access.leave',
+  'machines.access.prepareKeys',
+  'machines.terminal.open',
+  'machines.terminal.write',
+  'machines.terminal.close',
+  'machines.terminal.restart',
   'widgets.definition.update',
   'widgets.definition.delete',
   'widgets.snapshot.post',
@@ -276,13 +299,15 @@ function requiresDefaultApprovalFloor(
   if (actionId === SCOPED_SESSION_TRIGGER_APPROVAL_EXEMPT_ACTION_ID && surface.kind !== 'ambiguous') return false;
   // UI owns a direct present-user confirmation host for its ordinary dangerous
   // Actions, except the rows whose confirmation is this policy's own default.
+  // Host-proved contextual danger also uses this policy: a contextual safe
+  // neighbor must not need a separate UI review merely to share this Action.
   // CLI suppresses the duplicate default only when its host records a completed
   // confirmation for this exact Action. Explicit settings are evaluated first
   // and still win.
   if (
     surface.kind === 'non_agent'
     && (
-      (surface.surface === 'ui' && !usesPresentUserUiPolicyConfirmation(actionId, input))
+      (surface.surface === 'ui' && defaultSafety !== 'danger' && !usesPresentUserUiPolicyConfirmation(actionId, input))
       || (surface.surface === 'cli' && ctx?.presentUserConfirmation?.actionId === actionId)
     )
     && ctx?.authority === 'present_user'
@@ -291,8 +316,11 @@ function requiresDefaultApprovalFloor(
   }
   if (defaultSafety === 'danger' || (defaultSafety === undefined && DANGEROUS_ACTION_APPROVAL_REQUIRED_ACTION_ID_SET.has(actionId))) {
     if (surface.kind === 'ambiguous') return true;
-    // RPC is an internal transport surface; it has no human confirmation host.
-    if (surface.surface !== 'rpc') {
+    // General RPC remains an internal transport surface. These new semantic
+    // filesystem methods are directly reachable effect entry points, however,
+    // and use the same configurable Ask-first owner as their other surfaces.
+    // Released unrooted aliases retain their separate incumbent admission path.
+    if (surface.surface !== 'rpc' || isFilesystemActionId(actionId)) {
       return getActionSpec(actionId).surfaces[surface.surface] === true;
     }
   }
@@ -411,7 +439,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
         && args.context?.authority === 'present_user'
       )
     );
-  const flow = required && (mustReturnApprovalCustody
+  const flow = required && args.retainHostOperationApproval === true
+    ? 'blocking'
+    : required && (mustReturnApprovalCustody
     || (presentUserRequest && args.spec.approvalInputCustody !== 'live_only'))
     ? 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
