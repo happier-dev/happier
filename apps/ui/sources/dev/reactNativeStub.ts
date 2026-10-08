@@ -2,6 +2,7 @@
 // This avoids Vite trying to parse the real React Native entrypoint (Flow syntax).
 
 import * as React from 'react';
+import type { AppStateStatus } from 'react-native';
 
 // Provide basic host components so tests that rely on `react-test-renderer` can render trees
 // without having to mock `react-native` in every file.
@@ -46,6 +47,11 @@ export const AccessibilityInfo = {
     addEventListener: () => ({ remove: () => {} }),
 } as const;
 
+export const Appearance = {
+    getColorScheme: (): 'light' | 'dark' | null => 'light',
+    addChangeListener: (_listener: (preferences: { colorScheme: 'light' | 'dark' | null }) => void) => ({ remove: () => {} }),
+} as const;
+
 export const Dimensions = {
     get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
 } as const;
@@ -56,6 +62,9 @@ export const PixelRatio = {
     roundToNearestPixel: (value: number) => value,
 } as const;
 
+// The OS resolves these semantic names; host-renderer tests preserve its opaque color descriptor.
+export const PlatformColor = (...names: string[]) => ({ semantic: names });
+
 export const Platform = {
     OS: 'node',
     select: (x: any) => x?.default ?? x?.web ?? x?.native ?? x?.ios ?? x?.android,
@@ -65,7 +74,7 @@ export const I18nManager = {
 } as const;
 export const AppState = {
     currentState: 'active',
-    addEventListener: () => ({ remove: () => {} }),
+    addEventListener: (_eventName: string, _listener: (state: AppStateStatus) => void) => ({ remove: () => {} }),
 } as const;
 export const InteractionManager = {
     runAfterInteractions: (fn: () => void) => {

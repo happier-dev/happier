@@ -65,14 +65,32 @@ export function createFocusablePressableMock(
 export function createFocusableTextInputMock(
     onFocus: () => void,
     onFocusTarget?: (props: TestReactNativeHostProps) => void,
+    options: Readonly<{
+        onBlur?: () => void;
+        onSetNativeProps?: (props: Record<string, unknown>) => void;
+    }> = {},
 ) {
-    return React.forwardRef<{ focus: () => void }, TestReactNativeHostProps>(
+    return React.forwardRef<{
+        focus: () => void;
+        blur: () => void;
+        isFocused: () => boolean;
+        setNativeProps: (props: Record<string, unknown>) => void;
+    }, TestReactNativeHostProps>(
         function FocusableTextInput(props, ref) {
+            const focused = React.useRef(false);
             React.useImperativeHandle(ref, () => ({
-                focus: onFocusTarget
-                    ? () => { onFocusTarget(props); onFocus(); }
-                    : onFocus,
-            }), [onFocus, onFocusTarget, props]);
+                focus: () => {
+                    focused.current = true;
+                    onFocusTarget?.(props);
+                    onFocus();
+                },
+                blur: () => {
+                    focused.current = false;
+                    options.onBlur?.();
+                },
+                isFocused: () => focused.current,
+                setNativeProps: (nativeProps) => options.onSetNativeProps?.(nativeProps),
+            }), [onFocus, onFocusTarget, options.onBlur, options.onSetNativeProps, props]);
             return React.createElement('TextInput', props);
         },
     );

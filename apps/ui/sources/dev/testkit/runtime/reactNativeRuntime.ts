@@ -47,7 +47,8 @@ export async function createReactNativeWebRuntime(
             },
             appStateOverrides as PlainObject | undefined,
         ),
-    } as DeepMutable<ReactNativeStubModule> & TestReactNativeRuntimeOverrides;
+    // Arbitrary SDK-port overrides are intentionally untyped at this fixture boundary.
+    } as unknown as DeepMutable<ReactNativeStubModule> & TestReactNativeRuntimeOverrides;
 }
 
 export function installReactNativeWebRuntime(
@@ -77,7 +78,7 @@ export async function createReactNativeNativeRuntime(
     loadStub: TestReactNativeStubLoader = loadReactNativeStub,
 ): Promise<DeepMutable<ReactNativeStubModule> & TestReactNativeRuntimeOverrides> {
     const stub = await loadStub();
-    const { Platform: platformOverrides, Animated: animatedOverrides, ...restOverrides } = overrides ?? {};
+    const { Platform: platformOverrides, Animated: animatedOverrides, AppState: appStateOverrides, ...restOverrides } = overrides ?? {};
     const mergedModule = mergeObjects(stub as PlainObject, restOverrides as PlainObject | undefined);
     const { platformOS } = options;
 
@@ -101,6 +102,10 @@ export async function createReactNativeNativeRuntime(
 
     return {
         ...mergedModule,
+        AppState: mergeObjectsPreservingDescriptors(
+            stub.AppState as PlainObject,
+            appStateOverrides as PlainObject | undefined,
+        ),
         Animated: mergeObjectsPreservingDescriptors(
             baseAnimated as PlainObject,
             animatedOverrides as PlainObject | undefined,

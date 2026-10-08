@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getFocusedRouteNameFromRoute } from '@react-navigation/core';
 
 export type CreateReactNavigationNativeMockOptions = Readonly<{
     isFocused?: boolean;
@@ -34,6 +35,7 @@ export function createReactNavigationNativeMock(options: CreateReactNavigationNa
     };
 
     return {
+        getFocusedRouteNameFromRoute,
         CommonActions: {
             setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
         },
