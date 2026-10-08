@@ -265,14 +265,20 @@ describe('protocol-authoring public browser entrypoint', () => {
             'utf8',
         )) as Readonly<{ exports: Readonly<Record<string, unknown>> }>;
 
-        expect(packageJson.exports['./protocol']).toEqual({
+        expect(packageJson.exports['./protocol']).toMatchObject({
             types: './dist/protocol/index.d.ts',
-            browser: './dist/protocol/index.browser.js',
+            browser: {
+                'happier-source': './src/protocol/index.browser.ts',
+                default: './dist/protocol/index.browser.js',
+            },
             default: './dist/protocol/index.js',
         });
-        expect(packageJson.exports['./contributions']).toEqual({
+        expect(packageJson.exports['./contributions']).toMatchObject({
             types: './dist/contributions/index.d.ts',
-            browser: './dist/contributions/index.browser.js',
+            browser: {
+                'happier-source': './src/contributions/index.browser.ts',
+                default: './dist/contributions/index.browser.js',
+            },
             default: './dist/contributions/index.js',
         });
         expect(readNamedExports(protocolPublicEntry)).toEqual(expectedProtocolExports);

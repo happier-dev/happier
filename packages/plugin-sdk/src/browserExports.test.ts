@@ -102,7 +102,7 @@ describe('browser-safe package exports', () => {
     it('publishes the one registration transaction through browser and React Native conditions', () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
 
-        expect(packageJson.exports).toHaveProperty('./host/registration', {
+        expect(packageJson.exports?.['./host/registration']).toMatchObject({
             types: './dist/host/registration/index.d.ts',
             browser: './dist/host/registration/index.js',
             'react-native': './dist/host/registration/index.js',
@@ -198,12 +198,15 @@ describe('browser-safe package exports', () => {
             './index.browser.ts',
         ));
 
-        expect(packageJson.exports).toHaveProperty('.', {
+        expect(packageJson.exports?.['.']).toMatchObject({
             types: './dist/index.d.ts',
-            browser: './dist/index.browser.js',
+            browser: {
+                'happier-source': './src/index.browser.ts',
+                default: './dist/index.browser.js',
+            },
             default: './dist/index.js',
         });
-        expect(packageJson.exports).toHaveProperty('./manifest', {
+        expect(packageJson.exports?.['./manifest']).toMatchObject({
             types: './dist/manifest/index.d.ts',
             default: './dist/manifest/index.js',
         });
@@ -545,9 +548,12 @@ describe('browser-safe package exports', () => {
             '../../protocol/src/automations/automationEventV1.ts',
         );
         const emittedModules = new Set<string>();
-        expect(packageJson.exports).toHaveProperty('./events', {
+        expect(packageJson.exports?.['./events']).toMatchObject({
             types: './dist/events/index.d.ts',
-            browser: './dist/events/index.browser.js',
+            browser: {
+                'happier-source': './src/events/index.browser.ts',
+                default: './dist/events/index.browser.js',
+            },
             default: './dist/events/index.js',
         });
         const result = await build({
