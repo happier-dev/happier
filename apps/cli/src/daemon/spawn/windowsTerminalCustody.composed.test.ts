@@ -2,28 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import type { ChildProcess, SpawnSyncReturns } from 'node:child_process';
 
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
-import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
-
-const testDeviceLocalSecretStorage: DeviceLocalSecretStorage = {
-  sealJson: ({ value }) => `test.${Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')}`,
-  openJson: ({ ciphertext }) => JSON.parse(Buffer.from(ciphertext.slice('test.'.length), 'base64url').toString('utf8')) as unknown,
-  deriveOpaqueIdentity: ({ value }) =>
-    Buffer.from(value, 'utf8').toString('hex').padEnd(64, '0').slice(0, 64),
-  deriveSecretKey: () => new Uint8Array(32).fill(7),
-};
-
-type LauncherInput = Readonly<{
-  filePath: string;
-  args: string[];
-  onDispatcherSpawned?: (
-    pid: number,
-    stopDispatcher: () => void,
-  ) => void;
-}>;
+import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
 describe('Windows Terminal exact Agent custody composition', () => {
   const originalHome = process.env.HAPPIER_HOME_DIR;
@@ -36,9 +21,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
   let testRoot = '';
 
   afterEach(() => {
-    vi.doUnmock(
-      '../platform/windows/spawnHappyCliWindowsTerminal',
-    );
+    vi.doUnmock('node:child_process');
     vi.resetModules();
     if (testRoot) {
       rmSync(testRoot, { recursive: true, force: true });
@@ -81,6 +64,10 @@ describe('Windows Terminal exact Agent custody composition', () => {
       'utf8',
     );
     writeFileSync(binaryPath, '', 'utf8');
+    // Device key persistence uses this runner's real filesystem; only launch/custody emulate Windows.
+    const testDeviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
+      path: join(testRoot, 'private', 'device-local-secret.json'),
+    });
     process.env.HAPPIER_HOME_DIR = join(testRoot, 'home');
     process.env.HAPPIER_WINDOWS_SESSION_RUNNER_BINARY =
       binaryPath;
@@ -89,36 +76,46 @@ describe('Windows Terminal exact Agent custody composition', () => {
       value: 'win32',
     });
 
-    let launcherInput: LauncherInput | null = null;
     const stopDispatcher = vi.fn();
-    let settleDispatcher!: (
-      result: Readonly<{
-        ok: true;
-        pid: number;
-        custodyPid: number;
-      }>,
-    ) => void;
-    const dispatcherSettlement = new Promise<Readonly<{
-      ok: true;
-      pid: number;
-      custodyPid: number;
-    }>>((resolve) => {
-      settleDispatcher = resolve;
+    const dispatchers: ChildProcess[] = [];
+    // Native process/stdio and PowerShell inventory are OS ports; launch and custody stay real.
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+      return {
+        ...actual,
+        // The lock's reclaim witness uses the synchronous PowerShell process-birth OS port.
+        spawnSync: (): SpawnSyncReturns<string> => ({
+          pid: process.pid, status: 0, signal: null,
+          stdout: '1970-01-01T00:00:01.0000000Z', stderr: '',
+          output: [null, '1970-01-01T00:00:01.0000000Z', ''],
+        }),
+        spawn: () => {
+          const child = new actual.ChildProcess();
+          Object.defineProperties(child, {
+            pid: { value: 8_888 },
+            stdout: { value: new PassThrough() },
+            stderr: { value: new PassThrough() },
+            kill: { value: () => {
+              stopDispatcher();
+              Object.defineProperty(child, 'killed', { configurable: true, value: true });
+              return true;
+            } },
+          });
+          dispatchers.push(child);
+          return child;
+        },
+        execFile: (_command: string, _args: readonly string[], _options: unknown,
+          callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+          const child = new actual.ChildProcess();
+          queueMicrotask(() => {
+            callback(null, JSON.stringify([{ ProcessId: process.pid, ParentProcessId: process.ppid,
+              ProcessStartTimeMs: 1_000, CommandLine: 'happier test owner', ExecutablePath: process.execPath }]), '');
+            child.emit('close', 0, null);
+          });
+          return child;
+        },
+      };
     });
-    vi.doMock(
-      '../platform/windows/spawnHappyCliWindowsTerminal',
-      () => ({
-        startHappySessionInWindowsTerminal:
-          (input: LauncherInput) => {
-            launcherInput = input;
-            input.onDispatcherSpawned?.(
-              8_888,
-              stopDispatcher,
-            );
-            return dispatcherSettlement;
-          },
-      }),
-    );
     vi.resetModules();
 
     const [
@@ -280,13 +277,14 @@ describe('Windows Terminal exact Agent custody composition', () => {
 
     await vi.waitFor(() => {
       expect(pidToTrackedSession.has(8_888)).toBe(true);
-      expect(launcherInput).not.toBeNull();
+      expect(dispatchers).toHaveLength(1);
     });
-    const launched = launcherInput!;
-    agentExecutablePath = launched.filePath;
+    const tracked = pidToTrackedSession.get(8_888)!;
+    const launched = tracked.windowsTerminalLaunchCustody!;
+    agentExecutablePath = launched.executablePath;
     agentCommand = serializeWindowsCommandLine([
-      launched.filePath,
-      ...launched.args,
+      launched.executablePath,
+      ...launched.argv,
     ]);
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
@@ -311,7 +309,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
       },
       readCredentialsFn: async () => null,
     });
-    const tracked = pidToTrackedSession.get(8_888)!;
     expect(parseWindowsCommandLine(agentCommand)).toEqual([
       tracked.windowsTerminalLaunchCustody!.executablePath,
       ...tracked.windowsTerminalLaunchCustody!.argv,
@@ -443,12 +440,8 @@ describe('Windows Terminal exact Agent custody composition', () => {
         spawnNonce: 'nonce-wt-composed',
       }),
     }));
-    settleDispatcher({
-      ok: true,
-      pid: 8_889,
-      custodyPid: 8_888,
-    });
-    await dispatcherSettlement;
+    dispatchers[0]!.stdout?.emit('data', Buffer.from('8889\n'));
+    dispatchers[0]!.emit('close', 0, null);
     await removeSessionMarkerIfOwned({
       pid: markers[0]!.pid,
       happySessionId:
@@ -557,11 +550,11 @@ describe('Windows Terminal exact Agent custody composition', () => {
     });
     const timeoutTracked =
       pidToTrackedSession.get(8_888)!;
-    const timeoutLaunched = launcherInput!;
-    agentExecutablePath = timeoutLaunched.filePath;
+    const timeoutLaunched = timeoutTracked.windowsTerminalLaunchCustody!;
+    agentExecutablePath = timeoutLaunched.executablePath;
     agentCommand = serializeWindowsCommandLine([
-      timeoutLaunched.filePath,
-      ...timeoutLaunched.args,
+      timeoutLaunched.executablePath,
+      ...timeoutLaunched.argv,
     ]);
     const timeoutMetadata: Metadata = {
       path: 'C:\\repo',
@@ -621,5 +614,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
     });
     expect(await listSessionMarkers())
       .toHaveLength(0);
+    dispatchers[1]!.stdout?.emit('data', Buffer.from('8889\n'));
+    dispatchers[1]!.emit('close', 0, null);
   }, 120_000);
 });

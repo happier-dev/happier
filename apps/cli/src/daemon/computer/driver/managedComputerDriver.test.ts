@@ -39,6 +39,8 @@ import { createComputerRoutes } from '../routes';
 import { createMachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
 import { createMachineLiveStreamRelayTerminator } from '../../peer/mediation/stream/relay';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
 import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { ActionsSettingsV1Schema, FeaturesResponseSchema, decideApprovalRequestTransition, type ApprovalRequest } from '@happier-dev/protocol';
 
@@ -198,9 +200,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     } finally { finishInput?.({ structuredContent: { effect: 'unverifiable' } }); await source.close(); }
   });
   it('uses host display facts for an explicitly created agent selection approval', async () => {
-    const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-      import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-    ]);
     const routes = createComputerRoutes({ machineId: 'machine', machineDisplayName: 'Workstation',
       registry: createMachineLiveStreamCaptureRegistry(), executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
     let stored: ApprovalRequest | undefined;
@@ -226,9 +225,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     { name: 'with downgraded access', windowId: 123, access: 'see' as const },
     { name: 'outside the user-side target list', windowId: 999, access: 'use' as const },
   ])('stores the human selection $name from the blocking approval, preserving the agent origin and suggestion', async ({ windowId, access }) => {
-    const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-      import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-    ]);
     const chosen = { ...target, windowId };
     native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
       windows: [{ pid: target.pid, window_id: target.windowId, title: 'Requested app' },
@@ -298,9 +294,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
   });
   it.each(['computer.targets.list', 'computer.target.select', 'computer.control.interrupt', 'computer.control.handBack'] as const)(
     'routes agent %s through approval and the real native owner without human authority', async actionId => {
-      const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-        import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-      ]);
       native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
         windows: [{ pid: target.pid, window_id: target.windowId, title: 'Fixture' }],
       } } : name === 'get_window_state' ? captureResult() : { structuredContent: {} });
@@ -402,7 +395,8 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     const now = Date.now();
     const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_source', captureAdapter: source.adapter,
       nowMs: () => Date.now(), emitEnvelope: envelope => envelopes.push(envelope) });
-    const receivedFrames = () => envelopes.filter(envelope => envelope.message.kind === 'frame');
+    const receivedFrames = () => envelopes.flatMap(envelope => envelope.message.kind === 'frame' ? [envelope.message.frame] : []);
+    const receivedImages = () => receivedFrames().filter(frame => frame.payloadKind === 'image_keyframe');
     try {
       const started = await relay.start({ v: 1, streamId: 'stream', streamFamily: 'screen', routeKind: 'server_relay',
         sourceMachineId: 'machine_source', targetMachineId: 'machine_target', codecId: 'image.frame.v1',
@@ -413,12 +407,18 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       });
       if (!started.ok) throw new Error(started.reasonCode);
       await vi.advanceTimersByTimeAsync(25);
-      expect(receivedFrames()).toHaveLength(1);
+      expect(receivedImages()).toMatchObject([{ payloadBase64: png }]);
+      const metadata = receivedFrames().filter(frame => frame.payloadKind === 'metadata');
+      expect(metadata).toHaveLength(1);
+      expect(JSON.parse(Buffer.from(metadata[0].payloadBase64, 'base64').toString('utf8'))).toMatchObject({ target, sourceId: source.sourceId });
+      const captureCount = native.tools.filter(tool => tool.name === 'get_window_state').length;
+      expect(captureCount).toBe(1);
       expect(relay.applyControl({ v: 1, sourceMachineId: 'machine_source', targetMachineId: 'machine_target',
-        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: 2, windowFrames: 1 } } }))
+        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: receivedFrames().at(-1)!.sequence + 1, windowFrames: 1 } } }))
         .toEqual({ ok: true });
       await vi.advanceTimersByTimeAsync(25);
-      expect(receivedFrames()).toHaveLength(2);
+      expect(receivedImages()).toMatchObject([{ payloadBase64: png }, { payloadBase64: png }]);
+      expect(native.tools.filter(tool => tool.name === 'get_window_state')).toHaveLength(captureCount + 1);
     } finally { await relay.dispose(); await source.close(); }
   });
 
