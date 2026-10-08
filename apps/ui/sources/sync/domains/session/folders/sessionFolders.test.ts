@@ -334,7 +334,7 @@ describe('session folder domain helpers', () => {
         const targets = buildSessionFolderMoveTargets({
             folders: normalized,
             workspace: workspaceA,
-            currentFolderId: 'child',
+            currentFolderIds: ['child'],
             workspaceRootTitle: 'Workspace root',
         });
 
@@ -361,6 +361,24 @@ describe('session folder domain helpers', () => {
                 disabled: true,
             },
         ]);
+    });
+
+    it.each([
+        { currentFolderIds: ['child', null], disabled: [false, false, false] },
+        { currentFolderIds: ['child', 'child'], disabled: [false, false, true] },
+        { currentFolderIds: [null, null], disabled: [true, false, false] },
+        { currentFolderIds: [], disabled: [true, true, true] },
+    ])('disables only destinations that change none of the selected assignments: $currentFolderIds', ({ currentFolderIds, disabled }) => {
+        const targets = buildSessionFolderMoveTargets({
+            folders: normalizeSessionFolders({ v: 1, folders: [
+                folder({ id: 'root', name: 'Root' }),
+                folder({ id: 'child', name: 'Child', parentId: 'root' }),
+            ] }),
+            workspace: workspaceA,
+            currentFolderIds,
+            workspaceRootTitle: 'Workspace root',
+        });
+        expect(targets.map((target) => target.disabled)).toEqual(disabled);
     });
 
     it('shares normalized workspace folder targets with creation-draft pickers', () => {

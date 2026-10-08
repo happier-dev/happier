@@ -9,11 +9,14 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
+import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import {
   createPlainSession,
+  expectFolderAssignment,
+  setSessionFolderAssignment,
   resolveCanonicalServerIdForUi,
   setSessionFolderDragSettings,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
@@ -129,89 +132,141 @@ test.describe('ui e2e: session folders sidebar', () => {
     test.setTimeout(720_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
-    const rootPath = repoRootDir();
-    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
-    const firstSessionId = await createPlainSession({
-      baseUrl: server.baseUrl,
-      token,
-      title: `folder move target ${run.runId}`,
-      rootPath,
-      machineId: SEEDED_MACHINE_ID,
-      tagPrefix: 'session-folders',
-    });
+      const rootPath = repoRootDir();
+      const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
+      const firstSessionId = await createPlainSession({
+        baseUrl: server.baseUrl,
+        token,
+        title: `folder move target ${run.runId}`,
+        rootPath,
+        machineId: SEEDED_MACHINE_ID,
+        tagPrefix: 'session-folders',
+      });
 
-    await setSessionFolderDragSettings({
-      page,
-      baseUrl: uiBaseUrl,
-      apiBaseUrl: server.baseUrl,
-      token,
-      serverId,
-      folderViewMode: 'off',
-      sessionFoldersV1: {
-        v: 1,
-        folders: [{
-          id: FOLDER_ID,
-          workspace: {
-            t: 'workspaceScope',
-            serverId,
-            machineId: SEEDED_MACHINE_ID,
-            rootPath,
-          },
-          parentId: null,
-          name: FOLDER_NAME,
-          createdAt: 1,
-          updatedAt: 1,
-        }],
-      },
-    });
+      await setSessionFolderDragSettings({
+        page,
+        baseUrl: uiBaseUrl,
+        apiBaseUrl: server.baseUrl,
+        token,
+        serverId,
+        folderViewMode: 'off',
+        sessionFoldersV1: {
+          v: 1,
+          folders: [{
+            id: FOLDER_ID,
+            workspace: {
+              t: 'workspaceScope',
+              serverId,
+              machineId: SEEDED_MACHINE_ID,
+              rootPath,
+            },
+            parentId: null,
+            name: FOLDER_NAME,
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        },
+      });
 
-    await setUiFeatureToggle({
-      page,
-      baseUrl: uiBaseUrl,
-      featureId: 'sessions.folders',
-      enabled: true,
-    });
+      await setUiFeatureToggle({
+        page,
+        baseUrl: uiBaseUrl,
+        featureId: 'sessions.folders',
+        enabled: true,
+      });
 
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByTestId('session-list-ordering-menu-trigger').first().click();
-    await expect(page.getByTestId('session-folder-view-toggle')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('session-folder-view-toggle').click();
+      await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
 
-    await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-folder-drop-target-${FOLDER_ID}`)).toHaveCount(1, { timeout: 60_000 });
+      await openSessionRowMenu({ page, sessionId: firstSessionId });
+      await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
+      await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByRole('option', { name: new RegExp(FOLDER_NAME) })).toHaveCount(1, { timeout: 60_000 });
+      await page.getByRole('option', { name: new RegExp(FOLDER_NAME) }).click();
+      await expectFolderAssignment({ baseUrl: server.baseUrl, token, sessionId: firstSessionId, folderId: FOLDER_ID });
 
-    await openSessionRowMenu({ page, sessionId: firstSessionId });
-    await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
-    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByRole('option', { name: FOLDER_NAME })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('option', { name: FOLDER_NAME }).click();
+      await page.getByTestId('session-list-ordering-menu-trigger').first().click();
+      await expect(page.getByTestId('session-folder-view-toggle')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('session-folder-view-toggle').click();
 
-    await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
-    await expect(page.getByTestId('session-folder-breadcrumb')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('session-folder-clear-focus')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(`session-folder-drop-target-${FOLDER_ID}`)).toHaveCount(1, { timeout: 60_000 });
 
-    await page.getByTestId('session-folder-clear-focus').click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
+      await expect(page.getByTestId('session-folder-breadcrumb')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId('session-folder-clear-focus')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
 
-    await openSessionRowMenu({ page, sessionId: firstSessionId });
-    await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
-    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByRole('option', { name: /Workspace root/i })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('option', { name: /Workspace root/i }).click();
+      await page.getByTestId('session-folder-clear-focus').click();
+      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(0, { timeout: 120_000 });
+      await openSessionRowMenu({ page, sessionId: firstSessionId });
+      await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
+      await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
+      await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByRole('option', { name: /Workspace root/i })).toHaveCount(1, { timeout: 60_000 });
+      await page.getByRole('option', { name: /Workspace root/i }).click();
 
-    await page.getByTestId('session-folder-clear-focus').click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
+      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(0, { timeout: 120_000 });
+
+      await page.getByTestId('session-folder-clear-focus').click();
+      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
+  test('bulk moves mixed folder assignments while folder view is off', async ({ page }) => {
+    test.setTimeout(720_000);
+    if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+      const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
+      const sessionIds = [];
+      for (const label of ['assigned', 'unassigned']) {
+        sessionIds.push(await createPlainSession({ baseUrl: server.baseUrl, token,
+          title: `${label} bulk folder session ${run.runId}`, rootPath: repoRootDir(),
+          machineId: SEEDED_MACHINE_ID, tagPrefix: 'session-folders-bulk' }));
+      }
+      await setSessionFolderDragSettings({ page, baseUrl: uiBaseUrl,
+        apiBaseUrl: server.baseUrl, token, serverId, folderViewMode: 'off',
+        sessionFoldersV1: { v: 1, folders: [{ id: FOLDER_ID,
+          workspace: { t: 'workspaceScope', serverId, machineId: SEEDED_MACHINE_ID, rootPath: repoRootDir() },
+          parentId: null, name: FOLDER_NAME, createdAt: 1, updatedAt: 1 }] } });
+      await setSessionFolderAssignment({ baseUrl: server.baseUrl, token, sessionId: sessionIds[0]!, folderId: FOLDER_ID });
+      await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
+      await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
+      const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+      for (const sessionId of sessionIds) {
+        const row = page.getByTestId(`session-list-item-${sessionId}`);
+        await expect(row).toHaveCount(1, { timeout: 120_000 });
+        await row.click({ modifiers: [modifier] });
+      }
+      await expect(page.getByTestId('session-list-selection-count')).toHaveAttribute('data-selected-count', '2');
+      await page.getByTestId('session-list-selection-action-session-move-to-folder').click();
+      const destination = page.getByTestId(`session-folder-selection:root:option:session-folder-move-folder-${FOLDER_ID}`);
+      await expect(destination).toBeEnabled();
+      await destination.click();
+      await expect(page.getByTestId('session-list-selection-result')).toHaveAttribute('data-succeeded-count', '2', { timeout: 60_000 });
+      for (const sessionId of sessionIds) {
+        await expectFolderAssignment({ baseUrl: server.baseUrl, token, sessionId, folderId: FOLDER_ID });
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
   });
 });

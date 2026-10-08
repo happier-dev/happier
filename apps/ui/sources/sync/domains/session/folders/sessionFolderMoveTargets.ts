@@ -46,16 +46,15 @@ export function buildSessionFolderWorkspaceTargets(params: Readonly<{
 export function buildSessionFolderMoveTargets(params: Readonly<{
     folders: SessionFoldersV1;
     workspace: SessionFolderWorkspaceRefV1;
-    currentFolderId: string | null | undefined;
+    currentFolderIds: readonly (string | null)[];
     workspaceRootTitle: string;
 }>): readonly SessionFolderMoveTarget[] {
-    const currentFolderId = params.currentFolderId ?? null;
     const targets: SessionFolderMoveTarget[] = [{
         id: 'session-folder-move-root',
         folderId: null,
         title: params.workspaceRootTitle,
         depth: 0,
-        disabled: currentFolderId === null,
+        disabled: params.currentFolderIds.every((current) => current === null),
     }];
     targets.push(...buildSessionFolderWorkspaceTargets({
         folders: params.folders,
@@ -63,7 +62,7 @@ export function buildSessionFolderMoveTargets(params: Readonly<{
     }).map((target) => ({
         id: `session-folder-move-folder-${target.folderId}`,
         ...target,
-        disabled: target.folderId === currentFolderId,
+        disabled: params.currentFolderIds.every((current) => current === target.folderId),
     })));
     return targets;
 }

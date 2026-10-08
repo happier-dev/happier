@@ -498,14 +498,9 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         });
     }, []);
 
-    const prepareTreeRowSource = React.useCallback((sourceRowId: string) => {
-        const source = buildSessionListDragSource({ tree: latestTreeRef.current, sourceRowId });
-        const metadata = source.metadata;
-        const sessionDragKey = metadata.kind === 'session' && metadata.serverId && metadata.sessionId
-            ? sessionAddressKey({ serverId: metadata.serverId, sessionId: metadata.sessionId }) : sourceRowId;
-        return entityDragDrop.prepareSource(buildSessionListDragSnapshot({ items: listItemsRef.current, viewItems: listItemsRef.current,
-            sessionDragKey, foldersFeatureEnabled: input.folderActionsEnabled }));
-    }, [entityDragDrop.prepareSource, input.folderActionsEnabled]);
+    const prepareTreeRowSource = React.useCallback((sourceRowId: string) => (
+        entityDragDrop.prepareSource({ sourceRowId })
+    ), [entityDragDrop.prepareSource]);
 
     const performTreeResult = React.useCallback(async (sourceRowId: string, result: ReturnType<typeof buildSessionListKeyboardMoveResult>) => {
         const source = prepareTreeRowSource(sourceRowId);

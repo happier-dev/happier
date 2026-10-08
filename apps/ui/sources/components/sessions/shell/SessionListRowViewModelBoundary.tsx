@@ -8,7 +8,6 @@ import {
     useSessionListRowRenderablesForItems,
 } from '@/sync/domains/state/storage';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
@@ -61,7 +60,6 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     dataIndex: number;
     dragEnabled: boolean;
     draggingSessionKey: string | null;
-    folderMoveTargets: readonly SessionFolderMoveTarget[];
     forkActionContext?: SessionItemProps['forkActionContext'];
     hasMultipleMachines: boolean;
     hideInactiveSessions?: boolean | null;
@@ -76,7 +74,6 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     onMoveDown?: () => void;
     onDeleteDraft?: () => void | Promise<void>;
     onMoveToFolder?: () => void;
-    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
@@ -232,9 +229,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             compact={props.compact}
             compactMinimal={props.compactMinimal}
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
-            folderMoveTargets={props.folderMoveTargets}
             forkActionContext={props.forkActionContext}
-            onMoveToSessionFolder={props.onMoveToSessionFolder}
             onMoveToFolder={props.onMoveToFolder}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}

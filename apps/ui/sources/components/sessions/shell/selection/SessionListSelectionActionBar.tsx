@@ -305,7 +305,19 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
 
     const handleActionPress = React.useCallback(async (descriptor: SessionBulkActionDescriptor) => {
         if (runningAction) return;
-        const request = await resolveActionRequest(descriptor.id);
+        let request: SessionBulkActionRequest | null;
+        try {
+            request = await resolveActionRequest(descriptor.id);
+        } catch (error) {
+            const failedResult = buildFailureResult({
+                actionId: descriptor.id,
+                targets: selectedTargets,
+                reason: reasonFromUnknown(error),
+            });
+            setResult(failedResult);
+            applyRemainingSelection(failedResult);
+            return;
+        }
         if (!request) return;
         if (descriptor.requiresConfirmation) {
             setResult(null);
@@ -317,7 +329,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
             return;
         }
         await executeAction(request);
-    }, [executeAction, resolveActionRequest, runningAction, selectedTargets]);
+    }, [applyRemainingSelection, executeAction, resolveActionRequest, runningAction, selectedTargets]);
 
     const handleCancelRunningAction = React.useCallback(() => {
         if (!cancelStateRef.current) return;

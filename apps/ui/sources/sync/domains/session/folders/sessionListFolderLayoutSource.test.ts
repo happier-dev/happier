@@ -67,7 +67,9 @@ describe('resolveFolderAwareSessionListSourceForLayout', () => {
     it('leaves Recent activity as one flat corpus when no folder is focused', () => {
         const result = resolveForLayout('recent_activity', null);
 
-        expect(result.items).toBe(source);
+        expect(result.items).toEqual(source.map(item => item.type === 'session'
+            ? { ...item, folderId: assignmentsBySessionKey[buildSessionFolderAssignmentKey(item.serverId, item.sessionId)] ?? null }
+            : item));
         expect(result.folderFocus).toBeNull();
     });
 

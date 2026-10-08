@@ -1,5 +1,8 @@
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDropAdmissionV1,
     type EntityDropPreviewV1, type EntityDropReasonV1 } from '@happier-dev/protocol/plugins/ui';
+import { SetSessionFolderAssignmentRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { buildSessionFolderMoveTargets } from '@/sync/domains/session/folders';
+import { resolveSessionListItemOrganizationEligibility } from '@/sync/domains/sessionList/sessionListIndex';
 import { SessionOrganizationMoveInputSchema } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { resolveSessionListDragIntent, resolveSessionListDragTree, type CommitSessionListDragIntentContext,
     type SessionListDragAdmission } from './commitSessionListDragIntent';
@@ -15,19 +18,60 @@ function sourceRowIdForItem(item: EntityDragItemV1): string | null {
             : item.kind === 'session-workspace' ? treeRowId.workspaceRoot(item.workspaceId) : null;
 }
 
+export function readSessionListFolderAssignmentDestination(value: unknown): Readonly<{ folderId: string | null }> | null {
+    if (!value || typeof value !== 'object' || !('kind' in value) || value.kind !== 'folder-assignment') return null;
+    const parsed = SetSessionFolderAssignmentRequestSchema.safeParse('folderId' in value ? { folderId: value.folderId } : {});
+    return parsed.success ? parsed.data : null;
+}
+
+function folderAssignmentTargets(item: EntityDragItemV1, context: CommitSessionListDragIntentContext) {
+    if (item.kind !== 'session' || item.address.serverId !== item.scope.serverId || !context.scope || !entityDragScopesEqualV1(item.scope, context.scope)) return [];
+    const source = context.latestItems.find(candidate => candidate.type === 'session'
+        && candidate.serverId === item.address.serverId && candidate.sessionId === item.address.sessionId);
+    if (!source || source.type !== 'session' || !source.workspace
+        || !resolveSessionListItemOrganizationEligibility(source, {
+            foldersFeatureEnabled: context.isFolderOrganizationEnabled?.(source.serverId ?? null) === true,
+        }).canUseSessionFolders) return [];
+    return buildSessionFolderMoveTargets({ folders: context.sessionFoldersV1, workspace: source.workspace,
+        currentFolderIds: [source.folderId ?? null], workspaceRootTitle: '' });
+}
+
+/** Session assignment is semantic inventory; it does not add invisible tree geometry. */
+export function resolveSessionListFolderAssignmentDrop(params: Readonly<{
+    item: EntityDragItemV1;
+    folderId: string | null;
+    context: CommitSessionListDragIntentContext;
+    preview: (folderName: string | null) => EntityDropPreviewV1;
+    reason: (code: string) => EntityDropReasonV1;
+}>): EntityDropAdmissionV1 {
+    const refuse = (code: string): EntityDropAdmissionV1 => ({ status: 'refused', reason: params.reason(code) });
+    if (!params.context.scope || !entityDragScopesEqualV1(params.item.scope, params.context.scope)) return refuse('scope-mismatch');
+    if (params.item.kind !== 'session') return refuse('unsupported-item');
+    const target = folderAssignmentTargets(params.item, params.context).find(candidate => candidate.folderId === params.folderId);
+    if (!target) return refuse('unavailable');
+    if (target.disabled) return refuse('no-change');
+    return { status: 'allowed', effect: { actionId: 'session.folder.set', input: {
+        sessionId: params.item.address.sessionId, folderId: target.folderId,
+    }, preview: params.preview(target.folderId === null ? null : target.title) } };
+}
+
 /** Current semantic places, including denied applicable rows. The resolver alone admits them. */
 export function listSessionListEntityDropDestinations(params: Readonly<{
     item: EntityDragItemV1;
     context: CommitSessionListDragIntentContext;
     preview: (intent: SessionListDragIntent, target: SessionListTreeRowMetadata | null) => EntityDropPreviewV1;
+    folderPreview: (folderName: string | null) => EntityDropPreviewV1;
 }>): readonly EntityDropSemanticDestination[] {
     const { item, context } = params;
     if (!context.scope || !entityDragScopesEqualV1(item.scope, context.scope)) return [];
+    const destinations: EntityDropSemanticDestination[] = folderAssignmentTargets(item, context).map(target => ({
+        destination: { kind: 'folder-assignment', folderId: target.folderId },
+        label: params.folderPreview(target.folderId === null ? null : target.title).verb,
+    }));
     const tree = resolveSessionListDragTree(context);
     const sourceRowId = sourceRowIdForItem(item);
     const source = sourceRowId ? tree.rowMetadataById.get(sourceRowId) : null;
-    if (!source || source.serverId !== item.scope.serverId) return [];
-    const destinations: EntityDropSemanticDestination[] = [];
+    if (!source || source.serverId !== item.scope.serverId) return destinations;
     const append = (result: TreeDropResult, target: SessionListTreeRowMetadata | null) => {
         const intent = buildSessionListDragIntent({ result, sourceRowId: source.rowId,
             sourceKind: source.kind === 'session' ? 'leaf' : 'container', snapshotSignature: '' });
@@ -47,7 +91,7 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
                     visual: { kind: 'line', targetId: target.rowId, edge, depth: target.folderDepth } }, target);
             }
         }
-        if ((source.kind !== 'workspace-root' && target.kind === 'folder' && target.rootId === source.rootId)
+        if ((source.kind === 'folder' && target.kind === 'folder' && target.rootId === source.rootId)
             || (source.kind === 'session' && target.kind === 'session')) {
             append({ instruction: { kind: 'nest-into', targetId: target.rowId,
                 containerId: target.childContainerId ?? target.containerId,
@@ -56,7 +100,7 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
         }
     }
     const root = source.kind !== 'workspace-root' ? tree.containerMetadataById.get(source.rootId) : null;
-    if (root) append({ instruction: { kind: 'move-to-root', containerId: root.containerId,
+    if (root && source.kind !== 'session') append({ instruction: { kind: 'move-to-root', containerId: root.containerId,
         rootId: root.rootId, depth: root.depth }, visual: { kind: 'none' } }, tree.rowMetadataById.get(root.rootId) ?? null);
     return destinations;
 }

@@ -12,7 +12,6 @@ export type SessionRowMoreMenuBuildParams = Readonly<{
     target: SessionActionTarget;
     iconColor: string;
     leadingItems?: readonly DropdownMenuItem[];
-    folderMoveMenuItems?: readonly DropdownMenuItem[];
     canMoveToFolder?: boolean;
     reminderPresets?: readonly SessionReminderPresetV1[];
     reminder?: SessionReminderPresentation | null;

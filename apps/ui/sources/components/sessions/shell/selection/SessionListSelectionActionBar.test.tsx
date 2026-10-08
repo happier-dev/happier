@@ -190,6 +190,29 @@ describe('SessionListSelectionActionBarHost', () => {
         expect(count.props['data-selected-count']).toBe(1);
     });
 
+    it('reports failed folder-picker preparation and preserves selected sessions', async () => {
+        const targetsByKey = new Map<string, SessionBulkActionTarget>([
+            ['session-a', { key: 'session-a', sessionId: 'session-a', serverId: 'server-a', canMoveToFolder: true }],
+        ]);
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={['session-a']}>
+                <SelectionControls />
+                <SessionListSelectionActionBarHost
+                    targetsByKey={targetsByKey}
+                    onRequestMoveToFolder={async () => { throw new Error('Folder picker unavailable'); }}
+                />
+            </SessionListSelectionProvider>,
+        );
+        await pressByTestId(screen, 'select-session-a');
+        await act(async () => {
+            await screen.findByProps({ testID: 'session-list-selection-action-session-move-to-folder' }).props.onPress();
+        });
+        const result = screen.findByProps({ testID: 'session-list-selection-result' });
+        expect(result.props['data-failed-count']).toBe(1);
+        expect(result.props['data-succeeded-count']).toBe(0);
+        expect(screen.findByProps({ testID: 'session-list-selection-count' }).props['data-selected-count']).toBe(1);
+    });
+
     it('selects all visible sessions from the action bar', async () => {
         const screen = await renderScreen(<ActionBarHarness />);
 

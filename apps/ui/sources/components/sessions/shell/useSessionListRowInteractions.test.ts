@@ -15,6 +15,10 @@ installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+<<<<<<< HEAD
+=======
+// Reanimated is the native SDK boundary; keep real row and entity runtime owners.
+>>>>>>> origin/v0.3
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
@@ -241,6 +245,30 @@ describe('useSessionListRowInteractions', () => {
         }
     });
 
+    it('prepares a semantic Session source and folder destinations without tree headers', async () => {
+        const initialInput = buildInteractionsInput({ listItems: listItems.filter(item => item.type === 'session'),
+            sessionFoldersV1: { v: 1, folders: [{ id: 'hidden-folder', name: 'Hidden', workspace,
+                parentId: null, createdAt: 1, updatedAt: 1 }] } });
+        const hook = await renderHook((input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
+            { initialProps: initialInput });
+        let source: Readonly<{ sourceId: string; dispose: () => void }> | null;
+        try {
+            source = hook.getCurrent().prepareTreeRowSource(treeRowId.session('srv_server_a', 's1'));
+            expect(source).not.toBeNull();
+            const { runtime } = hook.getCurrent().entityDragDrop;
+            expect(runtime.getDestinations(source!.sourceId)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ destination: { kind: 'folder-assignment', folderId: 'hidden-folder' },
+                    admission: expect.objectContaining({ status: 'allowed' }) }),
+            ]));
+            await hook.rerender({ ...initialInput, listItems: [] });
+            expect(runtime.getDestinations(source!.sourceId)).toEqual([]);
+            expect(runtime.begin(source!.sourceId, 'keyboard')).toBeNull();
+            source!.dispose();
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('offers current semantic destinations through the mounted list, retaining denied relation targets', async () => {
         const initialInput = buildInteractionsInput({ listItems: twoSessionListItems });
         const hook = await renderHook(
@@ -280,17 +308,19 @@ describe('useSessionListRowInteractions', () => {
                 admission: { status: 'refused', reason: { code: 'unavailable' }, preview: { target: 's3' } },
             }]);
             const previousRelation = relationTargets()[0]!;
-            const folderRowId = treeRowId.folder('srv_server_a', 'folder-a');
             const folderItems: SessionListIndexItem[] = [...latestItems, { type: 'header', title: 'Folder A',
                 headerKind: 'folder', folderId: 'folder-a', folderDepth: 0,
                 groupKey: buildSessionFolderGroupKey({ serverId: 'srv_server_a', workspace, folderId: 'folder-a' }),
                 workspace, serverId: 'srv_server_a' }];
-            await hook.rerender({ ...initialInput, listItems: folderItems, sessionListOrderingModeV1: 'created' });
+            await hook.rerender({ ...initialInput, listItems: folderItems, sessionListOrderingModeV1: 'created',
+                sessionFoldersV1: { v: 1, folders: [{ id: 'folder-a', name: 'Folder A', workspace,
+                    parentId: null, createdAt: 1, updatedAt: 1 }] } });
             const destinations = runtime.getDestinations('chooser-session');
             expect(destinations).toEqual(expect.arrayContaining([
-                expect.objectContaining({ destination: expect.objectContaining({ instructionKind: 'nest-into', targetRowId: folderRowId }),
-                    admission: expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({ actionId: 'session.organization.move' }) }) }),
-                expect.objectContaining({ destination: expect.objectContaining({ instructionKind: 'move-to-root' }) }),
+                expect.objectContaining({ destination: { kind: 'folder-assignment', folderId: 'folder-a' },
+                    admission: expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({ actionId: 'session.folder.set' }) }) }),
+                expect.objectContaining({ destination: { kind: 'folder-assignment', folderId: null },
+                    admission: expect.objectContaining({ status: 'refused', reason: expect.objectContaining({ code: 'no-change' }) }) }),
                 expect.objectContaining({ destination: expect.objectContaining({ instructionKind: 'reorder-after' }),
                     admission: expect.objectContaining({ status: 'refused', reason: expect.objectContaining({ code: 'date-ordering-mode' }) }) }),
             ]));
