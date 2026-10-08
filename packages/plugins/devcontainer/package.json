@@ -1,0 +1,23 @@
+{
+  "name": "@happier-dev/plugins-devcontainer",
+  "version": "0.0.0",
+  "private": true,
+  "happier": { "pluginScaffold": { "shipping": "reservation_only" } },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
+  },
+  "files": ["dist", ".happier-plugin", "package.json"],
+  "scripts": {
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run"
+  },
+  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0" },
+  "devDependencies": { "@types/node": "^22.0.0", "vitest": "^3.2.4" }
+}
