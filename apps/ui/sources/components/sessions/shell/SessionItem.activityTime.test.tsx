@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen as renderCanonicalScreen, standardCleanup } from '@/dev/testkit';
 import {
     TREE_DROP_OVERLAY_KIND_NONE,
     type TreeDropOverlaySharedValues,
@@ -20,22 +20,14 @@ import {
 
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
+let windowDimensions = { width: 1024, height: 768, scale: 1, fontScale: 1 };
 let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
 let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
 let sessionListActiveColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive' = 'activityAndAttention';
 
-vi.mock('react-native-reanimated', () => ({
-    Easing: {
-        bezier: () => 'bezier',
-        linear: 'linear',
-        cubic: 'cubic',
-        out: (easing: unknown) => easing,
-    },
-    default: { View: 'Animated.View' },
-    useSharedValue: (value: unknown) => ({ value }),
-    useAnimatedStyle: (factory: () => unknown) => factory(),
-    withSpring: (value: unknown) => value,
-}));
+vi.mock('react-native-reanimated', async () => (
+    await import('@/dev/testkit/mocks/reanimated')
+).createReanimatedModuleMock());
 
 vi.mock('react-native-gesture-handler', () => ({
     GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
@@ -56,6 +48,7 @@ installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            useWindowDimensions: () => windowDimensions,
             Platform: {
                 get OS() {
                     return platformOs;
@@ -85,6 +78,10 @@ vi.doUnmock('@/hooks/session/useDraft');
 vi.doUnmock('@/agents/registry/registryUiBehavior');
 
 const storageModule = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
+    return renderCanonicalScreen(<InjectedAuthProvider credentials={null}>{args[0]}</InjectedAuthProvider>, args[1]);
+}
 const useProfileSpy = vi.spyOn(storageModule, 'useProfile');
 const useSessionSpy = vi.spyOn(storageModule, 'useSession');
 const useSessionListRenderableWithServerScopeSpy = vi.spyOn(storageModule, 'useSessionListRenderableWithServerScope');
@@ -111,17 +108,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => vi.fn(),
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useIsTablet: () => false,
-}));
-
-vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (_fn: unknown) => [false, vi.fn()],
-}));
 
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
@@ -257,6 +243,7 @@ describe('SessionItem activity time', () => {
         sessionListIdentityDisplay = 'avatar';
         sessionListActiveColorMode = 'activityAndAttention';
         platformOs = 'web';
+        windowDimensions = { width: 1024, height: 768, scale: 1, fontScale: 1 };
         mockSessionStatus = createStatusFixture({
             ...defaultSessionStatus,
         });
@@ -265,8 +252,8 @@ describe('SessionItem activity time', () => {
         useSessionListRenderableWithServerScopeSpy.mockClear();
     });
 
-    afterEach(() => {
-        standardCleanup();
+    afterEach(async () => {
+        await standardCleanup();
         storageModule.storage.setState(previousStorageState, true);
     });
 
@@ -721,6 +708,7 @@ describe('SessionItem activity time', () => {
 
     it('uses a 20px micro avatar for very compact native phone rows', async () => {
         platformOs = 'ios';
+        windowDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 };
         const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
@@ -1432,7 +1420,7 @@ describe('SessionItem activity time', () => {
         if (spinner) expect(flattenStyle(spinner.props.style).animationName).toBeUndefined();
     });
 
-    it.each([undefined, 'encrypted_access_pending'] as const)('hides retained private name and path with content availability %s', async (encryptedContentAvailability) => {
+    it.each([undefined, 'encrypted_access_pending'] as const)('keeps the safe cached title but hides the private path with content availability %s', async (encryptedContentAvailability) => {
         const session = { ...createSession('sess_private'), encryptionMode: 'e2ee' as const,
             encryptedContentAvailability,
             metadata: { name: 'Private retained title', path: '/private/retained/path' } };
@@ -1444,7 +1432,9 @@ describe('SessionItem activity time', () => {
             } })}
             serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle variant="default" compact={false}
         />);
-        expect(screen.getTextContent()).not.toContain('Private retained title');
+        // A legitimately retained title names the same Session as its detail header;
+        // unreadable content still cannot disclose the private path.
+        expect(screen.getTextContent()).toContain('Private retained title');
         expect(screen.getTextContent()).not.toContain('/private/retained/path');
     });
 

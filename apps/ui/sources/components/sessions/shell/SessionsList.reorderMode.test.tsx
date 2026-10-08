@@ -1,10 +1,13 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import type { Settings } from '@/sync/domains/settings/settings';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -24,29 +27,17 @@ const sessionStoreFixture = vi.hoisted(() => {
         active: true,
         presence: 'online',
         metadata: { host: 'h', path: '/p', homeDir: '/h' },
-    } as any;
+    } satisfies Partial<Session>;
     const sessionB = {
         id: 'sess_b',
         createdAt: 2,
         active: false,
-        presence: 'offline',
+        presence: 0,
         metadata: { host: 'h', path: '/p', homeDir: '/h' },
-    } as any;
+    } satisfies Partial<Session>;
     return {
         sessionA,
         sessionB,
-        state: {
-            ordinarySessionListMembershipByServerId: {
-                server_a: ['sess_a', 'sess_b'],
-            },
-            sessionListRowsByServerId: {
-                server_a: { sess_a: sessionA, sess_b: sessionB },
-            },
-            profileScope: {
-                serverId: 'server_a',
-                accountId: 'u1',
-            },
-        },
     };
 });
 
@@ -78,43 +69,25 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => {
     };
 });
 
-vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => vi.fn(),
-}));
-
 const routerPushSpy = vi.fn();
 const openUniversalSearchSpy = vi.hoisted(() => vi.fn());
-const setSessionListGroupOrderV1 = vi.fn();
-const setSessionListOrderingModeV1 = vi.fn();
-const setSessionListFolderSortModeV1 = vi.fn();
-const setSessionListSectionModeV1 = vi.fn();
-const setSessionListActiveGroupingV1 = vi.fn();
-const setSessionListInactiveGroupingV1 = vi.fn();
-const setHideInactiveSessions = vi.fn();
-const setSessionFoldersV1 = vi.fn();
 const recoveryBannerMountSpy = vi.fn();
 const recoveryBannerUnmountSpy = vi.fn();
-const applySettings = vi.hoisted(() => vi.fn());
-const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
-const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
-const markSessionListScrollActivitySpy = vi.hoisted(() => vi.fn());
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary();
 let homeA: string;
+let storage: typeof import('@/sync/domains/state/storageStore').storage;
 let previousStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState>;
+let restoredCredentials: import('@/auth/storage/tokenStorage').AuthCredentials;
 const folderAssignmentPath = '/v2/session-organization/folder-assignments/sess_a';
 
-vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
-    useUniversalSearchRuntime: () => ({
-        open: openUniversalSearchSpy,
-        buildCommands: vi.fn(),
-    }),
-}));
+const searchRuntime = { open: openUniversalSearchSpy, buildCommands: () => [] };
 
 let pinnedSessionKeysV1: string[] = [];
 let sessionListGroupOrderV1: Record<string, string[]> = {};
-let sessionListOrderingModeV1 = 'custom';
-let sessionListFolderSortModeV1 = 'foldersFirst';
+let sessionListOrderingModeV1: Settings['sessionListOrderingModeV1'] = 'custom';
+let sessionListFolderSortModeV1: Settings['sessionListFolderSortModeV1'] = 'foldersFirst';
 let sessionListSectionModeV1: 'activity' | 'single' = 'activity';
 let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
 let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
@@ -122,7 +95,7 @@ let hideInactiveSessions = false;
 let sessionTagsV1: Record<string, string[]> = {};
 const workspaceA = {
     t: 'workspaceScope' as const,
-    serverId: 'server_a',
+    serverId: 'srv_server_a',
     machineId: 'machine_a',
     rootPath: '/p',
 };
@@ -169,6 +142,8 @@ installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            Dimensions: { get: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }) },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
             Platform: {
                 OS: 'web',
             },
@@ -197,34 +172,10 @@ installSessionShellCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-        useAllMachines: () => [],
-        useProfile: () => ({ id: 'u1' } as any),
-        useSetting: (key: string) => {
-            if (key === 'compactSessionView') return false;
-            if (key === 'compactSessionViewMinimal') return false;
-            if (key === 'sessionTagsEnabled') return true;
-            if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
-            if (key === 'sessionListFolderSortModeV1') return sessionListFolderSortModeV1;
-            if (key === 'sessionListSectionModeV1') return sessionListSectionModeV1;
-            if (key === 'sessionListActiveGroupingV1') return sessionListActiveGroupingV1;
-            if (key === 'sessionListInactiveGroupingV1') return sessionListInactiveGroupingV1;
-            if (key === 'hideInactiveSessions') return hideInactiveSessions;
-            if (key === 'sessionFoldersV1') return sessionFoldersV1;
-            return null;
-        },
-        useSettingMutable: (key: string) => {
-            if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
-            if (key === 'sessionListFolderSortModeV1') return [sessionListFolderSortModeV1, setSessionListFolderSortModeV1];
-            if (key === 'sessionListSectionModeV1') return [sessionListSectionModeV1, setSessionListSectionModeV1];
-            if (key === 'sessionListActiveGroupingV1') return [sessionListActiveGroupingV1, setSessionListActiveGroupingV1];
-            if (key === 'sessionListInactiveGroupingV1') return [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1];
-            if (key === 'hideInactiveSessions') return [hideInactiveSessions, setHideInactiveSessions];
-            if (key === 'sessionFoldersV1') return [sessionFoldersV1, setSessionFoldersV1];
-            return [null, vi.fn()];
-        },
-    }),
 });
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => {
@@ -243,26 +194,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     },
 }));
 
-vi.mock('@/sync/store/settingsWriters', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/store/settingsWriters')>();
-    return {
-        ...actual,
-        useApplySettings: () => applySettings,
-    };
-});
 
-vi.mock('@/sync/sync', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/sync')>();
-    return {
-        ...actual,
-        sync: {
-            ...actual.sync,
-            fetchMoreSessions: fetchMoreSessionsSpy,
-            refreshSessions: refreshSessionsSpy,
-            markSessionListScrollActivity: markSessionListScrollActivitySpy,
-        },
-    };
-});
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: () => {
@@ -282,49 +214,18 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    formatPathRelativeToHome: (path: string) => path,
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-}));
-
-vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
-    useEffectiveServerSelection: () => ({
-        serverIds: ['server_a'],
-    }),
-    useResolvedActiveServerSelection: () => ({
-        enabled: true,
-        presentation: 'grouped',
-        activeServerId: 'server_a',
-        allowedServerIds: ['server_a'],
-    }),
-}));
-
-const groupKey = 'active:server_a';
-const inactiveGroupKey = 'inactive:server_a';
-const sessionA = createSessionListRenderableSessionFixture({ ...sessionStoreFixture.sessionA, owner: 'u1' });
-const sessionB = createSessionListRenderableSessionFixture({ ...sessionStoreFixture.sessionB, owner: 'u1' });
+const groupKey = 'active:srv_server_a';
+const inactiveGroupKey = 'inactive:srv_server_a';
+const storedSessionA = createSessionFixture({ ...sessionStoreFixture.sessionA, owner: 'u1' });
+const storedSessionB = createSessionFixture({ ...sessionStoreFixture.sessionB, owner: 'u1' });
+const sessionA = createSessionListRenderableSessionFixture(storedSessionA);
+const sessionB = createSessionListRenderableSessionFixture(storedSessionB);
 
 const mockVisibleSessionListViewData: any[] = [
-    { type: 'header', title: 'Active', headerKind: 'active', groupKey, serverId: 'server_a', serverName: 'Server A' },
-    { type: 'session', session: sessionA, groupKey, groupKind: 'project', serverId: 'server_a', serverName: 'Server A' },
-    { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'server_a', serverName: 'Server A' },
-    { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+    { type: 'header', title: 'Active', headerKind: 'active', groupKey, serverId: 'srv_server_a', serverName: 'Server A' },
+    { type: 'session', session: sessionA, groupKey, groupKind: 'project', serverId: 'srv_server_a', serverName: 'Server A' },
+    { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'srv_server_a', serverName: 'Server A' },
+    { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'srv_server_a', serverName: 'Server A' },
 ];
 const defaultVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData) ?? [];
 if (defaultVisibleSessionListIndex?.[1]?.type === 'session') {
@@ -342,39 +243,64 @@ vi.mock('./SessionItem', () => ({
 }));
 
 const { SessionsListView } = await import('./SessionsList');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { UniversalSearchRuntimeProvider } = await import('@/components/appShell/search/UniversalSearchRuntimeContext');
 const paneState = {
     summary: { sessionsReady: true, sessionCount: 2 },
     visibleSessionListIndex: mockVisibleSessionListIndex,
     hasHiddenInactiveSessions: false,
     folderFocus: null,
-    folderFeatureEnabledServerIds: ['server_a'],
+    folderFeatureEnabledServerIds: ['srv_server_a'],
     showLoading: false,
     showEmptyState: false,
 } satisfies import('@/hooks/session/useVisibleSessionListPaneState').VisibleSessionListPaneState;
 function SessionsList(props: React.ComponentProps<typeof SessionsListView>) {
-    return <SessionsListView {...props} paneState={{ ...paneState, visibleSessionListIndex: mockVisibleSessionListIndex }} />;
+    return <InjectedAuthProvider credentials={restoredCredentials}>
+        <UniversalSearchRuntimeProvider value={searchRuntime}>
+            <SessionsListView {...props} paneState={{ ...paneState, visibleSessionListIndex: mockVisibleSessionListIndex }} />
+        </UniversalSearchRuntimeProvider>
+    </InjectedAuthProvider>;
 }
 async function renderSessionsList() {
+    storage.getState().applySettingsLocal({
+        compactSessionView: false, compactSessionViewMinimal: false, sessionTagsEnabled: true,
+        sessionListOrderingModeV1, sessionListFolderSortModeV1, sessionListSectionModeV1,
+        sessionListActiveGroupingV1, sessionListInactiveGroupingV1, hideInactiveSessions,
+    });
     await applySessionOrganizationLegacyTestSettings({
-        serverId: 'server_a', pinnedSessionKeysV1, sessionListGroupOrderV1, sessionFoldersV1, sessionTagsV1,
+        serverId: 'srv_server_a', pinnedSessionKeysV1, sessionListGroupOrderV1, sessionFoldersV1, sessionTagsV1,
     });
     return renderScreen(<SessionsList />);
 }
 
 describe('SessionsList (inline reorder)', () => {
     beforeEach(async () => {
-        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage = (await import('@/sync/domains/state/storageStore')).storage;
         previousStorageState = storage.getState();
+        await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
         await home.reset();
-        homeA = await home.addHome({ name: 'Server A', serverUrl: 'https://server-a.example.test', serverIdentityId: 'server_a', accountId: 'u1' });
+        homeA = await home.addHome({ name: 'Server A', serverUrl: 'https://server-a.example.test', serverIdentityId: 'srv_server_a', accountId: 'u1' });
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer({ token: createAccountTokenForTests('u1') });
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://server-a.example.test');
+        if (!credentials) throw new Error('expected restored Home credentials');
+        restoredCredentials = credentials;
+        await home.selectHomes(['srv_server_a']);
         home.answer(homeA, folderAssignmentPath, { body: { sessionId: 'sess_a', folderId: 'folder-a' } });
+        const machine = createMachineFixture({ id: 'machine_a' });
+        if (!machine.metadata) throw new Error('Expected canonical Machine fixture metadata');
         storage.setState({
-            ordinarySessionListMembershipByServerId: { server_a: ['sess_a', 'sess_b'] },
-            sessionListRowsByServerId: { server_a: { sess_a: sessionA, sess_b: sessionB } },
+            sessions: { sess_a: storedSessionA, sess_b: storedSessionB },
+            machines: { machine_a: { ...machine, metadata: { ...machine.metadata, host: 'h', homeDir: '/h' } } },
+            ordinarySessionListMembershipByServerId: { srv_server_a: ['sess_a', 'sess_b'] },
+            sessionListRowsByServerId: { srv_server_a: { sess_a: sessionA, sess_b: sessionB } },
         });
         const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
-        primeServerFeaturesSnapshot({ serverId: 'server_a', snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+        primeServerFeaturesSnapshot({ serverId: 'srv_server_a', snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
             features: { sessions: { enabled: true, folders: { enabled: true } } },
         }) } });
         mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
@@ -390,24 +316,13 @@ describe('SessionsList (inline reorder)', () => {
         sessionFoldersV1 = { v: 1, folders: [] };
         dropdownMenuCaptures.length = 0;
         requestReviewSpy.mockClear();
-        applySettings.mockClear();
-        fetchMoreSessionsSpy.mockClear();
-        refreshSessionsSpy.mockClear();
-        markSessionListScrollActivitySpy.mockClear();
-        setSessionListActiveGroupingV1.mockClear();
-        setSessionListInactiveGroupingV1.mockClear();
-        setHideInactiveSessions.mockClear();
-        setSessionListGroupOrderV1.mockClear();
-        setSessionListOrderingModeV1.mockClear();
-        setSessionListFolderSortModeV1.mockClear();
-        setSessionListSectionModeV1.mockClear();
-        setSessionFoldersV1.mockClear();
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
     });
 
     afterEach(async () => {
         standardCleanup();
+        await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
         await home.reset();
         const { storage } = await import('@/sync/domains/state/storageStore');
         storage.setState(previousStorageState, true);
@@ -475,7 +390,7 @@ describe('SessionsList (inline reorder)', () => {
 
         const firstRow = screen.findAll((node) => String(node.type) === 'SessionItem')[0];
         expect(firstRow.props.dragEnabled).toBe(true);
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(0);
+        expect(storage.getState().sessionOrganizationOrderEntriesByScopeKey).toEqual({});
     });
 
     it('preserves carry availability when ordering mode returns to custom', async () => {
@@ -485,7 +400,6 @@ describe('SessionsList (inline reorder)', () => {
         const disabledItems = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(disabledItems[0].props.dragEnabled).toBe(true);
 
-        setSessionListOrderingModeV1.mockClear();
         sessionListOrderingModeV1 = 'custom';
         const updatedScreen = await renderSessionsList();
 
@@ -498,7 +412,7 @@ describe('SessionsList (inline reorder)', () => {
 
         await renderSessionsList();
 
-        const menuProps = dropdownMenuCaptures.find((captured) => {
+        const menuProps = [...dropdownMenuCaptures].reverse().find((captured) => {
             const items = captured.items ?? [];
             return items.some((item) => item?.id === 'layout:projects')
                 && items.some((item) => item?.id === 'layout:recent_activity')
@@ -531,25 +445,26 @@ describe('SessionsList (inline reorder)', () => {
             'attention:withinGroups',
         ]);
 
-        menuProps?.onSelect?.('ordering:created');
-        expect(applySettings).toHaveBeenLastCalledWith({ sessionListOrderingModeV1: 'created' });
-        menuProps?.onSelect?.('folderSort:mixed');
-        expect(applySettings).toHaveBeenLastCalledWith({ sessionListFolderSortModeV1: 'mixed' });
-        menuProps?.onSelect?.('grouping:active:date');
-        expect(applySettings).toHaveBeenLastCalledWith({ sessionListActiveGroupingV1: 'date' });
-        applySettings.mockClear();
-        fetchMoreSessionsSpy.mockClear();
-        refreshSessionsSpy.mockClear();
-        menuProps?.onSelect?.('layout:projects');
-        expect(applySettings).toHaveBeenCalledTimes(1);
-        expect(applySettings).toHaveBeenCalledWith({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
+        await act(async () => menuProps?.onSelect?.('ordering:created'));
+        expect(storage.getState().settings.sessionListOrderingModeV1).toBe('created');
+        await act(async () => menuProps?.onSelect?.('folderSort:mixed'));
+        expect(storage.getState().settings.sessionListFolderSortModeV1).toBe('mixed');
+        await act(async () => menuProps?.onSelect?.('grouping:active:date'));
+        expect(storage.getState().settings.sessionListActiveGroupingV1).toBe('date');
+        const layoutTransitions: unknown[] = [];
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (state.settings.sessionListSectionModeV1 !== previous.settings.sessionListSectionModeV1
+                || state.settings.sessionListActiveGroupingV1 !== previous.settings.sessionListActiveGroupingV1) {
+                layoutTransitions.push([state.settings.sessionListSectionModeV1, state.settings.sessionListActiveGroupingV1]);
+            }
         });
-        expect(fetchMoreSessionsSpy).not.toHaveBeenCalled();
-        expect(refreshSessionsSpy).not.toHaveBeenCalled();
-        menuProps?.onSelect?.('grouping:inactive:project');
-        expect(applySettings).toHaveBeenLastCalledWith({ sessionListInactiveGroupingV1: 'project' });
+        const sessionReadsBefore = home.requests.filter(request => /^\/v[12]\/sessions(?:\?|$)/.test(request.path)).length;
+        await act(async () => menuProps?.onSelect?.('layout:projects'));
+        unsubscribe();
+        expect(layoutTransitions).toEqual([['single', 'project']]);
+        expect(home.requests.filter(request => /^\/v[12]\/sessions(?:\?|$)/.test(request.path))).toHaveLength(sessionReadsBefore);
+        await act(async () => menuProps?.onSelect?.('grouping:inactive:project'));
+        expect(storage.getState().settings.sessionListInactiveGroupingV1).toBe('project');
     });
 
     it('uses folders-first as the effective folder sort mode while preserving mixed as a dormant date-mode preference', async () => {
@@ -558,7 +473,7 @@ describe('SessionsList (inline reorder)', () => {
 
         await renderSessionsList();
 
-        const menuProps = dropdownMenuCaptures.find((captured) => {
+        const menuProps = [...dropdownMenuCaptures].reverse().find((captured) => {
             const items = captured.items ?? [];
             return items.some((item) => item?.id === 'layout:projects');
         });
@@ -571,8 +486,9 @@ describe('SessionsList (inline reorder)', () => {
         expect(mixedFolderSortItem?.disabled).toBe(true);
         expect(mixedFolderSortItem?.subtitle).toBe('settingsSession.sessionList.folderSortModeMixedDisabledInDateModeSubtitle');
 
-        menuProps?.onSelect?.('folderSort:mixed');
-        expect(applySettings).not.toHaveBeenCalled();
+        const settingsBeforeSelection = storage.getState().settings;
+        await act(async () => menuProps?.onSelect?.('folderSort:mixed'));
+        expect(storage.getState().settings).toBe(settingsBeforeSelection);
     });
 
     it('moves a session to a folder through the row menu with server-scoped credentials', async () => {
@@ -598,11 +514,11 @@ describe('SessionsList (inline reorder)', () => {
         // The pane projection mounts empty folder destinations as well as the source row.
         mockVisibleSessionListIndex = [
             { type: 'header', title: 'Project', headerKind: 'project', groupKey,
-                workspace: workspaceA, workspaceKey: groupKey, serverId: 'server_a' },
+                workspace: workspaceA, workspaceKey: groupKey, serverId: 'srv_server_a' },
             ...sessionFoldersV1.folders.map((folder): SessionListIndexItem => ({
                 type: 'header', title: folder.name, headerKind: 'folder', folderId: folder.id,
-                folderDepth: folder.parentId ? 1 : 0, workspace: workspaceA, serverId: 'server_a',
-                groupKey: buildSessionFolderGroupKey({ serverId: 'server_a', workspace: workspaceA, folderId: folder.id }),
+                folderDepth: folder.parentId ? 1 : 0, workspace: workspaceA, serverId: 'srv_server_a',
+                groupKey: buildSessionFolderGroupKey({ serverId: 'srv_server_a', workspace: workspaceA, folderId: folder.id }),
             })),
             ...defaultVisibleSessionListIndex.filter((item) => item.type === 'session'),
         ];
@@ -623,7 +539,7 @@ describe('SessionsList (inline reorder)', () => {
             serverId: homeA, serverUrl: 'https://server-a.example.test', input: { folderId: 'folder-a' }, token: home.findByServerUrl('https://server-a.example.test')?.token,
         })]);
         const { storage } = await import('@/sync/domains/state/storageStore');
-        expect(storage.getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toEqual({
+        expect(storage.getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('srv_server_a', 'sess_a')]).toEqual({
             sessionId: 'sess_a', folderId: 'folder-a',
         });
         await screen.unmount();
@@ -633,7 +549,7 @@ describe('SessionsList (inline reorder)', () => {
 
         const screen = await renderSessionsList();
 
-        const menuProps = dropdownMenuCaptures.find((captured) => {
+        const menuProps = [...dropdownMenuCaptures].reverse().find((captured) => {
             const items = captured.items ?? [];
             return items.some((item) => item?.id === 'layout:projects');
         });
@@ -658,9 +574,6 @@ describe('SessionsList (inline reorder)', () => {
     });
 
     it('keeps the phone recovery banner mounted across SessionsList rerenders', async () => {
-        const responsive = await import('@/utils/platform/responsive');
-        // Wide layouts delegate this reminder to Home; its list placement is the phone contract.
-        vi.spyOn(responsive, 'useIsTablet').mockReturnValue(false);
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
 
