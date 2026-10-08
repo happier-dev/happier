@@ -15,10 +15,7 @@ installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-<<<<<<< HEAD
-=======
 // Reanimated is the native SDK boundary; keep real row and entity runtime owners.
->>>>>>> origin/v0.3
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
