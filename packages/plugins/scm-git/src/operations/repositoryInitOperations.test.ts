@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ import {
   type ScmRepositoryInitRequest,
   type ScmRepositoryInitResponse,
 } from '@happier-dev/plugin-sdk/scm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createGitBackend } from '../backend.js';
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
@@ -63,26 +63,35 @@ function makeContext(cwd: string, isRepo: boolean): ScmBackendContext {
 describe('git repository init operation', () => {
     it('initializes a non-repository once and returns a fresh snapshot', async () => {
         const workspace = createWorkspace();
+        const ambientWorkspace = createWorkspace();
+        writeFileSync(join(ambientWorkspace, '.git'), `gitdir: ${join(ambientWorkspace, 'missing-git-dir')}\n`);
         const repositoryInit = getRepositoryInitOperation();
+        // The daemon's OS working directory may be an unrelated broken checkout.
+        // Scope only its cwd observation; all Git commands still run against real directories.
+        const ambientCwd = vi.spyOn(process, 'cwd').mockReturnValue(ambientWorkspace);
+        try {
+            const response = await initWithRealGitRuntime(repositoryInit, {
+                context: makeContext(workspace, false),
+                request: { cwd: workspace, initialBranch: 'main' },
+            });
 
-        const response = await initWithRealGitRuntime(repositoryInit, {
-            context: makeContext(workspace, false),
-            request: { cwd: workspace, initialBranch: 'main' },
-        });
-
-        expect(response.success).toBe(true);
-        if (!response.success) {
-            throw new Error(response.error);
+            expect(response.success).toBe(true);
+            if (!response.success) {
+                throw new Error(response.error);
+            }
+            expect(response.alreadyInitialized).toBe(false);
+            expect(runGit(workspace, ['rev-parse', '--is-inside-work-tree'])).toBe('true');
+            expect(response.snapshot?.repo).toMatchObject({
+                isRepo: true,
+                backendId: 'git',
+                mode: '.git',
+            });
+            expect(response.snapshot?.capabilities.writeRepositoryInit).toBe(true);
+            expect(response.snapshot?.repo.rootPath).toBe(runGit(workspace, ['rev-parse', '--show-toplevel']));
+        } finally {
+            ambientCwd.mockRestore();
+            rmSync(ambientWorkspace, { recursive: true, force: true });
         }
-        expect(response.alreadyInitialized).toBe(false);
-        expect(runGit(workspace, ['rev-parse', '--is-inside-work-tree'])).toBe('true');
-        expect(response.snapshot?.repo).toMatchObject({
-            isRepo: true,
-            backendId: 'git',
-            mode: '.git',
-        });
-        expect(response.snapshot?.capabilities.writeRepositoryInit).toBe(true);
-        expect(response.snapshot?.repo.rootPath).toBe(runGit(workspace, ['rev-parse', '--show-toplevel']));
     });
 
     it('returns alreadyInitialized without changing HEAD when the directory is already a repo', async () => {

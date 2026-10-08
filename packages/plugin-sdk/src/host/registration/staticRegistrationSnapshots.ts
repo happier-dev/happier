@@ -467,7 +467,7 @@ const SCM_BACKEND_HANDLER_METHODS = Object.freeze({
     detection: ['detectRepo', 'describeBackend'],
     read: ['statusSnapshot', 'worktreesEnrichment', 'diffFile', 'diffCommit', 'logList', 'stashList'],
     changeSet: ['include', 'exclude', 'discard'],
-    commit: ['create', 'backout'],
+    commit: ['captureTarget', 'create', 'resolveOutcome', 'backout', 'undoLast'],
     remote: ['add', 'setUrl', 'remove', 'fetch', 'pull', 'push', 'publish'],
     branch: ['list', 'create', 'checkout', 'merge', 'rebase', 'operationContinue', 'operationSkip', 'operationAbort', 'conflictAcceptSide', 'conflictMarkResolved'],
     worktree: ['create', 'remove', 'prune'],
@@ -485,6 +485,7 @@ const SCM_BACKEND_HANDLER_METHODS = Object.freeze({
     ],
     stash: ['create', 'drop', 'pop', 'apply', 'show'],
     workspaceIntegration: [
+        'classifyDirectoryIgnores',
         'inspectWorkspaceLocation',
         'reconcilePostMaterialization',
         'prepareReviewWorkspace',
