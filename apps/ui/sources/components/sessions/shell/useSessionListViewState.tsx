@@ -1,4 +1,3 @@
-import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { resolveNewSessionGroupTarget } from './resolveSessionListHeaderActionHandlers';
 import {
     normalizeSessionAddress,
@@ -529,7 +528,7 @@ export function useSessionListViewStateFromPaneState(
     const sessionListFolderSortModeV1 = useSetting('sessionListFolderSortModeV1') === 'mixed' ? 'mixed' : 'foldersFirst';
     const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1') === 'tree' ? 'tree' : 'off';
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
-    const workspaceRefsV1 = useWorkspaceRefs();
+    const workspaceRefsV1 = useSetting('workspaceRefsV1');
     const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
     const workspaceFaviconsEnabled = useSetting('workspaceFaviconsEnabled') !== false;
     const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
