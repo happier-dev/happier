@@ -10,6 +10,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { LocalServicePreviewResourceV1Schema, LocalServicePreviewSnapshotRowV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { registerRestrictedRunnerMachineServices } from './registerRestrictedRunnerMachineServices';
 import { createRestrictedRunnerLocalServicesRoutes } from './restrictedRunnerLocalServices';
@@ -308,6 +309,27 @@ describe('restricted Runner ordinary Machine services', () => {
     };
     const localServicesRuntime = createLocalServicesDaemonRuntime({
       machineId: 'runner-machine',
+      accountId: 'runner-account',
+      previewServer: {
+        token: 'runner-token',
+        serverBaseUrl: 'https://home.example.test',
+        http: {
+          post: async (url, body, options) => {
+            expect(url).toBe('https://home.example.test/v1/local-services/preview');
+            expect(options.headers.Authorization).toBe('Bearer runner-token');
+            const resource = LocalServicePreviewResourceV1Schema.parse(body);
+            expect(resource).toMatchObject({ machineId: 'runner-machine', sessionId: 'runner-session' });
+            return { data: LocalServicePreviewSnapshotRowV1Schema.parse({
+              previewId: resource.previewId,
+              resource,
+              accessUrl: 'https://preview.example.test/',
+              expiresAt: Date.now() + 60_000,
+              diagnostics: [],
+            }) };
+          },
+          delete: async () => ({ data: { ok: true } }),
+        },
+      },
       inventoryEnabled: () => true,
       startLoop: false,
       inventoryAnnotations: { read: () => null, write: () => undefined },

@@ -1,12 +1,10 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
-import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInPrepareRequestSchema, AgentSignInStatusRequestSchema } from '@happier-dev/protocol/daemon/agentSignIn';
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamAckResponse, TerminalStreamInputRequest, TerminalStreamInputResponse, TerminalStreamReadRequest, TerminalStreamReadResponse } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
-import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { resolveLocalServiceRunTargetCommand } from '@/daemon/local/services/launch/runTargets';
@@ -87,13 +85,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 }>): MachineTerminalRpcRegistration {
   const { rpcHandlerManager } = params;
   const env = params.deps?.env ?? process.env;
-  rpcHandlerManager.registerHandler(AGENT_SIGN_IN_STATUS_RPC_METHOD, async (raw) => {
-    const request = AgentSignInStatusRequestSchema.parse(raw);
-    return await probeAgentSignInStatus(request.agentId);
-  });
-  rpcHandlerManager.registerHandler(AGENT_SIGN_IN_PREPARE_RPC_METHOD, (raw) =>
-    prepareAgentSignIn(AgentSignInPrepareRequestSchema.parse(raw)));
-
   const config = readDaemonTerminalPtyConfig(env);
   const workingDirectory =
     params.deps?.workingDirectory
