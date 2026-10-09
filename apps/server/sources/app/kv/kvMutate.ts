@@ -11,6 +11,8 @@ import {
 } from "./accountJsonKvStoredContent";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { assertPublicGenericKvKey } from "./accountScopedKv";
+import { getDbProviderFromEnv } from "@/storage/prisma";
+import { assertUserKvKeyStorageAdmission } from "./userKvKeyStorage";
 
 export interface KVMutation {
     key: string;
@@ -57,6 +59,10 @@ export async function applyUserKvMutationsInTx(
         existing: UserKvStoreRow,
     ) => Promise<void> | void,
 ): Promise<UserKvMutationApplication> {
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    for (const mutation of mutations) {
+        assertUserKvKeyStorageAdmission(mutation.key, provider);
+    }
     const errors: NonNullable<KVMutateResult["errors"]> = [];
     const existingByKey = new Map<string, UserKvStoreRow>();
 
