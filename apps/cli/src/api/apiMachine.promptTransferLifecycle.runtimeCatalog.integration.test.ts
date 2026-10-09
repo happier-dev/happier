@@ -182,8 +182,6 @@ describe('ApiMachineClient prompt transfer lifecycle', () => {
     const client = new ApiMachineClient('token', createMachine());
     const handlerStarted = createDeferredVoid();
     const releaseHandler = createDeferredVoid();
-    let handlerRunning = false;
-    let disposeSawHandlerRunning: boolean | null = null;
 
     try {
       client.setRPCHandlers({
@@ -192,23 +190,27 @@ describe('ApiMachineClient prompt transfer lifecycle', () => {
         requestShutdown: () => {},
       });
 
+      const lifecycle = getMachineRpcLifecycleRegistration(client);
+      expect(lifecycle).toBeTruthy();
+      const store = lifecycle.promptAssetTransfers.transferSessionStore;
+      const rpc = client.getPeerMediationMachineRpcHandlerManager();
+      const upload = await rpc.invokeLocal(RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT, { sizeBytes: 4 });
+      expect(upload).toMatchObject({ success: true, uploadId: expect.any(String) });
+      if (!upload || typeof upload !== 'object' || !('uploadId' in upload) || typeof upload.uploadId !== 'string') {
+        throw new Error('Prompt asset upload did not return its transfer identity');
+      }
+      const uploadSession = store.getUploadSession(upload.uploadId);
+      expect(uploadSession).toBeTruthy();
+
       (client as any).rpcHandlerManager.registerHandler(
         RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
         async () => {
-          handlerRunning = true;
           handlerStarted.resolve();
           await releaseHandler.promise;
-          handlerRunning = false;
           return { success: true, uploadId: 'slow-local-upload' };
         },
       );
-      (client as any).rpcLifecycleRegistrations.push({
-        dispose: async () => {
-          disposeSawHandlerRunning = handlerRunning;
-        },
-      });
 
-      const rpc = client.getPeerMediationMachineRpcHandlerManager();
       const invokePromise = rpc.invokeLocal(RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT, {});
       await handlerStarted.promise;
 
@@ -216,13 +218,15 @@ describe('ApiMachineClient prompt transfer lifecycle', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(disposeSawHandlerRunning).toBeNull();
+      expect(store.getUploadSession(upload.uploadId)).toBe(uploadSession);
+      await expect(access(uploadSession.tempPath)).resolves.toBeUndefined();
 
       releaseHandler.resolve();
       await invokePromise;
       await shutdownPromise;
 
-      expect(disposeSawHandlerRunning).toBe(false);
+      expect(store.getUploadSession(upload.uploadId)).toBeNull();
+      await expectPathMissing(uploadSession.tempPath);
     } finally {
       releaseHandler.resolve();
       await client.shutdown().catch(() => undefined);
