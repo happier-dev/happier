@@ -83,6 +83,13 @@ export type MachineAccessActionResultById = {
                 name: string | null;
             };
             readiness: 'ready' | 'key_pending' | 'refused';
+            audience: {
+                accountId: string;
+                displayName: string;
+                readiness: 'ready' | 'key_pending' | 'refused';
+                reason: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | null;
+                canPrepareKeys: boolean;
+            }[];
             removal: {
                 losesAccessAccountIds: string[];
             };
@@ -131,6 +138,7 @@ export type MachineAccessActionResultById = {
             level: 'view' | 'admin';
         };
         readiness: 'ready' | 'key_pending' | 'refused';
+        canPrepareKeys: boolean;
     } | {
         kind: 'removed';
         effectiveAccess: 'use' | 'manage' | 'none';
@@ -162,6 +170,7 @@ export type MachineAccessActionResultById = {
             level: 'view' | 'admin';
         };
         readiness: 'ready' | 'key_pending' | 'refused';
+        canPrepareKeys: boolean;
     } | {
         kind: 'removed';
         effectiveAccess: 'use' | 'manage' | 'none';
@@ -193,6 +202,7 @@ export type MachineAccessActionResultById = {
             level: 'view' | 'admin';
         };
         readiness: 'ready' | 'key_pending' | 'refused';
+        canPrepareKeys: boolean;
     } | {
         kind: 'removed';
         effectiveAccess: 'use' | 'manage' | 'none';

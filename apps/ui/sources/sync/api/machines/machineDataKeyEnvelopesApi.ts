@@ -49,35 +49,37 @@ export async function prepareMachineDataKeyEnvelopesForScope(params: Readonly<{
                 return payload;
             };
             let preparedOwner: Awaited<ReturnType<NonNullable<typeof authority.context.encryption>['prepareMachineContentKey']>> | null = null;
-            if (!params.resolveTransferableMachineDataKey) {
-                const current = MachineAccessRecipientCensusResponseV1Schema.parse(await request(`${path}?state=action_required`));
-                if (current.machineId !== params.machineId) throw new MachineDataKeyPreparationErrorV1('machine_key_changed');
-                if (current.encryptionMode === 'e2ee' && current.custodianAccountId === authority.scope.accountId) {
-                    const encryption = authority.context.encryption;
-                    if (!encryption) return { kind: 'pending_holder' };
-                    const accountMode = AccountEncryptionModeResponseSchema.parse(await request('/v1/account/encryption')).mode;
-                    preparedOwner = await encryption.prepareMachineContentKey({ machineId: params.machineId,
-                        custodianAccountId: authority.scope.accountId, accountMode, isCurrent, signal: guard.signal,
-                        observe: async () => {
-                            const payload = await request(`/v1/machines/${encodeURIComponent(params.machineId)}`);
-                            if (!payload || typeof payload !== 'object' || !('machine' in payload)) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
-                            return MachinePublishedRowV1Schema.parse(payload.machine);
-                        },
-                        transition: async input => MachineContentKeyTransitionResultV1Schema.parse(await request(`/v1/machines/${encodeURIComponent(params.machineId)}/content-key/transition`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
-                        })),
-                    });
-                }
-            }
+            const observeMachine = async () => {
+                const payload = await request(`/v1/machines/${encodeURIComponent(params.machineId)}`);
+                if (!payload || typeof payload !== 'object' || !('machine' in payload)) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
+                return payload.machine;
+            };
+            const encryption = authority.context.encryption;
             return prepareCurrentMachineDataKeyEnvelopes({
                 serverId: authority.scope.serverId, machineId: params.machineId,
                 isHostScopeCurrent: isCurrent,
+                ...(!params.resolveTransferableMachineDataKey && encryption ? {
+                    ownerPreparation: {
+                        accountId: authority.scope.accountId,
+                        observeMachine,
+                        prepareContentKey: async () => {
+                            const accountMode = AccountEncryptionModeResponseSchema.parse(await request('/v1/account/encryption')).mode;
+                            preparedOwner = await encryption.prepareMachineContentKey({ machineId: params.machineId,
+                                custodianAccountId: authority.scope.accountId, accountMode, isCurrent, signal: guard.signal,
+                                observe: async () => MachinePublishedRowV1Schema.parse(await observeMachine()),
+                                transition: async input => MachineContentKeyTransitionResultV1Schema.parse(await request(`/v1/machines/${encodeURIComponent(params.machineId)}/content-key/transition`, {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+                                })),
+                            });
+                        },
+                    },
+                } : {}),
                 resolveTransferableMachineDataKey: async page => {
                     if (params.resolveTransferableMachineDataKey) return params.resolveTransferableMachineDataKey(page);
                     // The authenticated Manage worklist owns permission and currentness. Foreign
                     // tuples only exist after conditional recipient delivery. The custodian's
                     // envelope instead uses the same C40 provenance decision as owner conversion.
-                    if (!page.callerDataEncryptionKey) return null;
+                    if (!page.callerDataEncryptionKey || !encryption) return null;
                     if (authority.scope.accountId === page.custodianAccountId) {
                         if (!preparedOwner || preparedOwner.encryptionMode !== 'e2ee' || !preparedOwner.encryptionKey
                             || preparedOwner.row.dataEncryptionKey !== page.callerDataEncryptionKey

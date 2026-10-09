@@ -11,6 +11,7 @@ import type { TrackedSession } from '../types';
 import type { ManagedServiceNativeLifecycleV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createManagedActivityInventory, type LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 import {
   authorizeResolvedProjectExecLaunchForHost,
   createProjectNativeEnvironmentIoForHost,
@@ -59,7 +60,7 @@ async function startRequesterWorker(
 }
 
 describe('Machine access-loss installation custody receiver', () => {
-  function fixture(mode: 'plain' | 'e2ee' = 'plain', services?: ReturnType<typeof createProjectServiceOwner>) {
+  function fixture(mode: 'plain' | 'e2ee' = 'plain', services?: ReturnType<typeof createProjectServiceOwner>, readLiveWorkInventory?: () => Promise<LiveWorkInventoryV1>) {
     let installationId = 'installation-a';
     let current = true;
     let checks = 0;
@@ -83,10 +84,11 @@ describe('Machine access-loss installation custody receiver', () => {
           checks += 1;
           if (changeOnFinalCheck && checks === 2) installationId = 'replacement';
           if (revokeOnFinalCheck && checks === 2) current = false;
-          return current && input.custodySubjectAccountId === 'bob';
+          return current && (input.custodySubjectAccountId === undefined || input.custodySubjectAccountId === 'bob');
         },
       }) });
     registerMachineAccessLossReceiver(rpc, { machineId: 'machine-a',
+      serverId: 'home', readLiveWorkInventory,
       resolveInstallationId: () => installationId, cleanupRequesterMachineSessions: cleanup,
       ...(services ? {
         cleanupRequesterMachineServices: async (input: Parameters<typeof cleanup>[0]) => {
@@ -125,6 +127,51 @@ describe('Machine access-loss installation custody receiver', () => {
     } finally {
       await owner.dispose();
     }
+  });
+
+  it('recovers sessionless native work from the actual live inventory without a live Session', async () => {
+    const owner = createProjectServiceOwner();
+    const worker = await startRequesterWorker(owner);
+    const inventory = createManagedActivityInventory({ producers: [owner.activity] });
+    const { rpc, request, tracked } = fixture('plain', owner, inventory.read);
+    try {
+      const census = { ...request, params: { v: 1, kind: 'requesters' } };
+      expect(await rpc.handleRequest(census)).toEqual({ kind: 'requesters', accountIds: ['bob'], coverage: 'complete' });
+      expect(worker.snapshot().state).toBe('running');
+      expect(tracked.size).toBe(0);
+      expect(await rpc.handleRequest(request)).toEqual({ kind: 'settled' });
+      expect(worker.snapshot().state).toBe('stopped');
+      expect(await rpc.handleRequest(census)).toEqual({ kind: 'requesters', accountIds: [], coverage: 'complete' });
+    } finally {
+      inventory.dispose();
+      await owner.dispose();
+    }
+  });
+
+  it('keeps incomplete attribution visible while returning only exact-installation live requester subjects', async () => {
+    const attribution = { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' };
+    const { rpc, request } = fixture('plain', undefined, async () => ({ coverage: 'unknown', items: [
+      { category: 'terminal', ownerRef: 'terminal', state: 'active', attribution },
+      { category: 'finite', ownerRef: 'operation', state: 'unknown', attribution },
+      { category: 'service', ownerRef: 'other-installation', state: 'active', attribution: { ...attribution, accountId: 'cara', installationId: 'retired' } },
+      { category: 'finite', ownerRef: 'retained-output', state: 'settled', attribution: { ...attribution, accountId: 'history-only' } },
+      { category: 'input', ownerRef: 'unattributed', state: 'active', attribution: { kind: 'unknown' } },
+    ] }));
+    const census = { ...request, params: { v: 1, kind: 'requesters' } };
+    expect(await rpc.handleRequest(census)).toEqual({ kind: 'requesters', accountIds: ['bob'], coverage: 'unknown' });
+    expect(await rpc.handleRequest({ ...census, authorization: undefined })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  });
+
+  it('does not disclose a census after current installation admission is lost during the inventory read', async () => {
+    let revoke = () => {};
+    const current = fixture('plain', undefined, async () => {
+      revoke();
+      return { coverage: 'complete', items: [{ category: 'terminal', ownerRef: 'terminal', state: 'active',
+        attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' } }] };
+    });
+    revoke = current.revoke;
+    expect(await current.rpc.handleRequest({ ...current.request, params: { v: 1, kind: 'requesters' } }))
+      .toEqual({ kind: 'incomplete' });
   });
 
   it('does not stop Project custody for forged or no-longer-current loss delivery', async () => {

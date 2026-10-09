@@ -11,6 +11,8 @@ import { createMachineEnvironmentAction } from '@/workspaces/environment/machine
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineEnvironmentReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 
 const osStore = vi.hoisted(() => ({
   identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null,
@@ -52,6 +54,48 @@ vi.mock('@/daemon/identity/store', async importOriginal => ({
 }));
 
 describe('ApiMachine own Session Account read custody', () => {
+  it('consumes Bob admitted original Account ports for his Session on Alice installation without reading Alice credentials', async () => {
+    const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    osStore.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,
+      publicKey: Buffer.from(pair.publicKey).toString('base64url'), privateKey: Buffer.from(pair.secretKey).toString('base64url') };
+    osStore.credentials = { token: 'alice-token', encryption: null };
+    osStore.reads.length = 0;
+    const machine: Machine = { id: 'alice-machine', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+    const client = new ApiMachineClient('alice-token', machine);
+    let live = true;
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'bob-root', binding: {
+      accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'stable-home', machineId: machine.id, installationId: osStore.identity.installationId,
+      actionId: 'machines.terminal.open', requestId: 'bob-open', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: machine.id },
+    } });
+    try {
+      const http = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: configuration.activeServerId,
+        serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://bob-home.test', target: root.binding.target,
+        installationId: osStore.identity.installationId, privateKey: pair.secretKey, isCurrent: async () => live });
+      if (!http) throw new Error('Original HTTP custody missing');
+      const authorization = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: 'stable-home',
+        bootstrap: { credentials: { token: 'bob-token', encryption: null }, serverHttpBaseUrl: 'https://bob-home.test',
+          attribution: { serverId: configuration.activeServerId, accountId: 'bob', machineId: machine.id, installationId: osStore.identity.installationId },
+          isCurrent: async () => live } });
+      if (!authorization) throw new Error('Private custody missing');
+      const ingress: RpcHandlerContext = { signal: new AbortController().signal, callerInputAuthorization: authorization,
+        machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: machine.id,
+          installationId: osStore.identity.installationId, role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => live };
+      const runtime = await client.resolveOwnSessionRuntime(ingress);
+      expect(runtime).toMatchObject({ accountId: 'bob', machineId: machine.id, serverId: configuration.activeServerId });
+      expect(runtime).not.toHaveProperty('credentials');
+      expect(osStore.reads).toEqual([]);
+      await expect(client.resolveOwnSessionRuntime({ ...ingress, machineAdmission: { ...ingress.machineAdmission!, actorAccountId: 'cara' } })).resolves.toBeNull();
+      live = false;
+      await expect(runtime?.isCurrent?.()).resolves.toBe(false);
+      await expect(client.resolveOwnSessionRuntime(ingress)).resolves.toBeNull();
+      expect(osStore.credentials.token).toBe('alice-token');
+    } finally { get.mockRestore(); post.mockRestore(); osStore.identity = null; osStore.credentials = null; }
+  });
   it('supplies installed Account provenance for local observation without granting missing-admission effects or foreign Session reads', async () => {
     const pair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     osStore.identity = { version: 1, installationId: '11111111-1111-4111-8111-111111111111', createdAt: 1,

@@ -12,7 +12,7 @@ describe('Machine access through the real Action front door', () => {
                 if (request.path !== '/v1/machines/machine/access') return undefined;
                 current = false;
                 return Response.json(request.method === 'PUT' ? { kind: 'saved', grant: { machineId: 'machine',
-                    principal: { kind: 'account', accountId: 'bob' }, level: 'view' }, readiness: 'ready' } : {
+                    principal: { kind: 'account', accountId: 'bob' }, level: 'view' }, readiness: 'ready', canPrepareKeys: false } : {
                     machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Alice' },
                     access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
                     canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
@@ -42,7 +42,7 @@ describe('Machine access through the real Action front door', () => {
         ], route: (request) => {
             if (request.home !== 'machine' || request.path !== '/v1/machines/machine/access') return undefined;
             if (request.method === 'PUT') return Response.json({ kind: 'saved', grant: { machineId: 'machine',
-                principal: { kind: 'account', accountId: 'bob' }, level: 'view' }, readiness: 'ready' });
+                principal: { kind: 'account', accountId: 'bob' }, level: 'view' }, readiness: 'ready', canPrepareKeys: false });
             if (request.method === 'DELETE') return Response.json({ kind: 'left', effectiveAccess: 'none' });
             return undefined;
         } });
@@ -53,7 +53,7 @@ describe('Machine access through the real Action front door', () => {
                 serverId: target.serverId, expectedAccountId: 'alice' };
             const input = { ...target, principal: { kind: 'account', accountId: 'bob' }, level: 'view' };
             expect(await execute('machines.access.grant.set', input, context)).toEqual({ ok: true, result: {
-                kind: 'saved', grant: { machineId: 'machine', principal: input.principal, level: 'view' }, readiness: 'ready',
+                kind: 'saved', grant: { machineId: 'machine', principal: input.principal, level: 'view' }, readiness: 'ready', canPrepareKeys: false,
             } });
             expect(await execute('machines.access.grant.set', { ...input, level: 'edit' }, context)).toMatchObject({ ok: false });
             expect(await execute('machines.access.leave', target, context)).toMatchObject({ ok: true, result: { kind: 'left' } });

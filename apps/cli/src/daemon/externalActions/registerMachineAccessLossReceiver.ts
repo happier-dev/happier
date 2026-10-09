@@ -3,11 +3,13 @@ import {
   MachineAccessLossCustodyResponseV1Schema,
   SocketRpcMachineAdmissionContextV1Schema,
   type MachineAccessLossCustodyResponseV1,
+  type MachineAccessLossRequesterCensusResponseV1,
 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { isSocketRpcMachineAccessLossServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 
 export type CleanupRequesterMachineSessions = (input: Readonly<{
   requesterAccountId: string;
@@ -23,7 +25,9 @@ export type CleanupRequesterMachineSessions = (input: Readonly<{
  * `settled` covers the registered scopes, not unregistered whole-Machine work.
  */
 export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, options: Readonly<{
+  serverId: string;
   machineId: string;
+  readLiveWorkInventory?: () => Promise<LiveWorkInventoryV1>;
   resolveInstallationId: () => string | null;
   cleanupRequesterMachineSessions: CleanupRequesterMachineSessions;
   cleanupRequesterMachineActionOperations?: CleanupRequesterMachineSessions;
@@ -36,23 +40,48 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
     const request = MachineAccessLossCustodyRequestV1Schema.safeParse(raw);
     const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(context?.machineAdmission);
     if (!request.success || !admission.success || !context?.verifyMachineAdmissionCurrent) return forbidden;
+    const verifyMachineAdmissionCurrent = context.verifyMachineAdmissionCurrent;
     const custody = admission.data;
     try {
       if (context.signal.aborted
         || custody.actorAccountId !== custody.custodianAccountId
         || custody.machineId !== options.machineId
         || custody.installationId !== options.resolveInstallationId()
-        || !await context.verifyMachineAdmissionCurrent()
+        || !await verifyMachineAdmissionCurrent()
         || custody.installationId !== options.resolveInstallationId()
         || context.signal.aborted) return forbidden;
     } catch { return forbidden; }
 
     try {
+      const stillCurrent = async () => !context.signal.aborted
+        && custody.installationId === options.resolveInstallationId()
+        && await verifyMachineAdmissionCurrent()
+        && custody.installationId === options.resolveInstallationId()
+        && !context.signal.aborted;
+      if ('kind' in request.data) {
+        if (!options.readLiveWorkInventory) return { kind: 'incomplete' as const };
+        const inventory = await options.readLiveWorkInventory();
+        const accountIds = new Set<string>();
+        let coverage = inventory.coverage;
+        for (const item of inventory.items) {
+          // A settled Session item is a still-hosted idle runtime, not a dead process.
+          if (item.state === 'settled' && item.category !== 'session') continue;
+          const attribution = item.attribution;
+          if ('kind' in attribution || attribution.serverId !== options.serverId
+            || attribution.machineId !== custody.machineId || attribution.installationId !== custody.installationId) {
+            coverage = 'unknown';
+            continue;
+          }
+          accountIds.add(attribution.accountId);
+        }
+        if (!await stillCurrent()) return { kind: 'incomplete' as const };
+        return { kind: 'requesters', accountIds: [...accountIds], coverage } satisfies MachineAccessLossRequesterCensusResponseV1;
+      }
       const input = Object.freeze({
         requesterAccountId: request.data.subjectAccountId,
         machineId: custody.machineId,
         installationId: custody.installationId,
-        verifyCurrentMachineAdmission: context.verifyMachineAdmissionCurrent,
+        verifyCurrentMachineAdmission: verifyMachineAdmissionCurrent,
       });
       const outcomes = await Promise.allSettled([
         options.cleanupRequesterMachineSessions(input),
@@ -65,12 +94,7 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
         const parsed = MachineAccessLossCustodyResponseV1Schema.safeParse(outcome.value);
         return parsed.success && parsed.data.kind === 'settled';
       });
-      const stillCurrent = !context.signal.aborted
-        && custody.installationId === options.resolveInstallationId()
-        && await context.verifyMachineAdmissionCurrent()
-        && custody.installationId === options.resolveInstallationId()
-        && !context.signal.aborted;
-      return { kind: settled && stillCurrent ? 'settled' as const : 'incomplete' as const };
+      return { kind: settled && await stillCurrent() ? 'settled' as const : 'incomplete' as const };
     } catch { return { kind: 'incomplete' as const }; }
   });
 }

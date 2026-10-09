@@ -29,6 +29,8 @@ export interface MachineAccessFacts {
     role: MachineAccessRoleV1;
     encryptionMode: 'plain' | 'e2ee';
     accessState: 'ready' | 'key_pending' | 'refused';
+    reason: MachineAccessRefusalCode | null;
+    canPrepareKeys: boolean;
     installationId: string | null;
     owned: boolean;
 }
@@ -138,21 +140,36 @@ async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: st
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null) return null;
     let accessState: MachineAccessFacts['accessState'] = resourceContentMatchesMode(row, encryptionMode) ? 'ready' : 'refused';
-    if (accessState === 'ready' && !owned && encryptionMode === 'plain') accessState = safePlainContent(row) ? 'ready' : 'key_pending';
+    let reason: MachineAccessRefusalCode | null = accessState === 'refused' ? 'encryption_material_unavailable' : null;
+    let canPrepareKeys = false;
+    if (accessState === 'ready' && !owned && encryptionMode === 'plain' && !safePlainContent(row)) {
+        accessState = 'key_pending'; reason = 'encryption_material_unavailable';
+    }
     if (accessState === 'ready' && !owned && encryptionMode === 'e2ee') {
         const recipient = await tx.account.findUnique({ where: { id: actorAccountId }, select: RECIPIENT_READINESS_SELECT });
         const readiness = recipient ? deriveAccountRecipientEnvelopeReadinessFromRow(recipient) : null;
-        if (readiness?.status === 'unavailable' && readiness.reason === 'plain_account') accessState = 'refused';
-        else if (readiness?.status !== 'available') accessState = 'key_pending';
+        if (readiness?.status === 'unavailable' && readiness.reason === 'plain_account') {
+            accessState = 'refused'; reason = 'recipient_encryption_incompatible';
+        } else if (readiness?.status !== 'available') {
+            accessState = 'key_pending'; reason = 'encryption_material_unavailable';
+        }
         else {
             const envelope = await tx.machineKeyEnvelope.findUnique({ where: { machineId_recipientAccountId: { machineId: row.id, recipientAccountId: actorAccountId } } });
             accessState = row.dataEncryptionKey !== null && parseEncryptedDataKeyEnvelopeV1(row.dataEncryptionKey) !== null && envelope
                 && envelope.machineOwnerEnvelopeFingerprint === computeMachineOwnerEnvelopeFingerprintV1(row.dataEncryptionKey)
                 && envelope.recipientContentPublicKeyFingerprint === readiness.binding.contentPublicKeyFingerprint
                 && parseEncryptedDataKeyEnvelopeV1(envelope.encryptedDataKey) !== null ? 'ready' : 'key_pending';
+            if (accessState === 'key_pending') { reason = 'recipient_key_pending'; canPrepareKeys = true; }
         }
     }
-    return { custodianAccountId: row.accountId, role, encryptionMode, accessState, installationId: row.installationId, owned };
+    return { custodianAccountId: row.accountId, role, encryptionMode, accessState, reason, canPrepareKeys,
+        installationId: row.installationId, owned };
+}
+
+function grantReadiness(states: readonly (MachineAccessFacts | null)[]) {
+    return { readiness: states.some(state => state?.accessState === 'refused') ? 'refused' as const
+        : states.some(state => state?.accessState === 'key_pending') ? 'key_pending' as const : 'ready' as const,
+        canPrepareKeys: states.some(state => state?.canPrepareKeys === true) };
 }
 export async function resolveMachineAccessInTx(tx: Tx, input: MachineActor): Promise<MachineAccessFacts | null> {
     const row = await readFactsInTx(tx, input.machineId);
@@ -217,13 +234,6 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
     if (!row || !access) return refusal('access_denied');
     const sources = contributions(row);
     const canManage = access.role === 'manage';
-    const grants: MachineAccessGrantRowV1[] = [];
-    if (canManage) for (const source of sources) {
-        const states = await Promise.all(source.accountIds.filter(accountId => accountId !== row.accountId).map(accountId => accessFromFactsInTx(tx, row, accountId)));
-        const readiness = states.some(state => state?.accessState === 'refused') ? 'refused' : states.some(state => state?.accessState === 'key_pending') ? 'key_pending' : 'ready';
-        grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: { name: source.displayName }, readiness,
-            removal: { losesAccessAccountIds: source.accountIds.filter(accountId => effectiveRole(row, accountId, sources.filter(candidate => candidate !== source)) === null) } });
-    }
     const custodian = { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) ?? '' };
     // The existing effective audience owns identity disclosure. This is only a
     // safe display projection for the custodian/Manage roster, never Session
@@ -236,6 +246,18 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
         ? (await tx.account.findMany({ where: { id: { in: currentRequesterAccountIds } }, select: ACCOUNT_DISPLAY_PROFILE_SELECT }))
             .map(account => ({ accountId: account.id, displayName: resolveAccountDisplayLabelV1(account) ?? '' }))
         : undefined;
+    const displayNames = new Map(currentRequesterDisplayIdentities?.map(account => [account.accountId, account.displayName]));
+    const grants: MachineAccessGrantRowV1[] = [];
+    if (canManage) for (const source of sources) {
+        const accountIds = source.accountIds.filter(accountId => accountId !== row.accountId);
+        const states = await Promise.all(accountIds.map(accountId => accessFromFactsInTx(tx, row, accountId)));
+        grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: { name: source.displayName },
+            readiness: grantReadiness(states).readiness,
+            audience: accountIds.map((accountId, index) => ({ accountId, displayName: displayNames.get(accountId) ?? '',
+                readiness: states[index]?.accessState ?? 'refused', reason: states[index]?.reason ?? (states[index] ? null : 'machine_unavailable'),
+                canPrepareKeys: states[index]?.canPrepareKeys === true })),
+            removal: { losesAccessAccountIds: source.accountIds.filter(accountId => effectiveRole(row, accountId, sources.filter(candidate => candidate !== source)) === null) } });
+    }
     return { machineId: row.id, custodian, access: { custodian, role: access.role, resourceMode: access.encryptionMode, accessState: access.accessState },
         canManage, grants, ownDirectGrant: row.accountGrants.some(grant => grant.accountId === input.actorAccountId),
         ...(currentRequesterDisplayIdentities ? { currentRequesterDisplayIdentities } : {}),
@@ -305,8 +327,7 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     const current = await readFactsInTx(tx, row.id);
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
     const states = current && source ? await Promise.all(source.accountIds.filter(id => id !== row.accountId).map(id => accessFromFactsInTx(tx, current, id))) : [];
-    const readiness = states.some(state => state?.accessState === 'refused') ? 'refused' : states.some(state => state?.accessState === 'key_pending') ? 'key_pending' : 'ready';
-    return { kind: 'saved', grant: { machineId: row.id, principal, level: input.level }, readiness };
+    return { kind: 'saved', grant: { machineId: row.id, principal, level: input.level }, ...grantReadiness(states) };
 }
 
 /** Direct Leave removes only self's direct tuple; surviving inherited contributions remain. */

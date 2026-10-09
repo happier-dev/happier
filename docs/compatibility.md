@@ -84,6 +84,21 @@ package validation remain required integration gates. Retire the storage adapter
 when those persisted 0.2 inputs leave the supported data window, not merely when
 old processes disappear. This integration is unreleased and still under validation.
 
+### Pending reset starts (0.3 development)
+
+The existing Pending Input numeric protocol revision 4 advertises the new
+identity-bound `reset_start` arm, installed Machine release, and source-filtered
+waiting read. Earlier positive revisions retain their own main/target-aware input
+behavior. A new daemon must omit its reset operation leaf unless the cached Home
+supports revision 4 and the concrete reset owner is mounted: Machine capability
+publication is a strict complete projection, not a place to send unknown leaves.
+
+The inspected 0.2 predecessor uses four strict Pending action kinds. Its UI
+treats an unknown non-null action as a blocked unsupported row, never as default
+enqueue; other rows remain readable. The server holds reset rows before claim,
+refuses reset admission to unsupported Machines, and releases to the already
+supported enqueue shape. This adds no reverse writer or rollback representation.
+
 ### Project and checkout identity (0.3 development)
 
 Current development checkout resolution has one Protocol owner:
@@ -96,8 +111,9 @@ path helpers adapt to that same owner.
 
 Accepted refs retain a stable Project anchor, `projectKey` (the ref id for an
 unenriched predecessor). Adding Source or hosting facts cannot change that anchor
-or merge independently accepted Projects. A new checkout may join only a unique,
-proven same-Home Source or repository association. Personal Project widget
+or merge independently accepted Projects. A new checkout may join its host-proven
+native parent or dedicated copy source, or a unique, proven same-Home Source or
+repository association. Personal Project widget
 Artifacts use the anchor; filesystem access and plugin grants use the exact
 checkout. Home-qualified local checkout preferences read bare-id predecessor
 values only when canonical resolution proves their unique Home.
@@ -106,6 +122,25 @@ Canonical writes are strict. Stored ref readers drop unknown fields recursively
 while validating known identity and enrichment fields. These are development
 source contracts, not a released row-storage rollout or loaded-runtime QA claim;
 Project row persistence has its own Account/Home owner.
+
+Worker-copy classification uses optional creation provenance on the same Sync
+relationship: `worker_clean_copy` binds distinct source and target WorkspaceRefs
+to that relationship's endpoints. Retained provenance cannot be added, removed,
+or redirected in place. Stored relationships without it, or with an unknown
+provenance kind, remain readable ordinary Sync rows and do not qualify for worker
+admission or worker-copy retirement. Canonical worker retirement refuses them
+before graph mutation; ordinary Sync termination remains separate and unchanged.
+The existing `workspace.sync.relationship.create` Action accepts optional
+`purpose:'worker_clean_copy'`, with the user's required target Machine and path.
+Its relationship owner stamps endpoint provenance before bootstrap; a fresh ref
+inherits its proven source anchor without requiring a Project object. A folder
+already anchored to a different Project is refused before bootstrap. The owner
+never upgrades an ordinary relationship's provenance. Missing copies return typed
+`worker_copy_missing` no-acceptance facts before operation admission; UI recovery
+opens the existing Sync creator with the Machine selected and path left for the
+user. Dequeue flushes only the admitted existing route and retains its provenance.
+These are 0.3 development source contracts, not released or loaded-runtime QA
+claims. An ordinary link or committed receipt does not supply copy provenance.
 
 ### Widget and organization stored readers (0.3 development)
 
@@ -510,6 +545,29 @@ migration, or coordinate a global cutover.
 If a concrete migration has a writer-drain or maintenance-window requirement,
 its dedicated migration procedure owns that external operation.
 
+### Connected personal metadata (development)
+
+The inspected moving `../0.2` Settings definitions produce profile labels,
+default-auth pool-adoption dismissals, exact global/per-Machine CLI warning
+booleans and sparse account/pool-member disclosure keys. The development reader
+qualifies those addresses against an admitted complete inventory; punctuation is
+not an identity parser. The literal profile ID `default` and explicit false
+values remain unchanged. Unknown or ambiguous addresses retain their source for
+repair rather than becoming an empty successful import.
+
+Labels and acknowledgements move into independent Account-mode catalogs;
+disclosure moves only through the actual device-local persistence owner. A
+present row or revision-retaining tombstone prevents reseeding from Settings or
+history. Complete row proofs authorize only the corresponding history roots,
+not caller-supplied root claims. Historical disclosure snapshots remain read-only
+history, not live authority; the remaining retired-root restore cutover must prevent
+their reinstatement. They do
+not receive an unrelated Account-row proof or a new device-import ledger.
+Pinned quota meters, quota strategies and genuine
+default preferences remain with their existing owners. This is a development
+source transition with consumer/restore activation and composed checks still being
+integrated, not a new released-client compatibility floor or rollback guarantee.
+
 ### Connected Account Pool selection clock (development)
 
 The qualified V4 group row owns the active member and its selection time together.
@@ -603,6 +661,48 @@ Plugins omitting the field retain their quota behavior. This is a development
 author-surface extension, not a predecessor SDK contract or a promise that an
 older host accepts newly authored plugin results.
 
+The development SDK quota-limit result also carries the consumed optional meter
+facts (`windowDurationMs`, `modelId`, scope, labels, units and confidence).
+Canonical PAU diagnostics are retained by the quota projection; their optional
+`retryAtMs` describes the existing producer backoff, not another retry owner.
+Readers accept retained snapshots without diagnostics or retry timing. The
+qualified V4 development UI consumes producer error status alongside last-known
+meters; bootstrap sources use `not_loaded` and do not assert a fresh observation.
+No credential identity, runtime union or persisted record key changes.
+
+The development Usage insights quota read retains material accepted B snapshots
+at the existing Provider Account Usage write owner. History is scoped to the
+actual qualified record identity, paged over the caller's requested range, and
+keeps the same plain/sealed envelope and separate subscription facet as current
+B. Once the first actual accepted observation is retained, timestamp-only
+refreshes do not manufacture additional usage samples. Existing retained
+current records remain readable when their accepted history is not yet available;
+readers must not invent a historical witness or join distinct credential records.
+The existing [B Account-mode conversion lifecycle](encryption.md#provider-account-usage-history-03-development)
+clears these records and their cascading history; this is not a historical
+rewrap or a promise of continuity across mode conversion.
+
+`connectedServices.quota.get` is a read, not a provider refresh. It opens current
+and requested history under the captured Account encryption mode and projects
+pace only from witnessed window duration, reset and utilization facts. Unknown
+or incomparable evidence is explicit. Advisory targets do not enforce a spend
+ceiling. Optional subscription monetary facts distinguish provider-observed
+paid amounts from versioned, dated list prices; absence is not a zero cost or an
+inferred payment.
+
+U3 refreshed the moving predecessor's actual usage/subscription files at clean
+`c03f1e9625ec924bfadde207eacd1b28530a8af0`: its strict separate facet has no
+monetary facts, and remains a supported forward input. The immutable
+CLI/Server v0.2.11 source (`98ea8fb76733b1dd785d38c31360179cafa84824`) has no
+subscription facet at all. Neither basis establishes reverse old-process
+consumption of new development writes; this extension adds no dual writer or
+new mixed-host promise.
+
+`connectedServices.pools.selection.get` reads the target daemon's own selector
+decision and comparator order. It does not switch a credential, acquire a lease
+or create a cross-pool value ranking. Existing UI summaries and explicit manual
+switch intent remain presentation/authoring seams, not automatic selectors.
+
 The inspected clean `../0.2` usage paths at
 `17ba05df68d4d3d4cad1c1241b58e63805db37ed` supply the separate-facet input contract;
 development V4 qualified account transport is not a promise that older clients
@@ -667,6 +767,25 @@ unknown fields, including work identifiers and content. This is neither a
 stored-data reader nor an inventory producer. Its Action, RPC and mounted UI
 must consume the canonical live inventory and owner-or-Manage admission; the
 schema alone does not make that operation available.
+
+The development-only, server-origin Machine access-loss RPC also reads a private
+requester census from that same live inventory on publisher reconnect. Its closed
+requester-census arm returns Account ids and explicit coverage, without work ids
+or content. The Home unions those subjects with existing AccessKey bindings and
+rechecks current effective access before invoking the incumbent cleanup owners.
+Sessionless services, terminals and operations therefore do not depend on a
+Session AccessKey for recovery. Missing census support or unknown coverage remains
+observably incomplete; known revoked subjects can still be cleaned. Existing
+per-subject cleanup requests keep their shape, and retained Session history is
+not changed by this recovery.
+
+The installed development terminal runtime consumes C42's admitted original
+requester Account ports for accepted Project shells and exact own local Session
+workspace reads. Current Machine Use does not grant access to another requester's
+terminal or Session. Each operation retains requester attribution and current
+custody; no Agent or custodian credential is manufactured. This replaces the
+unreleased blanket custodian-only terminal classification, not the separate
+signed finite Project-script original-caller guard.
 
 Execution Run preparation, active budget custody, visibility markers, private
 retained lifecycle records and pending terminal delivery preserve the admitted
@@ -1370,6 +1489,12 @@ and a lost transition acknowledgement is observed without automatic replay.
 Current contexts, caches, hydration and RPC use the existing update carrier.
 These wire refinements replace unreleased 0.3 shapes in place; historical reads
 are custodian-only and malformed present envelopes never become legacy or Plain.
+Shared recipient preparation observes the authenticated custodian Machine and
+runs that existing conversion before the strict current-holder census. Foreign
+Manage holders retain their delivered key tuple, not historical custodian reads.
+The development grant projection carries member-level compatibility and key
+recoverability separately from grant-edit authority; both initial continuation
+and Retry consume its canonical `canPrepareKeys` result.
 This describes current source, not a successful composed runtime certification.
 
 Reviewed conflict resolution refines the development Action in place: source and explicit
@@ -1912,6 +2037,16 @@ owner applies the same attention-policy privacy projection before push, webhook
 or plugin delivery. No notification persistence migration or Inbox record is
 introduced. Webhook integrations that validate a closed topic enum must accept
 this new topic before opting into Notify me delivery.
+
+The Account endpoint-catalog transition is development-only and still in progress.
+Its source reader accepts the genuine predecessor Expo Push and HTTP(S) webhook shapes,
+preserves their channel ids, six topic fields and exact opened signing bytes, and derives
+the builtin push channel only when the source root is absent. An explicitly empty source
+stays empty; an admitted empty row or tombstone never reseeds from preferences. Signing
+material moves to a SavedSecret Resource rather than a second inline delivery secret.
+Catalog consumers treat an unsupported Home route, unreadable row or incomplete inventory
+as unavailable, without a push fallback. This does not declare the Settings-based UI
+editor retired or certify retained source/history cleanup.
 
 Request previews use the existing `attentionDeliveryPolicyV1` channel/event privacy
 owner. Remote push and Live Activity permission and user-action events default to

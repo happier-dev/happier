@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { ContentPublicKeyFingerprintSchema } from './identity/contentPublicKeyFingerprint.js';
+import { MachineInstallationPublicIdentityV1Schema } from './identity/installationKeySchemas.js';
 import { SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema, SessionDataKeyEnvelopePageQueryV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 
 /** Machine access wire epoch V1: every authority/mutation object is closed. */
@@ -53,6 +54,11 @@ export type MachineAccessRefusalV1 = z.infer<typeof MachineAccessRefusalV1Schema
 export const MachineAccessGrantRowV1Schema = lazyZodSchema(() => MachineAccessGrantV1Schema.extend({
   display: z.object({ name: z.string().nullable() }).strict(),
   readiness: MachineAccessReadinessV1Schema,
+  /** Current member facts; a Team's aggregate refusal does not refuse its eligible members. */
+  audience: z.array(z.object({ accountId: z.string().min(1), displayName: z.string(),
+    readiness: MachineAccessReadinessV1Schema, reason: MachineAccessRefusalCodeV1Schema.nullable(),
+    canPrepareKeys: z.boolean(),
+  }).strict()),
   removal: z.object({ losesAccessAccountIds: z.array(z.string().min(1)) }).strict(),
 }).strict());
 export type MachineAccessGrantRowV1 = z.infer<typeof MachineAccessGrantRowV1Schema>;
@@ -68,7 +74,9 @@ export const MachineAccessGrantsListResultV1Schema = lazyZodSchema(() => z.union
 export type MachineAccessGrantsListResultV1 = z.infer<typeof MachineAccessGrantsListResultV1Schema>;
 
 export const MachineAccessMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('saved'), grant: MachineAccessGrantV1Schema, readiness: MachineAccessReadinessV1Schema }).strict(),
+  z.object({ kind: z.literal('saved'), grant: MachineAccessGrantV1Schema, readiness: MachineAccessReadinessV1Schema,
+    canPrepareKeys: z.boolean(),
+  }).strict(),
   z.object({ kind: z.literal('removed'), effectiveAccess: z.enum(['none', 'use', 'manage']) }).strict(),
   z.object({ kind: z.literal('left'), effectiveAccess: z.enum(['none', 'use', 'manage']) }).strict(),
   z.object({ kind: z.literal('inherited_access_remains'), role: MachineAccessRoleV1Schema }).strict(),
@@ -127,14 +135,21 @@ export type SocketRpcMachineAdmissionContextV1 = Readonly<z.infer<typeof SocketR
 
 export const MachineAdmissionVerifyResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1), ok: z.literal(true),
+  destinationInstallation: MachineInstallationPublicIdentityV1Schema.optional(),
 }).strict());
 
 /** Internal Home-to-installation custody request; routing identities are transport-owned. */
-export const MachineAccessLossCustodyRequestV1Schema = lazyZodSchema(() => z.object({
-  v: z.literal(1), subjectAccountId: z.string().min(1),
-}).strict());
+export const MachineAccessLossCustodyRequestV1Schema = lazyZodSchema(() => z.union([
+  z.object({ v: z.literal(1), subjectAccountId: z.string().min(1) }).strict(),
+  z.object({ v: z.literal(1), kind: z.literal('requesters') }).strict(),
+]));
 export type MachineAccessLossCustodyRequestV1 = Readonly<z.infer<typeof MachineAccessLossCustodyRequestV1Schema>>;
 export const MachineAccessLossCustodyResponseV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum(['settled', 'incomplete']),
 }).strict());
 export type MachineAccessLossCustodyResponseV1 = Readonly<z.infer<typeof MachineAccessLossCustodyResponseV1Schema>>;
+/** Private reconnect census; subjects are observations, never permission or cleanup authority. */
+export const MachineAccessLossRequesterCensusResponseV1Schema = lazyZodSchema(() => z.object({
+  kind: z.literal('requesters'), accountIds: z.array(z.string().min(1)), coverage: z.enum(['complete', 'unknown']),
+}).strict());
+export type MachineAccessLossRequesterCensusResponseV1 = Readonly<z.infer<typeof MachineAccessLossRequesterCensusResponseV1Schema>>;

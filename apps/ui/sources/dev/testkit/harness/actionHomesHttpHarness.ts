@@ -20,6 +20,7 @@ export type ServedHomeRequest = Readonly<{
     /** The Account the request authenticated as (the bearer token's subject). */
     accountId: string | null;
     body: unknown;
+    signal: AbortSignal | null | undefined;
 }>;
 
 type HomeSpec = Readonly<{ key: string; serverUrl: string; accountId: string; settings?: Readonly<Record<string, unknown>>;
@@ -91,6 +92,7 @@ export async function serveAccountHomes(params: Readonly<{
             url: target,
             accountId: accountOf(init),
             body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+            signal: init?.signal,
         };
         requests.push(request);
         return await params.route(request) ?? Response.json({ error: 'not_found' }, { status: 404 });

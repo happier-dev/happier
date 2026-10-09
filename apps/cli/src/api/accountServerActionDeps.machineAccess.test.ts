@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
+import nacl from 'tweetnacl';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { createCliActionInventoryDeps } from '@/session/actions/cliActionDeps/createCliActionInventoryDeps';
@@ -40,7 +45,7 @@ describe('Machine access headless Action transport', () => {
       expect(request.headers.authorization).toBe('Bearer test-token');
       expect(request.body).toEqual({ principal, level: 'view' });
       saved = true;
-      return { kind: 'saved', grant, readiness: 'ready' };
+      return { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false };
     });
     app.delete('/v1/machines/machine/access', async request => {
       if (Object.keys(request.body as object).length === 0) return { kind: 'left', effectiveAccess: 'none' };
@@ -68,11 +73,11 @@ describe('Machine access headless Action transport', () => {
         args: direct ? { ...target, principal, level: 'view' } : { actionId: 'machines.access.grant.set', input: { ...target, principal, level: 'view' } },
         deps: { executeActionByToolName: bridge.executeActionByToolName,
           changeTitle: createChangeTitleToolHandler({ executor, surface }) },
-      })).toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'ready' } });
+      })).toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false } });
       expect(saved).toBe(true);
     }
     expect(await executor.execute('machines.access.grant.set', { ...target, principal, level: 'view' }, context))
-      .toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'ready' } });
+      .toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false } });
     expect(saved).toBe(true);
     expect(await executor.execute('machines.access.grant.remove', { ...target, principal }, context))
       .toEqual({ ok: true, result: { kind: 'removed', effectiveAccess: 'use' } });
@@ -87,25 +92,37 @@ describe('Machine access headless Action transport', () => {
     app = fastify();
     const principal = { kind: 'account', accountId: 'bob' } as const;
     const grant = { machineId: 'machine', principal, level: 'view' } as const;
+    const manager = nacl.box.keyPair();
+    const dataKey = nacl.randomBytes(32);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: manager.publicKey, randomBytes: nacl.randomBytes });
+    const callerDataEncryptionKey = encodeBase64(envelope);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'manager' })).toString('base64url')}.signature`;
+    const content = { metadata: createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: dataKey, encryptionVariant: 'dataKey' }).encodeStored({
+      host: 'host', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier',
+    }), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 };
     let permissionWrites = 0;
     let censusReads = 0;
     app.put('/v1/machines/machine/access', async request => {
       expect(request.body).toEqual({ principal, level: 'view' });
       permissionWrites++;
-      return { kind: 'saved', grant, readiness: 'key_pending' };
+      return { kind: 'saved', grant, readiness: 'key_pending', canPrepareKeys: true };
     });
     app.get('/v1/machines/machine/data-key-envelopes', async request => {
-      expect(request.headers.authorization).toBe('Bearer test-token');
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
       expect(request.query).toEqual({ state: 'action_required' });
       censusReads++;
-      return { machineId: 'machine', custodianAccountId: 'alice', encryptionMode: 'plain',
-        machineOwnerEnvelopeFingerprint: null, callerDataEncryptionKey: null, nextCursor: null,
-        content: { metadata: '{}', metadataVersion: 1, daemonState: null, daemonStateVersion: 0 }, recipients: [] };
+      // Another holder may have repaired the pending member since the grant response.
+      return { machineId: 'machine', custodianAccountId: 'alice', encryptionMode: 'e2ee',
+        machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(envelope), callerDataEncryptionKey, nextCursor: null,
+        content, recipients: [] };
     });
+    app.get('/v1/machines/machine', async () => ({ machine: { id: 'machine', ...content, dataEncryptionKey: callerDataEncryptionKey,
+      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } } }));
     app.get('/v1/machines/machine/access', async () => ({ malformed: true }));
     await app.ready();
     restore = installAxiosFastifyAdapter({ app, origin: 'http://access.test' });
-    const executor = createActionExecutor({ ...createAccountServerActionDeps({ token: 'test-token',
+    const executor = createActionExecutor({ ...createAccountServerActionDeps({ token,
+      credentials: { token, encryption: { type: 'dataKey', publicKey: manager.publicKey, machineKey: manager.secretKey } },
       serverId: 'home', serverHttpBaseUrl: 'http://access.test' }), isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
     const target = { serverId: 'home', machineId: 'machine' };
@@ -114,8 +131,8 @@ describe('Machine access headless Action transport', () => {
       .toEqual({ ok: true, result: { kind: 'prepared' } });
     expect(permissionWrites).toBe(0);
     expect(await executor.execute('machines.access.grant.set', { ...target, principal, level: 'view' }, context))
-      .toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'key_pending' } });
+      .toEqual({ ok: true, result: { kind: 'saved', grant, readiness: 'key_pending', canPrepareKeys: true } });
     expect(permissionWrites).toBe(1);
-    expect(censusReads).toBe(2);
+    expect(censusReads).toBe(4);
   });
 });

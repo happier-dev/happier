@@ -183,7 +183,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 ? request.body.method !== undefined || custodySubjectAccountId !== undefined
                     || workspaceSyncSourceRouting !== undefined || workspaceSyncTargetRouting !== undefined
                 : !method.startsWith(prefix) || method.length === prefix.length)
-            || (isCustodyCleanup ? !custodySubjectAccountId || context.actorAccountId !== context.custodianAccountId
+            || (isCustodyCleanup ? context.actorAccountId !== context.custodianAccountId
                 : custodySubjectAccountId !== undefined)
             || (workspaceSyncSourceRouting !== undefined && !isWorkspaceSyncSource)
             || (workspaceSyncTargetRouting !== undefined && !isWorkspaceSyncTarget)

@@ -3,6 +3,13 @@ import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identi
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
+import axios from 'axios';
+import { configuration } from '@/configuration';
+import type { StoredCredentials } from '@/persistence';
+import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
 /**
  * Which fact entitles THIS daemon to act for a Session recorded against a
@@ -102,4 +109,34 @@ export function resolveSessionMachineWorkspacePath(params: Readonly<{
     machineId: currentMachineId,
     candidatePath,
   }).machinePath;
+}
+
+/** Exact owner metadata and locality read shared by installed and admitted Account custody. */
+export async function readOwnSessionMachineWorkspace(input: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl: string; sessionId: string; machineId: string;
+  currentMachineHost: string; currentMachineHomeDir: string; candidatePath?: string; signal?: AbortSignal;
+}>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null> {
+  const session = await fetchSessionById({ token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
+    sessionId: input.sessionId, signal: input.signal, accessProjectionVersion: 1 });
+  if (!session || session.id !== input.sessionId || session.effectiveAccess?.level !== 'owner') return null;
+  const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(`${input.serverHttpBaseUrl}/v1/account/encryption`, {
+    headers: { Authorization: `Bearer ${input.credentials.token}` }, signal: input.signal,
+    timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true,
+  }) });
+  if (mode.kind !== 'resolved') return null;
+  const metadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials, accountEncryptionMode: mode.mode, rawSession: session });
+  if (!metadata) return null;
+  const locality = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => resolveMachineControlLocalityProof({
+    sessionMachineId: metadata.machineId, currentMachineId: input.machineId,
+    sessionHost: metadata.host, sessionHomeDir: metadata.homeDir,
+    currentMachineHost: input.currentMachineHost, currentMachineHomeDir: input.currentMachineHomeDir,
+    credentials: input.credentials,
+  }));
+  if (!locality) return null;
+  const rootPath = resolveSessionMachineWorkspacePath({ metadata, currentMachineId: input.machineId, candidatePath: metadata.path });
+  if (!rootPath) return null;
+  const requestedPath = input.candidatePath === undefined ? undefined
+    : resolveSessionMachineWorkspacePath({ metadata, currentMachineId: input.machineId, candidatePath: input.candidatePath });
+  if (input.candidatePath !== undefined && !requestedPath) return null;
+  return { rootPath, ...(requestedPath ? { requestedPath } : {}) };
 }

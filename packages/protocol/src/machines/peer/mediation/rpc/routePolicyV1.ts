@@ -8,6 +8,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions/externalActionApi.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionFamily.js';
+import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSources.js';
 
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
@@ -332,6 +333,10 @@ const DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES = Object.freeze([
   HOST_PRIVATE_PLUGIN_INSTALL_DECISION_ROUTE_POLICY,
   { ...serverRequired(RPC_METHODS.MACHINES_WORK_SUMMARY_GET, 'sharing',
     'Content-free Machine work summary requires current custodian or Manage admission at the Home.'), sharedMachineAccess: 'manage' },
+  ...USAGE_SOURCE_ACTION_IDS.filter(id => id !== 'usage.sources.dismiss').map((method): MachineRpcRoutePolicyV1 => ({
+    ...serverRequired(method, 'account_change', 'Native source metadata and consent require the exact captured Account and current Machine installation.'),
+    sharedMachineAccess: 'custodian_only',
+  })),
   ...[MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD].map((method): MachineRpcRoutePolicyV1 => ({
     method, routeClass: 'server_required', rationale: 'Managed retention reads exact private guest activity and reversible drain through current Manage admission.',
     ownerPacket: 'PMS-5', rpcClassification: 'internal_only', commandReceiptRequired: false,
@@ -513,6 +518,7 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.STOP_DAEMON,
   RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
   RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
+  RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX,
   RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
@@ -719,6 +725,7 @@ const VOICE_CLIENT_CREDENTIAL_METHODS = [
 const MACHINE_MANAGEMENT_METHODS = new Set<string>([
   RPC_METHODS.STOP_DAEMON,
   RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
+  RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX,
   RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD,
   RPC_METHODS.DAEMON_EXTENSIONS_RELOAD,
   RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
@@ -738,6 +745,7 @@ const MACHINE_MANAGEMENT_METHODS = new Set<string>([
 ]);
 
 const MACHINE_CUSTODIAN_ONLY_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET,
   ...VOICE_CLIENT_CREDENTIAL_METHODS,
   ACTION_OPERATION_RPC_METHODS_V1.cancel,
   RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
@@ -761,12 +769,21 @@ const MACHINE_CUSTODIAN_ONLY_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE,
 ]);
 
+const MACHINE_REQUESTER_TERMINAL_METHODS = new Set<string>([
+    RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_LIST,
+    RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+    RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
+    RPC_METHODS.DAEMON_TERMINAL_INPUT, RPC_METHODS.DAEMON_TERMINAL_RESIZE,
+    RPC_METHODS.DAEMON_TERMINAL_CLOSE, RPC_METHODS.DAEMON_TERMINAL_RESTART,
+]);
+
 function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRoutePolicyV1 {
   // Private relationship and work inventories keep their custodian authority.
-  // Machine admission alone does not establish terminal requester attribution.
+  // These terminal routes establish exact requester custody at their canonical owner.
+  const requesterTerminal = MACHINE_REQUESTER_TERMINAL_METHODS.has(policy.method);
   const custodianOnly = MACHINE_CUSTODIAN_ONLY_METHODS.has(policy.method)
     || policy.method.startsWith('daemon.workspaceSync.')
-    || policy.method.startsWith('daemon.terminal.')
+    || policy.method.startsWith('daemon.terminal.') && !requesterTerminal
     || policy.method.startsWith('daemon.spawnSession.')
     || policy.method.startsWith('daemon.sessionCreation.')
     || policy.method.startsWith('daemon.sessionHandoff.')
@@ -774,12 +791,14 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
     || policy.method.startsWith('daemon.directSessions.');
   return {
     ...policy,
-    sharedMachineAccess: custodianOnly ? 'custodian_only'
+    sharedMachineAccess: custodianOnly ? 'custodian_only' : requesterTerminal ? 'use'
       : MACHINE_MANAGEMENT_METHODS.has(policy.method) ? 'manage' : policy.sharedMachineAccess,
   };
 }
 
 export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
+  serverRequired(RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET, 'auth',
+    'Pool selection observes the custodian Account group and private quota evidence through the current exact-Machine owner; shared Machine Use does not grant access to that Account data.'),
   ...serverRequiredRows([
     ACTION_OPERATION_RPC_METHODS_V1.list, ACTION_OPERATION_RPC_METHODS_V1.get,
     ACTION_OPERATION_RPC_METHODS_V2.list, ACTION_OPERATION_RPC_METHODS_V2.get,

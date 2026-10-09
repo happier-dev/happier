@@ -70,8 +70,13 @@ and E2EE Accounts, like Happier-session usage. This is deliberately not an E2EE
 numeric payload. Native source consent discloses this before capture. Prompts,
 replies, file paths and file contents are not accounting fields. Source-root,
 native-session and project identifiers use scoped opaque keys; an opaque key is
-not a path label. Any private project label uses its Account-mode content
-envelope and is resolved on the client.
+not a path label. Native-only human labels use the optional `label` on the
+existing Project Account organization row: encrypted for E2EE Accounts, plain
+for plain Accounts, and opened by authorized clients. Exact existing Workspace
+references may supply their accepted Project identity, but capture does not
+create a Workspace reference merely to label native usage, because that row
+would also carry a root path. The collector retains its local project witness
+in sealed pending custody while Account Project admission is unavailable.
 
 The Machine collector seals normalized unacknowledged accounting together with
 source cursors and consent using the incumbent device-local secret storage and
@@ -80,6 +85,23 @@ cipher is not an Account key and is never uploaded. Only acknowledged numeric
 events retire from pending custody. An older server that cannot admit a native
 subject is unsupported; a legacy Session report is not an acknowledgement.
 See [actions.md](actions.md#native-usage-sources-development) for source controls.
+
+### Provider Account Usage history (0.3 development)
+
+Provider quota and subscription/capacity snapshots are a separate domain from
+the server-queryable accounting above. Their accepted history keeps B's existing
+plain/sealed Account-mode representation; an authorized client opens sealed
+content, and mode/content disagreement fails closed. Retention metadata does
+not make the quota or capacity numbers SQL-queryable for E2EE Accounts.
+
+History also follows B's existing lifecycle. The explicit Account-mode
+conversion owner, `migrateConnectedServicesAccountEncryptionInTx`, clears B's
+source links and current records when changing modes, including when migrating
+credentials. Accepted history is deleted with those parent records through its
+composite cascading foreign key; it is not rewrapped or recoverable from a
+later provider refresh. New observations start new history. This describes
+unreleased development behavior, not continuity across mode conversion or
+completed loaded-runtime validation.
 
 ### Private Profile rows (0.3 development)
 
@@ -232,7 +254,11 @@ Initialization captures the source Settings version. Later host writes use the
 catalog revision without unrelated Settings or Profile guards. New SSH
 credential material belongs to the canonical
 SavedSecret transaction owner together with its host-reference mutation, not an
-independent resource POST. Source cleanup uses the admitted destination revision;
+independent resource POST. Resource packets capture the complete prior host
+reference inventory at its catalog revision and Account mode; next references
+cannot substitute for that old census. Resource creation retains SavedSecret's
+present-user admission, without restricting metadata-only host writes.
+Source cleanup uses the admitted destination revision;
 that revision alone cannot authorize discarding historical SSH credentials.
 Each historical slot needs its own characterized material and exact-value proof
 against a usable, owned SavedSecret Resource at its captured revision. Unknown,
@@ -304,6 +330,14 @@ Account or Machine warning scopes and sparse boolean values, including false.
 Stored readers project additive fields away and expose valid neighboring entries
 with diagnostics when a known entry is malformed. That partial display does not
 authorize rewriting the incomplete catalog.
+
+The credential-free demo world publishes its personal labels as an ephemeral
+display projection through the same UI catalog projection owner. Only the
+explicit seeded demo lifetime can expose that projection to scope-less readers;
+real Account-scoped snapshots retain priority. Seed and clear neither create an
+Account row nor grant write authority, and clear removes the projection while
+restoring the demo-owned qualified Account and group profile slices. Demo labels
+are not written to Settings or durable device storage.
 
 Connected row disclosure belongs to the existing device-local
 `collapsedGroupKeysV1` persistence owner, qualified by Home, Account, service and
@@ -1650,6 +1684,10 @@ malformed, wrong-mode, or unopened detail remains unknown. Historical
 terminal no-turn handling for transcript-publication policy; provider acceptance
 does not replace terminal turn evidence.
 
+A nonempty opened page containing only legacy/manual rows or unidentified
+acceptance facts cannot establish zero accepted inputs. An actually empty retained
+page is observed empty; a valid identified accepted subset remains partial history.
+
 Permission and scoped Action confirmation completions retain their existing
 private AgentState request/completion pairs. An authenticated request-scoped human
 answer can additionally retain `answeringClientCategory` (`ios`, `android`, `web`,
@@ -1765,8 +1803,16 @@ methods retain their existing plain transport and inner-envelope contracts.
   a surviving grant prevents intermediate loss from becoming final revocation.
   Final loss publishes Account invalidation and, after commit, disconnects the
   actor's exact Machine/AccessKey-bound Session sockets. Session history and
-  AccessKey bytes remain intact. Socket invalidation does not prove settled
-  cancellation of running processes; that composed cleanup remains incomplete.
+  AccessKey bytes remain intact. Reconnect recovery unions those historical subjects
+  with exact requester attribution from the daemon's existing live-work inventory,
+  revalidates current access and invokes the existing Session, operation, terminal
+  and service cleanup owners. Unknown inventory coverage or unavailable cleanup is
+  reported incomplete; socket invalidation alone never proves process cancellation.
+- The development access projection preserves each audience member's compatibility
+  and key recoverability. Current Manage authority permits Team/Group level edits
+  independently of a member's readiness. Incompatible Plain members are explained
+  without offering a futile key Retry; initial preparation and Retry consume the
+  same canonical `canPrepareKeys` fact for recoverable members.
 - In 0.3 development source, stored Plain Machine envelopes are opened through
   the canonical stored-read projection: extra envelope fields are dropped,
   required `{ t: 'plain', v }` content remains validated, and re-encoding emits
@@ -1796,7 +1842,12 @@ methods retain their existing plain transport and inner-envelope contracts.
   only by observing that exact proposed post-state; it does not replay the write.
   Conversion preserves the entire opened blobs, including display name and finite
   policy, and does not itself authorize wider disclosure.
-  Machine recipient preparation captures the Home/Account transport, refetches the
+  Machine recipient preparation captures the Home/Account transport. The shared
+  preparation owner observes the authenticated Machine and runs this custodian
+  conversion before requesting the strict current-key-holder recipient census,
+  so a genuinely envelope-less predecessor Machine can complete its first share.
+  Foreign Manage holders cannot convert custodian content; they use their current
+  delivered key tuple. Preparation refetches the
   current worklist after conversion, and checks the exact owner fingerprint, caller
   wrapping and both content revisions. The entire raw metadata/state must satisfy
   the published-content safety predicate before sealing; retained private bytes
@@ -2245,6 +2296,13 @@ authority rather than treating the ordinary Account credential as a present
 user. Current source publisher, Session tuple, installation and grant checks
 remain at their existing owners. This is development integration, not a claim
 that every requester lifecycle or a loaded cross-account journey is verified.
+
+The installed terminal runtime consumes these same admitted original requester
+ports for an accepted Project standalone shell and an exact own local Session
+workspace. Current Machine Use and requester custody remain required for each
+operation and reconnect; guessed or foreign terminal ids refuse. This creates
+neither an Agent nor a borrowed custodian credential. The original-caller refusal
+at the signed finite Project-script ingress remains unchanged.
 
 Cold delivery uses the nonsecret exact placement on the existing Session row,
 committed by its admitted runtime publisher. This fact contains only Home,
@@ -2942,8 +3000,11 @@ Like every disclosed document, an opened preview cannot be recalled from a
 recipient who already obtained its bytes. This is development-source behavior;
 loaded-stack and native-device validation remain separate evidence.
 
-Team credential resources and shared Saved Secrets in current 0.3 development source reuse these
-Account-mode boundaries; their product activation remains gated and unverified. Brokered Team
+Private Account-owned Saved Secret resources in current 0.3 development source do not require
+Teams. Account catalog and source writes remain Account-mode fenced; a Saved Secret resource's
+own stored encryption mode governs its material, including independently converted resources.
+Genuine Team-qualified credential operations retain their feature and authentication checks;
+their composed product activation remains unverified. Brokered Team
 credential use does not publish usable credential bytes to the recipient. Direct delivery does:
 an E2EE recipient receives material encrypted to its current verified Account content-key binding,
 while a plaintext recipient receives an explicit plain stored-content envelope that the live Home

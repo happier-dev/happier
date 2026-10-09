@@ -122,6 +122,7 @@ import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/worksp
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { readProjectFiniteIngressRefusal } from '@/workspaces/projectSetup/projectFiniteAction';
+import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createWorkspaceSyncWorkerPreparation } from '@/workspaces/sync/workspaceSyncPreparation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
@@ -180,10 +181,8 @@ import {
   resolveDaemonSelfRestartEnvironment,
 } from './lifecycle/requestDaemonSelfRestartWithLockHandoff';
 import {
-  DEFAULT_DAEMON_START_WAIT_POLL_MS,
   readDaemonRestartVerifyPollMs,
   readDaemonRestartVerifyTimeoutMs,
-  readDaemonStartWaitTimeoutMs,
 } from './startupWaitDefaults';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -248,6 +247,8 @@ import {
 } from '@/providers/broker/providerConnectionSource';
 import { createProviderConnectionTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { createProviderConnectionCpxBridge } from '@/providers/broker/providerConnectionCpxBridge';
+import { createAccountConnectionBrokerSourceOpen, retireAccountConnectionBrokerSource } from '@/providers/broker/accountConnectionSource';
+import { openAccountConnectionProviderBrokerAccess } from '@/providers/broker/accountConnectionClient';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { resolveProviderContributionRegistryView } from '@/providers/registry';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
@@ -457,11 +458,6 @@ export async function startDaemon(
         }
       },
     });
-    // Home reachability and explicit wait-for-auth are separate admission
-    // lifecycles. Start the cold plugin readiness budget after Home verification
-    // so a transient outage cannot exhaust it before any plugin phase starts.
-    const startupDeadlineAtMs = Date.now()
-      + readDaemonStartWaitTimeoutMs() - DEFAULT_DAEMON_START_WAIT_POLL_MS;
     machineIrohRuntime = preparedIrohState.machine;
     homeIrohTransport = preparedIrohState.home;
     daemonLockHandle = bootstrapContext.daemonLockHandle;
@@ -1286,7 +1282,7 @@ export async function startDaemon(
     const pluginRemovalInstallation = readInstallationIdentityIfExistsSync();
     const managedResourcePreflight = pluginRemovalOrigin?.machineId === machineId && pluginRemovalInstallation
       ? { credentials, serverUrl: managedPolicyServerHttpBaseUrl, homeId: pluginRemovalOrigin.serverIdentityId,
-          controller: { machineId, installationId: pluginRemovalInstallation.installationId } }
+          controller: { machineId, installationId: pluginRemovalInstallation.installationId }, signal: homeTransportCancellation.signal }
       : undefined;
     const readCurrentManagedMachinePolicies = async (signal?: AbortSignal) => {
       const origin = await resolveCurrentMachineExecutionOriginContext(signal);
@@ -1304,7 +1300,6 @@ export async function startDaemon(
     confidentialSecretFill = api.createConfidentialSecretFillExecutor({
       machineId: () => machineId, readHostIdentity: resolveCurrentMachineExecutionOriginContext });
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
-      startupDeadlineAtMs,
       happyHomeDir: configuration.happyHomeDir,
       ...(managedResourcePreflight ? { managedResourcePreflight } : {}),
       daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
@@ -1332,6 +1327,7 @@ export async function startDaemon(
         credentials,
         serverFeaturesSnapshotStore,
         getMachineId: () => machineId,
+        signal: homeTransportCancellation.signal,
       }),
       connectedAccounts: connectedAccountPurposeBindingRuntime.owner,
       actionFormConnectedAccounts: Object.freeze({
@@ -1709,7 +1705,7 @@ export async function startDaemon(
         if (contextStamp.serverId !== stamp.serverId || contextStamp.accountId !== stamp.accountId
           || contextStamp.machineId !== stamp.machineId || contextStamp.installationId !== stamp.installationId
           || context.bootstrap.getBoundSessionId() !== sessionId) return null;
-        if (await context.bootstrap.savedSecretOperationContext.isCurrent()) return context;
+        if (await context.isCurrent()) return context;
       }
       if (!createRequesterRuntime) return null;
       const bootstrap = coldBootstrap ?? await resolveRequesterSessionBootstrap({ happyHomeDir: configuration.happyHomeDir,
@@ -1729,7 +1725,7 @@ export async function startDaemon(
           return incumbentStamp.serverId === stamp.serverId && incumbentStamp.accountId === stamp.accountId
             && incumbentStamp.machineId === stamp.machineId && incumbentStamp.installationId === stamp.installationId
             && incumbent.bootstrap.getBoundSessionId() === sessionId
-            && await incumbent.bootstrap.savedSecretOperationContext.isCurrent() ? incumbent : null;
+            && await incumbent.isCurrent() ? incumbent : null;
         }
         tracked.requesterSessionRuntimeContext = recovered;
         if (context) await context.dispose();
@@ -1776,6 +1772,7 @@ export async function startDaemon(
     } = await startDaemonSessionControlRuntime({
       admissionDrain,
       requesterSessionCustodyServerId: requesterRuntimeServerId,
+      readLiveWorkInventory: managedActivity.read,
       machineId,
       managedProviderOperationAuthority,
       readManagedMachinePolicyCurrent: async (managedId, signal) => (
@@ -1818,6 +1815,24 @@ export async function startDaemon(
       deviceLocalSecretStorage,
       api,
       ...(openTeamCredentialProviderBinding ? { openTeamCredentialProviderBinding } : {}),
+      ...(managedPolicyHomeId && externalActionAccountId ? {
+        openAccountConnectionProviderBrokerAccess: async request => {
+          const runtime = machineIrohRuntime;
+          if (!runtime) throw createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId: request.connectionId, machineId: request.targetMachineId,
+          });
+          const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
+            homeId: managedPolicyHomeId, accountId: externalActionAccountId, localMachineId: machineId,
+            runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+          });
+          return await openAccountConnectionProviderBrokerAccess({
+            ...request, homeId: managedPolicyHomeId, accountId: externalActionAccountId, initiatorMachineId: machineId,
+            openBroker: async (openRequest, signal) => await api.openAccountConnectionProviderBroker(openRequest, { signal }),
+            admitConsumer: async (authority, signal) => (await api.admitAccountConnectionProviderBroker({ v: 2, authority }, { signal })).ok,
+            openTunnel,
+          });
+        },
+      } : {}),
       connectedServicesMaterializationBaseDir,
       getConnectedServiceRefreshCoordinator: () => connectedServiceRefreshCoordinator,
       getConnectedServiceQuotasCoordinator: () => connectedServiceQuotasCoordinator,
@@ -2365,6 +2380,31 @@ export async function startDaemon(
                 }, input.signal ? { signal: input.signal } : undefined);
                 const runtime = await startDaemonProviderBrokerRuntime({
                   machineId: registeredMachineId,
+                  ...(managedPolicyHomeId && externalActionAccountId ? {
+                    accountConnection: {
+                      homeId: managedPolicyHomeId,
+                      accountId: externalActionAccountId,
+                      retire: async ({ authority }) => await retireAccountConnectionBrokerSource({
+                        homeId: managedPolicyHomeId, accountId: externalActionAccountId, machineId: registeredMachineId,
+                        custody: brokerManagedProviderCustody, authority,
+                      }),
+                      open: createAccountConnectionBrokerSourceOpen({
+                        homeId: managedPolicyHomeId,
+                        accountId: externalActionAccountId,
+                        machineId: registeredMachineId,
+                        custody: brokerManagedProviderCustody,
+                        withRegistry: withBrokerProviderRegistry,
+                        getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+                        resolveBindingIntent: connectedAccountPurposeBindingRuntime.resolveBindingIntent,
+                        projectModels: async request => {
+                          const producer = providerOperationsProducer;
+                          if (!producer) throw new Error('provider_source_projection_unavailable');
+                          return await producer.machineServices.projectModels(request);
+                        },
+                        admitConsumer: async (authority, signal) => (await api.admitAccountConnectionProviderBroker({ v: 2, authority }, { signal })).ok,
+                      }),
+                    },
+                  } : {}),
                   resolveTrustRoots: resolvePeerMediationTrustRoots,
                   nowMs: () => Date.now(),
                   createRequestId: randomUUID,
@@ -2721,34 +2761,41 @@ export async function startDaemon(
               isFiniteExecutionLive: () => apiMachineForSessions?.isProjectFiniteExecutionLive() === true,
               isServiceExecutionLive: () => isProjectServiceExecutionLive?.() === true });
             const createProjectFiniteRuntime: NonNullable<ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime']> = async (ports, ingress) => {
-              if (readProjectFiniteIngressRefusal(ingress)) return null;
               if (!externalActionAccountId || !await isCurrent()) return null;
-              const currentCredentials = await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
-              if (!currentCredentials || !sameStoredCredentials(credentials, currentCredentials) || !await isCurrent()) return null;
+              const installationId = readInstallationIdentityIfExistsSync()?.installationId;
+              const requester = ingress.callerInputAuthorization && installationId
+                ? await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: finiteServerId,
+                  machineId: registeredMachineId, installationId, isInstalledCurrent: isCurrent }) : null;
+              if (ingress.callerInputAuthorization && !requester || !requester && readProjectFiniteIngressRefusal(ingress)) return null;
+              const currentCredentials = requester ? null : await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
+              if (!requester && (!currentCredentials || !sameStoredCredentials(credentials, currentCredentials)) || !await isCurrent()) return null;
+              const runtimeCurrent = requester?.isCurrent ?? isCurrent;
               const io = createProjectNativeIo();
-              return { ...ports, serverId: finiteServerId, machineId: registeredMachineId,
-                accountId: externalActionAccountId, credentials: currentCredentials,
-                serverHttpBaseUrl: finiteServerHttpBaseUrl, workerAdmission: admission, isCurrent,
+              const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
+                accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
+              if (!accountAccess) return null;
+              return { ...ports, ...accountAccess, workerAdmission: admission, isCurrent: runtimeCurrent,
                 nativeIo: io.commandIo, environmentIo: io.environmentIo,
                 plugins: { async resolveProjectNativeAdapter(reference, role) {
-                  if (!await isCurrent()) return { kind: 'refused', code: 'native_adapter_retired' };
+                  if (!await runtimeCurrent()) return { kind: 'refused', code: 'native_adapter_retired' };
                   const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
                     happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
                   });
                   try {
                     const selected = await lease.registry.resolveProjectNativeAdapter(reference, role);
-                    return await isCurrent() ? selected : { kind: 'refused', code: 'native_adapter_retired' };
+                    return await runtimeCurrent() ? selected : { kind: 'refused', code: 'native_adapter_retired' };
                   } finally { await lease.release(); }
                 } },
                 successHomeDir: configuration.happyHomeDir,
-                inspectSourceProjectManifest: createProjectFiniteSourceManifestInspector({ api,
+                ...(currentCredentials ? { inspectSourceProjectManifest: createProjectFiniteSourceManifestInspector({ api,
                   credentials: currentCredentials, serverId: finiteServerId, serverHttpBaseUrl: finiteServerHttpBaseUrl,
                   accountId: externalActionAccountId, ingress, isCurrent }),
-                ...createWorkspaceSyncWorkerPreparation({ serverId: finiteServerId,
+                  ...createWorkspaceSyncWorkerPreparation({ serverId: finiteServerId,
                   serverHttpBaseUrl: finiteServerHttpBaseUrl, targetMachineId: registeredMachineId,
                   credentials: currentCredentials, isCurrent,
-                  prepareBetween: (request, signal) => runtime.handoffAdapter.prepareBetween(request, signal) }),
+                  prepareBetween: (request, signal) => runtime.handoffAdapter.prepareBetween(request, signal) }) } : {}),
                 resolveWorkspaceExecutionConfig: async (context, currentIngress, actionId) => {
+                  if (!currentCredentials) return null;
                   if (!await isCurrent()) return null;
                   const origin = await resolveCurrentMachineExecutionOriginContext(currentIngress.signal);
                   if (!origin || origin.machineId !== registeredMachineId || !await isCurrent()) return null;

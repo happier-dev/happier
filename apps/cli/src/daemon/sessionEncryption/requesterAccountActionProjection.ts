@@ -20,6 +20,7 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import type { PrepareExternalActionRequesterAccountContext, ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 export type RequesterAccountActionAuthorizationInput = Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -115,6 +116,15 @@ async function projectAdmittedAccountCustody(input: RequesterAccountActionAuthor
         return context.encryptionMode === 'plain' ? { encryptionMode: 'plain' as const }
           : { ...context, encryptionMode: 'e2ee' as const };
       },
+      readOwnSessionWorkspace: async request => {
+        if (request.machineId !== stamp.machineId || request.signal?.aborted || !await isCurrent()) return null;
+        try {
+          const { readOwnSessionMachineWorkspace } = await import('@/session/machineControlLocality');
+          const workspace = await readOwnSessionMachineWorkspace({ ...request, credentials: bootstrap.credentials,
+            serverHttpBaseUrl: bootstrap.serverHttpBaseUrl });
+          return request.signal?.aborted || !await isCurrent() ? null : workspace;
+        } catch { return null; }
+      },
       readArtifact: async (ref, options) => {
         if (ref.serverId !== stamp.serverId || options?.signal?.aborted || !await isCurrent()) return null;
         try {
@@ -140,6 +150,40 @@ async function projectAdmittedAccountCustody(input: RequesterAccountActionAuthor
     Object.defineProperty(carrier, 'requesterAccountProjection', { value: projection, enumerable: false });
     return Object.freeze(carrier);
   } catch { return null; }
+}
+
+/** Consumes already-admitted ports at the exact installed receiver; never opens installed credentials. */
+export type AdmittedRequesterAccountReadRuntime = Readonly<{
+  serverId: string; machineId: string; accountId: string; serverHttpBaseUrl: string;
+  accountAuthorization: ExternalActionExecutionAuthorizationV1; isCurrent(): Promise<boolean>;
+}>;
+
+export async function resolveAdmittedRequesterAccountReadRuntime(input: Readonly<{
+  ingress: RpcHandlerContext; serverId: string; machineId: string; installationId: string;
+  isInstalledCurrent(): boolean | Promise<boolean>;
+}>): Promise<AdmittedRequesterAccountReadRuntime | null> {
+  const { ingress } = input;
+  const admission = ingress.machineAdmission;
+  const authorization = ingress.callerInputAuthorization;
+  const account = authorization?.requesterAccountProjection;
+  const http = authorization?.requesterHttpProjection;
+  if (!admission || !authorization || !account || !http || !ingress.verifyMachineAdmissionCurrent
+    || admission.machineId !== input.machineId || admission.installationId !== input.installationId
+    || authorization.binding.machineId !== input.machineId || authorization.binding.installationId !== input.installationId
+    || authorization.binding.accountId !== admission.actorAccountId || authorization.binding.custodianAccountId !== admission.custodianAccountId
+    || account.accountId !== admission.actorAccountId || http.accountId !== account.accountId
+    || account.serverId !== input.serverId || http.serverId !== input.serverId
+    || http.serverIdentityId !== authorization.binding.serverIdentityId
+    || account.accountEncryptionMode !== authorization.binding.accountEncryptionMode
+    || http.accountEncryptionMode !== account.accountEncryptionMode) return null;
+  const isCurrent = async () => {
+    try { return !ingress.signal.aborted && await input.isInstalledCurrent()
+      && await ingress.verifyMachineAdmissionCurrent!() && await account.isCurrent() && await http.isCurrent()
+      && !ingress.signal.aborted && await input.isInstalledCurrent(); }
+    catch { return false; }
+  };
+  return await isCurrent() ? { serverId: input.serverId, machineId: input.machineId, accountId: account.accountId,
+    accountAuthorization: authorization, serverHttpBaseUrl: http.serverHttpBaseUrl, isCurrent } : null;
 }
 
 /** Finite Account custody at an admitted ingress, never a Session or a credential store. */

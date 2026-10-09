@@ -198,4 +198,49 @@ describe('Machine current access (real SQLite)', () => {
         await db.machine.update({ where: { id: f.machine.id }, data: { dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: f.owner.keys.publicKey, randomBytes: tweetnacl.randomBytes })) } });
         expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, input))).toEqual({ kind: 'refused', code: 'machine_key_changed' });
     });
+
+    it('preserves mixed Team member compatibility and key recoverability while allowing grant level edits', async () => {
+        const f = await fixture('e2ee');
+        const eligible = await account('e2ee');
+        const incompatible = await account('plain');
+        const unbound = await db.account.create({ data: { encryptionMode: 'e2ee', firstName: 'Unbound' } });
+        await db.account.update({ where: { id: eligible.id }, data: { firstName: 'Eligible' } });
+        await db.account.update({ where: { id: incompatible.id }, data: { firstName: 'Plain member' } });
+        const team = await db.team.create({ data: { name: 'Mixed Team' } });
+        const principal = { kind: 'team' as const, teamId: team.id };
+        for (const accountId of [eligible.id, incompatible.id, unbound.id]) {
+            await db.teamMembership.create({ data: { teamId: team.id, accountId, role: 'member' } });
+        }
+        const actor = { actorAccountId: f.owner.id, machineId: f.machine.id };
+        expect(await inTx(tx => access.setMachineAccessGrantInTx(tx, { ...actor, principal, level: 'view' })))
+            .toMatchObject({ kind: 'saved', readiness: 'refused', canPrepareKeys: true });
+        const list = () => inTx(tx => access.listMachineAccessGrantsInTx(tx, actor));
+        expect(await list()).toMatchObject({ canManage: true, grants: [{ readiness: 'refused', audience: expect.arrayContaining([
+            { accountId: eligible.id, displayName: 'Eligible', readiness: 'key_pending', reason: 'recipient_key_pending', canPrepareKeys: true },
+            { accountId: incompatible.id, displayName: 'Plain member', readiness: 'refused', reason: 'recipient_encryption_incompatible', canPrepareKeys: false },
+            { accountId: unbound.id, displayName: 'Unbound', readiness: 'key_pending', reason: 'encryption_material_unavailable', canPrepareKeys: false },
+        ]) }] });
+        const census = await inTx(tx => access.readMachineRecipientCensusInTx(tx, actor));
+        if ('kind' in census) throw new Error(census.code);
+        await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, { ...actor,
+            expectedMachineOwnerEnvelopeFingerprint: census.machineOwnerEnvelopeFingerprint!,
+            expectedCallerDataEncryptionKey: census.callerDataEncryptionKey!,
+            expectedMetadataVersion: census.content.metadataVersion, expectedDaemonStateVersion: census.content.daemonStateVersion,
+            recipientKeyEnvelopes: [{ recipientAccountId: eligible.id,
+                encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: f.key, recipientPublicKey: eligible.keys.publicKey, randomBytes: tweetnacl.randomBytes })),
+                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(eligible.keys.publicKey) }],
+        }));
+        expect(await inTx(tx => access.setMachineAccessGrantInTx(tx, { ...actor, principal, level: 'admin' })))
+            .toMatchObject({ kind: 'saved', grant: { level: 'admin' }, canPrepareKeys: false });
+        expect(await list()).toMatchObject({ grants: [{ level: 'admin', audience: expect.arrayContaining([
+            { accountId: eligible.id, displayName: 'Eligible', readiness: 'ready', reason: null, canPrepareKeys: false },
+            { accountId: incompatible.id, displayName: 'Plain member', readiness: 'refused', reason: 'recipient_encryption_incompatible', canPrepareKeys: false },
+        ]) }] });
+        expect(await access.resolveMachineAdmission({ actorAccountId: eligible.id, machineId: f.machine.id, requiredRole: 'manage' }))
+            .toMatchObject({ kind: 'admitted', role: 'manage' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: incompatible.id, machineId: f.machine.id }))
+            .toEqual({ kind: 'denied', code: 'recipient_encryption_incompatible' });
+        const own = await inTx(tx => access.listMachineAccessGrantsInTx(tx, { actorAccountId: unbound.id, machineId: f.machine.id }));
+        expect(own).toMatchObject({ canManage: true });
+    });
 });

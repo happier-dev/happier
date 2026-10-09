@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -9,7 +10,10 @@ import * as privacyKit from 'privacy-kit';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { encryptWithDataKey } from '../../../../../../cli/src/api/encryption';
+import { encryptWithDataKey, decryptWithDataKey } from '../../../../../../cli/src/api/encryption';
+import { prepareMachineAccessKeyEnvelopes } from '../../../../../../cli/src/api/machineAccessGrantEnvelopeHost';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import {
     computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1,
     signExternalActionMachineRequestV1, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
@@ -21,6 +25,12 @@ import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { withAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { machinesRoutes } from './machinesRoutes';
+
+vi.mock('axios', async importOriginal => {
+    const actual = await importOriginal<typeof import('axios')>();
+    // HTTP dispatch enters actual Fastify routes/SQLite; no preparation or access logic is mocked.
+    return { ...actual, default: { ...actual.default, get: vi.fn(), post: vi.fn(), patch: vi.fn() } };
+});
 
 describe('Machine accessible discovery and access HTTP (SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -96,6 +106,77 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             expect(left.json()).toMatchObject({ kind: 'left', effectiveAccess: 'none' });
             const revoked = await app.inject({ method: 'GET', url: base, headers: headers(recipient.id) });
             expect(revoked.statusCode).toBe(404);
+        });
+    });
+
+    it.each(['absent', 'malformed-present'] as const)('first share of predecessor %s owner material uses actual client preparation and real routes', async envelopeState => {
+        // Actual ../0.2 factory basis f2dd8f01185784676b639cec5cf8a5ed79973301:
+        // client/encryptionKey.ts#resolveMachineEncryptionContext + api.ts registration.
+        // Captured by executing that factory and its encryptLegacy serializer with
+        // secret=21*32 and the edited objects below; no current factory produced these bytes.
+        const predecessorMetadata = 'LGwj+2OZUgTFSNE0XwZuM6nr3ZIrIZYFjPoqt7APLvxjr4VdACdgCgmQOuF5+WZE8mTKZ7x7hvmP8gq7jFGOwSfS/pu3Rk7MBTktTarigh7iimerlHdrpgjuPkkTsxG/egpFEHqJKmHuvLn6Z5dHAHexOSL6zcnVVSmGQlv8Cd5o9mvjVVLWc33CuDXwl0a5Ll6hBotnkIDju9BnXEQr1pdVvCnDmNUDmZA2948QAmGEKe81TmGtgvGnLXycff3cto2qXErTpDZ058TByuX3XmU/HOC/cAzgt2WkAa6e3eRT3JEyz8A3UqvnovzZgpGIfKiZwuLsndtU+w8mCPEoNNwMG1WUsVKqd0IYLN7chu0cEQNAppZuUd9rE64n';
+        const predecessorState = '14cnqX/ggtSHjD7iqiDsO7i5Hhm7GreLcs34Md0oRQeflMjEkRWAAsNJslOSrF63VB10zPV0ATiUYsbMkWHcHp8Bgfgui5auJ17aNrlY4yWr6eYUFlj83X1u2+Ex3D+WdgZrkT2gdZr2hXj7jsPCQAExMrLw5mY+FlM1JAqqRlP23e+oKAhBSp1mSuUgj35VL7rQ';
+        const secret = new Uint8Array(32).fill(21);
+        const ownerKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+        const ownerKeys = tweetnacl.box.keyPair.fromSecretKey(ownerKey);
+        const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(ownerKeys.publicKey), encryptionMode: 'e2ee' } });
+        const recipientKeys = tweetnacl.box.keyPair();
+        const recipient = await db.account.create({ data: { ...createSignedAccountContentBinding(recipientKeys.publicKey), encryptionMode: 'e2ee' } });
+        const editedMetadata = { host: 'workstation', platform: 'linux', happyCliVersion: '0.2.0', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier', displayName: 'Edited workstation', username: 'alice' };
+        const editedState = { status: 'running', pid: 42, httpPort: 4321 };
+        const machine = await db.machine.create({ data: {
+            id: `machine-${randomUUID()}`, accountId: owner.id,
+            metadata: predecessorMetadata, metadataVersion: 5,
+            daemonState: predecessorState, daemonStateVersion: 7,
+            dataEncryptionKey: envelopeState === 'absent' ? null : new Uint8Array([0, 1, 2]),
+            installationId: `installation-${randomUUID()}`,
+        } });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const base = `/v1/machines/${machine.id}`;
+            if (envelopeState === 'absent') {
+                const grant = await app.inject({ method: 'PUT', url: `${base}/access`, headers: headers(owner.id), payload: { principal: { kind: 'account', accountId: recipient.id }, level: 'view' } });
+                expect(grant.json()).toMatchObject({ kind: 'saved', readiness: 'key_pending' });
+            }
+            const before = await app.inject({ method: 'GET', url: `${base}/data-key-envelopes`, headers: headers(owner.id) });
+            expect(before.json()).toMatchObject({ kind: 'refused' });
+            const paths: string[] = [];
+            const request = async (method: 'GET' | 'POST' | 'PATCH', url: unknown, body?: unknown) => {
+                const path = new URL(String(url)).pathname + new URL(String(url)).search;
+                paths.push(`${method} ${path}`);
+                if (path === '/v1/account/encryption') {
+                    const persisted = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
+                    return { status: 200, data: { mode: persisted.encryptionMode, updatedAt: 1 } };
+                }
+                const response = await app.inject({ method, url: path, headers: headers(owner.id), ...(body === undefined ? {} : { payload: body }) });
+                return { status: response.statusCode, data: response.json() };
+            };
+            vi.mocked(axios.get).mockImplementation(url => request('GET', url));
+            vi.mocked(axios.post).mockImplementation((url, body) => request('POST', url, body));
+            vi.mocked(axios.patch).mockImplementation((url, body) => request('PATCH', url, body));
+            const token = `header.${Buffer.from(JSON.stringify({ sub: owner.id })).toString('base64url')}.signature`;
+            const result = await prepareMachineAccessKeyEnvelopes({ credentials: { token, encryption: { type: 'legacy', secret } }, serverHttpBaseUrl: 'https://owner-home.test', serverId: 'owner-home', machineId: machine.id });
+            const retained = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+            if (envelopeState === 'malformed-present') {
+                expect(result).toMatchObject({ kind: 'unavailable' });
+                expect(retained).toEqual(machine);
+                expect(await db.machineKeyEnvelope.count({ where: { machineId: machine.id } })).toBe(0);
+                expect(paths.some(path => path.startsWith('POST ') || path.startsWith('PATCH '))).toBe(false);
+                return;
+            }
+            expect(result).toEqual({ kind: 'prepared' });
+            const independentKey = openEncryptedDataKeyEnvelopeV1({ envelope: retained.dataEncryptionKey!, recipientSecretKeyOrSeed: ownerKey });
+            expect(independentKey).not.toBeNull();
+            expect(independentKey).not.toEqual(secret);
+            expect(independentKey).not.toEqual(ownerKey);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(retained.metadata), independentKey!)).toEqual(editedMetadata);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(retained.daemonState!), independentKey!)).toEqual(editedState);
+            expect(retained).toMatchObject({ metadataVersion: 6, daemonStateVersion: 8 });
+            const ready = await app.inject({ method: 'GET', url: base, headers: headers(recipient.id) });
+            expect(ready.json().machine.access.accessState).toBe('ready');
+            const recipientKey = openEncryptedDataKeyEnvelopeV1({ envelope: privacyKit.decodeBase64(ready.json().machine.dataEncryptionKey), recipientSecretKeyOrSeed: recipientKeys.secretKey });
+            expect(recipientKey).toEqual(independentKey);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(ready.json().machine.metadata), recipientKey!)).toEqual(editedMetadata);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(ready.json().machine.daemonState), recipientKey!)).toEqual(editedState);
         });
     });
 

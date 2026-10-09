@@ -28,8 +28,9 @@ export type PrepareMachineAccessKeyEnvelopesParams = Readonly<{
 export async function prepareMachineAccessKeyEnvelopes(
   params: PrepareMachineAccessKeyEnvelopesParams,
 ): Promise<MachineKeyPreparationResultV1> {
+  const credentials = params.credentials;
+  const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
   let current = true;
-  let custodianPrepared = false;
   let custodianKey: Machine | null = null;
   const assertCurrent = async () => {
     current = !params.signal?.aborted && (await params.isCredentialCurrent?.()) !== false;
@@ -57,23 +58,19 @@ export async function prepareMachineAccessKeyEnvelopes(
   };
   return prepareMachineDataKeyEnvelopesV1({
     machineId: params.machineId,
-    transport: {
-      fetchPage: async cursor => {
-        const query = new URLSearchParams({ state: 'action_required' });
-        if (cursor) query.set('cursor', cursor);
-        const pagePath = `${path}?${query.toString()}`;
-        const observe = async () => {
-          const response = await axios.get<unknown>(`${params.serverHttpBaseUrl}${pagePath}`, await options({ method: 'GET', path: pagePath }));
-          return MachineAccessRecipientCensusResponseV1Schema.parse(await readResponse(response));
-        };
-        let page = await observe();
-        if (page.machineId !== params.machineId) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
-        if (!custodianPrepared && !params.resolveTransferableMachineDataKey && params.credentials?.encryption
-          && readAccountIdFromToken(params.credentials.token) === page.custodianAccountId && page.encryptionMode === 'e2ee') {
-          custodianPrepared = true;
+    ...(!params.resolveTransferableMachineDataKey && credentials?.encryption && accountId ? {
+      ownerPreparation: {
+        accountId,
+        observeMachine: async () => {
+          const machinePath = `/v1/machines/${encodeURIComponent(params.machineId)}`;
+          const payload = await readResponse(await axios.get<unknown>(`${params.serverHttpBaseUrl}${machinePath}`, await options({ method: 'GET', path: machinePath })));
+          if (!payload || typeof payload !== 'object' || !('machine' in payload)) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
+          return payload.machine;
+        },
+        prepareContentKey: async () => {
           const { ApiClient } = await import('@/api/api');
           await assertCurrent();
-          const client = await ApiClient.create(params.credentials);
+          const client = await ApiClient.create(credentials);
           custodianKey = await client.prepareMachineContentKey(params.machineId, {
             signal: params.signal, isCurrent: async () => { await assertCurrent(); return current; },
             request: async request => {
@@ -85,11 +82,16 @@ export async function prepareMachineAccessKeyEnvelopes(
               return response;
             },
           });
-          // Preparation may have changed both encrypted blobs and their owner key. The first
-          // census cannot authorize sealing those new bytes; observe the current worklist again.
-          page = await observe();
-        }
-        return page;
+        },
+      },
+    } : {}),
+    transport: {
+      fetchPage: async cursor => {
+        const query = new URLSearchParams({ state: 'action_required' });
+        if (cursor) query.set('cursor', cursor);
+        const pagePath = `${path}?${query.toString()}`;
+        const response = await axios.get<unknown>(`${params.serverHttpBaseUrl}${pagePath}`, await options({ method: 'GET', path: pagePath }));
+        return MachineAccessRecipientCensusResponseV1Schema.parse(await readResponse(response));
       },
       patchPage: async request => {
         const { machineId: _machineId, ...body } = MachineRecipientKeyEnvelopeCommitInputV1Schema.parse(request);
@@ -110,7 +112,6 @@ export async function prepareMachineAccessKeyEnvelopes(
         }
         key = custodianKey.encryptionKey;
       }
-      const accountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
       if (!params.resolveTransferableMachineDataKey && params.credentials && accountId
         && accountId !== page.custodianAccountId) {
         // This manager-only worklist proved permission and the current caller tuple. A foreign

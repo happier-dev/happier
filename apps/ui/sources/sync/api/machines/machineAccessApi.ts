@@ -79,7 +79,7 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
         // Permission is already committed. A pending physical continuation must not turn a
         // successful grant into a retryable permission failure, nor fabricate readiness.
         if (actionId === 'machines.access.grant.set' && value && typeof value === 'object'
-            && 'kind' in value && value.kind === 'saved' && 'readiness' in value && value.readiness === 'key_pending') {
+            && 'kind' in value && value.kind === 'saved' && 'canPrepareKeys' in value && value.canPrepareKeys === true) {
             await prepare().catch(() => undefined);
         }
         return value;

@@ -8,14 +8,9 @@ import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/action
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { StoredCredentials } from '@/persistence';
-import axios from 'axios';
 import { hostname } from 'node:os';
-import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
-import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
-import { resolveMachineControlLocalityProof, resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
+import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -24,7 +19,7 @@ import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -94,7 +89,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   admissionDrain?: DaemonAdmissionDrain;
   resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess;
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
-  ownSessionRuntime?: (ingress: RpcHandlerContext) => MachineTerminalAccountReadRuntime | null | Promise<MachineTerminalAccountReadRuntime | null>;
+  ownSessionRuntime?: (ingress: RpcHandlerContext) => MachineTerminalOwnSessionReadRuntime | null | Promise<MachineTerminalOwnSessionReadRuntime | null>;
   /** The real receiving Action executor owns invocation policy, consent and finite launch. */
   projectScriptExecutor?: (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => RpcActionExecutor | Promise<RpcActionExecutor>;
   /**
@@ -113,6 +108,7 @@ export type MachineTerminalAccountReadRuntime = Readonly<{
   serverHttpBaseUrl: string;
   isCurrent?: () => Promise<boolean>;
 }>;
+export type MachineTerminalOwnSessionReadRuntime = Omit<MachineTerminalAccountReadRuntime, 'credentials'> & ProjectRuntimeAccountAccess;
 
 function terminalStreamUnavailable(): { ok: false; code: 'terminal_byte_stream_unavailable'; message: string } {
   return {
@@ -214,36 +210,24 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const resolveOwnSessionCustody = async (sessionId: string, cwdInput: string | undefined, context: RpcHandlerContext)
     : Promise<Readonly<{ ok: true; cwd: string; custody: TerminalPtyCustody }> | ReturnType<typeof err>> => {
     const admission = context.machineAdmission;
-    if (!admission || admission.actorAccountId !== admission.custodianAccountId || !await admissionCurrent(context)) return err('terminal_forbidden');
+    if (!admission || !await admissionCurrent(context)) return err('terminal_forbidden');
     const runtime = await params.deps?.ownSessionRuntime?.(context);
-    if (!runtime || runtime.accountId !== admission.actorAccountId) return err('terminal_unavailable');
+    if (!runtime) return err('terminal_unavailable');
+    if (runtime.accountId !== admission.actorAccountId) return err('terminal_forbidden');
     if (runtime.machineId !== admission.machineId || params.deps?.serverId !== undefined && runtime.serverId !== params.deps.serverId) return err('terminal_forbidden');
     try {
       if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
-      const session = await fetchSessionById({ token: runtime.credentials.token, serverUrl: runtime.serverHttpBaseUrl,
-        sessionId, signal: context.signal, accessProjectionVersion: 1 });
-      if (!session || session.id !== sessionId || session.effectiveAccess?.level !== 'owner') return err('terminal_forbidden');
-      const mode = await readAccountEncryptionModeOnce({ request: () => axios.get(`${runtime.serverHttpBaseUrl}/v1/account/encryption`, {
-        headers: { Authorization: `Bearer ${runtime.credentials.token}` }, signal: context.signal,
-        timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true,
-      }) });
-      if (mode.kind !== 'resolved') return err('terminal_forbidden');
-      const metadata = tryDecryptSessionOwnerMetadataView({ credentials: runtime.credentials, accountEncryptionMode: mode.mode, rawSession: session });
-      if (!metadata) return err('terminal_forbidden');
-      const locality = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => resolveMachineControlLocalityProof({
-        sessionMachineId: metadata.machineId, currentMachineId: admission.machineId,
-        sessionHost: metadata.host, sessionHomeDir: metadata.homeDir,
+      const request = { sessionId, machineId: admission.machineId, signal: context.signal,
         currentMachineHost: hostname(), currentMachineHomeDir: resolveHomeDirFromEnvironment(env, params.deps?.platform),
-        credentials: runtime.credentials,
-      }));
-      if (!locality) return err('terminal_forbidden');
-      const path = resolveSessionMachineWorkspacePath({ metadata, currentMachineId: admission.machineId, candidatePath: metadata.path });
-      if (!path) return err('terminal_cwd_denied');
-      const root = resolveCwd(path);
+        ...(cwdInput === undefined ? {} : { candidatePath: cwdInput }) };
+      const workspace = runtime.accountAuthorization
+        ? await runtime.accountAuthorization.requesterAccountProjection?.readOwnSessionWorkspace?.(request)
+        : await readOwnSessionMachineWorkspace({ ...request, credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl });
+      if (!workspace) return err('terminal_forbidden');
+      const root = resolveCwd(workspace.rootPath);
       if (!root.ok) return root;
       if (cwdInput !== undefined) {
-        const requestedPath = resolveSessionMachineWorkspacePath({ metadata, currentMachineId: admission.machineId, candidatePath: cwdInput });
-        const requested = resolveCwd(requestedPath ?? cwdInput);
+        const requested = resolveCwd(workspace.requestedPath ?? cwdInput);
         if (!requested.ok || normalizeWorkspaceRootPathV1(requested.cwd) !== normalizeWorkspaceRootPathV1(root.cwd)) return err('terminal_cwd_denied');
       }
       if (!await admissionCurrent(context)) return err('terminal_forbidden');
@@ -281,7 +265,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     try {
       if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
-        credentials: runtime.credentials, serverId: runtime.serverId, signal: context.signal,
+        ...projectRuntimeAccountRowsInput(runtime, context.callerInputAuthorization?.binding.actionId ?? 'machines.terminal.open'), serverId: runtime.serverId, signal: context.signal,
       }));
       const cwd = resolveCwd(input.workspace?.rootPath ?? input.cwd);
       if (!cwd.ok) return cwd;
@@ -383,7 +367,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         }
       };
       await assertCurrent();
-      const association = await resolveProjectSetupAcceptedWorkspace({ credentials: runtime.credentials,
+      const accountAccess = projectRuntimeAccountRowsInput(runtime, context.callerInputAuthorization?.binding.actionId ?? 'machines.terminal.open');
+      const association = await resolveProjectSetupAcceptedWorkspace({ ...accountAccess,
         serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
         address: { serverId: custody.serverId, workspaceId: custody.workspaceRefId, machineId: custody.machineId, rootPath: custody.rootPath } });
       if (association.workspace.projectKey !== custody.projectKey) return refused('project_workspace_changed');
@@ -398,7 +383,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       };
       const platform = runtime.platform ?? params.deps?.platform ?? process.platform;
       const preparation = { workspace: association.workspace, projectAssociation: association,
-        requester: { credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup' as const,
+        requester: { ...accountAccess, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup' as const,
         platform: { os: platform === 'win32' ? 'windows' : platform, arch: runtime.arch ?? process.arch },
         nativeIo: runtime.nativeIo, signal: context.signal, retainNativeInvocation: nativeCustody.retain,
         ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
@@ -408,7 +393,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       };
       const inspect = async () => {
         await assertCurrent();
-        const current = await resolveProjectSetupAcceptedWorkspace({ credentials: runtime.credentials,
+        const current = await resolveProjectSetupAcceptedWorkspace({ ...accountAccess,
           serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
           address: workspaceAddressFromRefV1(association.workspace) });
         if (current.workspace.projectKey !== custody.projectKey) throw Object.assign(new Error('project_workspace_changed'), { code: 'project_workspace_changed' });
@@ -496,7 +481,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         return refused('project_requester_credentials_unavailable');
       }
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
-        credentials: runtime.credentials, serverId: runtime.serverId, signal: context.signal,
+        ...projectRuntimeAccountRowsInput(runtime, 'projects.script.run'), serverId: runtime.serverId, signal: context.signal,
       }));
       if (!await isCurrent()) return refused('machine_admission_changed');
       // Directory selects only an exact accepted checkout. Its stored Project anchor,

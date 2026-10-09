@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../actions/externalActionApi.js';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, ExternalActionExecutionAuthorizationV1Schema } from '../../../../actions/externalActionApi.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../../../../auth/apiTokenGrant.js';
 import { HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD } from '../../../../marketplace/internal.js';
 import {
   RPC_METHODS,
@@ -9,12 +10,239 @@ import {
 } from '../../../../rpc/index.js';
 import { PeerFlowKindV1Schema } from '../flowKind.js';
 import { resolveMachineRpcGovernance } from './governanceV1.js';
+import { getActionSpec } from '../../../../actions/actionSpecs.js';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
+import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '../../../../connect/connectedServicePoolSelection.js';
 
 async function importRpcPolicy() {
   return await import('./index').catch((error: unknown) => ({ importError: error }));
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('binds Search settings and index control transports to their canonical Actions', async () => {
+    const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
+    for (const [method, actionSpecId] of [
+      [RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, 'search.settings.get'],
+      [RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET, 'search.settings.set'],
+      [RPC_METHODS.DAEMON_MEMORY_STATUS, 'memory.status'],
+      [RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX, 'memory.clear_index'],
+    ] as const) {
+      expect(resolveMachineRpcGovernance(method)).toEqual({ rpcClassification: 'action_spec_bound', actionSpecId });
+      expect(resolveMachineRpcExternalActionEffectV1(method)).toBe(actionSpecId);
+    }
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX)).toMatchObject({
+      routeClass: 'server_required', sharedMachineAccess: 'manage', serverRequiredReason: 'destructive_or_recovery_mutation',
+    });
+  });
+  it('binds the personal pool selection read to its Action without granting shared Machine Use', async () => {
+    const { resolveMachineRpcRoutePolicy, resolveMachineRpcExternalActionEffectV1 } = await import('./routePolicyV1');
+    expect(resolveMachineRpcGovernance(CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD)).toMatchObject({
+      rpcClassification: 'action_spec_bound', actionSpecId: 'connectedServices.pools.selection.get',
+    });
+    expect(resolveMachineRpcRoutePolicy(CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'auth',
+      rpcClassification: 'action_spec_bound', actionSpecId: 'connectedServices.pools.selection.get',
+      sharedMachineAccess: 'custodian_only', commandReceiptRequired: false,
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true, sessionRequired: false },
+    });
+    expect(resolveMachineRpcExternalActionEffectV1(CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD)).toBe('connectedServices.pools.selection.get');
+  });
+  it('projects only accepted handoff TARGET continuations onto the exact private Workspace Sync phases', async () => {
+    const { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-continuation', binding: {
+      accountId: 'requester', principalId: 'requester', credentialId: '11111111-1111-4111-8111-111111111111',
+      grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: `srv_${'a'.repeat(32)}`,
+      machineId: 'shared-target-child', installationId: 'target-installation', custodianAccountId: 'custodian',
+      actionId: 'session.handoff.prepare_target', requestId: 'original-request', requestEnvelopeDigest: 'b'.repeat(43),
+      target: { kind: 'machine', machineId: 'shared-target-child' },
+      handoffAdmission: { sessionId: 'moved-session', sourceMachineId: 'original-source', targetMachineId: 'shared-target-child',
+        sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      handoffContinuation: { rootRequestId: 'original-request', rootRequestEnvelopeDigest: 'a'.repeat(43), handoffId: 'accepted-handoff' },
+    } }).binding;
+    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
+      expect(resolveMachineRpcExternalActionEffectV1(method, binding)).toBe('session.handoff.prepare_target');
+      expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe('custodian_only');
+      expect(resolveMachineRpcExternalActionEffectV1(method)).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, handoffContinuation: undefined })).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, machineId: 'foreign-target' })).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, installationId: 'retired-target' })).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, actionId: 'session.handoff.commit' })).toBeNull();
+    }
+    expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, binding)).toBeNull();
+  });
+
+  it('maps native approved replay only to the exact fresh reviewer decision root', async () => {
+    const protocol = await import('./routePolicyV1');
+    const resolve = Reflect.get(protocol, 'resolveMachineRpcExternalActionEffectV1') as (method: string, binding: unknown) => string | null;
+    const reviewer = { actionId: 'approval.request.decide', accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 },
+      machineId: 'target', installationId: 'target-installation', target: { kind: 'machine', machineId: 'target' } };
+    const method = RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED;
+    expect(resolve(method, reviewer)).toBe('approval.request.decide');
+    expect(resolve(method, { ...reviewer, authentication: undefined, principalId: 'bob',
+      credentialId: '11111111-1111-4111-8111-111111111111', grant: API_TOKEN_FULL_GRANT_V1 }))
+      .toBe('approval.request.decide');
+    for (const unsafe of [undefined, { ...reviewer, actionId: 'session.spawn_new' },
+      { ...reviewer, target: { kind: 'machine', machineId: 'elsewhere' } },
+      { ...reviewer, sessionActionOrigin: { caller: { kind: 'session' } }, sessionActionSource: { machineId: 'source' } },
+      { ...reviewer, workflowActionOrigin: { runId: 'source-run' } },
+      { ...reviewer, handoffContinuation: { handoffId: 'handoff' } },
+      { ...reviewer, managedContinuation: { managedId: 'managed' } },
+      { ...reviewer, authentication: { kind: 'terminal' } }]) {
+      expect(resolve(method, unsafe)).toBeNull();
+    }
+  });
+  it('maps private handoff resume and custody observation only with the captured target continuation', async () => {
+    const protocol = await import('./routePolicyV1');
+    const resolve = Reflect.get(protocol, 'resolveMachineRpcExternalActionEffectV1') as (
+      method: string, binding: unknown) => string | null;
+    expect(typeof resolve).toBe('function');
+    const binding = { actionId: 'session.spawn_new', machineId: 'target', installationId: 'target-installation',
+      handoffAdmission: { sessionId: 'same-session', sourceMachineId: 'source', targetMachineId: 'target',
+        sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      handoffContinuation: { rootRequestId: 'root-request', rootRequestEnvelopeDigest: 'a'.repeat(43), handoffId: 'handoff' } };
+    for (const method of [RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE]) {
+      expect(resolve(method, binding)).toBe('session.spawn_new');
+      const root = { ...binding, actionId: 'session.handoff', machineId: 'source', installationId: 'source-installation',
+        handoffContinuation: undefined };
+      const projectRoot = resolve as (method: string, binding: unknown, target: unknown) => string | null;
+      expect(projectRoot(method, root, { machineId: 'target', installationId: 'target-installation' })).toBe('session.spawn_new');
+      expect(resolve(method, { ...binding, handoffContinuation: undefined })).toBeNull();
+      expect(resolve(method, { ...binding, machineId: 'source', installationId: 'source-installation' })).toBeNull();
+    }
+    expect(resolve(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, binding)).toBeNull();
+    expect(resolve(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, binding)).toBeNull();
+  });
+  it('admits repository-address checks as the canonical read Action through shared Machine Use', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    const method = getActionSpec('scm.hostingRepository.resolveAddress').bindings!.rpcMethod!;
+    expect(Object.values(RPC_METHODS)).toContain(method);
+    expect(resolveMachineRpcGovernance(method)).toEqual({
+      rpcClassification: 'action_spec_bound', actionSpecId: 'scm.hostingRepository.resolveAddress',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'ambiguous', sharedMachineAccess: 'use',
+      rpcClassification: 'action_spec_bound', actionSpecId: 'scm.hostingRepository.resolveAddress',
+      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+    });
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+  });
+  it('admits requester-scoped operation reads through Machine Use on both observation versions, without admitting Stop', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const methods of [ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2]) {
+      for (const [key, actionSpecId] of [['list', 'action.operations.list'], ['get', 'action.operations.get']] as const) {
+        expect(resolveMachineRpcGovernance(methods[key])).toEqual({ rpcClassification: 'action_spec_bound', actionSpecId });
+        expect(protocol.resolveMachineRpcRoutePolicy(methods[key])).toMatchObject({
+          routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'use',
+          rpcClassification: 'action_spec_bound', actionSpecId,
+          scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+        });
+        expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(methods[key])).toBeNull();
+      }
+    }
+    expect(protocol.resolveMachineRpcRoutePolicy(ACTION_OPERATION_RPC_METHODS_V1.cancel)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'custodian_only',
+      rpcClassification: 'action_spec_bound', actionSpecId: 'action.operations.cancel',
+    });
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(ACTION_OPERATION_RPC_METHODS_V1.cancel)).toBeNull();
+  });
+  it('admits retained-resource controls through current Manage without making them direct or Runner authority', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const id of ['machines.managed.power.set', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'] as const) {
+      const method = getActionSpec(id).bindings!.rpcMethod!;
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', sharedMachineAccess: 'manage', rpcClassification: 'action_spec_bound', actionSpecId: id,
+      });
+      expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+    }
+  });
+  it('admits all semantic filesystem Actions through verified Account and exact Machine ingress', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const id of ['daemon.filesystem.createDirectory', 'daemon.filesystem.rename', 'daemon.filesystem.delete',
+      'daemon.filesystem.copy', 'daemon.filesystem.upload', 'daemon.filesystem.download', 'daemon.filesystem.transfer.cancel'] as const) {
+      const method = getActionSpec(id).bindings!.rpcMethod!;
+      expect(resolveMachineRpcGovernance(method)).toEqual({ rpcClassification: 'action_spec_bound', actionSpecId: id });
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'use',
+        rpcClassification: 'action_spec_bound', actionSpecId: id,
+        scope: { accountRequired: true, machineRequired: true, serverRequired: true },
+      });
+      expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBe(
+        id === 'daemon.filesystem.upload' || id === 'daemon.filesystem.download'
+          || id === 'daemon.filesystem.transfer.cancel' ? null : 'submitAgentInput',
+      );
+    }
+    // The rooted new copy alias must not gain broader direct/Runner authority
+    // than the incumbent raw filesystem mutation corridor.
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.COPY_PATH)).toMatchObject({
+      ...protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.RENAME_PATH), method: RPC_METHODS.COPY_PATH,
+    });
+  });
+  it('keeps selected-service admission internal and server-routed with shared Machine use', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    const method = 'daemon.localServices.preview.admission';
+    expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'internal_only',
+      sharedMachineAccess: 'use',
+      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+    });
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+  });
+  it('classifies Open and its source-host Sync effect under one server-routed Project Action', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const method of [RPC_METHODS.PROJECTS_OPEN, RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN]) {
+      expect(resolveMachineRpcGovernance(method)).toEqual({ rpcClassification: 'action_spec_bound', actionSpecId: 'projects.open' });
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'action_spec_bound',
+        actionSpecId: 'projects.open', sharedMachineAccess: method === RPC_METHODS.PROJECTS_OPEN ? 'use' : 'custodian_only',
+        scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+      });
+      expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
+    }
+  });
+  it('keeps Machine access-loss cleanup server-origin and custodian-only', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    const policy = protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS);
+    expect(policy).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'auth',
+      rpcClassification: 'internal_only', sharedMachineAccess: 'custodian_only',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
+    });
+    expect(protocol.isMachineRpcDirectRoutePolicy(policy)).toBe(false);
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS)).toBeNull();
+  });
+  it('separates Machine use, infrastructure management and private custodian operations', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+    for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_LIST,
+      RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+      RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
+      RPC_METHODS.DAEMON_TERMINAL_INPUT, RPC_METHODS.DAEMON_TERMINAL_RESIZE,
+      RPC_METHODS.DAEMON_TERMINAL_CLOSE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({ sharedMachineAccess: 'use' });
+    }
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.STOP_DAEMON)).toMatchObject({ sharedMachineAccess: 'manage' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET)).toMatchObject({ sharedMachineAccess: 'manage' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD)).toMatchObject({ sharedMachineAccess: 'manage' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROMPT_REGISTRY_LIST_SOURCES)).toMatchObject({ sharedMachineAccess: 'use' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_MATERIALIZE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SESSION_FORK_PROVIDER_SAFE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy('not.registered')).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+  });
   it('keeps explicit machine log reads on the classified Account and Machine server route', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
@@ -51,12 +279,6 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(result.duplicateMethods).toEqual([]);
     expect(result.invalidMethods).toEqual([]);
     expect(result.ok).toBe(true);
-    // Two classified methods are owned outside the two method literal maps:
-    // the host-private plugin install decision and the closed server-origin
-    // public Action dispatch.
-    expect(result.policies).toHaveLength(
-      Object.keys(RPC_METHODS).length + Object.keys(SESSION_RPC_METHODS).length + 2,
-    );
   });
 
   it('keeps workspace content search on the Account and Machine server route with its read Action authority', async () => {
@@ -332,6 +554,11 @@ describe('MachineRpcRoutePolicyV1', () => {
       RPC_METHODS.CREATE_DIRECTORY,
       RPC_METHODS.RENAME_PATH,
       RPC_METHODS.DELETE_PATH,
+      RPC_METHODS.COPY_PATH,
+      RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY,
+      RPC_METHODS.DAEMON_FILESYSTEM_RENAME,
+      RPC_METHODS.DAEMON_FILESYSTEM_DELETE,
+      RPC_METHODS.DAEMON_FILESYSTEM_COPY,
       RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
       RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
       RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
@@ -463,7 +690,8 @@ describe('MachineRpcRoutePolicyV1', () => {
 
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_MEMORY_STATUS)).toMatchObject({
       routeClass: 'direct_ephemeral',
-      rpcClassification: 'internal_only',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'memory.status',
       commandReceiptRequired: false,
       scope: expect.objectContaining({
         machineRequired: true,

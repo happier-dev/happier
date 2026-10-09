@@ -1,3 +1,4 @@
+import { resolveExistingSessionAttachContext } from '../sessionEncryption/resolveExistingSessionAttachContext';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createSessionLiveWorkProducer } from '../lifecycle/sessionLiveWorkProducer';
@@ -7,6 +8,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { createSessionStartupReadinessHandler } from './sessionStartupReadiness';
+import { createSharedManagedProviderSessionAccess } from './sharedManagedProviderSessionAccess';
+import { createRemoteManagedProviderSessionProjection } from './remoteManagedProviderSession';
 import type { ActionOperationRpcContext } from '../actionOperations/actionOperationRpcHandlers';
 import type { ConnectedServicePoolSelectionRead } from '@/api/machine/rpcHandlers.connectedAccounts';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
@@ -421,6 +424,7 @@ import { resolveRecoveredSpawnNonceAdmission } from '../spawn/recoveredSpawnNonc
 import { applyTrackedSessionTurnLifecycle } from '../sessions/applyTrackedSessionTurnLifecycle';
 import {
   isSessionRunnerActive as isSessionRunnerActiveInDaemon,
+  probeSessionRunnerPresence,
   probeSessionRunnerServiceability,
   resolveSessionRunnerResumeDecision,
 } from '../sessions/isSessionRunnerActive';
@@ -2314,8 +2318,11 @@ export async function startDaemonSessionControlRuntime(
      * Without it the public Action route is deliberately not mounted.
      */
     externalActionAccountId?: string | null;
+    openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
     /** Profile identity paired with `serverBaseUrl` for this daemon lifecycle. */
     serverId: string;
+    /** C52's single composed inventory; requester recovery must include sessionless native work. */
+    readLiveWorkInventory?: () => Promise<import('../lifecycle/managedActivity').LiveWorkInventoryV1>;
     /** Resolved Account server for this daemon lifecycle's PAT introspection. */
     serverBaseUrl: string;
     runtimeActionExecute?: RuntimeActionExecute;
@@ -2733,7 +2740,7 @@ export async function startDaemonSessionControlRuntime(
       if (
         (attribution &&
           !isDeepStrictEqual(context.bootstrap.attribution, attribution)) ||
-        !(await context.bootstrap.isCurrent())
+        !(await context.isCurrent())
       )
         throw new Error('requester_session_not_current');
       return context;
@@ -2799,7 +2806,7 @@ export async function startDaemonSessionControlRuntime(
         ...(context
           ? {
               currentness: {
-                verifyCurrent: () => context.bootstrap.isCurrent(),
+                verifyCurrent: () => context.isCurrent(),
               },
             }
           : {}),
@@ -4572,7 +4579,7 @@ export async function startDaemonSessionControlRuntime(
         ...(context
           ? {
               currentness: {
-                verifyCurrent: () => context.bootstrap.isCurrent(),
+                verifyCurrent: () => context.isCurrent(),
               },
             }
           : {}),
@@ -4864,7 +4871,7 @@ export async function startDaemonSessionControlRuntime(
         (options.existingSessionId &&
           suppliedRequesterRuntime.bootstrap.getBoundSessionId() !==
             options.existingSessionId) ||
-        !(await suppliedRequesterRuntime.bootstrap.isCurrent()))
+        !(await suppliedRequesterRuntime.isCurrent()))
     )
       return {
         type: 'error',
@@ -5000,12 +5007,27 @@ export async function startDaemonSessionControlRuntime(
             await resolveExistingSessionSpawnPreGate({
               existingSessionId: options.existingSessionId,
               pidToTrackedSession: spawnParams.pidToTrackedSession,
-              isSessionRunnerActive,
+              probeSessionRunnerPresence: async (sessionId) => await probeSessionRunnerPresence({
+                sessionId, trackedSessions: spawnParams.pidToTrackedSession.values(),
+              }),
+              pendingSessionStartup: {
+                pidToAwaiter: spawnParams.pidToAwaiter,
+                machineId: spawnParams.machineId,
+                happyHomeDir: configuration.happyHomeDir,
+                readSessionMetadata: async (sessionId) => {
+                  const context = await resolveExistingSessionAttachContext({
+                    sessionId, token: spawnParams.credentials.token, credentials: spawnParams.credentials,
+                  });
+                  if (!context.ok) throw new Error(context.reason);
+                  return context.attachPayload.metadata ?? null;
+                },
+              },
               waitForExitTimeoutMs:
                 configuration.daemonSpawnExistingSessionWaitForExitMs,
               waitForExitPollIntervalMs:
                 configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
               logDebug: (message, payload) => logger.debug(message, payload),
+              logWarn: (message, payload) => logger.infoFile(message, payload),
               onAlreadyRunning: async (sessionId) => {
                 const serviceability =
                   await probeAlreadyRunningExistingSessionServiceability({
@@ -6618,6 +6640,7 @@ export async function startDaemonSessionControlRuntime(
               return result;
             },
             hotApply: createSessionConnectedServiceAuthHotApply({
+              runtimeRegistry: connectedServiceRuntimeRegistry,
               isSessionCurrent: async () => {
                 await assertSessionAccountCurrent(
                   builderInput.sessionId,
@@ -7146,7 +7169,7 @@ export async function startDaemonSessionControlRuntime(
                     params.serverId &&
                   requester.bootstrap.attribution.machineId ===
                     params.machineId &&
-                  (await requester.bootstrap.isCurrent())
+                  (await requester.isCurrent())
                 );
               return await runWithServerHttpBaseUrl(
                 params.serverBaseUrl,
@@ -7718,7 +7741,7 @@ export async function startDaemonSessionControlRuntime(
             const accountSnapshot = getActiveAccountSettingsSnapshot();
             if (!accountSnapshot) return false;
             const providerSettings = readProviderSettingsForCli(
-              accountSnapshot.settings,
+              accountSnapshot,
             ).settings;
             return isRetainedManagedProviderSettingsGrantCurrent({
               machineId: params.machineId,
@@ -7729,6 +7752,114 @@ export async function startDaemonSessionControlRuntime(
             return false;
           }
         };
+        const resolveSharedGatewayBinding = async (
+          basis: ProviderRuntimeBindingBasisV1,
+        ) => {
+          const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
+          if (!origin || origin.machineId !== params.machineId || !params.externalActionAccountId) {
+            throw new PluginError({
+              code: 'plugin_services_managed_provider_authority_unavailable',
+              message: 'Managed gateway execution identity is unavailable',
+            });
+          }
+          return Object.freeze({
+            homeId: origin.serverIdentityId,
+            accountId: params.externalActionAccountId,
+            connectionId: basis.connectionId,
+            machineId: params.machineId,
+            consumerId: sessionId,
+          });
+        };
+        const createSharedManagedProjection = (
+          created: import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry').ResolvedManagedProviderRuntimeInvocationServices,
+          basis: ProviderRuntimeBindingBasisV1,
+          metadata: NonNullable<NonNullable<typeof tracked.spawnOptions>['providerBindingMetadataV1']>,
+          revalidate: () => Promise<boolean>,
+        ) => {
+          if (basis.deployment.kind !== 'managedLocal' || created.lifetime !== 'sharedConsumer') {
+            throw new PluginError({
+              code: 'plugin_services_managed_provider_authority_unavailable',
+              message: 'Managed gateway shared custody is unavailable',
+            });
+          }
+          const deployment = basis.deployment;
+          const launchScope = createProviderLaunchResourceScope();
+          launchScope.register(created.cleanup);
+          managedProviderCleanup.current = () => launchScope.release();
+          let captured: Pick<Parameters<NonNullable<typeof created.materializeManagedProviderAgentBinding>>[0], 'service' | 'projection'> | null = null;
+          let startPromise: Promise<void> | null = null;
+          const start = () => {
+            startPromise ??= (async () => {
+              const started = await startPublicManagedProviderRuntime({
+                identity: created.bootstrap.identity,
+                request: {
+                  reason: 'sessionDemand',
+                  connectionId: basis.connectionId,
+                  connectionRevision: metadata.connectionRevision,
+                  endpointTemplateIds: deployment.managedRuntime.endpointTemplateIds,
+                },
+                acquireRuntime: async identity => {
+                  const runtime = await lease.registry.acquireManagedProviderRuntime?.(identity);
+                  return runtime && runtime.activationOccurrenceId === created.bootstrap.occurrenceId
+                    && pluginSourceCustodyV1Equal(runtime.sourceCustody, created.bootstrap.sourceCustody)
+                    ? runtime : null;
+                },
+                connectedAccounts: created.connectedAccounts,
+                custody: {
+                  ...created,
+                  async projectEndpointAccess(input) {
+                    const projection = await created.projectEndpointAccess(input);
+                    if (projection) captured = { service: input.service, projection };
+                    return projection;
+                  },
+                },
+                isAuthorizationCurrent: () => !signal.aborted && authorizeOperation(undefined),
+                revalidateAuthorization: revalidate,
+                signal,
+                launchResourceScope: launchScope,
+              });
+              if (!started.ok) throw new PluginError({
+                code: started.code,
+                message: 'Managed gateway Session runtime start failed',
+              });
+            })();
+            return startPromise;
+          };
+          return Object.freeze({
+            start,
+            readSharedGatewayAccess: createSharedManagedProviderSessionAccess({
+              start,
+              readProjection: () => captured,
+              ...(created.materializeManagedProviderAgentBinding ? { materialize: created.materializeManagedProviderAgentBinding } : {}),
+              endpointTemplateId: basis.endpoint.endpointTemplateId,
+              revalidate,
+              cleanup: cleanupManagedProvider,
+            }),
+          });
+        };
+        const createRemoteManagedProjection = async (
+          basis: ProviderRuntimeBindingBasisV1,
+          metadata: NonNullable<NonNullable<typeof tracked.spawnOptions>['providerBindingMetadataV1']>,
+          hardRevocationRevision: number,
+          revalidate: () => Promise<boolean>,
+          retainedScope?: import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry').RetainedManagedProviderRuntimeInvocationScope,
+        ) => await createRemoteManagedProviderSessionProjection({
+          sessionId, machineId: params.machineId, basis, metadata, hardRevocationRevision,
+          registry: lease.registry, ...(retainedScope ? { retainedScope } : {}), signal,
+          isBootstrapCurrent: () => !signal.aborted && authorizeOperation(undefined),
+          isCurrent: async scope => !signal.aborted && authorizeOperation(undefined) && await revalidate()
+            && await readCurrentPluginHardRevocationRevision({
+              paths: resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir }), pluginId: scope.pluginId,
+            }) === hardRevocationRevision
+            && (scope.sourceCustody.kind !== 'managed' || await readCurrentPluginImmutableGenerationIntegrityCurrentness({
+              paths: resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir }),
+              pluginId: scope.pluginId, immutableGenerationId: scope.sourceCustody.immutableGenerationId,
+            })),
+          openBroker: params.openAccountConnectionProviderBrokerAccess,
+          installConsumerCleanup: cleanup => { managedProviderCleanup.current = cleanup; },
+          cleanup: cleanupManagedProvider, readSupervisionLaunchAuthority,
+          capturedAgentProviderBinding, isCapturedAgentRegistrationCurrent: isCapturedAgentRegistrationPreOpen,
+        });
         let managedProvider = await (async () => {
           if (managedProviderRetention) {
             const retained = managedProviderRetention;
@@ -7775,10 +7906,12 @@ export async function startDaemonSessionControlRuntime(
               );
             };
             const retainedCustodyDispatch =
-              await createSessionManagedProviderCustodyDispatch(scope);
+              retained.custody === 'daemonShared' ? null
+                : await createSessionManagedProviderCustodyDispatch(scope);
             let retainedProviderPolicyFence: Promise<void> | null = null;
             let retainedProviderPolicyFenced = false;
             const fenceRetainedProviderPolicy = async () => {
+              if (!retainedCustodyDispatch) return await cleanupManagedProvider();
               if (retainedProviderPolicyFenced) return;
               if (!retainedProviderPolicyFence) {
                 const fenceAttempt = (async () => {
@@ -7814,6 +7947,7 @@ export async function startDaemonSessionControlRuntime(
                   scope.runtimeBindingBasis,
                 );
             const readAdoptedPublicOutcome = async () => {
+              if (!retainedCustodyDispatch) return null;
               const outcome = await retainedCustodyDispatch({
                 v: 1,
                 kind: 'readAdoptedPublicOutcome',
@@ -7828,6 +7962,24 @@ export async function startDaemonSessionControlRuntime(
                 paths: storePaths,
                 pluginId: scope.pluginId,
               });
+            const retainedBasis = scope.runtimeBindingBasis;
+            if (retainedBasis.deployment.kind === 'managedLocal'
+              && retainedBasis.deployment.gatewayPlacement.kind === 'machine'
+              && retainedBasis.deployment.gatewayPlacement.machineId !== params.machineId) {
+              const metadata = tracked.spawnOptions?.providerBindingMetadataV1;
+              if (retained.custody !== 'daemonShared' || !metadata?.runtimeBindingBasis
+                || !sameProviderRuntimeBindingBasis(metadata.runtimeBindingBasis, retainedBasis)
+                || currentHardRevocationRevision !== retained.providerPluginHardRevocationRevisionAtAdmission) {
+                throw new PluginError({ code: 'plugin_services_managed_provider_authority_unavailable',
+                  message: 'Retained remote managed gateway authority changed' });
+              }
+              return await createRemoteManagedProjection(retainedBasis, metadata, currentHardRevocationRevision,
+                async () => readsRetainedAuthorityCurrent() && await revalidateRetainedProviderPolicy(), {
+                  sessionId: scope.sessionId, runtimeBindingBasis: retainedBasis,
+                  identity: { pluginId: scope.pluginId, localId: scope.providerLocalId }, occurrenceId: scope.occurrenceId,
+                  sourceCustody: scope.sourceCustody, manifestAuthority: scope.manifestAuthority, operationClaimId: scope.operationClaimId,
+                });
+            }
             if (
               currentHardRevocationRevision !==
                 retained.providerPluginHardRevocationRevisionAtAdmission ||
@@ -7847,6 +7999,9 @@ export async function startDaemonSessionControlRuntime(
               });
             }
             const created = await createRetainedInvocation({
+              ...(retained.custody === 'daemonShared'
+                ? { sharedGateway: await resolveSharedGatewayBinding(scope.runtimeBindingBasis) }
+                : {}),
               scope: {
                 sessionId: scope.sessionId,
                 runtimeBindingBasis: scope.runtimeBindingBasis,
@@ -7864,7 +8019,7 @@ export async function startDaemonSessionControlRuntime(
               readAdoptedPublicOutcome,
               revalidatePolicy: revalidateRetainedProviderPolicy,
             });
-            if (!created) {
+            if (!created || (retained.custody === 'daemonShared') !== (created.lifetime === 'sharedConsumer')) {
               throw new PluginError({
                 code: 'plugin_services_managed_provider_authority_unavailable',
                 message:
@@ -7942,18 +8097,31 @@ export async function startDaemonSessionControlRuntime(
                   'Retained managed Provider binding metadata is unavailable',
               });
             }
+            const sharedProjection = created.lifetime === 'sharedConsumer'
+              ? createSharedManagedProjection(
+                  created,
+                  scope.runtimeBindingBasis,
+                  retainedSessionBindingMetadata,
+                  isRetainedProviderCurrent,
+                )
+              : null;
             return Object.freeze({
               bootstrap: Object.freeze({
                 v: 1 as const,
+                ...(sharedProjection ? { custody: 'daemonShared' as const } : {}),
                 scope,
-                requestAuth: bootstrap.requestAuth,
+                requestAuth: sharedProjection ? null : bootstrap.requestAuth,
                 providerPluginHardRevocationRevisionAtAdmission:
                   currentHardRevocationRevision,
                 sessionBindingMetadata: retainedSessionBindingMetadata,
               }),
               connectedAccounts: created.connectedAccounts,
               readSupervisionLaunchAuthority,
+              ...(sharedProjection ? {
+                readSharedGatewayAccess: sharedProjection.readSharedGatewayAccess,
+              } : {}),
               start: async () => {
+                if (sharedProjection) return await sharedProjection.start();
                 const outcome = await readAdoptedPublicOutcome();
                 if (
                   !outcome ||
@@ -7981,6 +8149,9 @@ export async function startDaemonSessionControlRuntime(
                 const metadata =
                   tracked.spawnOptions?.providerBindingMetadataV1;
                 const outcome = await readAdoptedPublicOutcome();
+                const sharedEndpoint = sharedProjection
+                  ? await sharedProjection.readSharedGatewayAccess()
+                  : null;
                 const endpoint = outcome?.endpoints.find(
                   (entry) =>
                     entry.endpointTemplateId ===
@@ -7998,9 +8169,14 @@ export async function startDaemonSessionControlRuntime(
                   (credentialPlaceholder === null) !==
                     (basis.runtimeCredentialTransport === null) ||
                   !metadata?.model ||
-                  !endpoint ||
                   !assessed ||
-                  assessed.normalizedUrl !== endpoint.endpointUrl
+                  (sharedEndpoint ? (
+                    assessed.locality !== 'loopback'
+                    || new URL(assessed.normalizedUrl).hostname !== '127.0.0.1'
+                    || new URL(assessed.normalizedUrl).protocol !== 'http:'
+                    || new URL(assessed.normalizedUrl).pathname
+                      !== new URL(sharedEndpoint.endpointUrl).pathname
+                  ) : (!endpoint || assessed.normalizedUrl !== endpoint.endpointUrl))
                 ) {
                   await cleanupManagedProvider().catch(() => undefined);
                   throw new PluginError({
@@ -8178,9 +8354,17 @@ export async function startDaemonSessionControlRuntime(
                 return false;
               }
             };
+          if (runtimeBindingBasis.deployment.gatewayPlacement.kind === 'machine'
+            && runtimeBindingBasis.deployment.gatewayPlacement.machineId !== params.machineId) {
+            return await createRemoteManagedProjection(runtimeBindingBasis, authorization.sessionBindingMetadata,
+              providerPluginHardRevocationRevisionAtAdmission, revalidateSessionProviderAuthority);
+          }
           const createdManagedProviderInvocation = await createInvocation({
             identity,
             purposeBindings: runtimeBindingBasis.deployment.purposeBindings,
+            ...(runtimeBindingBasis.deployment.managedRuntime.sharing === 'connectionMachine'
+              ? { sharedGateway: await resolveSharedGatewayBinding(runtimeBindingBasis) }
+              : {}),
             operationClaim: {
               kind: 'sessionDemand',
               sessionId,
@@ -8283,10 +8467,23 @@ export async function startDaemonSessionControlRuntime(
           }
           const providerConnectionRevision =
             authorization.sessionBindingMetadata.connectionRevision;
+          const sharedProjection = createdManagedProviderInvocation.lifetime === 'sharedConsumer'
+            ? createSharedManagedProjection(
+                createdManagedProviderInvocation,
+                runtimeBindingBasis,
+                authorization.sessionBindingMetadata,
+                revalidateSessionProviderAuthority,
+              )
+            : null;
           let adoptionCommitted = false;
           let startPromise: Promise<void> | null = null;
           const start = (): Promise<void> => {
             startPromise ??= (async () => {
+              if (sharedProjection) {
+                await sharedProjection.start();
+                adoptionCommitted = true;
+                return;
+              }
               const launchResourceScope = createProviderLaunchResourceScope();
               const started = await startPublicManagedProviderRuntime({
                 identity,
@@ -8337,6 +8534,7 @@ export async function startDaemonSessionControlRuntime(
                   runtimeBindingBasis,
                 ),
               fenceRetainedPolicy: async () => {
+                if (sharedProjection) return await cleanupManagedProvider();
                 if (!fenceRetainedProviderPolicy) {
                   throw new PluginError({
                     code: 'plugin_services_managed_provider_custody_unavailable',
@@ -8367,6 +8565,7 @@ export async function startDaemonSessionControlRuntime(
           return Object.freeze({
             bootstrap: Object.freeze({
               v: 1 as const,
+              ...(sharedProjection ? { custody: 'daemonShared' as const } : {}),
               scope: Object.freeze({
                 v: 1 as const,
                 sessionId: sessionId,
@@ -8378,7 +8577,7 @@ export async function startDaemonSessionControlRuntime(
                 manifestAuthority: bootstrap.manifestAuthority,
                 operationClaimId: bootstrap.operationClaimId,
               }),
-              requestAuth: bootstrap.requestAuth,
+              requestAuth: sharedProjection ? null : bootstrap.requestAuth,
               providerPluginHardRevocationRevisionAtAdmission,
               sessionBindingMetadata: authorization.sessionBindingMetadata,
             }),
@@ -8386,6 +8585,9 @@ export async function startDaemonSessionControlRuntime(
               createdManagedProviderInvocation.connectedAccounts,
             readSupervisionLaunchAuthority,
             start,
+            ...(sharedProjection ? {
+              readSharedGatewayAccess: sharedProjection.readSharedGatewayAccess,
+            } : {}),
             materializeAgentBinding: async ({
               endpointUrl,
               credentialPlaceholder,
@@ -8396,7 +8598,7 @@ export async function startDaemonSessionControlRuntime(
               if (
                 !startPromise ||
                 !capturedAgentProviderBinding ||
-                !readAdoptedPublicOutcome ||
+                (!sharedProjection && !readAdoptedPublicOutcome) ||
                 (credentialPlaceholder === null) !==
                   (runtimeBindingBasis.runtimeCredentialTransport === null)
               ) {
@@ -8419,7 +8621,10 @@ export async function startDaemonSessionControlRuntime(
                     'Managed Provider materialization endpoint is invalid',
                 });
               }
-              const adopted = await readAdoptedPublicOutcome();
+              const adopted = await readAdoptedPublicOutcome?.();
+              const sharedEndpoint = sharedProjection
+                ? await sharedProjection.readSharedGatewayAccess()
+                : null;
               const adoptedEndpoint = adopted?.endpoints.find(
                 (entry) =>
                   entry.endpointTemplateId ===
@@ -8427,10 +8632,15 @@ export async function startDaemonSessionControlRuntime(
               );
               if (
                 assessed.locality !== 'loopback' ||
-                !adopted ||
+                (sharedEndpoint ? (
+                  new URL(assessed.normalizedUrl).hostname !== '127.0.0.1'
+                  || new URL(assessed.normalizedUrl).protocol !== 'http:'
+                  || new URL(assessed.normalizedUrl).pathname
+                    !== new URL(sharedEndpoint.endpointUrl).pathname
+                ) : (!adopted ||
                 adopted.operationClaimId !== bootstrap.operationClaimId ||
                 !adoptedEndpoint ||
-                assessed.normalizedUrl !== adoptedEndpoint.endpointUrl
+                assessed.normalizedUrl !== adoptedEndpoint.endpointUrl))
               ) {
                 await cleanupManagedProvider().catch(() => undefined);
                 throw new PluginError({
@@ -11658,6 +11868,8 @@ export async function startDaemonSessionControlRuntime(
       }
     };
     apiMachineForSessions.registerMachineAccessLossReceiver({
+      serverId: params.serverId,
+      readLiveWorkInventory: params.readLiveWorkInventory,
       resolveInstallationId: () =>
         readInstallationIdentityIfExistsSync()?.installationId ?? null,
       cleanupRequesterMachineSessions: cleanupSessions,
@@ -13093,7 +13305,7 @@ export async function startDaemonSessionControlRuntime(
             || runtimeRegistry?.isRunTarget(target) === true)
           .map(runtimeGenerationTarget),
       applyLiveCredentialRevision: async (input) => {
-        if (accountContext && !(await accountContext.bootstrap.isCurrent()))
+        if (accountContext && !(await accountContext.isCurrent()))
           throw new Error('requester_session_not_current');
         await applyConnectedServiceProjectionCredentialUpdate({
           input,
@@ -14081,7 +14293,7 @@ export async function startDaemonSessionControlRuntime(
                       happyHomeDir: configuration.happyHomeDir,
                     },
                     verifyMachineAdmissionCurrent: () =>
-                      requesterRuntime.bootstrap.isCurrent(),
+                      requesterRuntime.isCurrent(),
                     ...(args[1]?.signal ? { signal: args[1].signal } : {}),
                   });
                   if (!prepared)
@@ -14134,7 +14346,7 @@ export async function startDaemonSessionControlRuntime(
       };
       const isManagedApprovalRequesterRuntimeCurrent = async (context: ActionExecutorContext, machine: import('@happier-dev/protocol').ManagedMachineV1) => {
         if (requesterAccountContext) return requesterAccountContext.isCurrent();
-        if (requesterRuntime) return requesterRuntime.bootstrap.isCurrent();
+        if (requesterRuntime) return requesterRuntime.isCurrent();
         return isInstalledManagedAccountCurrent(context, machine);
       };
       const invocationApprovalCurrentness = requesterAccountContext
@@ -14193,7 +14405,7 @@ export async function startDaemonSessionControlRuntime(
           ? async () => await requesterAccountContext.isCurrent() ? credentials : null
           : requesterRuntime
           ? async () =>
-              (await requesterRuntime.bootstrap.isCurrent())
+              (await requesterRuntime.isCurrent())
                 ? credentials
                 : null
           : async () => await readStoredCredentialsForServerId(params.serverId),
@@ -14816,7 +15028,7 @@ export async function startDaemonSessionControlRuntime(
               if (authority.signal?.aborted
                 || currentInstallation?.installationId !== installation.installationId
                 || currentInstallation.publicKey !== installation.publicKey
-                || requesterRuntime && !await requesterRuntime.bootstrap.isCurrent()) return false;
+                || requesterRuntime && !await requesterRuntime.isCurrent()) return false;
               const acceptedOrigin = buildApprovalExecutionOriginV1({
                 actionId: operation.actionId,
                 input: operation.input,
@@ -16725,6 +16937,7 @@ export async function startDaemonSessionControlRuntime(
               return result;
             },
             hotApply: createSessionConnectedServiceAuthHotApply({
+              runtimeRegistry: connectedServiceRuntimeRegistry,
               isSessionCurrent: async () => {
                 await assertSessionAccountCurrent(
                   input.sessionId,
@@ -17487,6 +17700,37 @@ export async function startDaemonSessionControlRuntime(
       // Execution-run bridge endpoints accept only the scoped run-materialize capability token.
       verifyRunMaterializeToken: (provided) =>
         isValidConnectedServiceRunMaterializeToken(provided, controlToken),
+      readAppliedSessionConnectedServices: async (input) => {
+        const tracked = params.pidToTrackedSession.get(input.runnerPid);
+        if (!tracked || tracked.happySessionId !== input.sessionId
+          || resolveTrackedSessionCatalogAgentId(tracked) !== input.agentId) return { status: 'unavailable' };
+        try {
+          const accountContext = await resolveSessionAccountContext(input.sessionId);
+          await assertSessionAccountCurrent(input.sessionId, accountContext);
+          if (!await isSessionRunnerActiveInDaemon({ sessionId: input.sessionId, trackedSessions: [tracked] })) {
+            return { status: 'unavailable' };
+          }
+          await assertSessionAccountCurrent(input.sessionId, accountContext);
+          if (params.pidToTrackedSession.get(input.runnerPid) !== tracked) return { status: 'unavailable' };
+          return await withSessionAccountHome(accountContext, () => {
+            // The runner invokes this only once, after its accepted open proves
+            // there are no applied CS accounts or selection environment. Later
+            // reads never recreate a target invalidated by a partial hot apply.
+            if (input.initialEmpty && !connectedServiceRuntimeRegistry.getByPid(input.runnerPid)) {
+              connectedServiceRuntimeRegistry.registerTarget({
+                pid: input.runnerPid, sessionId: input.sessionId, agentId: input.agentId,
+                sessionDirectory: tracked.spawnOptions?.directory,
+                connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {} },
+                connectedServiceSelectionsEnv: {},
+                ...(tracked.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: tracked.requesterWorkAttributionV1 } : {}),
+              });
+            }
+            return connectedServiceRuntimeRegistry.readAppliedSessionBindings(input);
+          });
+        } catch {
+          return { status: 'unavailable' };
+        }
+      },
       materializeConnectedServicesForExecutionRun:
         executionRunConnectedServicesBridge.materialize,
       recoverConnectedServicesRejectedStartForExecutionRun:

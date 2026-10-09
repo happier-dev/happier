@@ -1,5 +1,5 @@
 import type { MachineAccessRecipientCensusResponseV1, MachineKeyPreparationResultV1, MachineRecipientKeyEnvelopeCommitInputV1, MachineRecipientKeyEnvelopeCommitResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
-import { prepareMachineDataKeyEnvelopesV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';
+import { prepareMachineDataKeyEnvelopesV1, type MachineDataKeyOwnerPreparationV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { AES256Encryption } from './encryptor';
@@ -15,12 +15,14 @@ export async function prepareCurrentMachineDataKeyEnvelopes(params: Readonly<{
     serverId: string;
     machineId: string;
     transport: CurrentMachineDataKeyEnvelopeTransport;
+    ownerPreparation?: MachineDataKeyOwnerPreparationV1;
     resolveTransferableMachineDataKey: (page: MachineAccessRecipientCensusResponseV1) => Promise<Uint8Array | null>;
     isHostScopeCurrent: () => boolean;
 }>): Promise<MachineKeyPreparationResultV1> {
     return prepareMachineDataKeyEnvelopesV1({
         machineId: params.machineId,
         transport: params.transport,
+        ownerPreparation: params.ownerPreparation,
         resolveTransferableDataKey: params.resolveTransferableMachineDataKey,
         isScopeCurrent: params.isHostScopeCurrent,
         randomBytes: getRandomBytes,

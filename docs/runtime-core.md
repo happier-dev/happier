@@ -12,6 +12,23 @@ The engine registry's [`runtimeCore.ts`](../apps/cli/src/agent/runtime/registry/
 
 Session-owned child Runs retain their own transcript sidechain and interaction scope. They cannot publish the parent Session's work-state or active-input readiness; those projections belong to the main Session context. Finite and retained child contexts use the same Run-scoped work-state service, which reports Session projection as unavailable.
 
+The daemon starter's readiness timeout bounds the starter's observation, not
+plugin execution. The existing daemon plugin runtime owner awaits source
+preparation, module loading, activation, primary Agent construction and initial
+Resource admission before publishing the serving registry. Slow work remains
+pending under its real occurrence lifetime and can settle without restarting
+the daemon. Elapsed startup time is not a participant failure; real failures
+retain their diagnosed unavailable result.
+Required synchronous consumers do not receive an incomplete registry merely
+because the starter stopped waiting. See [plugin preparation](plugin-platform.md#generated-ownership).
+
+Session MCP bootstrap reads the same daemon plugin catalog through the existing
+control client. `/plugins/catalog/read` has no implicit generic control timeout:
+a loaded daemon's delayed response is not a catalog-unavailable fact. An explicit
+caller deadline or cancellation still ends that caller's wait; actual transport
+or catalog failures retain their existing unavailable result. This changes no
+catalog authority, retry loop or Session lifecycle owner.
+
 In current 0.3 development source, the daemon's [admission drain](../apps/cli/src/daemon/lifecycle/admissionDrain.ts) owns fresh-work quiescence. Temporary drain preserves accepted custody, native request-auth and daemon publications; reopening wakes the incumbent Automation claim loop and parked Workflow admission. Fresh turn and managed-process authorization remain closed during drain. Plugin handoff retains its own exclusion and publication custody. Final shutdown closes admission irreversibly and awaits the existing finite-operation owner's actual settlement before disposing native plugin leases, terminals or roots. Unconfirmed Stop retains that custody and keeps observation and explicit repeated Stop reachable; it does not prove settlement. Session-hosted Execution Runs ask that current daemon owner over the scoped control transport before creating a Run; an unavailable admission reply refuses the new start. Retained Run state stays with the [execution registry](../apps/cli/src/daemon/executionRunRegistry.ts), rather than becoming another drain decision or start registry. These source contracts are distinct from loaded-daemon certification.
 
 Finite Windows PTY work now consumes the existing [native process-custody owner](../apps/cli/src/subprocess/supervision/processCustody.ts), not ConPTY's root-exit notification as a descendant-settlement fact. Its finite helper mode assigns the actual target to the same Job before execution, retains the Job until positive kernel membership absence, and returns the recorded root exit code. Ordinary managed-service helper semantics remain separate and unchanged. Completion-port notifications may be lost; explicit Stop queries/terminates that same established Job and a positive zero-membership result wakes the retained helper. A Get/Wait or output EOF alone is not this recovery. Consumer, native-platform and loaded-runtime validation remain open in development source.
@@ -21,6 +38,14 @@ POSIX natural-root uncertainty preserves the original exit waiter, cancellation 
 ### Managed activity inventory
 
 The daemon's [managed activity inventory](../apps/cli/src/daemon/lifecycle/managedActivity.ts) reads the incumbent Session/input, execution budget and marker, Action operation, PTY, Workflow, Service, transfer, Sync and installation owners. It is a private projection, not another work registry. Missing or failed applicable coverage remains unknown. The transfer bootstrap can prove absence when its canonical configuration explicitly disables direct transfer; an unavailable enabled owner cannot make that claim. The requester summary projector takes this same inventory input; its authenticated reader and authorized requester identities remain a separate Machine-access seam. Retention-only custody is not reduced to the summary's three public count columns.
+
+Publisher reconnect reads this same inventory through the reserved server-origin
+Machine access-loss receiver. Only attribution matching the current Home, Machine
+and installation supplies requester subjects. The Home combines them with
+Session AccessKey subjects, revalidates current effective access, and delegates
+cleanup to the existing Session, operation, terminal and Service owners. A surviving
+grant preserves work; missing attribution or coverage remains incomplete rather
+than a claim that all requester work was recovered.
 
 Session absence requires exact committed runtime activity and a fresh Pending snapshot, including accepted, returned-batch, preparing and dispatched input custody. Content-free host notifications invalidate observations; they do not authorize idle. A foreign requester's unavailable Session transport remains unknown. External execution markers are observed on demand through the existing registry's native directory watcher; uncovered or failed observation cannot prove idle.
 
@@ -93,6 +118,19 @@ retains actual custody without retaining preview access. `cancelled_preparation`
 requires definitively settled cleanup with no acquired instance, and `stopped`
 requires definitive process/native termination. Ordinary shutdown retires this
 same owner; no separate service census or registry supplies lifetime authority.
+
+Shared subscription-backed Provider gateways use these same semantic entries in
+unreleased 0.3 source. The admitted Home/Account, connection and execution
+machine identify physical custody. Separate consumer claims retain exact
+request-auth authority; final release joins that consumer's in-flight request
+settlement before the owner can stop an idle process. An explicit Start retains
+its own claim, with no invented idle timer. The Session runner retains its Agent
+and a stable local delivery endpoint, not gateway process custody. New requests
+re-admit private daemon access after replacement without replaying transport
+failures. A saved remote placement reaches the same custody owner through the
+existing machine broker/carrier; it cannot select another hub or local fallback.
+See [Providers](providers.md#managed-subscription-backed-gateways) for source
+authority and the remaining composed-validation boundary.
 
 ## Session path and owners
 
@@ -208,6 +246,30 @@ custodian policy or credentials until their requester bootstrap is available.
 The strict [`session.spawn_new` input](../packages/protocol/src/sessions/creation/sessionSpawnNewInputV2.ts) accepts `initialTriggers` through the same Session trigger vocabulary as `session.trigger.*`. A birth draft supplies neither a source Session id nor a current-turn identity. The existing [Workflow trigger Action owner](../packages/protocol/src/actions/executor/workflowTriggerActions.ts) validates target and agent-start policy and seals the intent; UI, Agent and MCP callers do not write triggers after spawning.
 
 The [layout-1 Session row writer](../apps/server/sources/app/session/create/layout1SessionRowWrite.ts) binds each intent to the newborn Session and invokes the canonical Automation creation and lifecycle-occurrence owners in the same transaction. Session, triggers and an eligible `sessionStarted` occurrence commit together, or a typed `initial_trigger_admission_failed` refusal rolls back the birth. Ordinary Session trigger CRUD still refuses retrospective `sessionStarted` registration. PR/CI and plugin-event sources cannot be admitted by this birth path until their source prerequisites are available. This describes current source wiring, not completed loaded-runtime validation or released availability.
+
+## Execution Run launch selection
+
+In 0.3 development source, [`ExecutionRunHostBridge`](../apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.ts)
+supplies attachment context to [`startExecutionRun`](../apps/cli/src/agent/runtime/bridges/executionRun/startExecutionRun.ts).
+Its [child-selection owner](../apps/cli/src/agent/runtime/bridges/executionRun/runtime/openInputs.ts)
+completes omitted model and credential-route choices before materialization.
+Explicit native, Provider, role and Workflow choices keep precedence. Detached
+work retains its independent Account-default contract.
+
+The host-private Session reader combines the model-transition coordinator's
+admitted applied target with the scoped daemon's existing applied Connected
+Services registry. Pending intent alone neither supplies nor invalidates an
+otherwise readable applied choice; an actual unresolved effect or unavailable
+owner refuses inheritance. Pool references retain the pool, not its selected
+member, credential or activation. Cross-Agent Provider choices use the existing
+Provider authorization and Agent adapter owners, rather than another selector.
+
+Resolved safe choices stay in the existing retained Run launch record. Resume
+does not consult a changed parent or Account default. The additive
+`resolvedSelection` summary is a projection of that record, not another persisted
+route or an authorization input. Voice chat and commit resolve their choices
+separately; unsupported Team custody refuses before a Voice Run is published.
+These source contracts do not certify the composed loaded-runtime journey.
 
 ## Execution Run recovery and observation
 

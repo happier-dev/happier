@@ -1136,6 +1136,11 @@ export type ExternalActionRequesterAccountProjectionV1 = Readonly<{
   resolveMachineContentEncryptionContext?(row: MachinePublishedRowV1): Readonly<
     { encryptionMode: 'plain' } | { encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }
   >;
+  /** Host-private owner read; never exposes a Session envelope or Account credential. */
+  readOwnSessionWorkspace?(input: Readonly<{
+    sessionId: string; machineId: string; currentMachineHost: string; currentMachineHomeDir: string;
+    candidatePath?: string; signal?: AbortSignal;
+  }>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null>;
   isCurrent(): Promise<boolean>;
   readArtifact(ref: PromptArtifactRefV1 & Readonly<{ serverId: string }>,
     options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{

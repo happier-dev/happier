@@ -4,7 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { Server, Socket } from "socket.io";
 
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from "@happier-dev/protocol/rpc";
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from "@happier-dev/protocol";
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER,
+    buildAccountStoredContentCompatibilitySocketAuthV1, decodeBase64, encodePlainMachineStoredContent } from "@happier-dev/protocol";
 import tweetnacl from 'tweetnacl';
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 
@@ -14,8 +15,17 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createAuthenticatedFakeSocket, triggerSocketHandler } from "../../testkit/socketHarness";
 import { registerSocketRpcHandlers } from "./registerSocketRpcHandlers";
 import { dispatchMachineAccessLossCustody } from '@/app/machines/machineAccessCustody';
+import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { inTx } from '@/storage/inTx';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { forwardRpcCall } from './forwardRpcCall';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+
+// These fake transport peers advertise the same declaration as current clients;
+// Plain Machine routing must retain its real compatibility admission underneath.
+const accountStoredContentCompatibility = evaluateAccountStoredContentSocketCompatibility(
+    buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+).evaluation;
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -111,7 +121,7 @@ describe("Session RPC final access admission on SQLite", () => {
     ) {
         return createAuthenticatedFakeSocket({
             id: `caller-${randomUUID()}`,
-            data: { clientType: "user-scoped", authTokenAuthenticationEvidence: evidence },
+            data: { clientType: "user-scoped", authTokenAuthenticationEvidence: evidence, accountStoredContentCompatibility },
         });
     }
 
@@ -121,11 +131,11 @@ describe("Session RPC final access admission on SQLite", () => {
             metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }),
             active: true, installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
-            dataEncryptionKey: new TextEncoder().encode(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
         const effect = vi.fn(async () => ({ status: "ready" }));
         const target = { id: "owner-machine-daemon", data: { clientType: "machine-scoped", userId: owner.id,
-            machineId: machine.id, verifiedMachineInstallationId: machine.installationId },
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
             timeout: vi.fn(() => ({ emitWithAck: effect })) };
         const io = { in: (room: string) => ({
             timeout: () => ({ fetchSockets: async () => room === `rpc:${owner.id}:${method}` || room === target.id ? [target] : [] }),
@@ -150,13 +160,13 @@ describe("Session RPC final access admission on SQLite", () => {
             metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }),
             active: true, installationId, installationPublicKey: tweetnacl.sign.keyPair().publicKey,
-            dataEncryptionKey: new TextEncoder().encode(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const grant = { machineId: machine.id, accountId: actor.id, accessLevel: "view", createdByAccountId: owner.id };
         await db.machineAccountGrant.create({ data: grant });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
         const effect = vi.fn(async () => ({ status: "ready" }));
         const target = { id: "custodian-machine-daemon", data: { clientType: "machine-scoped", userId: owner.id,
-            machineId: machine.id, verifiedMachineInstallationId: installationId },
+            machineId: machine.id, verifiedMachineInstallationId: installationId, accountStoredContentCompatibility },
             timeout: vi.fn(() => ({ emitWithAck: effect })) };
         let duringDiscovery: (() => Promise<void>) | undefined;
         let duringLatestTarget: (() => Promise<void>) | undefined;
@@ -207,11 +217,11 @@ describe("Session RPC final access admission on SQLite", () => {
             metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }), active: true,
             installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
-            dataEncryptionKey: new TextEncoder().encode(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
         const effect = vi.fn(async () => ({ kind: 'settled' }));
         const target = { id: 'custody-cleanup-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
-            machineId: machine.id, verifiedMachineInstallationId: machine.installationId },
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
             timeout: () => ({ emitWithAck: effect }) };
         let duringLatest: (() => Promise<void>) | undefined;
         const read = async (room: string) => {
@@ -237,6 +247,55 @@ describe("Session RPC final access admission on SQLite", () => {
             duringLatest = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } }).then(() => undefined);
             expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'incomplete' });
             expect(effect).not.toHaveBeenCalled();
+        } finally { eventRouter.clearIo(); }
+    });
+
+    it('recovers offline sessionless requester cleanup from the daemon census while surviving grants and history remain intact', async () => {
+        const owner = await db.account.create({ data: { publicKey: `reconnect-owner-${randomUUID()}`, encryptionMode: 'plain' } });
+        const actor = await db.account.create({ data: { publicKey: `reconnect-actor-${randomUUID()}`, encryptionMode: 'plain' } });
+        const survivor = await db.account.create({ data: { publicKey: `reconnect-survivor-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }), active: true,
+            installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        const history = await db.session.create({ data: { accountId: actor.id, tag: randomUUID(),
+            metadata: JSON.stringify({ t: 'plain', v: { retained: true } }), encryptionMode: 'plain' } });
+        for (const accountId of [actor.id, survivor.id]) await db.machineAccountGrant.create({ data: {
+            machineId: machine.id, accountId, accessLevel: 'view', createdByAccountId: owner.id,
+        } });
+        const team = await db.team.create({ data: { name: `Independent ${randomUUID()}` } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: survivor.id, role: 'member' } });
+        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
+        let online = false;
+        const cleaned = new Set<string>();
+        const effect = async (_event: string, request: { params: { kind?: string; subjectAccountId?: string } }) => {
+            // Genuine daemon transport boundary: the receiver's real inventory/native cleanup is covered in its owner suite.
+            if (request.params.kind === 'requesters') return { kind: 'requesters', accountIds: [actor.id, survivor.id], coverage: 'complete' };
+            if (request.params.subjectAccountId) cleaned.add(request.params.subjectAccountId);
+            return { kind: 'settled' };
+        };
+        const target = { id: 'reconnect-custody-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility }, timeout: () => ({ emitWithAck: effect }) };
+        const read = async (room: string) => online && (room === target.id || room === `rpc:${owner.id}:${method}`) ? [target] : [];
+        const io = { in: (room: string) => ({ timeout: () => ({ fetchSockets: () => read(room) }), fetchSockets: () => read(room) }) } as unknown as Server;
+        eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ io, ...request }) });
+        const custody = { machineId: machine.id, expectedCustodianAccountId: owner.id, expectedInstallationId: machine.installationId! };
+        try {
+            for (const accountId of [actor.id, survivor.id]) expect(await inTx(tx => removeMachineAccessGrantInTx(tx, {
+                actorAccountId: owner.id, machineId: machine.id, principal: { kind: 'account', accountId },
+            }))).toMatchObject({ kind: 'removed' });
+            expect(await dispatchMachineAccessLossCustody({ ...custody, subjectAccountId: actor.id })).toEqual({ kind: 'incomplete' });
+            expect(await db.accessKey.count({ where: { machineId: machine.id } })).toBe(0);
+            online = true;
+            const publisher = { ...createAuthenticatedFakeSocket({ id: target.id, data: target.data }), join: async () => {} };
+            registerSocketRpcHandlers({ userId: owner.id, socket: publisher as unknown as Socket, io });
+            await triggerSocketHandler(publisher, SOCKET_RPC_EVENTS.REGISTER, { method });
+            expect(publisher.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTERED, { method });
+            expect([...cleaned]).toEqual([actor.id]);
+            expect(await db.session.findUnique({ where: { id: history.id } })).toEqual(history);
         } finally { eventRouter.clearIo(); }
     });
 

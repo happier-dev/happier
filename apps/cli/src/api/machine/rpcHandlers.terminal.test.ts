@@ -33,6 +33,10 @@ import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessio
 import { reviewProjectSetupEffect } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import nacl from 'tweetnacl';
 
 class FakePty implements PtyProcess {
   readonly pid = 4321;
@@ -114,6 +118,100 @@ class FakeInteractivePtyProvider implements PtyProvider {
 }
 
 describe('registerMachineTerminalRpcHandlers', () => {
+  it('opens and reconnects Bob accepted Project shell through private Account ports on Alice installation without a Session', async () => {
+    const h = await finiteHarness({ observeInteractiveStop: true, maxSessions: 2 });
+    let live = true;
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'bob-terminal-root', binding: {
+      accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
+      actionId: 'machines.terminal.open', requestId: 'bob-open', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    } });
+    h.get.mockResolvedValue({ status: 200, data: { mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
+    const originalPost = h.post.getMockImplementation()!;
+    h.post.mockImplementation(async (...args) => String(args[0]).endsWith('/execution-authorization/verify')
+      ? { status: live ? 200 : 403, data: live ? { ok: true } : {} } : originalPost(...args));
+    const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    const http = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
+      serverIdentityId: 'stable-home', serverHttpBaseUrl: h.runtime.serverHttpBaseUrl, target: root.binding.target,
+      installationId: 'installation', privateKey: key.secretKey, isCurrent: async () => live });
+    if (!http) throw new Error('Original requester HTTP projection missing');
+    const authorization = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: 'stable-home',
+      bootstrap: { credentials: { token: 'bob-token', encryption: null }, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl,
+        attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' }, isCurrent: async () => live } });
+    if (!authorization) throw new Error('Requester Account projection missing');
+    const { credentials: _custodian, ...ports } = h.runtime;
+    const runtime = { ...ports, accountId: 'bob', accountAuthorization: authorization,
+      isCurrent: async () => live && await authorization.requesterAccountProjection!.isCurrent() };
+    const context: RpcHandlerContext = { ...h.ingress, callerInputAuthorization: authorization,
+      machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'bob', custodianAccountId: 'alice', role: 'use' },
+      verifyMachineAdmissionCurrent: async () => live };
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager, projectFiniteRuntime: async () => runtime } });
+    const input = { terminalKey: 'bob-shell', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    let disposeOwnSession: (() => void) | undefined;
+    try {
+      const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, context);
+      expect(opened).toMatchObject({ ok: true, reused: false, terminalId: expect.any(String) });
+      if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') throw new Error('Bob shell missing');
+      const terminalId = opened.terminalId;
+      expect(h.sessionManager.getCustody(terminalId)).toMatchObject({ requesterAccountId: 'bob', installationId: 'installation', workspaceRefId: 'accepted' });
+      expect(h.sessionManager.list()[0]?.sessionId).toBeUndefined();
+      const reconnect = { ...context, signal: new AbortController().signal };
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, reconnect)).resolves.toMatchObject({ ok: true, reused: true, terminalId });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, reconnect)).resolves.toMatchObject({ terminals: [{ terminalId }] });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'echo bob\n' }, reconnect)).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)!({ terminalId, cols: 100, rows: 30 }, reconnect)).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId, cursor: 0 }, reconnect)).resolves.toMatchObject({ ok: true });
+      const cara = { ...reconnect, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'cara' } };
+      for (const [method, params] of [[RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'stolen' }],
+        [RPC_METHODS.DAEMON_TERMINAL_RESIZE, { terminalId, cols: 80, rows: 24 }],
+        [RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId }], [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, { terminalId, cursor: 0 }]] as const) {
+        await expect(handlers.get(method)!(params, cara)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      }
+      expect(h.provider.spawned).toHaveLength(1);
+      let sessionOwner = true;
+      h.get.mockImplementation(async (url, options) => {
+        if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        if (String(url).includes('/v2/sessions/')) {
+          expect(options?.headers).toMatchObject({ Authorization: 'Bearer bob-token' });
+          if (!String(url).includes('/bob-session')) return { status: 404, data: {} };
+          return { status: 200, data: { session: { id: 'bob-session', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+            encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine', path: h.root }), metadataVersion: 1,
+            agentState: null, agentStateVersion: 0, dataEncryptionKey: null, responsibleAccountId: null, responsibleAccount: null,
+            share: sessionOwner ? null : { accessLevel: 'view', canApprovePermissions: false },
+            effectiveAccess: { v: 1, level: sessionOwner ? 'owner' : 'view', sources: sessionOwner ? [{ kind: 'owner' }] : [{ kind: 'direct', shareId: 'share' }],
+              capabilities: projectSessionAccessCapabilitiesV1({ owner: sessionOwner, grants: sessionOwner ? [] : [{ accessLevel: 'view', canApprovePermissions: false }] }) },
+          } } };
+        }
+        return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      });
+      const sessionHandlers = new Map<string, RpcHandler<unknown, unknown>>();
+      const sessionRegistration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { sessionHandlers.set(method, handler); } },
+        deps: { serverId: 'home', env: {}, sessionManager: h.sessionManager, ownSessionRuntime: async () => runtime } });
+      disposeOwnSession = sessionRegistration.dispose;
+      {
+        const own = await sessionHandlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'bob-session-shell', sessionId: 'bob-session' }, reconnect);
+        expect(own).toMatchObject({ ok: true, terminalId: expect.any(String) });
+        if (!own || typeof own !== 'object' || !('terminalId' in own) || typeof own.terminalId !== 'string') throw new Error('Own Session shell missing');
+        expect(h.sessionManager.getCustody(own.terminalId)).toMatchObject({ requesterAccountId: 'bob', kind: 'session', sessionId: 'bob-session' });
+        await expect(sessionHandlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'guessed', sessionId: 'alice-session' }, reconnect)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+        sessionOwner = false;
+        await expect(sessionHandlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId: own.terminalId, data: 'shared-only' }, reconnect)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+        sessionOwner = true;
+        await expect(sessionHandlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId: own.terminalId }, reconnect)).resolves.toMatchObject({ ok: true });
+      }
+      expect(h.sessionManager.list()).toMatchObject([{ terminalId }]);
+      live = false;
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'after revoke' }, reconnect)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(registration.cleanupRequesterMachineTerminals({ serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation',
+        verifyCurrentMachineAdmission: async () => true })).resolves.toEqual({ kind: 'settled' });
+      expect(h.sessionManager.list()).toEqual([]);
+      expect(h.provider.spawned[0]!.pty.exited).toBe(true);
+      expect(JSON.parse(JSON.stringify(authorization))).toEqual(root);
+    } finally { disposeOwnSession?.(); registration.dispose(); await h.dispose(); }
+  });
   it('reads retained machine setup output only through the exact admitted machine custody', async () => {
     const h = await finiteHarness();
     const handlers = new Map<string, RpcHandler<unknown, unknown>>();
@@ -501,7 +599,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     }
   });
 
-  async function finiteHarness(options: Readonly<{ setup?: boolean; waived?: boolean; acceptedRootTrailingSlash?: boolean; acceptedRoot?: string; unenriched?: boolean; observeInteractiveStop?: boolean }> = {}) {
+  async function finiteHarness(options: Readonly<{ setup?: boolean; waived?: boolean; acceptedRootTrailingSlash?: boolean; acceptedRoot?: string; unenriched?: boolean; observeInteractiveStop?: boolean; maxSessions?: number }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-finite-terminal-')));
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'web; echo untrusted', packageManager: 'yarn@1', scripts: { dev: 'echo selected' } }));
     if (options.setup) {
@@ -527,7 +625,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       }, stopProcessTree: async ({ pid }) => {
       if (options.observeInteractiveStop) provider.spawned.find(entry => entry.pty.pid === pid)!.pty.exit(0);
     },
-      config: { maxSessions: 1, idleTimeoutMs: 0, bufferMaxBytes: 1000, bufferMaxEvents: 10,
+      config: { maxSessions: options.maxSessions ?? 1, idleTimeoutMs: 0, bufferMaxBytes: 1000, bufferMaxEvents: 10,
         bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 } });
     const operationRuntime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
       custodyBinding: { serverId: 'home', installationId: 'installation' },

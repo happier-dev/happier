@@ -11,11 +11,14 @@ import { createMachineContentCodec } from './machine/machineStoredContent';
 import { prepareMachineAccessKeyEnvelopes } from './machineAccessGrantEnvelopeHost';
 import { ApiClient } from './api';
 import { prepareCurrentMachineDataKeyEnvelopes } from '../../../ui/sources/sync/encryption/prepareCurrentMachineDataKeyEnvelopes';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createAccountServerActionDeps } from './accountServerActionDeps';
 
 vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
   // Replace HTTP dispatch only; the actual client construction and error predicates remain real.
-  return { ...actual, default: { ...actual.default, get: vi.fn(), post: vi.fn(), patch: vi.fn() } };
+  return { ...actual, default: { ...actual.default, get: vi.fn(), post: vi.fn(), patch: vi.fn(), request: vi.fn() } };
 });
 
 const dataKey = new Uint8Array(32).fill(19);
@@ -59,14 +62,22 @@ describe('trusted Machine key envelope continuation', () => {
   });
 
   it('a current foreign Manage holder opens only its delivered recipient tuple', async () => {
-    vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: page }).mockResolvedValue({ status: 200, data: { ...page, recipients: [] } });
-    vi.mocked(axios.patch).mockResolvedValue({ status: 200, data: { appliedRecipientAccountIds: ['team-member'], skippedRecipientAccountIds: [] } });
+    let delivered = false;
+    vi.mocked(axios.get).mockImplementation(async url => String(url).endsWith('/v1/machines/machine')
+      ? { status: 200, data: { machine: { id: 'machine', ...page.content, dataEncryptionKey: callerDataEncryptionKey,
+        access: { custodian: { accountId: 'offline-custodian', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } } } }
+      : { status: 200, data: { ...page, recipients: delivered ? [] : page.recipients } });
+    vi.mocked(axios.patch).mockImplementation(async () => {
+      delivered = true;
+      return { status: 200, data: { appliedRecipientAccountIds: ['team-member'], skippedRecipientAccountIds: [] } };
+    });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'manager-account' })).toString('base64url')}.signature`;
     expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials: { token,
       encryption: { type: 'dataKey', publicKey: manager.publicKey, machineKey: manager.secretKey },
     } })).toEqual({ kind: 'prepared' });
     const body = vi.mocked(axios.patch).mock.calls[0]![1] as { recipientKeyEnvelopes: { encryptedDataKey: string }[] };
     expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(body.recipientKeyEnvelopes[0]!.encryptedDataKey), recipientSecretKeyOrSeed: recipient.secretKey })).toEqual(dataKey);
+    expect(axios.post).not.toHaveBeenCalled();
   });
 
   it('does not turn a readable owner envelope into transferability authority', async () => {
@@ -157,21 +168,31 @@ describe('trusted Machine key envelope continuation', () => {
     expect(axios.post).not.toHaveBeenCalled();
   });
 
-  it('actual owner conversion preserves private raw bytes and cannot activate recipient delivery', async () => {
+  it.each(['dataKey', 'legacy', 'mixed-legacy'] as const)('actual %s owner conversion preserves full raw content before deciding recipient delivery', async variant => {
+    // ../0.2 f2dd8f01185784676b639cec5cf8a5ed79973301, client/encryptionKey.ts:
+    // legacy Machines use the recovery secret and publish no owner envelope.
     const historicalKey = manager.secretKey;
-    const historicalCodec = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: historicalKey, encryptionVariant: 'dataKey' });
-    let ownerEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: historicalKey, recipientPublicKey: manager.publicKey, randomBytes: nacl.randomBytes }));
-    let metadata = historicalCodec.encodeStored({ host: 'host', platform: 'linux', happyCliVersion: '0.3',
-      homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier', privateWorkspace: { token: 'retained-private-content' } });
+    const ownerSecret = variant === 'dataKey' ? historicalKey : deriveAccountMachineKeyFromRecoverySecret(historicalKey);
+    const ownerPublic = nacl.box.keyPair.fromSecretKey(ownerSecret).publicKey;
+    const historicalCodec = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: historicalKey, encryptionVariant: variant === 'dataKey' ? 'dataKey' : 'legacy' });
+    let ownerEnvelope: string | null = variant === 'dataKey' ? encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: historicalKey, recipientPublicKey: ownerPublic, randomBytes: nacl.randomBytes })) : null;
+    const editedMetadata = { host: 'host', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier', displayName: 'Edited workstation',
+      ...(variant === 'mixed-legacy' ? {} : { privateWorkspace: { token: 'retained-private-content' } }) };
+    let metadata = historicalCodec.encodeStored(editedMetadata);
     let revision = 3;
     let converted = false;
+    let deliveredKey: Uint8Array | null = null;
     const machine = () => ({ id: 'machine', metadata, metadataVersion: revision, daemonState: null, daemonStateVersion: revision,
       dataEncryptionKey: ownerEnvelope, keyBasis: { dataEncryptionKey: ownerEnvelope, metadataVersion: revision, daemonStateVersion: revision },
       access: { custodian: { accountId: 'offline-custodian', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } });
     vi.mocked(axios.get).mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (String(url).endsWith('/v1/machines/machine')) return { status: 200, data: { machine: machine() } };
+      if (!ownerEnvelope) return { status: 409, data: { kind: 'refused', code: 'encryption_material_unavailable' } };
       return { status: 200, data: { ...page, callerDataEncryptionKey: ownerEnvelope,
+        recipients: [...(deliveredKey ? [] : page.recipients), ...(variant === 'mixed-legacy' ? [{ recipientAccountId: 'plain-member',
+          contentKey: { status: 'unavailable' as const, reason: 'plain_account' as const }, contentPublicKeyFingerprint: null,
+          encryptedDataKey: null, recipientContentPublicKeyFingerprint: null }] : [])],
         machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(ownerEnvelope)),
         content: { metadata, metadataVersion: revision, daemonState: null, daemonStateVersion: revision } } };
     });
@@ -181,18 +202,41 @@ describe('trusted Machine key envelope continuation', () => {
       metadata = transition.next.metadata;
       revision += 1;
       converted = true;
-      const opened = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(ownerEnvelope), recipientSecretKeyOrSeed: manager.secretKey });
+      const opened = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(ownerEnvelope), recipientSecretKeyOrSeed: ownerSecret });
       expect(opened).not.toEqual(historicalKey);
-      expect(createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: opened!, encryptionVariant: 'dataKey' }).decodeStored(metadata))
-        .toMatchObject({ privateWorkspace: { token: 'retained-private-content' } });
+      expect(createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: opened!, encryptionVariant: 'dataKey' }).decodeStored(metadata)).toEqual(editedMetadata);
       return { status: 200, data: { kind: 'committed', machine: machine() } };
     });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'offline-custodian' })).toString('base64url')}.signature`;
-    expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials: { token,
-      encryption: { type: 'dataKey', publicKey: manager.publicKey, machineKey: manager.secretKey },
-    } })).toEqual({ kind: 'pending_holder' });
+    const credentials = { token,
+      encryption: variant !== 'dataKey' ? { type: 'legacy' as const, secret: historicalKey }
+        : { type: 'dataKey' as const, publicKey: ownerPublic, machineKey: ownerSecret },
+    };
+    if (variant === 'mixed-legacy') {
+      const principal = { kind: 'team', teamId: 'mixed-team' } as const;
+      vi.mocked(axios.request).mockImplementation(async request => ({ status: 200, data: request.method === 'PUT'
+        ? { kind: 'saved', grant: { machineId: 'machine', principal, level: 'view' }, readiness: 'refused', canPrepareKeys: true }
+        : { malformed: true } }));
+      vi.mocked(axios.patch).mockImplementation(async (_url, body) => {
+        const input = body as { recipientKeyEnvelopes: { encryptedDataKey: string }[] };
+        deliveredKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.recipientKeyEnvelopes[0]!.encryptedDataKey), recipientSecretKeyOrSeed: recipient.secretKey });
+        return { status: 200, data: { appliedRecipientAccountIds: ['team-member'], skippedRecipientAccountIds: [] } };
+      });
+      const executor = createActionExecutor({ ...createAccountServerActionDeps({ token, credentials,
+        serverId: 'home', serverHttpBaseUrl: params.serverHttpBaseUrl }), isActionApprovalRequired: () => false,
+      } as unknown as ActionExecutorDeps);
+      expect(await executor.execute('machines.access.grant.set', { serverId: 'home', machineId: 'machine', principal, level: 'view' },
+        { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: true, result: { kind: 'saved', readiness: 'refused', canPrepareKeys: true } });
+      const currentKey = ownerEnvelope ? openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(ownerEnvelope), recipientSecretKeyOrSeed: ownerSecret }) : null;
+      expect(deliveredKey).not.toBeNull();
+      expect(deliveredKey).toEqual(currentKey);
+      expect(deliveredKey).not.toEqual(historicalKey);
+      expect(deliveredKey).not.toEqual(ownerSecret);
+    } else {
+      expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials })).toEqual({ kind: 'pending_holder' });
+      expect(axios.patch).not.toHaveBeenCalled();
+    }
     expect(converted).toBe(true);
-    expect(axios.patch).not.toHaveBeenCalled();
   });
 
   it('the UI holder uses the same current worklist and real recipient crypto', async () => {

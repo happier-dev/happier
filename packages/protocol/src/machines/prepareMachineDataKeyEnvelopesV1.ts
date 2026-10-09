@@ -5,6 +5,7 @@ import { decodeBase64 } from '../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { prepareResourceDataKeyEnvelopeItemV1 } from '../sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.js';
 import { runSessionDataKeyPreparationPass } from '../sessions/encryption/sessionDataKeyPreparationPass.js';
+import { MachinePublishedRowV1Schema } from './machineContentKeyTransitionV1.js';
 
 export class MachineDataKeyPreparationErrorV1 extends Error {
   constructor(readonly code: MachineAccessRefusalCodeV1) { super(code); this.name = 'MachineDataKeyPreparationErrorV1'; }
@@ -17,10 +18,18 @@ export type MachineDataKeyEnvelopeTransportV1 = Readonly<{
 
 type Recipient = MachineAccessRecipientCensusResponseV1['recipients'][number];
 
+/** Captured authenticated host transport; never a public grant or Action input. */
+export type MachineDataKeyOwnerPreparationV1 = Readonly<{
+  accountId: string;
+  observeMachine: () => Promise<unknown>;
+  prepareContentKey: () => Promise<void>;
+}>;
+
 /** One trusted-holder flow; the Home alone owns audience, permission and conditional tuple writes. */
 export async function prepareMachineDataKeyEnvelopesV1(params: Readonly<{
   machineId: string;
   transport: MachineDataKeyEnvelopeTransportV1;
+  ownerPreparation?: MachineDataKeyOwnerPreparationV1;
   resolveTransferableDataKey: (page: MachineAccessRecipientCensusResponseV1) => Promise<Uint8Array | null>;
   decodeStoredContent: (key: Uint8Array, content: string) => Promise<unknown>;
   isScopeCurrent: () => boolean;
@@ -29,6 +38,19 @@ export async function prepareMachineDataKeyEnvelopesV1(params: Readonly<{
 }>): Promise<MachineKeyPreparationResultV1> {
   try {
     if (!params.isScopeCurrent()) return { kind: 'unavailable', code: 'machine_key_changed' };
+    if (params.ownerPreparation) {
+      const owner = params.ownerPreparation;
+      const machine = MachinePublishedRowV1Schema.parse(await owner.observeMachine());
+      if (!params.isScopeCurrent()) return { kind: 'unavailable', code: 'machine_key_changed' };
+      if (machine.id !== params.machineId) return { kind: 'unavailable', code: 'machine_unavailable' };
+      // Historical owners can read a genuinely absent envelope, while the recipient census
+      // requires a current key holder. C40 must establish that key before asking for recipients.
+      // Foreign Manage holders never convert: their delivered tuple remains census-owned.
+      if (machine.access?.custodian.accountId === owner.accountId && machine.access.resourceMode === 'e2ee') {
+        await owner.prepareContentKey();
+        if (!params.isScopeCurrent()) return { kind: 'unavailable', code: 'machine_key_changed' };
+      }
+    }
     const basis = await params.transport.fetchPage(null);
     if (!params.isScopeCurrent()) return { kind: 'unavailable', code: 'machine_key_changed' };
     if (basis.machineId !== params.machineId) return { kind: 'unavailable', code: 'machine_unavailable' };

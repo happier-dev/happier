@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { FILESYSTEM_TRANSFER_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { createProjectFiniteAction, readProjectFiniteIngressRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import { logger } from '@/ui/logger';
@@ -678,15 +678,17 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         && (!runtime.isCurrent || await runtime.isCurrent()) };
     }
     : undefined;
-  const createProjectActionExecutor = (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => (
-    createCliActionExecutorFromCredentials({
+  const createProjectActionExecutor = (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutor => {
+    if (!runtime.credentials) return { execute: async () => readProjectFiniteIngressRefusal(ingress)
+      ?? { ok: false, errorCode: 'project_requester_credentials_unavailable', error: 'project_requester_credentials_unavailable' } };
+    return createCliActionExecutorFromCredentials({
       credentials: runtime.credentials, serverId: runtime.serverId,
       serverApiUrl: runtime.serverHttpBaseUrl, machineId: runtime.machineId,
       pluginActionExecutionOwner: 'current_process',
       ...(params.deps?.actionsSettingsProvider ? { actionsSettingsProvider: params.deps.actionsSettingsProvider } : {}),
       projectAction: createProjectFiniteAction(runtime, ingress),
-    })
-  );
+    });
+  };
   const terminalRegistration = registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
     deps: {
@@ -808,6 +810,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     transferRelayV2DownloadResponderCleanupByManager.set(rpcHandlerManager, transferRelayV2ResponderCleanup);
   }
   const externalSessionsRegistration = registerMachineExternalSessionsRpcHandlers({
+    ...(memoryWorker ? { memoryWorker } : {}),
     ...(params.deps?.nativeUsage && params.deps.executionBudgetRegistry
       ? { nativeUsage: { ...params.deps.nativeUsage, budgetRegistry: params.deps.executionBudgetRegistry } }
       : {}),

@@ -65,6 +65,12 @@ describe('Machine receiver current admission on SQLite', () => {
                 rpcAdmission: { context: custodyContext, method: custodyMethod, custodySubjectAccountId: actor.id } }, privateKey: key.secretKey });
             const custodyBody = { v: 1, context: custodyContext, method: custodyMethod,
                 custodySubjectAccountId: actor.id, proof: custodyProof };
+            const censusProof = signMachineInstallationProof({ payload: { version: 1, machineId: machine.id,
+                installationId: context.installationId, accountId: custodian.id,
+                rpcAdmission: { context: custodyContext, method: custodyMethod } }, privateKey: key.secretKey });
+            const censusBody = { v: 1, context: custodyContext, method: custodyMethod, proof: censusProof };
+            expect((await verify(censusBody)).statusCode).toBe(200);
+            expect((await verify(censusBody, stranger.id)).statusCode).toBe(403);
             expect((await verify(custodyBody)).statusCode).toBe(200);
             expect((await verify({ ...custodyBody, custodySubjectAccountId: stranger.id })).statusCode).toBe(403);
             await db.machineAccountGrant.create({ data: grant });

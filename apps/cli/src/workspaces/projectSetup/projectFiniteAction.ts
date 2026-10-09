@@ -5,7 +5,7 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import type { ProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import type { ProjectSetupExecutionInput } from './projectSetupExecution';
 import type { ProjectSetupPreparationInput } from './projectSetupPreparation';
-import type { StoredCredentials } from '@/persistence';
+import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ProjectManifestFileSnapshot } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
@@ -39,13 +39,12 @@ import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type Prepare
 import { executeProjectSetup, executeProjectFiniteProcess, publishProjectFiniteAdmission, authorizePreparedProjectCommand,
     createProjectNativeLaunchAdmission, createProjectNativeInvocationCustody, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from './projectSetupExecution';
 
-export type ProjectFiniteActionRuntime = Readonly<{
+export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<{
     serverId: string;
     machineId: string;
     accountId: string;
-    credentials: StoredCredentials;
     serverHttpBaseUrl: string;
-    /** Exact Home credential lifetime supplied by the installed host constructor. */
+    /** Exact Account custody lifetime supplied by the installed host constructor. */
     isCurrent?: () => Promise<boolean>;
     operationRuntime: Pick<HostActionOperationRuntime, 'observeExecution'>;
     workerAdmission: ProjectWorkerAdmission;
@@ -157,13 +156,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const resolveAccepted = async () => {
             await assertCurrent();
             const association = await resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
-                credentials: runtime.credentials, serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+                ...projectRuntimeAccountRowsInput(runtime, request.actionId), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
             await assertCurrent();
             if (!workerBasis) return association;
             if (association.workspace.id !== workerBasis.source.id || association.workspace.machineId !== workerBasis.source.machineId
                 || association.workspace.rootPath !== workerBasis.source.rootPath || association.workspace.projectKey !== workerBasis.source.projectKey) throw coded('project_workspace_changed');
             const target = await resolveProjectSetupAcceptedWorkspace({ address: { serverId: workerBasis.target.serverId, workspaceId: workerBasis.target.id,
-                machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, credentials: runtime.credentials,
+                machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime, request.actionId),
                 serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
             await assertCurrent();
             if (target.workspace.machineId !== runtime.machineId || target.workspace.projectKey !== association.workspace.projectKey) throw coded('project_workspace_changed');
@@ -272,7 +271,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (!runtime.resolveWorkerTarget || !runtime.prepareDequeue) return failure('workspace_sync_source_unavailable');
                 workerBasis = await runtime.resolveWorkerTarget({ source: sourceAssociation.workspace, signal });
                 association = await resolveAccepted();
-            } catch (error) { return failure(codeOf(error)); }
+            } catch (error) {
+                const code = codeOf(error);
+                if (code === 'worker_copy_missing' && workerUnavailable) return failure(code,
+                    ProjectWorkerNoAcceptanceFailureDetailsV1Schema.parse({ kind: 'no_worker_can_accept', reason: code,
+                        unavailable: workerUnavailable, workerCopy: { serverId: sourceAssociation.workspace.serverId,
+                            sourceWorkspaceRefId: sourceAssociation.workspace.id, sourceMachineId: sourceAssociation.workspace.machineId,
+                            targetMachineId: runtime.machineId } }));
+                return failure(code);
+            }
         } else if (sourceAssociation.workspace.machineId !== runtime.machineId) return failure('target_not_local');
         const readWorkerExecutionBasis = async (definition: typeof initialSourceDefinition) => {
             const manifest = definition.document?.manifest;
@@ -331,7 +338,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 targetRoot: association.workspace.rootPath, sessionRelativeCwd: workerRelativeCwd,
             }) : association.workspace.rootPath;
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
-            requester: { credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl },
+            requester: { ...projectRuntimeAccountRowsInput(runtime, request.actionId), serverHttpBaseUrl: runtime.serverHttpBaseUrl },
             purpose: request.actionId === 'projects.prepare' ? request.input.phase : 'setup',
             platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform, arch: runtime.arch ?? process.arch },
             nativeIo: runtime.nativeIo, signal: nativeExecutionSignal(),

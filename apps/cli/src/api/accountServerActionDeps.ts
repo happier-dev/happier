@@ -46,6 +46,10 @@ import {
   type ExternalActionMachineRequestSigningKey,
 } from '@/api/externalActionExecutionAuthorization';
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
+import { usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, type UsageAccountingSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 export type AccountServerActionDeps = Pick<
   ActionExecutorDeps,
@@ -67,6 +71,7 @@ export type AccountServerActionDeps = Pick<
   | 'sessionAccessAction'
   | 'machineAccessAction'
   | 'projectWorkerAction'
+  | 'usageActions'
 >;
 
 type AccountServerActionFixedHome =
@@ -317,6 +322,38 @@ export function createAccountServerActionDeps(input: Readonly<{
     return { ok: false, errorCode: 'api_token_operation_failed', error: 'api_token_operation_failed' };
   };
   return {
+    usageActions: {
+      query: async (request, context) => {
+        const mismatch = accountServerTargetMismatch(context);
+        if (mismatch) return mismatch;
+        const retired = (): ActionExecuteFailure => ({ ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' });
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+        const snapshots = await Promise.all(resolveUsagePageAccountingRequests(request.queries).map(async (query): Promise<UsageAccountingSourceSnapshot | ActionExecuteFailure> => {
+          const body = projectNativeJsonValueForTransport(usageQueryToAnalyticsRequest(query));
+          const path = '/v2/usage/query';
+          const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'POST', path, body });
+          if (!authorization.ok) return externalAuthorizationUnavailable();
+          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+          const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'POST', path, body,
+            signal: context.signal, sideEffectClass: 'read' });
+          if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+          if (!dispatched.ok) return { query, status: 'error', errorCode: dispatched.errorCode };
+          if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+          if ([404, 405, 501].includes(dispatched.response.status)) return { query, status: 'unsupported', errorCode: 'unsupported' };
+          if (dispatched.response.status >= 400) return { query, status: 'error', errorCode: 'usage_query_failed' };
+          const parsed = UsageAnalyticsQueryResponseSchema.safeParse(dispatched.response.data);
+          return parsed.success ? { query, status: 'available', value: parsed.data }
+            : { query, status: 'error', errorCode: 'usage_query_result_invalid' };
+        }));
+        if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+        const refusal = snapshots.find((snapshot): snapshot is ActionExecuteFailure => 'ok' in snapshot);
+        if (refusal) return refusal;
+        return resolveUsagePageAggregation({ queries: request.queries,
+          accounting: snapshots.filter((snapshot): snapshot is UsageAccountingSourceSnapshot => !('ok' in snapshot)) });
+      },
+    },
     projectWorkerAction: async ({ actionId, input: actionInput, context, signal }) => {
       const parsed = ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput);
       const targetServerId = 'workspace' in parsed ? parsed.workspace.serverId : parsed.serverId;
@@ -429,7 +466,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const output = actionId === 'machines.access.grants.list'
         ? MachineAccessGrantsListResultV1Schema.parse(response.data)
         : MachineAccessMutationResultV1Schema.parse(response.data);
-      if (actionId !== 'machines.access.grant.set' || !('kind' in output) || output.kind !== 'saved' || output.readiness !== 'key_pending') return output;
+      if (actionId !== 'machines.access.grant.set' || !('kind' in output) || output.kind !== 'saved' || !output.canPrepareKeys) return output;
       // Permission already committed. A private continuation failure is not a
       // permission failure and must not invite a second grant mutation.
       const prepared = await prepareKeys().catch(() => null);
@@ -444,7 +481,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       const audience = MachineAccessGrantsListResultV1Schema.safeParse(refreshed.response.data);
       if (!audience.success || 'kind' in audience.data) return output;
       const row = audience.data.grants.find(grant => JSON.stringify(grant.principal) === JSON.stringify(output.grant.principal));
-      return row ? { ...output, readiness: row.readiness } : output;
+      return row ? { ...output, readiness: row.readiness, canPrepareKeys: row.audience.some(member => member.canPrepareKeys) } : output;
     },
     machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
       const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);

@@ -6,6 +6,7 @@ import type { DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs
 import type { ProjectCommandSourceV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readProjectFiniteIngressRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { authorizePreparedProjectCommand, createProjectNativeInvocationCustody, executeProjectSetup, publishProjectFiniteAdmission, type ProjectSetupExecutionInput, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -133,7 +134,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (signal.aborted) throw new ServiceStartRefusal('cancelled');
         };
         await assertCurrent();
-        let association = await resolveProjectSetupAcceptedWorkspace({ address: request.workspace, credentials: runtime.credentials,
+        let association = await resolveProjectSetupAcceptedWorkspace({ address: request.workspace, ...projectRuntimeAccountRowsInput(runtime, 'localServices.launcher.start'),
             serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
         await assertCurrent();
         if (request.declaration.workspaceRefId !== association.workspace.id || request.workspaceId && request.workspaceId !== association.workspace.id) throw new ServiceStartRefusal('wrong_workspace');
@@ -182,7 +183,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 placementEffectDigest: digest({ placement: placement.placement, choice }), serviceEffectDigest: digest(serviceEffect) };
             if (!afterCopy) return worker;
             association = await resolveProjectSetupAcceptedWorkspace({ address: { serverId: basis.target.serverId, machineId: basis.target.machineId,
-                workspaceId: basis.target.id, rootPath: basis.target.rootPath }, credentials: runtime.credentials,
+                workspaceId: basis.target.id, rootPath: basis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime, 'localServices.launcher.start'),
                 serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
             await assertCurrent();
         } else {
@@ -191,7 +192,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (!currentTargets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
         }
         const preparation: ProjectSetupPreparationInput = { workspace: association.workspace, projectAssociation: association,
-            requester: { credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup',
+            requester: { ...projectRuntimeAccountRowsInput(runtime, 'localServices.launcher.start'), serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup',
             platform: platformFor(runtime),
             nativeIo: runtime.nativeIo, signal,
             retainNativeInvocation: production => nativeCustody ? nativeCustody.retain(production) : nativeInvocations.add(production),

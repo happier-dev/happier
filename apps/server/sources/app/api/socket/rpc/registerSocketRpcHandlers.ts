@@ -974,7 +974,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     await recoverMachineAccessLossCustody({ machineId: machineScopedSocketMachineId,
                         expectedCustodianAccountId: params.userId, expectedInstallationId: installationId }).catch((error: unknown) => {
                         log({ module: 'machine-access', level: 'warn', machineId: machineScopedSocketMachineId, error },
-                            'Reconnect requester Session cleanup remains incomplete');
+                            'Reconnect requester work cleanup remains incomplete');
                     });
                 }
             }

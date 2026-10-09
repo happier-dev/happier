@@ -75,6 +75,14 @@ function rowError(code: string): Error & { code: string } { return Object.assign
 export type ProjectAccountRowsInput = Readonly<({ credentials: StoredCredentials; authorization?: never; effectActionId?: never }
   | { credentials?: never; authorization: ExternalActionExecutionAuthorizationV1; effectActionId: string })
   & { serverId?: string; signal?: AbortSignal }>;
+export type ProjectRuntimeAccountAccess = Readonly<{ credentials: StoredCredentials; accountAuthorization?: never }>
+  | Readonly<{ credentials?: never; accountAuthorization: ExternalActionExecutionAuthorizationV1 }>;
+
+/** Adapts captured Account custody to this owner's existing row/trust access contract. */
+export function projectRuntimeAccountRowsInput(runtime: ProjectRuntimeAccountAccess, effectActionId: string): ProjectAccountRowsInput {
+  return runtime.accountAuthorization ? { authorization: runtime.accountAuthorization, effectActionId }
+    : { credentials: runtime.credentials };
+}
 type ReadInput = ProjectAccountRowsInput;
 async function assertRequesterCurrent(input: ReadInput): Promise<void> {
   if (!input.authorization) return;
