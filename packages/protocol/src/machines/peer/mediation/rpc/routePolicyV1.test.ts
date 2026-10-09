@@ -128,7 +128,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
   });
-  it('admits requester-scoped operation reads through Machine Use on both observation versions, without admitting Stop', async () => {
+  it('admits requester-scoped operation reads and cancellation through Machine Use', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
     for (const methods of [ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2]) {
@@ -143,7 +143,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       }
     }
     expect(protocol.resolveMachineRpcRoutePolicy(ACTION_OPERATION_RPC_METHODS_V1.cancel)).toMatchObject({
-      routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'custodian_only',
+      routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'use',
       rpcClassification: 'action_spec_bound', actionSpecId: 'action.operations.cancel',
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(ACTION_OPERATION_RPC_METHODS_V1.cancel)).toBeNull();

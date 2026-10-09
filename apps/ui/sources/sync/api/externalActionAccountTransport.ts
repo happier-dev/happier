@@ -12,7 +12,7 @@ import { parseTokenPayload } from '@/utils/auth/parseToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
-import { confirmRequesterAccountCredentialDisclosure, serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
+import { serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
@@ -57,6 +57,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     input: unknown;
     material?: Material;
     managedAdmission?: ExternalActionRequestEnvelopeV2['managedAdmission'];
+    handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
     signal?: AbortSignal;
     invalidResponseCode?: string;
     requestFailureCode?: string;
@@ -77,16 +78,12 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
     }
     if (foreignGuest && custody) {
         if (!custody.installationPublicKey || binding.target.kind !== 'machine') return failure('content_unavailable');
-        // Confidentiality consent does not approve the effect: the installed native Ask remains intact.
-        const accepted = await confirmRequesterAccountCredentialDisclosure({ accountContext: account,
-            machineId: binding.target.machineId, custodian: custody.custodian,
-            ...(params.signal ? { signal: params.signal } : {}) });
-        if (!accepted) return failure('permission_denied');
     }
-    const envelope = material
+    const sealed = material
         ? sealExternalActionRequestV2({ binding, material, randomBytes: getRandomBytes, input: params.input,
             ...(params.managedAdmission ? { managedAdmission: params.managedAdmission } : {}) })
         : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input: params.input });
+    const envelope = params.handoffAdmission ? { ...sealed, handoffAdmission: params.handoffAdmission } : sealed;
     let request: unknown = envelope;
     if (custody && (foreignGuest || finite)) {
         if (binding.target.kind !== 'machine' || !('authentication' in binding)) return failure('admission_unavailable');
@@ -123,14 +120,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             };
             const controller = await readController();
             if (!controller) return failure('admission_unavailable');
-            const alreadyDisclosed = foreignGuest && wake.target.controller.machineId === binding.target.machineId
-                && wake.target.controller.installationId === custody.installationId
-                && controller.access.custodian.accountId === custody.custodian.accountId;
-            if (controller.access.custodian.accountId !== account.accountId && !alreadyDisclosed) {
-                const accepted = await confirmRequesterAccountCredentialDisclosure({ accountContext: account,
-                    machineId: controller.id, custodian: controller.access.custodian,
-                    ...(params.signal ? { signal: params.signal } : {}) });
-                if (!accepted) return failure('permission_denied');
+            if (controller.access.custodian.accountId !== account.accountId) {
                 const currentController = await readController();
                 if (!currentController || currentController.access.custodian.accountId !== controller.access.custodian.accountId) {
                     return failure('admission_unavailable');
@@ -180,6 +170,7 @@ type OriginalAccountMachineActionParams = Readonly<{
     requestId: string;
     machineId: string;
     input: unknown;
+    handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
     signal?: AbortSignal;
 }>;
 
@@ -205,6 +196,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (foreignCustody && !row.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
     return await executeOriginalAccountActionTransport({ account, input: params.input,
+        ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
         binding: { serverIdentityId: account.serverIdentityId, accountId: account.accountId, authentication,
             actionId: params.actionId, requestId: params.requestId, target: { kind: 'machine', machineId: params.machineId } },
         ...(accountMode === 'e2ee' && encryption ? { material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() } } : {}),

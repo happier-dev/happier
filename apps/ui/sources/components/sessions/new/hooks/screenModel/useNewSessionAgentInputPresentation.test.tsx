@@ -6,6 +6,7 @@ import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { canAttemptMachineSpawn, resolveMachineSpawnReadiness, type MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -21,9 +22,11 @@ const sessionAgentInputTheme = {
     },
 } as const;
 
+// Load the real graph during collection, not inside the first hook's timeout.
+const presentationModule = await import('./useNewSessionAgentInputPresentation');
+
 describe('useNewSessionAgentInputPresentation', () => {
     it('invalidates stabilized chips when their rendered content revision changes', async () => {
-        const presentationModule = await import('./useNewSessionAgentInputPresentation');
         const buildSignature = presentationModule.buildExtraActionChipsSignature;
         const base = {
             agentType: 'claude',
@@ -85,6 +88,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             daemonState: null,
             daemonStateVersion: 0,
         };
+        let readiness: MachineSpawnReadiness = { status: 'unknown', machineId: 'm1' };
 
         const hook = await renderHook(() => useNewSessionAgentInputPresentation({
             theme: {
@@ -96,7 +100,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                 },
             },
             selectedMachine: machine,
-            selectedMachineSpawnReadiness: { status: 'unknown', machineId: 'm1' },
+            selectedMachineSpawnReadiness: readiness,
             automationFeatureEnabled: false,
             automationDraft: {
                 enabled: false,
@@ -160,9 +164,21 @@ describe('useNewSessionAgentInputPresentation', () => {
             dotColor: 'success',
             isPulsing: true,
         });
+        readiness = resolveMachineSpawnReadiness({ selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
+        await hook.rerender();
+        expect(hook.getCurrent().connectionStatus).toMatchObject({
+            text: 'machineRequester.keyPending(machine=host-1)', healthy: false, isPulsing: false, recovery: 'machine',
+        });
+        expect(canAttemptMachineSpawn({ selectedMachineId: 'm1', machine, spawnReadiness: readiness })).toBe(false);
+        machine = { ...machine, active: false, activeAt: 0 };
+        readiness = resolveMachineSpawnReadiness({ selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
+        await hook.rerender();
+        expect(hook.getCurrent().connectionStatus).toMatchObject({ text: 'newSession.machineOfflineInlineTitle', healthy: false });
         machine = null;
         await hook.rerender();
-        expect(hook.getCurrent().connectionStatus).toMatchObject({ text: 'common.unavailable', isPulsing: false });
+        expect(hook.getCurrent().connectionStatus).toMatchObject({
+            text: 'newSession.machineUnavailableStatus', isPulsing: false, recovery: 'machine',
+        });
         await hook.unmount();
     });
 

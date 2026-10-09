@@ -1,28 +1,33 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const machineRpc = vi.hoisted(() => vi.fn());
-const machineTarget = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpc,
 }));
-vi.mock('./sessionMachineTarget', () => ({
-    readMachineControlTargetForSession: machineTarget,
-}));
-vi.mock('../domains/state/storage', () => ({
-    storage: { getState: () => ({ sessions: {} }) },
-}));
-vi.mock('../domains/session/readSessionOwnerMetadataView', () => ({
-    readSessionOwnerMetadataView: () => null,
-}));
 
 describe('session handoff UI request client', () => {
-    beforeEach(() => {
-        vi.resetModules();
+    beforeEach(async () => {
         machineRpc.mockReset();
-        machineTarget.mockReturnValue({ machineId: 'source-1' });
+        const serverUrl = 'https://fx14-owned.example.test';
+        const profile = await upsertServerProfile({ serverUrl, name: 'Owned Home' });
+        await setServerProfileIdentityForUrl(serverUrl, 'srv_fx14_owned');
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: profile.id }, { token })).toBe(true);
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/machines') return Response.json([{ id: 'source-1', kind: 'persistent', active: true,
+                revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
+                access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }]);
+            throw new Error(`Unexpected boundary: ${path}`);
+        });
     });
+    afterEach(resetRuntimeFetch);
 
     it('sends one coordinator request and returns its terminal result without client phase work', async () => {
         const policyFields = {
@@ -39,9 +44,10 @@ describe('session handoff UI request client', () => {
         });
         const { startSessionHandoff } = await import('./sessionHandoffs');
         await expect(startSessionHandoff({
+            sourceMachineId: 'source-1',
             sessionId: 'session-1',
             targetMachineId: 'target-1',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
             workspaceAction: {
                 kind: 'create_relationship',
                 mode: 'keep_synced',
@@ -55,7 +61,7 @@ describe('session handoff UI request client', () => {
             handoffTargetReplacementApproval: {
                 v: 1,
                 consequences: ['replace_nonempty_workspace_target'],
-                serverId: 'server-1',
+                serverId: 'srv_fx14_owned',
                 machineId: 'target-1',
                 canonicalRoot: '/target/repo',
                 rootFingerprint: 'a'.repeat(64),
@@ -72,11 +78,11 @@ describe('session handoff UI request client', () => {
         expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'source-1',
             method: 'daemon.sessionHandoff.start.v3',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
             payload: expect.objectContaining({
                 sessionId: 'session-1',
                 targetMachineId: 'target-1',
-                accountServerId: 'server-1',
+                accountServerId: 'srv_fx14_owned',
                 workspaceAction: expect.objectContaining({
                     kind: 'create_relationship',
                     mode: 'keep_synced',
@@ -102,8 +108,8 @@ describe('session handoff UI request client', () => {
             .mockResolvedValueOnce({ status: { handoffId: 'handoff-1', status: 'awaiting_recovery', phase: 'finalizing', recoveryActions: [] } })
             .mockResolvedValueOnce({ status: { handoffId: 'handoff-1', status: 'aborted', phase: 'finalizing', recoveryActions: [] } });
         const { getSessionHandoffStatus, cancelSessionHandoff } = await import('./sessionHandoffs');
-        await expect(getSessionHandoffStatus({ machineId: 'target-1', handoffId: 'handoff-1', serverId: 'server-1' })).resolves.toMatchObject({ ok: true, status: { status: 'awaiting_recovery' } });
-        await expect(cancelSessionHandoff({ machineId: 'target-1', handoffId: 'handoff-1', serverId: 'server-1' })).resolves.toMatchObject({ ok: true, status: { status: 'aborted' } });
+        await expect(getSessionHandoffStatus({ machineId: 'target-1', handoffId: 'handoff-1', serverId: 'srv_fx14_owned' })).resolves.toMatchObject({ ok: true, status: { status: 'awaiting_recovery' } });
+        await expect(cancelSessionHandoff({ machineId: 'target-1', handoffId: 'handoff-1', serverId: 'srv_fx14_owned' })).resolves.toMatchObject({ ok: true, status: { status: 'aborted' } });
         expect(machineRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({ method: 'daemon.sessionHandoff.status.get.v3', payload: { handoffId: 'handoff-1' } }));
         expect(machineRpc).toHaveBeenNthCalledWith(2, expect.objectContaining({ method: 'daemon.sessionHandoff.abort.v3', payload: { handoffId: 'handoff-1', reason: 'user_cancelled' } }));
     });
@@ -127,9 +133,10 @@ describe('session handoff UI request client', () => {
         const { startSessionHandoff } = await import('./sessionHandoffs');
 
         await expect(startSessionHandoff({
+            sourceMachineId: 'source-1',
             sessionId: 'session-1',
             targetMachineId: 'target-1',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
             workspaceAction: { kind: 'none' },
         })).resolves.toMatchObject({
             ok: true,
@@ -156,9 +163,10 @@ describe('session handoff UI request client', () => {
         const { startSessionHandoff } = await import('./sessionHandoffs');
 
         await expect(startSessionHandoff({
+            sourceMachineId: 'source-1',
             sessionId: 'session-1',
             targetMachineId: 'target-1',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
             workspaceAction: {
                 kind: 'relationship',
                 relationshipId: 'relationship-1',
@@ -178,9 +186,10 @@ describe('session handoff UI request client', () => {
         const { startSessionHandoff } = await import('./sessionHandoffs');
 
         await expect(startSessionHandoff({
+            sourceMachineId: 'source-1',
             sessionId: 'session-1',
             targetMachineId: 'target-1',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
             workspaceAction: {
                 kind: 'relationship',
                 relationshipId: 'relationship-1',
@@ -200,9 +209,10 @@ describe('session handoff UI request client', () => {
         const { startSessionHandoff } = await import('./sessionHandoffs');
 
         await expect(startSessionHandoff({
+            sourceMachineId: 'source-1',
             sessionId: 'session-1',
             targetMachineId: 'target-1',
-            serverId: 'server-1',
+            serverId: 'srv_fx14_owned',
         })).resolves.toMatchObject({
             ok: false,
             errorCode: 'UNEXPECTED',

@@ -6,9 +6,13 @@ import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/s
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { v4 as uuidv4 } from 'uuid';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
+import { captureLazyActionAccountContext } from './actions/actionAccountContext';
+import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 
 /** UI-side request/status adapter. The daemon owns all handoff phases, retries and recovery. */
 type HandoffErrorResult = Readonly<{ ok: false; errorCode: string; errorMessage: string; handoffId?: string; status?: SessionHandoffStatus; recovery?: unknown }>;
@@ -79,24 +83,34 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
     const machineId = resolveSourceMachineId(options);
     if (!machineId) return { ok: false, errorCode: 'machine_not_found', error: 'No reachable source machine target found for session handoff' };
     try {
+        const payload = {
+            sessionId: options.sessionId,
+            targetMachineId: normalizeId(options.targetMachineId),
+            ...(options.targetPath ? { targetPath: options.targetPath } : {}),
+            ...(options.targetSessionStorageMode ? { targetSessionStorageMode: options.targetSessionStorageMode } : {}),
+            ...(options.workspaceAction ? { workspaceAction: options.workspaceAction } : {}),
+            ...(normalizeId(options.actionRequestId) ? { actionRequestId: normalizeId(options.actionRequestId) } : {}),
+            ...(options.handoffTargetReplacementApproval
+                ? { handoffTargetReplacementApproval: options.handoffTargetReplacementApproval }
+                : {}),
+            ...(normalizeId(options.handoffTargetReplacementApprovalReceiptId) ? {
+                handoffTargetReplacementApprovalReceiptId: normalizeId(options.handoffTargetReplacementApprovalReceiptId),
+                handoffTargetReplacementApprovalActionInput: options.handoffTargetReplacementApprovalActionInput,
+            } : {}),
+            ...(normalizeId(options.serverId) ? { accountServerId: normalizeId(options.serverId) } : {}),
+        };
+        const account = await captureLazyActionAccountContext(normalizeId(options.serverId) || getActiveServerSnapshot().serverId, options.signal);
+        try {
+            const requesterResult = await executeOriginalAccountMachineAction({ account,
+                actionId: 'session.handoff', machineId, requestId: normalizeId(options.actionRequestId) || uuidv4(),
+                input: payload, handoffAdmission: { sessionId: options.sessionId,
+                    sourceMachineId: machineId, targetMachineId: normalizeId(options.targetMachineId) },
+                foreignTargetOnly: true, ...(options.signal ? { signal: options.signal } : {}),
+            });
+            if (requesterResult) return requesterResult;
+        } finally { account.dispose(); }
         return await machineRpcWithServerScope<unknown, unknown>({
-            machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
-            payload: {
-                sessionId: options.sessionId,
-                targetMachineId: normalizeId(options.targetMachineId),
-                ...(options.targetPath ? { targetPath: options.targetPath } : {}),
-                ...(options.targetSessionStorageMode ? { targetSessionStorageMode: options.targetSessionStorageMode } : {}),
-                ...(options.workspaceAction ? { workspaceAction: options.workspaceAction } : {}),
-                ...(normalizeId(options.actionRequestId) ? { actionRequestId: normalizeId(options.actionRequestId) } : {}),
-                ...(options.handoffTargetReplacementApproval
-                    ? { handoffTargetReplacementApproval: options.handoffTargetReplacementApproval }
-                    : {}),
-                ...(normalizeId(options.handoffTargetReplacementApprovalReceiptId) ? {
-                    handoffTargetReplacementApprovalReceiptId: normalizeId(options.handoffTargetReplacementApprovalReceiptId),
-                    handoffTargetReplacementApprovalActionInput: options.handoffTargetReplacementApprovalActionInput,
-                } : {}),
-                ...(normalizeId(options.serverId) ? { accountServerId: normalizeId(options.serverId) } : {}),
-            },
+            machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, payload,
             serverId: normalizeId(options.serverId) || null,
             ...(options.signal ? { signal: options.signal } : {}),
         });

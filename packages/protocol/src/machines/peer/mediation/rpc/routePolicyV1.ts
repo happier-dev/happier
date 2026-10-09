@@ -747,7 +747,6 @@ const MACHINE_MANAGEMENT_METHODS = new Set<string>([
 const MACHINE_CUSTODIAN_ONLY_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET,
   ...VOICE_CLIENT_CREDENTIAL_METHODS,
-  ACTION_OPERATION_RPC_METHODS_V1.cancel,
   RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
   RPC_METHODS.SPAWN_HAPPY_SESSION,
   RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
@@ -803,7 +802,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     ACTION_OPERATION_RPC_METHODS_V1.list, ACTION_OPERATION_RPC_METHODS_V1.get,
     ACTION_OPERATION_RPC_METHODS_V2.list, ACTION_OPERATION_RPC_METHODS_V2.get,
   ], 'auth', 'Operation observation requires current exact-Machine admission and reads only the verified requester Account scope; V1 and V2 share the same custody owner.'),
-  serverRequired(ACTION_OPERATION_RPC_METHODS_V1.cancel, 'auth', 'Operation cancellation retains custodian-only Machine admission and the existing exact operation custody checks; observation access does not admit Stop.'),
+  serverRequired(ACTION_OPERATION_RPC_METHODS_V1.cancel, 'auth', 'Operation cancellation requires current exact-Machine admission; the existing operation owner admits Stop only within the verified requester Account scope.'),
   ...MANAGED_MACHINE_ACTION_IDS_V1.map((method): MachineRpcRoutePolicyV1 => ({
     method, routeClass: 'server_required', rationale: 'Managed-resource Actions require current Manage, exact installation and row admission before reviewed native effects.',
     ownerPacket: 'PMS-5', rpcClassification: 'action_spec_bound', actionSpecId: method,

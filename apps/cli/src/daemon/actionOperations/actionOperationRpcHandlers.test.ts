@@ -276,7 +276,28 @@ describe('action operation observation RPC handlers', () => {
         ] });
       }
       expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: 'alice' })).toEqual({ kind: 'not_found' });
+      let aborted = false;
+      const running = createActionOperationRunner({ store, generateOperationId: () => 'bob-running',
+        resolveAction: actionId => ({ actionId, title: 'Script', operation: { version: 1,
+          visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }),
+      });
+      await running.observe({ actionId: 'projects.script.run', scope: { accountId: 'bob', machineId: 'machine' },
+        cancellation: 'supported', execute: async context => {
+          context.publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+            machineId: 'machine', workspaceRefId: 'workspace', cwd: '/project' } });
+          await new Promise<void>(resolve => context.signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
+          return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        } });
+      registerActionOperationRpcHandlers(rpc, createActionOperationRpcHandlers({ store, runner: running,
+        machineId: 'machine', resolveAccountId: async () => 'alice' }));
+      for (const operationId of ['alice', 'carol', 'guessed']) {
+        expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId })).toEqual({ kind: 'not_found' });
+      }
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: 'bob-running' })).toMatchObject({ kind: 'requested' });
+      expect(aborted).toBe(true);
+      await running.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'bob-running');
       current = false;
+      expect(await call(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: 'bob-running' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(await call(ACTION_OPERATION_RPC_METHODS_V1.get, { operationId: 'bob' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     } finally { network.mockRestore(); }
   });

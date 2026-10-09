@@ -20,6 +20,12 @@ import { inTx } from '@/storage/inTx';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { forwardRpcCall } from './forwardRpcCall';
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { createActionOperationStore } from '../../../../../../cli/src/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRunner } from '../../../../../../cli/src/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationRpcHandlers } from '../../../../../../cli/src/daemon/actionOperations/actionOperationRpcHandlers';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 
 // These fake transport peers advertise the same declaration as current clients;
 // Plain Machine routing must retain its real compatibility admission underneath.
@@ -124,6 +130,62 @@ describe("Session RPC final access admission on SQLite", () => {
             data: { clientType: "user-scoped", authTokenAuthenticationEvidence: evidence, accountStoredContentCompatibility },
         });
     }
+
+    it('cancels only the admitted requester operation on a shared Machine through real socket admission and operation custody', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+            metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test', homeDir: '/shared', happyHomeDir: '/shared/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const store = createActionOperationStore();
+        const scope = { accountId: actor.id, machineId: machine.id };
+        for (const accountId of [owner.id, stranger.id]) store.create({ operationId: accountId, actionId: 'projects.script.run',
+            title: 'Private operation', scope: { accountId, machineId: machine.id }, cancellation: 'unsupported', inputIdentity: '{}' });
+        const runner = createActionOperationRunner({ store, generateOperationId: () => 'own-script', resolveAction: actionId => ({
+            actionId, title: 'Script', operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
+        let cancelled = false;
+        await runner.observe({ actionId: 'projects.script.run', scope, cancellation: 'supported', execute: async context => {
+            context.publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+                machineId: machine.id, workspaceRefId: 'workspace', cwd: '/project' } });
+            await new Promise<void>(resolve => context.signal.addEventListener('abort', () => { cancelled = true; resolve(); }, { once: true }));
+            return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        } });
+        const handlers = createActionOperationRpcHandlers({ store, runner, machineId: machine.id, resolveAccountId: async () => owner.id });
+        const method = `${machine.id}:${ACTION_OPERATION_RPC_METHODS_V1.cancel}`;
+        const effect = vi.fn(async (_event: string, raw: unknown) => {
+            const payload = raw as SocketRpcRequestPayload;
+            const admission = payload.machineAdmission;
+            return handlers.cancel(payload.params, { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => {
+                const current = await resolveMachineAdmission({ actorAccountId: admission!.actorAccountId, machineId: machine.id, rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel });
+                return current.kind === 'admitted' && current.installationId === admission!.installationId;
+            } });
+        });
+        const daemon = { id: 'fx14-operation-daemon', data: { clientType: 'machine-scoped', userId: owner.id, machineId: machine.id,
+            verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility }, timeout: () => ({ emitWithAck: effect }) };
+        const read = (room: string) => room === daemon.id || room === `rpc:${owner.id}:${method}` ? [daemon] : [];
+        const io = { in: (room: string) => ({ timeout: () => ({ fetchSockets: async () => read(room) }), fetchSockets: async () => read(room) }) } as unknown as Server;
+        const caller = createCaller();
+        registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
+        const call = async (operationId: string) => {
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { operationId } }, callback);
+            return callback;
+        };
+        try {
+            for (const id of [owner.id, stranger.id, 'guessed']) expect(await call(id)).toHaveBeenCalledWith({ ok: true, result: { kind: 'not_found' } });
+            expect(cancelled).toBe(false);
+            expect(await call('own-script')).toHaveBeenCalledWith({ ok: true, result: { kind: 'requested' } });
+            expect(cancelled).toBe(true);
+            await runner.waitForTerminal(scope, 'own-script');
+            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            effect.mockClear();
+            expect(await call('own-script')).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(effect).not.toHaveBeenCalled();
+        } finally { runner.cancel(scope, 'own-script'); await runner.waitForTerminal(scope, 'own-script'); }
+    });
 
     it("refuses a caller-minted Machine admission instead of forwarding it as trusted context", async () => {
         const owner = await db.account.create({ data: { publicKey: `machine-owner-${randomUUID()}`, encryptionMode: "plain" } });

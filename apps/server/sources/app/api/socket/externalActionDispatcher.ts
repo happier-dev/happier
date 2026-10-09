@@ -31,7 +31,8 @@ import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { ManagedMachineError, sameManagedInput } from '@/app/machines/managed/managedRows';
 import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrincipalInTx,
     hasCurrentExternalActionSessionSource, isExternalActionAuthorizationBoundToEnvelope,
-    projectExternalActionBoundPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
+    projectExternalActionBoundPrincipal, isOriginalAccountHandoffAction,
+    readCurrentExternalActionHandoffBindingInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { readMachineDaemonSocketIdentity } from "@/app/machines/machineDaemonPresence";
 import {
     readSessionPublisherAuthorityProjection,
@@ -101,6 +102,7 @@ type ResolveMachine = (params: Readonly<{
     accountId: string;
     machineId: string;
     actionId?: ExternalActionActionIdV1;
+    handoffAdmission?: ExternalActionRequestEnvelope['handoffAdmission'] | ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
     expectedCustodianAccountId?: string;
     expectedInstallationId?: string;
     requiredExternalActionExecutionAuthorization?: true;
@@ -156,6 +158,7 @@ async function resolveMachineFromServer(params: Readonly<{
     accountId: string;
     machineId: string;
     actionId?: ExternalActionActionIdV1;
+    handoffAdmission?: ExternalActionRequestEnvelope['handoffAdmission'] | ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
     expectedCustodianAccountId?: string;
     expectedInstallationId?: string;
     requiredExternalActionExecutionAuthorization?: true;
@@ -180,8 +183,19 @@ async function resolveMachineFromServer(params: Readonly<{
         // they never acquire persistent shared-Machine grants.
         if (machine.accountId !== params.accountId) return 'not_owned';
     } else {
+        // A handoff's Session/key owner qualifies both exact installations. The
+        // unsigned private RPC policy remains custodian-only.
+        const handoff = params.handoffAdmission && params.actionId
+            && (isOriginalAccountHandoffAction(params.actionId) || params.actionId === 'session.spawn_new')
+            ? await readCurrentExternalActionHandoffBindingInTx(db, { accountId: params.accountId,
+                handoffAdmission: params.handoffAdmission, requireSourceOnline: true }) : null;
+        if (params.handoffAdmission && (!handoff
+            || ![handoff.sourceMachineId, handoff.targetMachineId].includes(params.machineId)
+            || machine.installationId !== (params.machineId === handoff.sourceMachineId
+                ? handoff.sourceInstallationId : handoff.targetInstallationId))) return 'not_owned';
         const admission = await resolveMachineAdmission({ actorAccountId: params.accountId,
-            machineId: params.machineId, actionId: params.actionId, requireOnline: params.requireOnline ?? true });
+            machineId: params.machineId, ...(handoff ? { requiredRole: 'use' as const } : { actionId: params.actionId }),
+            requireOnline: params.requireOnline ?? true });
         if (admission.kind !== 'admitted') return admission.code === 'machine_unavailable' ? 'unavailable' : 'not_owned';
         if (admission.custodianAccountId !== machine.accountId || admission.installationId !== machine.installationId) return 'unavailable';
     }
@@ -297,6 +311,7 @@ function createExactMachineDaemonGuard(params: Readonly<{
     installationId: string;
     actionId: ExternalActionActionIdV1;
     custodianAccountId: string;
+    handoffAdmission?: ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
     sessionId?: string;
     requiredExternalActionExecutionAuthorization?: true;
     requiredSessionInputAdmissionProtocolVersion?: 2;
@@ -311,6 +326,7 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 accountId: params.accountId,
                 machineId: params.machineId,
                 actionId: params.actionId,
+                ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
                 expectedCustodianAccountId: params.custodianAccountId,
                 expectedInstallationId: params.installationId,
                 ...(params.requiredExternalActionExecutionAuthorization === true
@@ -425,10 +441,15 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let managedAdmission: Awaited<ReturnType<typeof admitManagedAcquire>> | undefined;
         const mint = async (): Promise<ExternalActionExecutionAuthorizationV1> => {
             const { authority: _authority, ...provenance } = request.principal;
+            const handoffAdmission = request.envelope.handoffAdmission && isOriginalAccountHandoffAction(request.actionId)
+                ? await readCurrentExternalActionHandoffBindingInTx(db, { accountId: request.principal.accountId,
+                    handoffAdmission: request.envelope.handoffAdmission, requireSourceOnline: true }) : null;
+            if (request.envelope.handoffAdmission && !handoffAdmission) throw new Error('handoff_admission_unavailable');
             return mintExecutionAuthorization({
                 serverIdentityId: await getServerIdentityId(), ...provenance, machineId,
                 actionId: request.actionId, requestId: request.envelope.requestId ?? randomUUID(),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target,
+                ...(handoffAdmission ? { handoffAdmission } : {}),
                 ...(request.managedContinuation ? { managedContinuation: request.managedContinuation } : {}),
                 ...(request.sessionActionSource ? { sessionActionSource: request.sessionActionSource } : {}),
             }, { input: request.envelope.v === 1 ? request.envelope.input : request.envelope.sessionSpawnAdmission,
@@ -509,6 +530,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 accountId: request.principal.accountId,
                 machineId,
                 actionId: request.actionId,
+                ...((executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission)
+                    ? { handoffAdmission: executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission } : {}),
                 requiredExternalActionExecutionAuthorization: true,
                 ...(finiteWake?.kind === 'ready' ? { requireOnline: false } : {}),
                 ...(requiredSessionInputAdmissionProtocolVersion === undefined
@@ -575,6 +598,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             actionId: request.actionId,
             custodianAccountId: executionAuthorization.binding.custodianAccountId,
             installationId: executionAuthorization.binding.installationId,
+            ...(executionAuthorization.binding.handoffAdmission ? { handoffAdmission: executionAuthorization.binding.handoffAdmission } : {}),
             requiredExternalActionExecutionAuthorization: true,
             ...(sessionId === undefined ? {} : { sessionId }),
             ...(requiredSessionInputAdmissionProtocolVersion === undefined

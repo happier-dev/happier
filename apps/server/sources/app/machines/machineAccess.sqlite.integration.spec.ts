@@ -30,7 +30,7 @@ describe('Machine current access (real SQLite)', () => {
     }
     const grant = (actorAccountId: string, machineId: string, accountId: string, level: 'view' | 'admin' = 'view') => inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
 
-    it('admits requester-scoped operation reads for current Machine Use and Manage without widening Stop', async () => {
+    it('admits requester-scoped operation reads and cancellation for current Machine Use and Manage', async () => {
         const f = await fixture();
         const requester = await account();
         const outsider = await account();
@@ -49,11 +49,13 @@ describe('Machine current access (real SQLite)', () => {
                 }
             }
             expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel }))
-                .toEqual({ kind: 'denied', code: 'unsupported_operation' });
+                .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id });
         }
         await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
             principal: { kind: 'account', accountId: requester.id } }));
         expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: ACTION_OPERATION_RPC_METHODS_V2.get }))
+            .toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel }))
             .toEqual({ kind: 'denied', code: 'access_denied' });
     });
 

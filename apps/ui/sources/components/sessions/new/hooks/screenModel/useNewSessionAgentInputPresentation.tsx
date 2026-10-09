@@ -21,6 +21,7 @@ import { t } from '@/text';
 import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/agentInput/definitions/createLinkedFilesActionChip';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { getMachineDisplaySubtitle } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { createTemporaryComputerTeamAccessActionChip } from '@/components/sessions/agentInput/definitions/createTemporaryComputerTeamAccessActionChip';
 
@@ -135,6 +136,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         dotColor: string;
         isPulsing: boolean;
         healthy: boolean;
+        recovery?: 'machine';
     }> | undefined;
     agentInputExtraActionChips: ReadonlyArray<AgentInputExtraActionChip>;
 }> {
@@ -152,15 +154,17 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         selectedMachineRevokedAt,
     ]);
     const selectedMachineReadinessStatus = params.selectedMachineSpawnReadiness?.status;
+    const selectedMachineLabel = getMachineDisplaySubtitle(params.selectedMachine ?? undefined, params.selectedMachineId ?? '');
     const connectionStatus = React.useMemo(() => {
         if (!params.selectedMachineId) return undefined;
         if (!params.selectedMachine) {
             return {
-                text: t('common.unavailable'),
+                text: t('newSession.machineUnavailableStatus'),
                 color: params.theme.colors.state.danger.foreground,
                 dotColor: params.theme.colors.state.danger.foreground,
                 isPulsing: false,
                 healthy: false,
+                recovery: 'machine' as const,
             };
         }
         const online = selectedMachineReadinessStatus === 'ready'
@@ -174,17 +178,21 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
             );
 
         return {
-            text: online ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
+            text: online ? t('status.online') : selectedMachineReadinessStatus === 'keyUnavailable'
+                ? t('machineRequester.keyPending', { machine: selectedMachineLabel })
+                : t('newSession.machineOfflineInlineTitle'),
             color: online ? params.theme.colors.state.success.foreground : params.theme.colors.state.danger.foreground,
             dotColor: online ? params.theme.colors.state.success.foreground : params.theme.colors.state.danger.foreground,
             isPulsing: online,
             healthy: online,
+            ...(online ? {} : { recovery: 'machine' as const }),
         };
     }, [
         params.selectedMachine?.id,
         params.selectedMachineId,
         selectedMachineOnline,
         selectedMachineReadinessStatus,
+        selectedMachineLabel,
         params.theme.colors.state.success.foreground,
         params.theme.colors.state.danger.foreground,
     ]);
