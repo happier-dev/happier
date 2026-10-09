@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
+import { verifyAndroidPageSize } from './verify-android-page-size.mjs';
 import { resolveDaggerSecretArg } from './resolve-dagger-secret-arg.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
@@ -831,6 +832,7 @@ async function main() {
 
 	      if (!dryRun) {
 	        if (!fs.existsSync(artifactAbs)) fail(`Missing build artifact at: ${artifactAbs}`);
+        if (platform === 'android' && artifactAbs.endsWith('.aab')) verifyAndroidPageSize({ aabPath: artifactAbs });
 	        if (!fs.existsSync(exportedOutJsonAbs)) {
 	          // The module always exports metadata next to the artifact, then we copy it into place.
 	          fail(`Missing build metadata json at: ${exportedOutJsonAbs}`);
@@ -963,6 +965,7 @@ async function main() {
       if (!fs.existsSync(absOut)) {
         fail(`Missing EAS local build output at: ${absOut}`);
       }
+      if (platform === 'android' && absOut.endsWith('.aab')) verifyAndroidPageSize({ aabPath: absOut });
       const size = fs.statSync(absOut).size;
       if (size < 1_000_000) {
         fail(`EAS local build output is unexpectedly small (${size} bytes): ${absOut}`);
