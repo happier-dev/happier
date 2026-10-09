@@ -8,10 +8,12 @@ import {
 } from '@happier-dev/protocol';
 
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
+import * as persistence from '@/persistence';
 
 import {
   createServerPluginAvailabilityPublisher,
   PluginAvailabilityReleaseContentConflictError,
+  readServerPluginManagedResources,
 } from './serverPublisher';
 
 vi.mock('axios');
@@ -53,9 +55,33 @@ const materializationsInput = PluginAvailabilityMaterializationsReportActionInpu
 
 describe('server plugin Availability publisher', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.mocked(axios.post).mockReset();
     vi.mocked(axios.isAxiosError).mockReset();
     vi.mocked(createDefaultPluginInstallationPublisherHeader).mockReset();
+  });
+
+  it('reads removal dependencies through captured Account authority and refuses missing or mismatched census responses', async () => {
+    const credentials = { token: 'current-account', encryption: null } satisfies persistence.StoredCredentials;
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'another-account', encryption: null });
+    const binding = { credentials, serverUrl: 'https://captured-home.example', homeId: 'home-a',
+      controller: { machineId: 'controller-a', installationId: 'installation-a' } };
+    const normal = { availabilityCursor: 0, hostingCapability: { enabled: false }, intent: null,
+      release: null, uiArtifacts: [], packageAssets: [] };
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: { ...normal, managedResources: [], managedResourcesReviewed: true } });
+    await expect(readServerPluginManagedResources(binding, 'com.acme.fixture')).resolves.toEqual({ resources: [], reviewed: true });
+    expect(axios.post).toHaveBeenLastCalledWith('https://captured-home.example/v1/plugins/availability/intents/read',
+      { pluginId: 'com.acme.fixture', includeManagedResources: true, controller: binding.controller, homeId: binding.homeId }, expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer current-account' }),
+      }));
+
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: normal });
+    await expect(readServerPluginManagedResources(binding, 'com.acme.fixture')).rejects.toThrow('plugin_managed_resource_preflight_unavailable');
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: { ...normal, managedResources: [{
+      managedId: 'foreign-resource', homeId: 'home-b', custodianAccountId: 'current-account', intentRevision: 1,
+      controller: binding.controller, provider: { pluginId: 'com.acme.fixture', localId: 'compute' }, allocation: 'may-exist',
+    }], managedResourcesReviewed: true } });
+    await expect(readServerPluginManagedResources(binding, 'com.acme.fixture')).rejects.toThrow('plugin_managed_resource_preflight_unavailable');
   });
 
   it('publishes verified release facts and complete machine materializations through the canonical paths and proof', async () => {

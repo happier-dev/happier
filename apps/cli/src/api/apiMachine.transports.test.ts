@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import {
   bindApiSessionSocketMock,
@@ -14,14 +16,22 @@ import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceIn
 import { resolveSessionClientDurableMutationJournalPaths } from './session/client/transport/mutations/sessionClientDurableMutationPersistence';
 import { ApiMachineClient } from './apiMachine';
 import type { Machine } from './types';
+import { decryptLegacy, decodeBase64 } from './encryption';
 
 const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
   configurationMock: {
     apiServerUrl: 'http://localhost:3005',
+    serverUrl: 'http://localhost:3005',
+    activeServerId: 'test-server',
     activeServerDir: '',
     currentCliVersion: '0.2.10-test',
     happyHomeDir: process.env.RUNNER_TEMP ?? process.env.TMPDIR ?? process.env.TEMP ?? '.',
     socketIoTransports: ['polling', 'websocket'] as string[],
+    // Canonical configuration defaults: no execution cap without an operator override.
+    executionRunsMaxConcurrentPerSession: null,
+    oneShotTasksMaxConcurrentPerSession: null,
+    executionBudgetMaxConcurrentTotalPerSession: null,
+    executionBudgetMaxConcurrentByClass: Object.freeze({}),
   },
   mockAxiosIsAxiosError: vi.fn((error: unknown) => (
     typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
@@ -35,11 +45,6 @@ const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.h
   })),
 }));
 
-const registerFileSystemHandlersMock = vi.hoisted(() => vi.fn(() => ({
-  transferSessionStore: { dispose: async () => {} },
-})));
-const registerMachineRpcHandlersMock = vi.hoisted(() => vi.fn());
-
 vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
@@ -52,9 +57,16 @@ vi.mock('axios', () => ({
   isAxiosError: mockAxiosIsAxiosError,
 }));
 
-vi.mock('@/configuration', () => ({
-  configuration: configurationMock,
-}));
+// Configuration is the environment boundary; use its canonical finite-transfer defaults.
+vi.mock('@/configuration', async () => {
+  const { readFiniteTransferConfig } = await import('@happier-dev/transfers/node');
+  const transfer = readFiniteTransferConfig({});
+  Object.assign(configurationMock, {
+    filesTransferChunkBytes: transfer.chunkSizeBytes,
+    filesTransferSessionTtlMs: transfer.ttlMs,
+  });
+  return { configuration: configurationMock };
+});
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -64,31 +76,14 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({ registerSessionHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/scm', () => ({ registerScmHandlers: vi.fn() }));
-vi.mock('@/rpc/handlers/fileSystem', () => ({ registerFileSystemHandlers: registerFileSystemHandlersMock }));
-vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', () => ({ registerMachineFileBrowserHandlers: vi.fn() }));
-vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: registerMachineRpcHandlersMock }));
-vi.mock('./rpc/RpcHandlerManager', () => ({
-  RpcHandlerManager: class {
-    registerHandler() {}
-    hasHandler() { return true; }
-    async waitForRegisteredHandlers() {
-      return { status: 'disconnected' as const, missingMethods: [] };
-    }
-    onSocketConnect() {}
-    onSocketDisconnect() {}
-    async handleRequest() {
-      return { ok: true };
-    }
-    async invokeLocal() {
-      return { ok: true };
-    }
-    async waitForIdle() {}
-  },
-}));
 vi.mock('./changes', () => ({ fetchChanges: vi.fn() }));
-vi.mock('@/persistence', () => ({ readAccountChangesCursor: vi.fn(), writeAccountChangesCursor: vi.fn() }));
+// Credential files and durable change cursors are filesystem boundaries, not RPC logic.
+vi.mock('@/persistence', () => ({
+  readAccountChangesCursor: vi.fn(),
+  writeAccountChangesCursor: vi.fn(),
+  readStoredCredentials: vi.fn(async () => null),
+  readStoredCredentialsForServerId: vi.fn(async () => null),
+}));
 vi.mock('./client/loopbackUrl', () => ({ resolveLoopbackHttpUrl: (value: string) => value }));
 vi.mock('@/utils/proxy/socketIoProxy', () => ({ getSocketIoProxyOptions: () => ({}) }));
 vi.mock('@/utils/time', () => ({ backoff: async <T>(fn: () => Promise<T>) => await fn() }));
@@ -101,9 +96,6 @@ describe('ApiMachineClient transports', () => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
     configurationMock.socketIoTransports = ['polling', 'websocket'];
     mockAxiosPost.mockResolvedValue({ status: 200, data: { success: true, applied: true } });
-    registerFileSystemHandlersMock.mockReset();
-    registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: { dispose: async () => {} } });
-    registerMachineRpcHandlersMock.mockReset();
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
 
@@ -113,6 +105,80 @@ describe('ApiMachineClient transports', () => {
     configurationMock.socketIoTransports = ['polling', 'websocket'];
     vi.mocked(logger.warn).mockReset();
     mockAxiosPost.mockReset();
+    vi.unstubAllEnvs();
+  });
+
+  it('publishes only safe retained Machine content and refuses new private peer flow fields before encryption', async () => {
+    const key = new Uint8Array(32).fill(3);
+    const published: unknown[] = [];
+    const publishedMetadata: unknown[] = [];
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: vi.fn(async (event: string, payload: unknown) => {
+      if (event === 'machine-update-metadata') {
+        const update = payload as { metadata: string };
+        publishedMetadata.push(decryptLegacy(decodeBase64(update.metadata), key));
+        return { result: 'success', version: publishedMetadata.length, metadata: update.metadata };
+      }
+      if (event !== 'machine-update-state') return { success: true, applied: true };
+      const update = payload as { daemonState: string };
+      published.push(decryptLegacy(decodeBase64(update.daemonState), key));
+      return { result: 'success', version: published.length, daemonState: update.daemonState };
+    }) });
+    bindApiSessionSocketMock(mockIo, socket);
+    const privateState = {
+      status: 'running',
+      workspaceSync: {
+        v: 1, readiness: { engine: { state: 'ready' }, carrier: { state: 'ready' } },
+        status: { relationshipId: 'private-relationship', alphaPath: '/private/work' },
+      },
+      peerMediation: { loopback: { flows: { machine_rpc: { active: true, token: 'private-token' } } } },
+      transfer: {
+        supported: { import: true, export: true },
+        listenerClasses: {
+          loopback_http: { enabled: true, configured: true, active: false, token: 'transfer-secret' },
+          tailscale_serve_https: { enabled: false, configured: false, active: false },
+        },
+        lifecycle: { mode: 'lazy_idle_shutdown', version: 1 }, native: { privatePath: '/private/native' },
+      },
+      foreignSession: { id: 'foreign-session', command: 'private-command' },
+    };
+    const client = new ApiMachineClient('fake-token', {
+      id: 'machine', encryptionKey: key, encryptionVariant: 'legacy',
+      metadata: {
+        host: 'workstation', platform: 'linux', happyCliVersion: '0.3',
+        homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier',
+        privateWorkspace: { relationshipId: 'private-relationship', path: '/private/work', token: 'metadata-secret' },
+      },
+      metadataVersion: 0, daemonState: privateState, daemonStateVersion: 0,
+    } as Machine);
+    client.connect();
+    try {
+      await client.updateMachineMetadata((metadata) => ({ ...metadata, displayName: 'Workstation' }));
+      expect(publishedMetadata).toEqual([{
+        host: 'workstation', platform: 'linux', happyCliVersion: '0.3',
+        homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier', displayName: 'Workstation',
+      }]);
+      await client.updateDaemonState((state) => ({ ...state, status: 'running' }));
+      expect(published).toEqual([{
+        status: 'running',
+        workspaceSync: { v: 1, readiness: { engine: { state: 'ready' }, carrier: { state: 'ready' } } },
+        peerMediation: { loopback: { flows: { machine_rpc: { active: true } } } },
+        transfer: {
+          supported: { import: true, export: true },
+          listenerClasses: {
+            loopback_http: { enabled: true, configured: true, active: false },
+            tailscale_serve_https: { enabled: false, configured: false, active: false },
+          },
+          lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+        },
+      }]);
+      await expect(client.updateDaemonState((state) => ({
+        ...state, status: 'running',
+        peerMediation: { loopback: { flows: { machine_rpc: { active: true, token: 'new-private-token' } } } },
+      }))).rejects.toThrow();
+      expect(published).toHaveLength(1);
+    } finally {
+      await client.shutdown();
+    }
   });
 
   it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
@@ -174,6 +240,7 @@ describe('ApiMachineClient transports', () => {
       MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
     } = await import('@happier-dev/protocol');
     const machineSocket = createApiSessionSocketStub({
+      connected: true,
       emitWithAck: vi.fn(async (event: string) => {
         if (event === MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1) {
           return {
@@ -224,6 +291,7 @@ describe('ApiMachineClient transports', () => {
         authority: { kind: 'generation', publisherGeneration: '7' },
       },
     );
+    await client.shutdown();
   });
 
   it('can force websocket-only via config flag', async () => {
@@ -939,7 +1007,7 @@ describe('ApiMachineClient transports', () => {
     });
   });
 
-  it('forwards voice inference workers into machine RPC registration', async () => {
+  it('serves voice inference status through the registered machine RPC', async () => {
     const mod = await import('./apiMachine');
 
     const machine: Machine = {
@@ -952,6 +1020,7 @@ describe('ApiMachineClient transports', () => {
       daemonStateVersion: 0,
     };
 
+    // The native inference/model worker is the OS boundary; RPC registration and policy remain real.
     const voiceInference: VoiceInferenceWorkerHandle = {
       stop: vi.fn(async () => {}),
       getStatus: vi.fn(async () => ({
@@ -1011,22 +1080,35 @@ describe('ApiMachineClient transports', () => {
       cancelStt: vi.fn(async () => {}),
     };
 
+    const runtimeHome = await mkdtemp(join(tmpdir(), 'happier-machine-rpc-voice-'));
+    configurationMock.activeServerDir = runtimeHome;
+    vi.stubEnv('HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED', '1');
+    vi.stubEnv('HAPPIER_FEATURE_VOICE_AGENT__ENABLED', '1');
+    vi.stubEnv('HAPPIER_FEATURE_VOICE__ENABLED', '1');
+    vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+    const features = FeaturesResponseSchema.parse({ features: { voice: { enabled: true } } });
     const client = new mod.ApiMachineClient('fake-token', machine);
-    client.setRPCHandlers({
-      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
-      stopSession: async () => true,
-      requestShutdown: () => {},
-      voiceInference,
-    });
-
-    expect(registerMachineRpcHandlersMock).toHaveBeenCalledWith(expect.objectContaining({
-      handlers: expect.objectContaining({
+    try {
+      client.setRPCHandlers({
+        spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+        stopSession: async () => true,
+        requestShutdown: () => {},
         voiceInference,
-      }),
-    }));
+      }, { getServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
+
+      await expect(client.invokeLocalMachineAction(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, {})).resolves.toEqual({
+        ok: true,
+        serviceState: 'ready',
+        normalization: { inputTransport: 'upload_transfer', strategy: 'daemon_decode', systemFfmpegAllowed: false },
+        models: [],
+      });
+    } finally {
+      await client.shutdown();
+      await rm(runtimeHome, { recursive: true, force: true });
+    }
   });
 
-  it('projects canonical update-session archive state into machine RPC lifecycle dependencies', async () => {
+  it('projects canonical update-session archive state with real machine RPC lifecycle registration', async () => {
     const machineSocket = createApiSessionSocketStub();
     bindApiSessionSocketMock(mockIo, machineSocket);
     const mod = await import('./apiMachine');
@@ -1039,79 +1121,76 @@ describe('ApiMachineClient transports', () => {
       daemonState: null,
       daemonStateVersion: 0,
     };
+    const runtimeHome = await mkdtemp(join(tmpdir(), 'happier-machine-rpc-archive-'));
+    configurationMock.activeServerDir = runtimeHome;
     const client = new mod.ApiMachineClient('fake-token', machine);
-    client.setRPCHandlers({
-      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
-      stopSession: async () => true,
-      requestShutdown: () => {},
-    });
+    try {
+      client.setRPCHandlers({
+        spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      });
 
-    const registration = registerMachineRpcHandlersMock.mock.calls[0]![0] as Readonly<{
-      deps: Readonly<{
-        subscribeSessionArchivedStateChanges(
-          listener: (change: Readonly<{
-            sessionId: string;
-            archived: boolean;
-          }>) => void,
-        ): () => void;
-      }>;
-    }>;
-    const listener = vi.fn();
-    const unsubscribe = registration.deps.subscribeSessionArchivedStateChanges(listener);
-    client.connect();
+      const listener = vi.fn();
+      const unsubscribe = client.onSessionArchivedStateChange(listener);
+      client.connect();
 
-    machineSocket.getHandler('update')?.({
-      id: 'update-session-without-archive-state',
-      seq: 1,
-      createdAt: Date.now(),
-      body: {
-        t: 'update-session',
-        id: 'session-metadata-only',
-        metadata: 'encrypted-metadata',
-      },
-    } as never);
-    machineSocket.getHandler('update')?.({
-      id: 'update-archive',
-      seq: 2,
-      createdAt: Date.now(),
-      body: {
-        t: 'update-session',
-        id: 'session-archived',
-        archivedAt: 123,
-      },
-    } as never);
-    machineSocket.getHandler('update')?.({
-      id: 'update-unarchive',
-      seq: 3,
-      createdAt: Date.now(),
-      body: {
-        t: 'update-session',
-        id: 'session-archived',
-        archivedAt: null,
-      },
-    } as never);
+      machineSocket.getHandler('update')?.({
+        id: 'update-session-without-archive-state',
+        seq: 1,
+        createdAt: Date.now(),
+        body: {
+          t: 'update-session',
+          id: 'session-metadata-only',
+          metadata: 'encrypted-metadata',
+        },
+      } as never);
+      machineSocket.getHandler('update')?.({
+        id: 'update-archive',
+        seq: 2,
+        createdAt: Date.now(),
+        body: {
+          t: 'update-session',
+          id: 'session-archived',
+          archivedAt: 123,
+        },
+      } as never);
+      machineSocket.getHandler('update')?.({
+        id: 'update-unarchive',
+        seq: 3,
+        createdAt: Date.now(),
+        body: {
+          t: 'update-session',
+          id: 'session-archived',
+          archivedAt: null,
+        },
+      } as never);
 
-    expect(listener).toHaveBeenNthCalledWith(1, {
-      sessionId: 'session-archived',
-      archived: true,
-    });
-    expect(listener).toHaveBeenNthCalledWith(2, {
-      sessionId: 'session-archived',
-      archived: false,
-    });
+      expect(listener).toHaveBeenNthCalledWith(1, {
+        sessionId: 'session-archived',
+        archived: true,
+      });
+      expect(listener).toHaveBeenNthCalledWith(2, {
+        sessionId: 'session-archived',
+        archived: false,
+      });
 
-    unsubscribe();
-    machineSocket.getHandler('update')?.({
-      id: 'update-after-unsubscribe',
-      seq: 4,
-      createdAt: Date.now(),
-      body: {
-        t: 'update-session',
-        id: 'session-after-unsubscribe',
-        archivedAt: 456,
-      },
-    } as never);
-    expect(listener).toHaveBeenCalledTimes(2);
+      unsubscribe();
+      machineSocket.getHandler('update')?.({
+        id: 'update-after-unsubscribe',
+        seq: 4,
+        createdAt: Date.now(),
+        body: {
+          t: 'update-session',
+          id: 'session-after-unsubscribe',
+          archivedAt: 456,
+        },
+      } as never);
+      expect(listener).toHaveBeenCalledTimes(2);
+    } finally {
+      await client.shutdown();
+      await rm(runtimeHome, { recursive: true, force: true });
+    }
   });
 
 });

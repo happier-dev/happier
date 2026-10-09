@@ -1,8 +1,11 @@
 import { Buffer } from 'node:buffer';
+import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
+import type { Socket } from 'socket.io-client';
 
-import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type {
@@ -27,7 +30,26 @@ import type {
     ManagedProviderRequestAuthCapabilityPathBinding,
     ManagedServiceCredentialFileOwner,
 } from './managedServicesAdapter';
-import { createManagedServicesOwner } from './managedServicesOwner';
+import { createManagedServicesOwner, type ProjectManagedServiceSupervisionInput } from './managedServicesOwner';
+import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
+import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
+import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
+import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
+import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/feed';
+import { createLocalServiceLauncherHistoryStore, createLocalServiceLauncherLeafRoutes } from '@/daemon/local/services/launch/leaves';
+import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
+import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createRunnerManagedServiceEndpointProjectionBinding } from './createRunnerManagedServiceInvocationOwner';
 import { createProviderCliAttachSurface } from '@/session/attach/providerCliAttach';
 import {
@@ -38,7 +60,13 @@ import {
     createManagedServiceEndpointProjectionV1,
 } from './managedServiceEndpointProjection';
 import { createStablePluginEventsBroker } from './events';
-import { associateSupervisedPluginProcessHandleForHost } from '../../exec/processSupervisor';
+import {
+    authorizeResolvedProjectExecLaunchForHost,
+    createProjectNativeEnvironmentIoForHost,
+    createStablePluginExecService,
+} from './exec';
+import { associateSupervisedPluginProcessHandleForHost, readSupervisedPluginProcessIdForHost } from '../../exec/processSupervisor';
+import * as processTreeBoundary from '@/agent/runtime/process/killProcessTree';
 import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
     createPluginInvocationServicesFactory,
@@ -186,7 +214,7 @@ function lifecycleScope(input: Readonly<{
 function createLifecycleHarness(
     processes: PluginProcessHandle[] = [],
     custodyOwner: 'daemon' | 'sessionRunner' = 'sessionRunner',
-    boundaryOptions: Pick<Parameters<typeof createManagedServicesOwner>[0], 'fetch' | 'registerRawForRedaction'> = {},
+    boundaryOptions: Pick<Parameters<typeof createManagedServicesOwner>[0], 'fetch' | 'registerRawForRedaction' | 'resolveNativeLifecycle'> = {},
 ) {
     let nextInstance = 0;
     const processSupervisorHost = createManagedServiceProcessSupervisorHost({
@@ -338,7 +366,479 @@ function createManagedProviderBinding(
     });
 }
 
+function createProjectLifecycleInput(options: Readonly<{
+    isCurrent?: () => boolean;
+    signal?: AbortSignal;
+}> = {}): ProjectManagedServiceSupervisionInput {
+    const isCurrent = options.isCurrent ?? (() => true);
+    const workspace = {
+        id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
+        rootPath: process.cwd(), createdAtMs: 1,
+    };
+    const declaration = {
+        workspaceRefId: workspace.id,
+        selection: { kind: 'manifest' as const, name: 'worker' },
+    };
+    const requester = {
+        serverId: workspace.serverId, accountId: 'requester-one',
+        machineId: workspace.machineId, installationId: 'installation-one',
+    };
+    return {
+        workspace, declaration, requester, cwd: workspace.rootPath,
+        serviceId: 'project:workspace-one:manifest:worker',
+        specIdentity: 'reviewed-worker-effect',
+        ...(options.signal ? { signal: options.signal } : {}),
+        isCurrent,
+        processSpec: {
+            mode: { kind: 'managedSpawn', endpointNone: true },
+            startupTimeoutMs: 1_000,
+        },
+        authorizeLaunch: ({ signal }) =>
+            authorizeResolvedProjectExecLaunchForHost({
+                signal,
+                assertCurrent() {
+                    if (!isCurrent()) {
+                        throw new PluginError({
+                            code: 'plugin_managed_service_unavailable',
+                            message: 'Project authority retired',
+                        });
+                    }
+                },
+                projectLaunch: {
+                    status: 'ready', reviewedEffectDigest: 'reviewed-worker-effect',
+                    environment: {
+                        selection: { kind: 'host' }, root: workspace.rootPath,
+                        platform: process.platform,
+                        io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                    },
+                },
+                launch: {
+                    command: process.execPath,
+                    args: ['-e', 'setInterval(() => {}, 1000)'],
+                    cwd: workspace.rootPath, env: {}, release() {},
+                },
+            }),
+    };
+}
+
 describe('managed-services SVC09 owner', () => {
+    it('awaits the real final launch capture when Project access retires before tuple handoff', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        let admitted = true;
+        const input = createProjectLifecycleInput({ isCurrent: () => admitted });
+        const executable = { kind: 'systemTool', id: 'fixture.native-helper' } as const;
+        const helper = await createStablePluginExecService({ allowedExecutables: [executable], signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
+            resolvePath: async () => input.cwd }).spawn({ executable, args: ['-e', 'setInterval(()=>{},1000)'] });
+        const pid = readSupervisedPluginProcessIdForHost(helper);
+        if (!pid) throw new Error('Expected an actual captured native helper');
+        const settlement = deferred<void>();
+        let cleanupStarted = false;
+        let establishmentFinished = false;
+        const terminate = processTreeBoundary.killProcessTree;
+        const boundary = vi.spyOn(processTreeBoundary, 'killProcessTree').mockImplementation(async (...args) => {
+            if (args[0].pid === pid) { cleanupStarted = true; await settlement.promise; }
+            await terminate(...args);
+        });
+        const establishment = owner.superviseProject({ ...input, authorizeLaunch: async ({ signal }) => {
+            const launch = await authorizeResolvedProjectExecLaunchForHost({ signal, assertCurrent() {},
+                projectLaunch: { status: 'ready', reviewedEffectDigest: input.specIdentity,
+                    environment: { selection: { kind: 'host' }, root: input.cwd, platform: process.platform,
+                        io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                launch: { command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: input.cwd, env: {} } });
+            // Current requester access changes after the real final authorizer
+            // returned, before the owner can hand that tuple to its supervisor.
+            admitted = false;
+            // Match the Service starter's retained final-capture composition:
+            // this is genuine Exec disposal, not a mocked release or terminator.
+            return { ...launch, async release() { await launch.release(); await helper.dispose(); } };
+        } });
+        const observed = establishment.then(() => { establishmentFinished = true; }, error => { establishmentFinished = true; return error; });
+        try {
+            await vi.waitFor(() => expect(cleanupStarted).toBe(true));
+            expect(process.kill(pid, 0)).toBe(true);
+            expect(establishmentFinished).toBe(false);
+            expect(owner.readRetainedSemanticCustodyCount()).toBeGreaterThan(0);
+            settlement.resolve();
+            expect(await observed).toBeInstanceOf(Error);
+            expect(() => process.kill(pid, 0)).toThrow();
+            expect(owner.listProjectServices()).toEqual([]);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+        } finally {
+            settlement.resolve();
+            boundary.mockRestore();
+            await helper.dispose();
+            await observed;
+            await owner.dispose();
+        }
+    });
+
+    it('rechecks authenticated access loss after establishment before stopping an exact native service', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        let stopped = false;
+        // Native resource inspection and termination are external boundaries.
+        const handle = await owner.superviseProject({ ...input, processSpec: { ...input.processSpec,
+            mode: { kind: 'native', instance: { adapter: { pluginId: 'native', localId: 'worker' },
+                nativeResourceId: 'exact-resource' }, lifecycle: {
+                inspect: async () => ({ phase: stopped ? 'stopped' : 'running', readiness: 'not_reported', endpoint: null }),
+                stop: async () => { stopped = true; return { status: 'stopped' }; },
+            } },
+        } });
+        try {
+            expect(await owner.stopForAccessLoss(input.requester, { verifyCurrentMachineAdmission: async () => false }))
+                .toMatchObject([{ status: 'termination_incomplete', instanceId: handle.instanceId }]);
+            expect(handle.retirementSignal.aborted).toBe(false);
+            let checks = 0;
+            expect(await owner.stopForAccessLoss(input.requester, { verifyCurrentMachineAdmission: async () => ++checks === 1 }))
+                .toMatchObject([{ status: 'termination_incomplete', instanceId: handle.instanceId }]);
+            expect(stopped).toBe(false);
+            expect(handle.snapshot().state).toBe('running');
+            expect(await owner.stopForAccessLoss(input.requester, { verifyCurrentMachineAdmission: async () => true }))
+                .toMatchObject([{ status: 'stopped', instanceId: handle.instanceId }]);
+            expect(stopped).toBe(true);
+        } finally { await owner.dispose(); }
+    });
+    it('projects material Project service preparation and real lifetime without a public port', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        const inspected = deferred<void>();
+        let stopped = false;
+        const edges: unknown[] = [];
+        const unsubscribe = owner.activity.subscribe(() => edges.push(owner.activity.read()));
+        const establishment = owner.superviseProject({ ...input, processSpec: { ...input.processSpec,
+            mode: { kind: 'native', instance: { adapter: { pluginId: 'native', localId: 'worker' },
+                nativeResourceId: 'exact-resource' }, lifecycle: {
+                inspect: async () => { await inspected.promise; return { phase: stopped ? 'stopped' : 'running', readiness: 'not_reported', endpoint: null }; },
+                stop: async () => { stopped = true; return { status: 'stopped' }; },
+            } },
+        } });
+        try {
+            expect(owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
+                { category: 'service', attribution: input.requester, state: 'active' },
+            ] });
+            inspected.resolve();
+            const handle = await establishment;
+            expect(handle.snapshot().baseUrl).toBeNull();
+            expect(owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
+                { category: 'service', ownerRef: handle.instanceId, state: 'active' },
+            ] });
+            await handle.stop();
+            expect(owner.activity.read()).toEqual({ coverage: 'complete', items: [] });
+            expect(edges).toContainEqual({ coverage: 'complete', items: [] });
+        } finally {
+            inspected.resolve();
+            unsubscribe();
+            await establishment.catch(() => undefined);
+            await owner.dispose();
+        }
+    });
+
+    it('retains an admitted Project service in the same custody owner independently of its joined caller', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        let admitted = true;
+        const caller = new AbortController();
+        const input = createProjectLifecycleInput({ isCurrent: () => admitted, signal: caller.signal });
+        const { workspace, declaration, requester } = input;
+        try {
+            const handle = await owner.superviseProject(input);
+            expect(handle).toMatchObject({
+                instanceId: 'owner-lifecycle-1', serviceId: input.serviceId,
+                workspace, declaration, requester, cwd: workspace.rootPath,
+            });
+            expect(handle.snapshot()).toMatchObject({ state: 'running', baseUrl: null });
+            const target = {
+                kind: 'managed_service' as const,
+                managedServiceId: handle.instanceId,
+                machineId: workspace.machineId,
+                declaration,
+                cwd: workspace.rootPath,
+            };
+            expect(owner.listProjectServices()).toEqual([handle]);
+            expect(owner.resolveProjectService(target)).toEqual({ status: 'found', handle });
+            expect(owner.resolveProjectService({ ...target, managedServiceId: input.serviceId })).toEqual({ status: 'unknown' });
+            expect(owner.resolveProjectService({ ...target, machineId: 'other-machine' })).toEqual({ status: 'mismatch' });
+            expect(owner.resolveProjectService({ ...target, cwd: `${workspace.rootPath}/other` })).toEqual({ status: 'mismatch' });
+            expect(owner.resolveProjectService({ ...target, declaration: undefined })).toEqual({ status: 'mismatch' });
+            expect(owner.resolveProjectService({ ...target, declaration: {
+                ...declaration, selection: { kind: 'manifest', name: 'other' },
+            } })).toEqual({ status: 'mismatch' });
+            await expect(owner.superviseProject({ ...input, specIdentity: 'different-reviewed-effect' }))
+                .rejects.toMatchObject({ code: 'plugin_managed_service_spec_conflict' });
+            caller.abort();
+            expect(await owner.superviseProject({ ...input, signal: undefined })).toBe(handle);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
+            for (const field of ['serverId', 'accountId', 'machineId', 'installationId'] as const) {
+                expect(await owner.stopForAccessLoss({ ...requester, [field]: 'other' })).toEqual([]);
+                expect(handle.snapshot().state).toBe('running');
+            }
+            admitted = false;
+            expect(await owner.stopForAccessLoss(requester)).toMatchObject([
+                { status: 'stopped', instanceId: handle.instanceId, requester, serviceId: input.serviceId },
+            ]);
+            expect(handle.snapshot().state).toBe('stopped');
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+            expect(owner.resolveProjectService(target)).toEqual({ status: 'unknown' });
+        } finally {
+            await owner.dispose();
+        }
+    });
+
+    it('revokes Project serving immediately while retaining uncertain exact native custody', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        const endpoint = 'http://127.0.0.1:43170';
+        let stoppable = false;
+        const instance = {
+            adapter: { pluginId: 'acme.native', localId: 'compose' },
+            nativeResourceId: 'exact-project-resource',
+        };
+        // Native resource inspection and termination are genuine external IO.
+        const handle = await owner.superviseProject({
+            ...input,
+            processSpec: {
+                ...input.processSpec,
+                mode: {
+                    kind: 'native',
+                    instance,
+                    lifecycle: {
+                        inspect: async observed => {
+                            expect(observed).toEqual(instance);
+                            return { phase: 'running', readiness: 'not_reported', endpoint };
+                        },
+                        stop: async observed => {
+                            expect(observed).toEqual(instance);
+                            return { status: stoppable ? 'stopped' : 'unsupported' };
+                        },
+                    },
+                },
+            },
+        });
+        try {
+            const inventoryRegistry = createLocalServiceInventoryRegistry();
+            const feed = createLocalServiceLauncherFeed({
+                machineId: input.workspace.machineId,
+                inventoryRegistry,
+                previewRegistry: createLocalServicePreviewRegistry(),
+                projectManagedServices: owner,
+            });
+            expect((await feed.getSnapshot()).targets[0]?.endpointUrl).toBe(endpoint);
+            const result = await owner.stopForAccessLoss(input.requester);
+            expect(result).toMatchObject([{
+                status: 'unsupported', instanceId: handle.instanceId,
+                snapshot: { mode: 'native', state: 'running' },
+            }]);
+            expect(handle.retirementSignal.aborted).toBe(true);
+            expect(handle.isCurrent()).toBe(false);
+            expect(owner.listProjectServices()).toEqual([handle]);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
+            expect(owner.activity.read()).toMatchObject({ coverage: 'complete', items: [
+                { category: 'service', ownerRef: handle.instanceId, state: 'active', attribution: input.requester },
+            ] });
+            await expect(handle.request({ pathAndQuery: '/' })).rejects
+                .toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            const retainedTarget = (await feed.getSnapshot()).targets[0];
+            expect(retainedTarget).toMatchObject({
+                source: 'managed_service',
+                serviceState: 'running',
+                sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
+            });
+            expect(retainedTarget?.endpointUrl).toBeUndefined();
+            expect(retainedTarget?.actions).toEqual(['manage']);
+            stoppable = true;
+            // The protected Machine Action path retains exact-instance Stop
+            // custody even though serving and requester access have retired.
+            const routes = createLocalServiceActionRoutes({
+                machineId: input.workspace.machineId,
+                inventoryRegistry,
+                projectManagedServices: owner,
+                verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request),
+            });
+            const request = {
+                requestId: 'retained-native-stop',
+                target: {
+                    kind: 'managed_service' as const,
+                    machineId: input.workspace.machineId,
+                    managedServiceId: handle.instanceId,
+                    workspaceId: input.workspace.id,
+                    declaration: input.declaration,
+                    cwd: input.cwd,
+                },
+                action: 'stop_managed' as const,
+                force: false,
+            };
+            expect(await routes.execute({
+                ...request,
+                confirmationNonce: createLocalServiceActionConfirmationNonceV1(request),
+            })).toMatchObject({ status: 'succeeded' });
+            expect(handle.snapshot().state).toBe('stopped');
+            expect(owner.listProjectServices()).toEqual([]);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+        } finally {
+            stoppable = true;
+            await owner.dispose();
+        }
+    });
+
+    it.each([true, false])('does not report acquired native preparation as unstarted cancellation (stoppable=%s)', async (initiallyStoppable) => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        const inspection = deferred<void>();
+        let inspecting = false;
+        let stoppable = initiallyStoppable;
+        const establishment = owner.superviseProject({
+            ...input,
+            processSpec: {
+                ...input.processSpec,
+                mode: {
+                    kind: 'native',
+                    instance: {
+                        adapter: { pluginId: 'acme.native', localId: 'compose' },
+                        nativeResourceId: 'acquired-before-initial-inspection',
+                    },
+                    // Delay only the genuine native inspection IO, not the owner.
+                    lifecycle: {
+                        inspect: async () => {
+                            inspecting = true;
+                            await inspection.promise;
+                            return { phase: 'running', readiness: 'not_reported', endpoint: null };
+                        },
+                        stop: async () => ({ status: stoppable ? 'stopped' : 'unsupported' }),
+                    },
+                },
+            },
+        });
+        const failedEstablishment = establishment.catch(error => error);
+        try {
+            await vi.waitFor(() => expect(inspecting).toBe(true));
+            const feed = createLocalServiceLauncherFeed({ machineId: input.workspace.machineId,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
+                projectManagedServices: owner });
+            const bindingRead = { projection: 'managed_bindings' as const, workspaceRoot: input.workspace.rootPath };
+            expect((await feed.getSnapshot({ ...bindingRead, workspaceRoot: '/unrelated-workspace' })).targets).toEqual([]);
+            await expect(feed.getSnapshot(bindingRead)).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            const loss = owner.stopForAccessLoss(input.requester);
+            inspection.resolve();
+            await failedEstablishment;
+            expect(await loss).toMatchObject([{
+                status: initiallyStoppable ? 'stopped' : 'termination_incomplete',
+                instanceId: 'owner-lifecycle-1',
+            }]);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(initiallyStoppable ? 0 : 1);
+            if (initiallyStoppable) expect((await feed.getSnapshot(bindingRead)).targets).toEqual([]);
+            else await expect(feed.getSnapshot(bindingRead)).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        } finally {
+            inspection.resolve();
+            stoppable = true;
+            await owner.stopForAccessLoss(input.requester);
+            await owner.dispose();
+        }
+    });
+
+    it.skipIf(process.platform !== 'linux')('settles access loss as cancelled preparation only before process custody exists', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        const toolResolution = deferred<void>();
+        let resolving = false;
+        const establishment = owner.superviseProject({
+            ...input,
+            authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
+                signal,
+                assertCurrent() {},
+                projectLaunch: {
+                    status: 'ready', reviewedEffectDigest: input.specIdentity,
+                    environment: {
+                        selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+                        root: input.cwd,
+                        platform: 'linux',
+                        io: createProjectNativeEnvironmentIoForHost({
+                            // Suspend only installed-tool resolution, a genuine OS boundary.
+                            resolveTool: async () => {
+                                resolving = true;
+                                await toolResolution.promise;
+                                return null;
+                            },
+                        }),
+                    },
+                },
+                launch: {
+                    command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
+                    cwd: input.cwd, env: {}, release() {},
+                },
+            }),
+        });
+        const failedEstablishment = establishment.catch(error => error);
+        try {
+            await vi.waitFor(() => expect(resolving).toBe(true));
+            const loss = owner.stopForAccessLoss(input.requester);
+            toolResolution.resolve();
+            await failedEstablishment;
+            expect(await loss).toMatchObject([{
+                status: 'cancelled_preparation', instanceId: null,
+                requester: input.requester,
+            }]);
+            expect(owner.listProjectServices()).toEqual([]);
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+        } finally {
+            toolResolution.resolve();
+            await owner.dispose();
+        }
+    });
+
+    it('supervises a URL-less worker through the public owner and refuses HTTP-only operations', async () => {
+        const { owner, exec: lifecycleExec } = createLifecycleHarness([createLifecycleProcess(77)], 'daemon');
+        const services = owner.bindScope(lifecycleScope({ occurrenceId: 'worker' }), lifecycleExec);
+        const handle = await services.supervise({
+            id: 'worker',
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } }, endpoint: { kind: 'none' } },
+        });
+        expect(handle.snapshot()).toMatchObject({ state: 'running', mode: 'spawn', baseUrl: null, lastHealthyAtMs: null });
+        await expect(handle.request({ pathAndQuery: '/health' })).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        await expect(handle.waitUntilHealthy()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        expect(handle.snapshot().state).toBe('stopped');
+        await owner.dispose();
+    });
+
+    it('refuses a native start without a currently declared lifecycle before spawning', async () => {
+        const { owner, exec: lifecycleExec } = createLifecycleHarness([], 'daemon');
+        const services = owner.bindScope(lifecycleScope({ occurrenceId: 'native' }), lifecycleExec);
+        await expect(services.supervise({
+            id: 'compose',
+            mode: { kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } },
+                instance: { adapter: { pluginId: 'acme.providers', localId: 'compose' }, nativeResourceId: 'exact-project' } },
+        })).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        expect(lifecycleExec.spawn).not.toHaveBeenCalled();
+        await owner.dispose();
+    });
+
+    it('keeps a native owner binding when stop is unsupported and permits the exact later stopped witness', async () => {
+        let stoppable = false;
+        const { owner, exec: lifecycleExec } = createLifecycleHarness([createLifecycleProcess(78)], 'daemon', {
+            // Native inspection/control is an OS/tool boundary; the owner and supervisor remain real.
+            resolveNativeLifecycle: async () => ({
+                inspect: async () => ({ phase: 'running', readiness: 'not_reported', endpoint: null }),
+                stop: async () => ({ status: stoppable ? 'stopped' : 'unsupported' }),
+            }),
+        });
+        const services = owner.bindScope(lifecycleScope({ occurrenceId: 'native' }), lifecycleExec);
+        const spec: ManagedServiceSpec = {
+            id: 'compose',
+            mode: { kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } },
+                instance: { adapter: { pluginId: 'acme.providers', localId: 'compose' }, nativeResourceId: 'exact-project' } },
+        };
+        const handle = await services.supervise(spec);
+        expect(handle.snapshot()).toMatchObject({ mode: 'native', state: 'running', readiness: 'not_reported', baseUrl: null });
+        await expect(handle.stop()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        expect(handle.snapshot().state).toBe('running');
+        expect(await services.supervise(spec)).toBe(handle);
+        await expect(handle.dispose()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        expect(handle.snapshot().state).toBe('running');
+        expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
+        stoppable = true;
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        await owner.dispose();
+    });
     it.each([false, true])('resolves projected Session access by exact native instance without replacing runtime occurrence (retireBeforeSpawn=%s)', async (retireBeforeSpawn) => {
         const hostFetch = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }));
         const harness = createLifecycleHarness([createLifecycleProcess(42)], 'sessionRunner', {
@@ -3579,7 +4079,7 @@ describe('managed-services SVC09 owner', () => {
         });
 
         await expect(handle.stop()).rejects.toMatchObject({
-            code: 'plugin_managed_service_establishment_failed',
+            code: 'plugin_managed_server_termination_incomplete',
         });
         expect(harness.legacyHandle.stop).toHaveBeenCalledTimes(1);
         expect(releaseFiles).toHaveBeenCalledTimes(1);
@@ -4330,17 +4830,14 @@ describe('managed-services SVC09 owner', () => {
         });
         let currentSnapshot = healthySnapshot as
             ReturnType<ManagedServiceProcessHandle['snapshot']>;
-        let terminalListener:
-            | ((snapshot: ReturnType<ManagedServiceProcessHandle['snapshot']>) => void)
-            | null = null;
-        const disposeObservation = vi.fn();
+        const observationListeners = new Set<(snapshot: ReturnType<ManagedServiceProcessHandle['snapshot']>) => void>();
         const disposeProcess = vi.fn(async () => undefined);
         const processHandle = Object.freeze({
             snapshot: () => currentSnapshot,
             observe: vi.fn((listener) => {
-                terminalListener = listener;
+                observationListeners.add(listener);
                 listener(currentSnapshot);
-                return Object.freeze({ dispose: disposeObservation });
+                return Object.freeze({ dispose: () => observationListeners.delete(listener) });
             }),
             waitUntilHealthy: vi.fn(async () => currentSnapshot),
             stop: vi.fn(async () => Object.freeze({
@@ -4406,13 +4903,15 @@ describe('managed-services SVC09 owner', () => {
                 severity: 'error' as const,
             })]),
         });
-        terminalListener!(currentSnapshot);
+        for (const listener of [...observationListeners]) listener(currentSnapshot);
         await vi.waitFor(() => {
             expect(disposeWatch).toHaveBeenCalledOnce();
         });
 
         expect(disposeProcess).toHaveBeenCalledOnce();
-        expect(disposeObservation).toHaveBeenCalledOnce();
+        // Failed credential cleanup retains the semantic entry and its
+        // activity observation until permanent cleanup settles it.
+        expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
         await expect(services.supervise(spec)).rejects.toMatchObject({
             code: 'plugin_managed_service_establishment_failed',
         });
@@ -4420,13 +4919,13 @@ describe('managed-services SVC09 owner', () => {
 
         await expect(owner.dispose()).resolves.toBeUndefined();
         expect(disposeProcess).toHaveBeenCalledOnce();
-        expect(disposeObservation).toHaveBeenCalledOnce();
+        expect(observationListeners.size).toBe(0);
         expect(disposeWatch).toHaveBeenCalledTimes(3);
 
         await expect(owner.dispose()).resolves.toBeUndefined();
         await expect(owner.dispose()).resolves.toBeUndefined();
         expect(disposeProcess).toHaveBeenCalledOnce();
-        expect(disposeObservation).toHaveBeenCalledOnce();
+        expect(observationListeners.size).toBe(0);
         expect(disposeWatch).toHaveBeenCalledTimes(3);
     });
 
@@ -4446,12 +4945,9 @@ describe('managed-services SVC09 owner', () => {
         });
         let currentSnapshot = healthySnapshot as
             ReturnType<ManagedServiceProcessHandle['snapshot']>;
-        let terminalListener:
-            | ((snapshot: ReturnType<ManagedServiceProcessHandle['snapshot']>) => void)
-            | null = null;
+        const observationListeners = new Set<(snapshot: ReturnType<ManagedServiceProcessHandle['snapshot']>) => void>();
         const disposeStarted = deferred<void>();
         const releaseDispose = deferred<void>();
-        const disposeObservation = vi.fn();
         const disposeProcess = vi.fn(async () => {
             disposeStarted.resolve(undefined);
             await releaseDispose.promise;
@@ -4462,9 +4958,9 @@ describe('managed-services SVC09 owner', () => {
         const processHandle = Object.freeze({
             snapshot: () => currentSnapshot,
             observe: vi.fn((listener) => {
-                terminalListener = listener;
+                observationListeners.add(listener);
                 listener(currentSnapshot);
-                return Object.freeze({ dispose: disposeObservation });
+                return Object.freeze({ dispose: () => observationListeners.delete(listener) });
             }),
             waitUntilHealthy: vi.fn(async () => currentSnapshot),
             stop: stopProcess,
@@ -4524,7 +5020,7 @@ describe('managed-services SVC09 owner', () => {
                 severity: 'error' as const,
             })]),
         });
-        terminalListener!(currentSnapshot);
+        for (const listener of [...observationListeners]) listener(currentSnapshot);
         await disposeStarted.promise;
 
         const concurrentStop = handle.stop();
@@ -4534,13 +5030,13 @@ describe('managed-services SVC09 owner', () => {
         await expect(handle.stop()).resolves.toEqual({ status: 'stopped' });
         expect(disposeProcess).toHaveBeenCalledOnce();
         expect(stopProcess).not.toHaveBeenCalled();
-        expect(disposeObservation).toHaveBeenCalledOnce();
+        expect(observationListeners.size).toBe(0);
         expect(disposeWatch).toHaveBeenCalledOnce();
 
         await expect(owner.dispose()).resolves.toBeUndefined();
         expect(disposeProcess).toHaveBeenCalledOnce();
         expect(stopProcess).not.toHaveBeenCalled();
-        expect(disposeObservation).toHaveBeenCalledOnce();
+        expect(observationListeners.size).toBe(0);
         expect(disposeWatch).toHaveBeenCalledOnce();
     });
 
@@ -5494,5 +5990,273 @@ describe('managed-services SVC09 owner', () => {
         expect(stop).toHaveBeenCalledOnce();
         expect(establish).toHaveBeenCalledOnce();
         await expect(owner.dispose()).resolves.toBeUndefined();
+    });
+});
+
+describe('Project Local Services control composition', () => {
+    it.each(['machineRpc', 'machineTransport', 'action', 'actionIngress'] as const)('delivers %s cancellation to the canonical native control without reporting stopped', async entry => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const input = createProjectLifecycleInput();
+        let nativeStopped = false;
+        try {
+            const handle = await owner.superviseProject({
+                ...input,
+                processSpec: { ...input.processSpec, mode: { kind: 'native',
+                    instance: { adapter: { pluginId: 'acme.native', localId: 'compose' }, nativeResourceId: 'cancellable-control-resource' },
+                    // Resource inspection and termination are the actual external IO boundary.
+                    lifecycle: {
+                        inspect: async () => ({ phase: nativeStopped ? 'stopped' : 'running', readiness: 'not_reported', endpoint: null }),
+                        stop: async () => { nativeStopped = true; return { status: 'stopped' }; },
+                    },
+                } },
+            });
+            const target = { kind: 'managed_service' as const, managedServiceId: handle.instanceId,
+                machineId: input.workspace.machineId, workspaceId: input.workspace.id, cwd: input.cwd, declaration: input.declaration };
+            const request = { requestId: 'cancel-native-control', target, action: 'stop_managed' as const, force: false };
+            const confirmed = { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
+            const routes = createLocalServiceActionRoutes({ machineId: input.workspace.machineId,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), projectManagedServices: owner,
+                verifyConfirmationNonce: value => value.confirmationNonce === createLocalServiceActionConfirmationNonceV1(value) });
+            const gate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({
+                status: 'ready', features: FeaturesResponseSchema.parse({ features: { localServices: {
+                    enabled: true, inventory: { enabled: true }, actions: { enabled: true }, managed: { enabled: true },
+                } }, capabilities: {} }),
+            }) });
+            await gate.refresh();
+            expect(gate.isEnabled('localServices.actions')).toBe(true);
+            expect(gate.isEnabled('localServices.managed')).toBe(true);
+            const controller = new AbortController();
+            controller.abort();
+            let result: unknown;
+            if (entry === 'machineRpc' || entry === 'machineTransport') {
+                const machineAdmission = {
+                    actorAccountId: input.requester.accountId,
+                    custodianAccountId: input.requester.accountId,
+                    machineId: input.workspace.machineId,
+                    installationId: input.requester.installationId,
+                    role: 'use' as const,
+                    encryptionMode: 'plain' as const,
+                };
+                const machineBoundary = {
+                    machineId: input.workspace.machineId,
+                    resolveCustodianAccountId: async () => input.requester.accountId,
+                    resolveInstallationId: () => input.requester.installationId,
+                    // The signed Home verification HTTP boundary, not RPC admission logic.
+                    verifyMachineAdmission: async ({ signal }: { signal?: AbortSignal }) => !signal?.aborted,
+                };
+                const receivingFactoryReady = deferred<void>();
+                const accountSettingsRead = deferred<null>();
+                const rpc = new RpcHandlerManager({ scopePrefix: input.workspace.machineId, localMachineId: input.workspace.machineId,
+                    encryptionMode: 'plain', logger() {},
+                    authorizeRequest: request => authorizeMachineRpcRequest(request, machineBoundary),
+                });
+                registerDaemonLocalServicesMachineRpcHandlers(rpc, { localServicesActions: routes, machineId: input.workspace.machineId,
+                    resolveLauncherActionExecutor: async ({ ingress }) => {
+                        let rawSettings: null = null;
+                        if (entry === 'machineTransport') {
+                            expect(ingress?.machineAdmission).toEqual(machineAdmission);
+                            expect(await ingress?.verifyMachineAdmissionCurrent?.()).toBe(true);
+                            receivingFactoryReady.resolve();
+                            // Receiving Account-settings IO may outlive the caller's cancellation.
+                            rawSettings = await accountSettingsRead.promise;
+                        }
+                        const settings = normalizeActionsSettingsV1(rawSettings);
+                        const executor = createActionExecutor({
+                            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(
+                                actionId, settings, { surface: context.surface ?? null, authority: context.authority },
+                            ),
+                            runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({
+                                featureGate: gate, ingress, routes: { actionRoutes: routes },
+                            }),
+                        });
+                        return {
+                            execute: (actionId, actionInput, context) => {
+                                if (entry === 'machineTransport') {
+                                    expect(context?.runtimeAccountId).toBe(input.requester.accountId);
+                                    expect(context?.signal?.aborted).toBe(true);
+                                }
+                                return executor.execute(actionId, actionInput, { ...context, serverId: input.workspace.serverId });
+                            },
+                        };
+                    },
+                });
+                if (entry === 'machineTransport') {
+                    const socketEvents = new EventEmitter();
+                    const socketBoundary = {
+                        auth: { clientType: 'machine-scoped' },
+                        on: socketEvents.on.bind(socketEvents),
+                        emit() {},
+                    };
+                    // Socket.IO is the transport IO boundary; only its event surface is exercised.
+                    rpc.onSocketConnect(socketBoundary as unknown as Socket);
+                    const transportRequestId = 'relay-native-stop-cancellation';
+                    const pending = rpc.handleRequest({
+                        method: `${input.workspace.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE}`,
+                        params: confirmed,
+                        requestId: transportRequestId,
+                        callerAuthority: 'present_user',
+                        machineAdmission,
+                    });
+                    try {
+                        await receivingFactoryReady.promise;
+                        socketEvents.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId: transportRequestId });
+                    } finally {
+                        accountSettingsRead.resolve(null);
+                    }
+                    result = await pending;
+                } else {
+                    result = await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, confirmed, { signal: controller.signal });
+                }
+                expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+            } else {
+                const executor = createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate, routes: { actionRoutes: routes },
+                    ...(entry === 'actionIngress' ? { ingress: { signal: controller.signal } } : {}) });
+                result = await executor({ actionId: 'localServices.actions.stopManaged', input: confirmed,
+                    context: { signal: entry === 'action' ? controller.signal : new AbortController().signal } });
+                expect(result).toMatchObject({ status: 'failed' });
+            }
+            expect(nativeStopped).toBe(false);
+            expect(handle.snapshot().state).toBe('running');
+            expect(owner.resolveProjectService(target)).toMatchObject({ status: 'found' });
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
+        } finally { await owner.dispose(); }
+    });
+    it('admits a shared Machine viewer only through the actual service witness and retires disclosure with the starter', async () => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const workspace = { id: 'preview-workspace', serverId: 'home-a', machineId: 'machine-a',
+            rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
+        const requester = { serverId: workspace.serverId, accountId: 'starter-a', machineId: workspace.machineId, installationId: 'installation-a' };
+        let current = true;
+        const boundary = { machineId: workspace.machineId, resolveCustodianAccountId: async () => 'custodian-a',
+            resolveInstallationId: () => requester.installationId,
+            // The current Home verification HTTP boundary only; owner and RPC admission remain real.
+            verifyMachineAdmission: async () => current };
+        const rpc = new RpcHandlerManager({ scopePrefix: workspace.machineId, localMachineId: workspace.machineId,
+            encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
+        try {
+            const handle = await owner.superviseProject({
+                workspace, declaration, cwd: workspace.rootPath, serviceId: 'project-preview-web', requester,
+                specIdentity: 'preview-web-effect', isCurrent: () => true,
+                processSpec: { mode: { kind: 'managedSpawn' }, startupTimeoutMs: 1_000 },
+                authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
+                    signal, assertCurrent() {}, projectLaunch: { status: 'ready', reviewedEffectDigest: 'preview-web-effect',
+                        environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
+                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                    launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: workspace.rootPath, env: {} },
+                }),
+            });
+            registerDaemonLocalServicePreviewSnapshotHandler(rpc, {
+                localServicesPreview: createLocalServicePreviewRoutes({ machineId: workspace.machineId, registry: createLocalServicePreviewRegistry() }),
+                projectManagedServices: owner, machineId: workspace.machineId, serverId: workspace.serverId,
+            });
+            const target = { kind: 'managed_service' as const, machineId: workspace.machineId,
+                managedServiceId: handle.instanceId, workspaceId: workspace.id, declaration, cwd: workspace.rootPath };
+            const machineAdmission = { actorAccountId: 'viewer-a', custodianAccountId: 'custodian-a',
+                machineId: workspace.machineId, installationId: requester.installationId, role: 'use' as const, encryptionMode: 'plain' as const };
+            const request = { method: `${workspace.machineId}:daemon.localServices.preview.admission`,
+                params: { v: 1, kind: 'read', target }, machineAdmission,
+                authorization: { kind: 'localServices.preview.admission.serverOrigin' } as const };
+            // This future wire fixture is intentional; the new strict transport stamp owns its admission.
+            const call = (params: unknown) => rpc.handleRequest({ ...request, params } as Parameters<typeof rpc.handleRequest>[0]);
+            expect(await call(request.params)).toMatchObject({ v: 1, kind: 'admitted', instanceId: handle.instanceId,
+                serviceTarget: target, starterAccountId: requester.accountId,
+                endpoint: { scheme: 'http', host: '127.0.0.1', port: expect.any(Number) } });
+            expect(await call({ ...request.params, target: { ...target, declaration: { ...declaration,
+                selection: { kind: 'manifest', name: 'wrong-service' } } } })).toMatchObject({ kind: 'refused' });
+            const previewRegistry = createLocalServicePreviewRegistry();
+            const endpoint = new URL(handle.snapshot().baseUrl!);
+            const registration = registerLocalServicePreview(previewRegistry, {
+                previewId: handle.serviceId, machineId: workspace.machineId, owner: { kind: 'user', id: requester.accountId },
+                serviceTarget: target, target: { scheme: 'http', host: endpoint.hostname, port: Number(endpoint.port) },
+                initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: endpoint.host }, originMode: 'host',
+            });
+            if (!registration.ok) throw new Error(registration.reasonCode);
+            const previewRoutes = createLocalServicePreviewRoutes({ machineId: workspace.machineId, registry: previewRegistry,
+                server: { token: 'custodian-token', serverBaseUrl: 'https://home.example.test', http: {
+                    async post(_url, resource) { return { data: { resource, accessUrl: 'https://web.preview.example.test/?previewToken=current', expiresAt: 61_000 } }; },
+                    async delete() { return { data: { ok: true } }; },
+                } } });
+            const leaves = createLocalServiceLauncherLeafRoutes({ machineId: workspace.machineId,
+                feed: createLocalServiceLauncherFeed({ machineId: workspace.machineId, inventoryRegistry: createLocalServiceInventoryRegistry(),
+                    previewRegistry, projectManagedServices: owner }), previewRoutes, history: createLocalServiceLauncherHistoryStore() });
+            expect(await leaves.registerPreview({ machineId: workspace.machineId, targetId: handle.serviceId }))
+                .toMatchObject({ status: 'existing', previewId: handle.serviceId, browserTarget: { kind: 'localServicePreview', targetId: handle.serviceId } });
+            expect(await leaves.openPreview({ machineId: workspace.machineId, targetId: handle.serviceId }))
+                .toMatchObject({ status: 'opened', browserTarget: { kind: 'localServicePreview', targetId: handle.serviceId } });
+            const waiting = call({ v: 1, kind: 'wait_retirement', target, instanceId: handle.instanceId });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await owner.stopForAccessLoss(requester);
+            expect(await waiting).toEqual({ v: 1, kind: 'retired', instanceId: handle.instanceId });
+            expect(await call(request.params)).toMatchObject({ kind: 'refused' });
+            current = false;
+            expect(await call(request.params)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        } finally { await owner.dispose(); }
+    });
+    it.each(['clear', 'forget', 'retired-stop'] as const)('hides through %s without stopping, then stops only the source-qualified occurrence', async hide => {
+        const { owner } = createLifecycleHarness([], 'daemon');
+        const workspace = { id: 'control-workspace', serverId: 'home-a', machineId: 'machine-a',
+            rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'worker' } };
+        const reviewedEffectDigest = 'control-worker-effect';
+        let servingCurrent = true;
+        try {
+            const handle = await owner.superviseProject({
+                workspace, declaration, cwd: workspace.rootPath, serviceId: 'project-control-worker',
+                requester: { serverId: workspace.serverId, accountId: 'starter-a', machineId: workspace.machineId, installationId: 'installation-a' },
+                specIdentity: reviewedEffectDigest, isCurrent: () => servingCurrent,
+                processSpec: { mode: { kind: 'managedSpawn', endpointNone: true }, startupTimeoutMs: 1_000 },
+                authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
+                    signal, assertCurrent() {}, projectLaunch: { status: 'ready', reviewedEffectDigest,
+                        environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
+                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                    launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: workspace.rootPath, env: {} },
+                }),
+            });
+            const history = createLocalServiceLauncherHistoryStore();
+            const routes = createLocalServiceActionRoutes({ machineId: workspace.machineId,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), projectManagedServices: owner,
+                launcherHistory: history,
+                verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request),
+            });
+            const target = { kind: 'managed_service' as const, machineId: workspace.machineId,
+                managedServiceId: handle.instanceId, workspaceId: workspace.id, declaration, cwd: workspace.rootPath };
+            const inventoryRegistry = createLocalServiceInventoryRegistry();
+            const previewRegistry = createLocalServicePreviewRegistry();
+            const feed = createLocalServiceLauncherFeed({ machineId: workspace.machineId, inventoryRegistry, previewRegistry,
+                projectManagedServices: owner, history });
+            const feedTarget = (await feed.getSnapshot({ workspaceRoot: workspace.rootPath })).targets[0];
+            expect(feedTarget).toMatchObject({ source: 'managed_service', declaration, cwd: workspace.rootPath,
+                serviceState: 'running', sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId }, actions: ['manage'] });
+            expect(feedTarget?.endpointUrl).toBeUndefined();
+            expect((await feed.getSnapshot({ workspaceRoot: '/unrelated-workspace' })).targets).toEqual([]);
+            history.record(feedTarget!.id);
+            const leaves = createLocalServiceLauncherLeafRoutes({ machineId: workspace.machineId, feed,
+                history, previewRoutes: createLocalServicePreviewRoutes({ machineId: workspace.machineId, registry: previewRegistry }) });
+            if (hide === 'clear') expect(await leaves.clearHistory({ machineId: workspace.machineId })).toMatchObject({ cleared: 1 });
+            else expect(await routes.execute({ requestId: 'control-hide', target, action: 'forget', force: false }))
+                    .toMatchObject({ status: 'succeeded' });
+            expect((await feed.getSnapshot()).targets).toEqual([]);
+            expect(handle.snapshot().state).toBe('running');
+            if (hide === 'retired-stop') {
+                // Serving authority may retire while the exact OS occurrence still needs cleanup.
+                servingCurrent = false;
+                expect(handle.isCurrent()).toBe(false);
+            }
+            const request = { requestId: 'control-stop', target, action: 'stop_managed' as const, force: false };
+            const mismatched = { ...request, target: { ...target, declaration: { ...declaration,
+                selection: { kind: 'manifest' as const, name: 'other-worker' } } } };
+            expect(await routes.execute({ ...mismatched, confirmationNonce: createLocalServiceActionConfirmationNonceV1(mismatched) }))
+                .toMatchObject({ status: 'denied', reasonCode: 'managed_service_target_mismatch' });
+            expect(handle.snapshot().state).toBe('running');
+            expect(await routes.execute(request)).toMatchObject({ status: 'denied', reasonCode: 'confirmation_required' });
+            expect(handle.snapshot().state).toBe('running');
+            expect(await routes.execute({ ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) }))
+                .toMatchObject({ status: 'succeeded' });
+            expect(handle.snapshot().state).toBe('stopped');
+            expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+            expect(await routes.execute({ ...request, requestId: 'stale-stop', confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) }))
+                .toMatchObject({ status: 'denied', reasonCode: 'unknown_managed_service' });
+        } finally { await owner.dispose(); }
     });
 });

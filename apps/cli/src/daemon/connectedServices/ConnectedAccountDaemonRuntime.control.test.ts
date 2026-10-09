@@ -540,9 +540,10 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           invokeWithReceipt,
         } as unknown as Pick<
           QualifiedConnectedAccountEstablishedRuntimeOwner,
-          'invokeWithReceipt'
+          'invokeWithReceipt' | 'readCredentialRevision'
         >,
         resolveV4Support: () => 'absent',
+        resolveRemovalReviewSupport: () => 'absent',
         legacyCredentialApi: {
           getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
           getConnectedServiceCredentialPlain: vi.fn(async () => ({
@@ -662,9 +663,10 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           })),
         } as unknown as Pick<
           QualifiedConnectedAccountEstablishedRuntimeOwner,
-          'invokeWithReceipt'
+          'invokeWithReceipt' | 'readCredentialRevision'
         >,
         resolveV4Support: () => 'advertised',
+        resolveRemovalReviewSupport: () => 'absent',
         deleteCredential,
       },
     });
@@ -979,7 +981,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       })),
     } as unknown as Pick<
       QualifiedConnectedAccountEstablishedRuntimeOwner,
-      'invokeWithReceipt'
+      'invokeWithReceipt' | 'readCredentialRevision'
     >;
     let releaseConsequence!: () => void;
     const consequenceGate = new Promise<void>((resolve) => {
@@ -1016,6 +1018,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         token: 'token-1',
         establishedRuntimeOwner,
         resolveV4Support: () => 'advertised',
+        resolveRemovalReviewSupport: () => 'absent',
         deleteCredential,
       },
     });

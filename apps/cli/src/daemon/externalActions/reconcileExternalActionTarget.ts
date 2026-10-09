@@ -1,4 +1,6 @@
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
+import { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId } from '@happier-dev/protocol/actions';
 
 /**
@@ -38,10 +40,18 @@ function readSessionSelectorIds(
   return selectors.filter((selector): selector is string => selector !== null);
 }
 
-function readMachineSelectorIds(input: Readonly<Record<string, unknown>>): readonly string[] {
+function readMachineSelectorIds(actionId: ActionId, input: Readonly<Record<string, unknown>>): readonly string[] {
+  const acquire = actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(input) : null;
+  const controllerMachineId = acquire?.success ? resolveManagedAcquireReviewV1(acquire.data).controller.machineId
+    : actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options'
+      ? readNonEmptyString(asRecord(input.controller)?.machineId) : null;
   const selectors = [
-    readNonEmptyString(input.machineId),
+    controllerMachineId,
+    // Key preparation executes on the explicitly selected trusted key holder.
+    // Its qualified machineId addresses the managed Resource, not that holder.
+    actionId === 'machines.access.prepareKeys' ? null : readNonEmptyString(input.machineId),
     readNonEmptyString(asRecord(input.executionTarget)?.machineId),
+    readLocalServiceControlActionRequest(actionId, input)?.target.machineId ?? null,
   ];
   return selectors.filter((selector): selector is string => selector !== null);
 }
@@ -135,7 +145,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
   const sessionSelectorId = distinctSessionSelectorIds[0] ?? null;
 
   if (executionPlacement === 'machine') {
-    const machineSelectorIds = readMachineSelectorIds(parsedInput);
+    const machineSelectorIds = readMachineSelectorIds(input.actionId, parsedInput);
     if (machineSelectorIds.some((machineId) => machineId !== input.currentMachineId)) {
       return { kind: 'rejected', execution: targetNotLocal() };
     }
@@ -193,7 +203,7 @@ export function resolveExternalActionMachineTarget(input: Readonly<{
 }>): Readonly<{ kind: 'ready'; machineId: string }> | Readonly<{ kind: 'rejected'; execution: ActionExecuteResult }> {
   const parsed = getActionSpec(input.actionId).inputSchema.safeParse(input.rawInput);
   if (!parsed.success) return { kind: 'rejected', execution: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } };
-  const machineIds = readMachineSelectorIds(asRecord(parsed.data) ?? {});
+  const machineIds = readMachineSelectorIds(input.actionId, asRecord(parsed.data) ?? {});
   const explicitMachineId = input.target?.kind === 'machine' ? input.target.machineId : null;
   const distinctMachineIds = new Set([...machineIds, ...(explicitMachineId ? [explicitMachineId] : [])]);
   if (distinctMachineIds.size > 1) return { kind: 'rejected', execution: targetNotLocal() };

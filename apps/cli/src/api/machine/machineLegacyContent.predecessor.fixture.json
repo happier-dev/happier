@@ -1,0 +1,35 @@
+{
+  "producer": {
+    "head": "37a6541578749067b49d4579be8c752c9591b8c8",
+    "scopedStatus": "clean",
+    "sourcePaths": ["apps/cli/src/api/encryption.ts", "apps/cli/src/api/client/encryptionKey.ts", "packages/protocol/src/crypto/boxBundle.ts", "packages/protocol/src/crypto/encryptedDataKeyEnvelopeV1.ts"],
+    "generation": "Actual ../0.2 source bytes executed as routed esbuild virtual modules; base64.ts and serializedJsonValue.ts were byte-identical to current source. Synthetic credentials and content only."
+  },
+  "openedMetadata": {
+    "host": "predecessor-host", "homeDir": "/home/predecessor", "platform": "linux", "happyCliVersion": "0.2", "happyHomeDir": "/home/predecessor/.happier", "displayName": "User edit",
+    "finitePolicyV1": { "accepting": false, "runAtMost": 2 }, "legacyExtension": { "preserve": "whole predecessor blob" }
+  },
+  "openedDaemonState": { "status": "running", "pid": 42 },
+  "rows": [
+    {
+      "credentialKind": "legacy", "accountSecret": "ERERERERERERERERERERERERERERERERERERERERERE=", "accountPublicKey": null,
+      "machine": {
+        "id": "predecessor-legacy", "storageMode": "e2ee", "dataEncryptionKey": null,
+        "metadata": "a1CXeH6tk1TRCKnydsyIz2LY+6vVJxeSTh1KLwrUIoU33QD6O5mV5mSlE+seiz/EXm/Vu9EVJBVHckbI4oGx+t7sLif0+rC+p9XCZN6WErJcvdQkN4E9p+FQSzSTP2h/9ftCGkA9uGGXgANWpvUf7+D3jfdmPshQv/TU9GnCNB7QnzjDhKY+aUG961vZLtAiUFpJT0kEQXIHqPPkGgJphU7+ceU5dYyS7dUYSv3W8WYRPh5vqXohCFkThJLU6BX5LF6mSY88sw5NryjADmDwYGdiHpb144dgtamCnlfKnXuGvfGou8YkATcZMBrgkEW9bgFiJX21qut0OnIWWnnCnVRlvpxiYtY771u85Iq9lZt/5oYvi3cEyhb7sOoo7wBMXla6O1jdySOqgYCH954KdtUwXb7IybIm6pS2qRoPFbg+rOgs5a3Txb8c7QA5+elTpYtz3C8jvcTjImOGlyeif4N6wwSZ6srHtiRf/ea6ayRLpER0P1GvMP5eSg==",
+        "metadataVersion": 4,
+        "daemonState": "9EMeutdeYyHcXZonIE4Mp+3sRITZ+AeeFmKyDsYIaXV9Lo2ocImaEn/++IGSsjtWxBoqjttPUqiiInlvik/Ltxo0KBLNYvIVs7cJAYsc8dJWBTM937YPxEX3iOP/VBYW0sDot1OTwJeWFE4YX3v+VxQ2P02UvCtJ/5X1Na906NvVjJA=",
+        "daemonStateVersion": 3
+      }
+    },
+    {
+      "credentialKind": "dataKey", "accountSecret": "ERERERERERERERERERERERERERERERERERERERERERE=", "accountPublicKey": "e06Qm75//kTEZaIgA31gjuNYl9Me+XLwf3SJLLD3PxM=",
+      "machine": {
+        "id": "predecessor-dataKey", "storageMode": "e2ee", "dataEncryptionKey": "ANaKiw5KfdpMk9iTDRxLv2kM7/b4u7LhfGbBeg+isj1spOjzelJVrTkKZSvYeGFyLExAKRInsV/GTXfrxmkyILqpOSAWz3Vy3o+Io8F3miB6KUkadeVen3u0Beru+29iIM/pHqJIjLVk",
+        "metadata": "ALFke5t9jcaNXc8U1LHQUPbLP3NvrqZ/QxwJdIaKx1B8VpC0D4lp0YYcYdJkBV5yfTP7hA0Kw3XB/Ra14HND3N5dh6XohPaXcNi3XawfXhxwpjVQscD6IWSCvUYZyxWJXEGqdmHMkmQZtTHRu2k2C9hxRils8VoM+p8xrVvbRqBZFSGCGvn+9Dbb4o3FVwfztUpyWiYgZJWK/GnAgL1u8sK9UJ28anE8AypnYe1nya1imF7jiSYs7/V7RB5zR7YmmkE4lmB5uwercb6Sz201iTgq+WfjMae/fDJ+ElsEn+vfogInk40W+OzdHOVqJ95+EQSWZLC51Hg+yQD7MWhhT/jM0dgVZEjvYeJ0LmEeCp9qflsekE9bu9wSV62yufBrJnaNDCMpTwMGk2SNhobRZP5ZWmLInAvfBmzpW0ZROY7SkWCnyIQYcQxt7rgz4dsM3/ENxnZkpi6jzSLEuoVE42W7TpPb/IdfZL0aTCjxIFA=",
+        "metadataVersion": 4,
+        "daemonState": "AAfgp9KHEycE1QM5alKMZu/q1DUBAEYEHjGqJvNVrvXXDjqYERSVRMfpU/Ub+6AvfaFOp+SyJGuC+b5YkORKuLqgP6qkNyZb3Pvek+GmdHqNi6SeChBA84YmEtV2lkdard1Xc5lpWxfyLP7IphPM0TxsnUGxSdIn",
+        "daemonStateVersion": 3
+      }
+    }
+  ]
+}

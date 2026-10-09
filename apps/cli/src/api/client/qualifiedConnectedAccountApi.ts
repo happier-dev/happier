@@ -1,5 +1,7 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from "axios";
+import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -57,11 +59,13 @@ export type QualifiedConnectedAccountCredentialConflictCode =
 export class QualifiedConnectedAccountCredentialConflictError extends HttpStatusError {
     readonly status = 409;
     readonly code: QualifiedConnectedAccountCredentialConflictCode;
+    readonly resources: readonly ManagedResourceDependencyV1[] | undefined;
 
-    constructor(code: QualifiedConnectedAccountCredentialConflictCode) {
+    constructor(code: QualifiedConnectedAccountCredentialConflictCode, resources?: readonly ManagedResourceDependencyV1[]) {
         super(409, code);
         this.name = "QualifiedConnectedAccountCredentialConflictError";
         this.code = code;
+        this.resources = resources;
     }
 }
 
@@ -72,6 +76,7 @@ function throwQualifiedConnectedAccountCredentialConflict(data: unknown): never 
         parsed.success
             ? parsed.data.error
             : "connected_account_credential_conflict_response_invalid",
+        parsed.success && parsed.data.error === 'managed_resources_review_required' ? parsed.data.resources : undefined,
     );
 }
 
@@ -176,6 +181,18 @@ export function resolveQualifiedConnectedAccountAtomicV4Negotiation(
         return "absent";
     }
     return "indeterminate";
+}
+
+/** New DELETE fields belong only to the server's explicitly advertised operation. */
+export function resolveQualifiedConnectedAccountRemovalReviewNegotiation(
+    snapshot?: CliServerFeaturesSnapshot,
+): QualifiedConnectedAccountAtomicV4Negotiation {
+    const v4 = resolveQualifiedConnectedAccountAtomicV4Negotiation(snapshot);
+    if (v4 !== "advertised") return v4;
+    if (snapshot?.status !== "ready") return "indeterminate";
+    const capability = snapshot.features.capabilities.connectedServices?.credentialRemovalReview;
+    if (!capability) return "absent";
+    return capability.protocolVersion === 1 ? "advertised" : "indeterminate";
 }
 
 function isExactLegacyUnfencedServer(
@@ -725,19 +742,26 @@ export async function deleteQualifiedConnectedAccountCredentialV4(
         cleanupGroupReferences:
             String(deletion.cleanupGroupReferences),
     });
+    if (deletion.reviewOnly !== undefined) query.set('reviewOnly', String(deletion.reviewOnly));
+    if (deletion.emergencyRevoke !== undefined) query.set('emergencyRevoke', String(deletion.emergencyRevoke));
+    if (deletion.managedResourceDispositions !== undefined) query.set('managedResourceDispositions', encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountCredentialDeleteV4Schema.shape.managedResourceDispositions.unwrap(), deletion.managedResourceDispositions));
     const response = await axios.delete(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/credential?${query.toString()}`,
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: status => status === 200 || status === 409,
         },
     );
+    if (response.status === 409) throwQualifiedConnectedAccountCredentialConflict(response.data);
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account credential delete returned ${response.status}`,
         );
     }
-    return QualifiedConnectedAccountSuccessV4Schema.parse(response.data);
+    const result = QualifiedConnectedAccountCredentialDeleteResponseV4Schema.parse(response.data);
+    if (deletion.reviewOnly ? !('status' in result) : !('success' in result)) throw new QualifiedConnectedAccountCompatibilityError('connected_account_v4_contract_violation');
+    return result;
 }
 
 export async function acquireQualifiedConnectedAccountRefreshLeaseV4(

@@ -1,16 +1,17 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { execFileSync, spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { ModuleKind, transpileModule } from 'typescript';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../../../packages/plugins/claude/src/agent/transcripts/internalEventTypes';
 import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definition';
 import * as codexDefinition from '../../../../packages/plugins/codex/src/agent/definition';
 import * as claudeDefinition from '../../../../packages/plugins/claude/src/agent/definition';
 import * as ohMyPiDefinition from '../../../../packages/plugins/ohmypi/src/agent/definition';
-import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures, parsePreparedGeneratorPublication } from './generateBundledPluginEntries.ts';
+import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
 import { renderBundledPluginTranslationsTs } from './bundledPlugins/agentUi.ts';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceRuntimeEntriesTs } from './bundledPlugins/voice.ts';
@@ -27,129 +28,17 @@ import { prepareBundledWorkspaceDependenciesForCli } from '../buildSharedDeps.mj
 import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../../../../packages/agents/src/generated/bundledAgentDefinitions';
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../packages/agents/src/generated/agentIds';
-import { collectBundledAgentContributionIdentities, runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries.ts';
+import { collectBundledAgentContributionIdentities, importPluginAuthorRuntimeModules, main, runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries.ts';
 import { renderAgentIdsTs } from './bundledPlugins/agentFacts.ts';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../src/plugins/projection/registry/sources/generatedBundledPluginManifests';
-import { readGeneratorAuthoringSourceFingerprint, readGeneratorHostProjectionCurrentness } from './generateBundledPluginEntries.ts';
-import { readGeneratorCliPreparationFingerprint } from './bundledPlugins/authoringInputs.mjs';
-import { withGeneratorSingleFlight } from './bundledPlugins/publication.ts';
+import { collectBuiltInLegacyConnectedAccountCompatibility } from './generateBundledPluginEntries.ts';
+import { ConnectedServiceIdSchema } from '../../../../packages/protocol/src/connect/connectedServiceBindings.ts';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY } from '../../../../packages/plugins/antigravity/src/connectedAccounts/builtInLegacyCompatibility.ts';
+import type { BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
 
 const generatorSource = readFileSync(new URL('./generateBundledPluginEntries.ts', import.meta.url), 'utf8');
 const registryRendererSource = readFileSync(new URL('./bundledPlugins/registry.ts', import.meta.url), 'utf8');
 const voiceRendererSource = readFileSync(new URL('./bundledPlugins/voice.ts', import.meta.url), 'utf8');
-
-describe('bundled generator preparation process boundary', () => {
-  it('rejects changed authoring source without invalidating built outputs for unrelated daemon edits', () => {
-    const root = mkdtempSync(join(tmpdir(), 'bundled-authoring-inputs-'));
-    const author = join(root, 'src/plugins/authoring/sourceModule.ts');
-    const daemon = join(root, 'src/daemon/daemon.ts');
-    mkdirSync(join(root, 'src/plugins/authoring'), { recursive: true });
-    mkdirSync(join(root, 'src/daemon'), { recursive: true });
-    writeFileSync(author, 'export const author = 1;');
-    writeFileSync(daemon, 'export const daemon = 1;');
-    try {
-      const first = readGeneratorAuthoringSourceFingerprint(root);
-      writeFileSync(daemon, 'export const daemon = 2;');
-      expect(readGeneratorAuthoringSourceFingerprint(root)).toBe(first);
-      writeFileSync(author, 'export const author = 2;');
-      expect(readGeneratorAuthoringSourceFingerprint(root)).not.toBe(first);
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-  it('does not invalidate completed generator preparation for an unrelated CLI resource edit', () => {
-    const repoDir = mkdtempSync(join(tmpdir(), 'bundled-cli-preparation-inputs-'));
-    const root = join(repoDir, 'apps/cli');
-    const author = join(root, 'src/plugins/authoring/sourceModule.ts');
-    const resource = join(root, 'src/mcp/resources/watchSubscriptions.ts');
-    mkdirSync(dirname(author), { recursive: true });
-    mkdirSync(dirname(resource), { recursive: true });
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
-    writeFileSync(author, 'export const author = 1;');
-    writeFileSync(resource, 'export const resource = 1;');
-    try {
-      const first = readGeneratorCliPreparationFingerprint(root);
-      writeFileSync(resource, 'export const resource = 2;');
-      expect(readGeneratorCliPreparationFingerprint(root)).toBe(first);
-      writeFileSync(author, 'export const author = 2;');
-      expect(readGeneratorCliPreparationFingerprint(root)).not.toBe(first);
-      const authored = readGeneratorCliPreparationFingerprint(root);
-      const missingOutputs = readGeneratorHostProjectionCurrentness(repoDir);
-      const generated = join(root, 'src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
-      mkdirSync(dirname(generated), { recursive: true });
-      writeFileSync(generated, 'export const generated = [];');
-      expect(readGeneratorCliPreparationFingerprint(root)).toBe(authored);
-      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(missingOutputs);
-      const ui = join(repoDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
-      mkdirSync(dirname(ui), { recursive: true });
-      const beforeUi = readGeneratorHostProjectionCurrentness(repoDir);
-      writeFileSync(ui, 'export const generated = [];');
-      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(beforeUi);
-      const beforeUiDependencies = readGeneratorHostProjectionCurrentness(repoDir);
-      writeFileSync(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ dependencies: {} }));
-      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(beforeUiDependencies);
-    } finally { rmSync(repoDir, { recursive: true, force: true }); }
-  });
-  it('preserves optional-plugin exclusions and dependency currentness across child serialization', () => {
-    const prepared = {
-      dependencyCurrentness: 'prepared dependency signature',
-      pluginFailures: [{
-        packageName: '@happier-dev/plugins-channels', pluginId: 'happier.channels',
-        diagnostic: { code: 'plugin_manifest_invalid', message: 'manifest rejected' },
-      }],
-    };
-    expect(parsePreparedGeneratorPublication(JSON.parse(JSON.stringify(prepared)))).toEqual(prepared);
-    expect(() => parsePreparedGeneratorPublication({ ...prepared, dependencyCurrentness: null })).toThrow();
-    expect(() => parsePreparedGeneratorPublication({ ...prepared, pluginFailures: [{ packageName: 'not-a-plugin' }] })).toThrow();
-  });
-  it.each(['drift', 'compiler'] as const)('preserves terminal %s failure across a real private child without retrying it', async (mode) => {
-    const root = mkdtempSync(join(tmpdir(), 'bundled-terminal-child-'));
-    const source = join(root, 'source');
-    writeFileSync(source, 'first');
-    let children = 0;
-    const childSource = `
-      import { execFile } from 'node:child_process';
-      import { writeFileSync } from 'node:fs';
-      import { promisify } from 'node:util';
-      import { BuildInputDriftError, WorkspacePackageBuildError, withSingleTrailingBuildPass, serializeTerminalBuildFailure }
-        from ${JSON.stringify(new URL('../../../../scripts/workspaces/buildInputConvergence.mjs', import.meta.url).href)};
-      const [source, mode] = process.argv.slice(1);
-      try {
-        await withSingleTrailingBuildPass({ run: async (trailing) => {
-          writeFileSync(source, trailing ? 'third' : 'second');
-          if (mode === 'drift') throw new BuildInputDriftError('inputs still moving');
-          try { await promisify(execFile)(process.execPath, ['-e', 'throw new Error("compiler rejected current source")']); }
-          catch (error) { throw new WorkspacePackageBuildError(error); }
-        } });
-      } catch (error) {
-        process.send(serializeTerminalBuildFailure(error), () => { process.disconnect(); process.exitCode = 1; });
-      }
-    `;
-    try {
-      await expect(withGeneratorSingleFlight({
-        readFingerprint: () => readFileSync(source, 'utf8'),
-        stampPath: join(root, 'readiness.json'),
-        lockOptions: { lockPath: join(root, 'publication.lock') },
-        prepare: async () => {
-          children++;
-          await new Promise<void>((resolve, reject) => {
-            let failure: unknown;
-            const child = spawn(process.execPath, ['--input-type=module', '-e', childSource, source, mode], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
-            child.on('message', (message: unknown) => {
-              try { parsePreparedGeneratorPublication(message); }
-              catch (error) { failure = error; }
-            });
-            child.once('error', reject);
-            child.once('exit', (code) => code === 0 ? resolve() : reject(failure ?? new Error('child failed without its terminal result')));
-          });
-        },
-        run: async () => { throw new Error('terminal preparation must not publish'); },
-      })).rejects.toMatchObject(mode === 'drift'
-        ? { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true }
-        : { code: 'WORKSPACE_PACKAGE_BUILD_FAILED' });
-      expect(children).toBe(1);
-      expect(existsSync(join(root, 'readiness.json'))).toBe(false);
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-});
 
 function sourceBetween(startMarker: string, endMarker: string, source = generatorSource): string {
   const start = source.indexOf(startMarker);
@@ -160,7 +49,133 @@ function sourceBetween(startMarker: string, endMarker: string, source = generato
   return source.slice(start, end);
 }
 
+describe('built-in legacy Connected Account compatibility', () => {
+  async function readAntigravityPackage(): Promise<BundledPluginPackage> {
+    const source = await importPluginAuthorRuntimeModules(async sourceImport =>
+      await sourceImport(new URL('../../../../packages/plugins/antigravity/src/manifest.ts', import.meta.url).href,
+        import.meta.url)) as typeof import('../../../../packages/plugins/antigravity/src/manifest.ts');
+    const ingestion = ingestPluginManifestV2(source.PLUGIN_MANIFEST);
+    if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+    return {
+      pluginPackageId: 'antigravity', pluginId: ingestion.manifest.id,
+      packageName: '@happier-dev/plugins-antigravity', packageVersion: '0.0.0',
+      manifest: ingestion.manifest,
+      builtInLegacyConnectedAccountCompatibility: BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY,
+    };
+  }
+
+  it('publishes real Antigravity storage ingress without expanding the closed peer vocabulary', async () => {
+    const plugin = await readAntigravityPackage();
+    const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-legacy-storage-ingress-');
+    try {
+      const mapping = collectBuiltInLegacyConnectedAccountCompatibility(repoRoot, [plugin], {
+        protocol: { ConnectedServiceIdSchema },
+      });
+      expect(ConnectedServiceIdSchema.safeParse('antigravity').success).toBe(false);
+      expect(mapping).toEqual([{
+        legacyServiceId: 'antigravity',
+        service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' },
+        peerOperations: { exactV0_2_1: [], revisionedV2V3: [] },
+        exactV0_2_1ReaderQuotaProjection: false,
+        defaultAuthenticationModeId: 'oauth-personal',
+        authenticationModeByCredentialKind: { oauth: 'oauth-personal' },
+        unsupportedAuthenticationModeByCredentialKind: { token: 'legacy-token-unsupported' },
+      }]);
+    } finally { cleanup(); }
+  });
+
+  it('keeps storage-only declarations behind peer, ownership and authentication guards', async () => {
+    const plugin = await readAntigravityPackage();
+    const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-legacy-storage-guards-');
+    const source = BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY[0];
+    const collect = (packages: readonly BundledPluginPackage[]) =>
+      collectBuiltInLegacyConnectedAccountCompatibility(repoRoot, packages, { protocol: { ConnectedServiceIdSchema } });
+    try {
+      const invalidSources = [
+        { ...source, peerOperations: { exactV0_2_1: ['account_list'] as const, revisionedV2V3: [] } },
+        { ...source, peerOperations: { exactV0_2_1: [], revisionedV2V3: ['credential_read'] as const } },
+        { ...source, exactV0_2_1ReaderQuotaProjection: true },
+        { ...source, serviceLocalId: 'missing-descriptor' },
+        { ...source, defaultAuthenticationModeId: 'undeclared-mode' },
+        { ...source, unsupportedAuthenticationModeByCredentialKind: { token: 'oauth-personal' } },
+      ];
+      for (const invalid of invalidSources) {
+        expect(() => collect([{ ...plugin, builtInLegacyConnectedAccountCompatibility: [invalid] }])).toThrow();
+      }
+      expect(() => collect([plugin, { ...plugin }])).toThrow(/ambiguous/u);
+      const bindingsPath = join(repoRoot, 'packages/protocol/src/connect/connectedServiceBindings.ts');
+      mkdirSync(dirname(bindingsPath), { recursive: true });
+      writeFileSync(bindingsPath, '');
+      expect(() => collect([plugin])).toThrow(/Missing built-in legacy/u);
+    } finally { cleanup(); }
+  });
+});
+
 describe('generated output ownership', () => {
+  it('loads public SDK source facts through the author runtime without compiler declaration aliases', async () => {
+    const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-author-source-exports-');
+    const entryPath = join(repoRoot, 'author-entry.ts');
+    writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ name: 'author-source-fixture', type: 'module' }));
+    writeFileSync(entryPath, [
+      "import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/first-party/connected-accounts';",
+      "import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';",
+      'export const PROFILE = ANTIGRAVITY_OAUTH_PROFILE;',
+      "export const HOME_PATH = expandHomeDirPath('~/happier-loader-fixture');",
+      '',
+    ].join('\n'));
+    try {
+      const loaded = await importPluginAuthorRuntimeModules(async sourceImport => {
+        const source = await sourceImport(new URL(
+          '../../../../packages/plugin-sdk/src/first-party/connected-accounts/index.ts',
+          import.meta.url,
+        ).href, import.meta.url) as Readonly<{ ANTIGRAVITY_OAUTH_PROFILE: Readonly<{ callbackUrl: string }> }>;
+        const entry = await sourceImport(pathToFileURL(entryPath).href, import.meta.url) as Readonly<{
+          PROFILE: Readonly<{ callbackUrl: string }> | undefined; HOME_PATH: string;
+        }>;
+        return { source, entry };
+      });
+      expect(loaded.source.ANTIGRAVITY_OAUTH_PROFILE.callbackUrl).toBe('https://antigravity.google/oauth-callback');
+      // Identity also discriminates a refreshed dist copy with equal values:
+      // publication must use the same source graph, not compiler-only aliases.
+      expect(loaded.entry.PROFILE).toBe(loaded.source.ANTIGRAVITY_OAUTH_PROFILE);
+      expect(loaded.entry.HOME_PATH).toBe(join(homedir(), 'happier-loader-fixture'));
+    } finally { cleanup(); }
+  }, 30_000);
+
+  it('rejects failed full preparation before replacing any Agent projection', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-agent-projection-coherence-');
+    // Authored membership is the input under test; generated locators may already
+    // be incomplete after the defect this regression reproduces.
+    const packageName = '@happier-dev/plugins-antigravity';
+    const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'antigravity' });
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [packageName] });
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: packageName, version: '0.0.0' }));
+    writeFileSync(join(packageRoot, 'src/manifest.ts'), 'throw new Error("Antigravity source preparation failed");');
+    mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
+    writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(BUNDLED_AGENT_DEFINITIONS_BY_ID.antigravity)};`);
+    const projections = [
+      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
+      'packages/agents/src/generated/agentIds.ts',
+      'packages/agents/src/generated/bundledAgentDefinitions.ts',
+      'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts',
+    ];
+    const before = new Map(projections.map((relativePath) => [
+      relativePath, readFileSync(new URL(`../../../../${relativePath}`, import.meta.url), 'utf8'),
+    ]));
+    for (const [relativePath, bytes] of before) {
+      const outPath = join(repoRoot, relativePath);
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, bytes);
+    }
+    try {
+      await expect(main(['--root', repoRoot, '--mode', 'write']))
+        .rejects.toThrow(/Antigravity source preparation failed/u);
+      for (const [relativePath, bytes] of before) {
+        expect(readFileSync(join(repoRoot, relativePath), 'utf8'), relativePath).toBe(bytes);
+      }
+    } finally { cleanup(); }
+  });
+
   it('publishes core and session-mode facts for every catalog Agent despite an unavailable executable manifest', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-complete-agent-facts-');
     const locators = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter((entry) => entry.manifest.contributes.agents?.length);
@@ -244,19 +259,13 @@ describe('generated output ownership', () => {
       expect(readFileSync(outPath, 'utf8')).toBe(published);
     } finally { cleanup(); }
   }, 30_000);
-  it('retains source catalog identities when optional Agent publication is unavailable', () => {
-    const identities = collectBundledAgentContributionIdentities([], {
-      agents: { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES },
-    });
-    expect(identities.ohMyPi).toEqual({
-      pluginId: 'happier.agent.ohmypi', localId: 'ohmypi',
-    });
-    expect(() => renderAgentIdsTs({ agentIds: AGENT_IDS, contributionIdentities: identities }))
-      .not.toThrow();
+  it('does not retain previous Agent identities in a full source projection', () => {
+    const identities = collectBundledAgentContributionIdentities([]);
+    expect(identities).toEqual({});
     expect(() => renderAgentIdsTs({ agentIds: ['undeclared-agent'], contributionIdentities: identities }))
       .toThrow(/Missing bundled plugin contribution identity/u);
   });
-  it('refreshes retained identities from the authored Agent routing id and manifest local id', () => {
+  it('projects identities from the authored Agent routing id and manifest local id', () => {
     const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find((entry) => entry.pluginId === 'happier.agent.ohmypi');
     const ingestion = ingestPluginManifestV2(locator?.manifest);
     if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
@@ -264,15 +273,7 @@ describe('generated output ownership', () => {
       pluginPackageId: 'ohmypi', pluginId: ingestion.manifest.id,
       packageName: '@happier-dev/plugins-ohmypi', packageVersion: '0.0.0',
       agentId: ohMyPiDefinition.AGENT_DEFINITION.id, manifest: ingestion.manifest,
-    }], {
-      agents: {
-        AGENT_IDS,
-        BUNDLED_AGENT_CONTRIBUTION_IDENTITIES: {
-          ...BUNDLED_AGENT_CONTRIBUTION_IDENTITIES,
-          ohMyPi: { pluginId: 'happier.agent.ohmypi', localId: 'stale' },
-        },
-      },
-    });
+    }]);
     expect(identities.ohMyPi).toEqual({ pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' });
   });
   it.each([
@@ -369,232 +370,6 @@ describe('packaged runtime eligibility', () => {
 
   it('does not require packaged bytes for a declarative-only owner', () => {
     expect(requiresBundledPackagedRuntime(declarativeOnlyOwner)).toBe(false);
-  });
-});
-
-describe('generator workspace lock policy', () => {
-  it('keeps API governance in the SDK check and prepack lanes', () => {
-    const synchronization = sourceBetween(
-      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
-      'type PluginAuthorRuntimeModules =',
-    );
-    expect(synchronization).not.toContain('api-governance:prepared');
-    expect(synchronization).toContain(
-      "await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);",
-    );
-    expect(generatorSource).not.toContain('publishPluginSdkApiGovernanceOutputs');
-  });
-
-  it('keeps check-mode generated compiler-input preparation read-only', () => {
-    const synchronization = sourceBetween(
-      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
-      'type PluginAuthorRuntimeModules =',
-    );
-
-    expect(synchronization).toContain(
-      'generatedCompilerInputMode: preparationPolicy.generatedCompilerInputMode,',
-    );
-    expect(synchronization).not.toContain("generatedCompilerInputMode: 'write',");
-  });
-
-  it('admits the final combined authoring closure rather than an earlier partial preparation', () => {
-    const synchronization = sourceBetween(
-      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
-      'function captureGeneratorDependencyCurrentness(',
-    );
-
-    // The final host pass also prepares the SDK's transitive dependencies.
-    // Its recorded publication must cover both scopes; the earlier SDK-only
-    // stamp can be superseded by that same invocation's later package builds.
-    expect(synchronization).toContain('workspaceNames: generatorPublicationDependencyNames(),');
-    expect(synchronization).toContain('stampPath: GENERATOR_STAGE_PREP_STAMP_PATH,');
-    expect(synchronization).not.toContain('[GENERATOR_BUILD_PREP_STAMP_PATH,');
-    expect(synchronization).toContain('requireExactOutputs: true,');
-    expect(synchronization).toContain('verifyMaterializedOutputs: true,');
-  });
-
-  it('carries the publication lease into packaged-runtime workspace preparation', () => {
-    const synchronization = sourceBetween(
-      'async function prepareSelectedBundledPluginWorkspaceOutputs(',
-      'type PluginAuthorRuntimeModules =',
-    );
-
-    // A caller's authenticated inherited lease remains usable. The generator
-    // no longer acquires a containing lease around this package preparation.
-    expect(synchronization).toContain(
-      `env: createWorkspaceChildBuildEnv({
-      env: process.env,
-      heldLockValue: input.inheritedLockValue,
-    }),`,
-    );
-  });
-
-  it('prepares the authoring runtime for scoped workspace publication too', () => {
-    const mainSource = sourceBetween(
-      'export async function main(',
-      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
-    );
-
-    expect(mainSource).toContain('if (!options.aggregateOnly) {');
-    expect(mainSource).not.toContain(
-      'options.workspaceNames.length === 0 && !options.aggregateOnly',
-    );
-    expect(mainSource).toContain(
-      'await synchronizeGeneratorAuthoringRuntimeClosure(',
-    );
-    expect(mainSource.indexOf('await loadPluginAuthorRuntimeForScope(authorRuntimeLoadScope);'))
-      .toBeGreaterThan(mainSource.indexOf('await withGeneratorPublicationLock('));
-  });
-
-  it('keeps source-synchronized projections read-only during target-owned publication', () => {
-    const projectionPublisher = sourceBetween(
-      'async function publishBundledPluginSemanticProjection(',
-      'function collectBundledAgentContributionIdentities(',
-    );
-    const targetedPublisher = sourceBetween(
-      'if (options.workspaceNames.length > 0) {',
-      '// Discover and validate every package before mutating host membership.',
-    );
-    const packagedRuntimePublisher = sourceBetween(
-      'async function prepareBundledPluginPackageArtifacts(',
-      'const BUNDLED_PLUGIN_WORKSPACE_PACKAGE_PREFIX',
-    );
-    const mainSource = sourceBetween(
-      'export async function main(',
-      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
-    );
-
-    expect(projectionPublisher).toContain('...(!options.targetOwnedOnly');
-    expect(projectionPublisher).toContain('? [{ outPath: cliManifestOutPath, out: cliManifestOut }]');
-    expect(targetedPublisher).toContain('? [{ outPath: cliOutPath, out: cliOut }]');
-    expect(packagedRuntimePublisher).toContain(
-      "params.mode === 'check' || params.targetOwnedOnly === true",
-    );
-    expect(mainSource).toContain('targetOwnedOnly: options.targetOwnedOnly,');
-    expect(generatorSource).toContain('const mode: Mode = input.options.mode;');
-    expect(generatorSource).not.toContain(
-      "const mode: Mode = input.options.targetOwnedOnly ? 'check' : input.options.mode;",
-    );
-  });
-
-  it('publishes generated compiler inputs under the canonical lock without the authoring closure', () => {
-    // `--compiler-inputs` is the pre-build choke point `buildSharedDeps.mjs`
-    // runs before `agents`/`cli-common`/`plugin-sdk` compile. Preparing the
-    // authoring runtime closure here would compile the very packages this mode
-    // exists to unblock. The existing publication lock is still required around
-    // its read/compare/write transaction, and the inherited lease makes the
-    // nested full-publication call safely reentrant.
-    const mainSource = sourceBetween(
-      'export async function main(',
-      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
-    );
-
-    expect(mainSource).toContain('if (options.compilerInputsOnly) {');
-    expect(mainSource.indexOf('if (options.compilerInputsOnly) {'))
-      .toBeLessThan(mainSource.indexOf('await synchronizeGeneratorAuthoringRuntimeClosure('));
-
-    const dispatch = mainSource.slice(
-      mainSource.indexOf('if (options.compilerInputsOnly) {'),
-      mainSource.indexOf('const authorRuntimeLoadScope ='),
-    );
-    expect(dispatch).toContain('await withGeneratorPublicationLock(');
-    expect(dispatch).toContain(
-      'async (context) => await publishGeneratedCompilerInputs(options, context),',
-    );
-    expect(dispatch).toContain('inheritedLockValue,');
-    expect(dispatch).toContain('return;');
-    expect(dispatch).not.toContain('await synchronizeGeneratorAuthoringRuntimeClosure(');
-    expect(dispatch).not.toContain('await withGeneratorWorkspaceLock(');
-  });
-
-  it('uses the prepared publication owner for dependency loading and commit', () => {
-    const publicationLock = sourceBetween(
-      'async function withGeneratorPublicationLock<T>(',
-      'export async function main(',
-    );
-    const mainSource = sourceBetween(
-      'export async function main(',
-      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
-    );
-
-    expect(publicationLock).toContain('return await withPreparedGeneratorPublication({');
-    expect(publicationLock).toContain('prepare,');
-    expect(publicationLock).toContain('heldLockValue,');
-    expect(publicationLock).not.toContain('loadGeneratorWorkspaceDependencies');
-    expect(mainSource).toContain('await withGeneratorPublicationLock(');
-    expect(mainSource).toContain('const dependencies = await loadGeneratorWorkspaceDependencies();');
-    expect(mainSource).toContain('inheritedLockValue,');
-  });
-
-  it('publishes runtime-consumed Agent facts in a private child before parent runtime loading', () => {
-    const privatePhase = sourceBetween(
-      'async function runRuntimeConsumedAgentFactsPrivatePhase(',
-      'async function collectBundledPluginPackages(',
-    );
-    const mainSource = sourceBetween(
-      'export async function main(',
-      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
-    );
-    const directEntry = generatorSource.slice(
-      generatorSource.indexOf("if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)"),
-    );
-
-    expect(generatorSource).not.toContain('beforeRuntimeStaging');
-    expect(privatePhase).not.toContain('await collectBundledPluginSourcePackages({');
-    expect(privatePhase).not.toContain("await loadPluginAuthorRuntimeForScope('full')");
-    expect(privatePhase.indexOf('await readBundledSourceAgentDefinitionProjection(options.rootDir)'))
-      .toBeLessThan(privatePhase.indexOf('publishCoherentProjectionOutputs('));
-    expect(mainSource).toContain('await publishGeneratedCompilerInputs(options, publicationLease);');
-    expect(mainSource).not.toContain('await runCanonicalPluginSdkGeneratedCompilerInputs({');
-    expect(mainSource.indexOf('await publishGeneratedCompilerInputs(options, publicationLease);'))
-      .toBeLessThan(mainSource.indexOf('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue, dependencyCurrentness);'));
-    expect(mainSource).toContain('await runRuntimeConsumedAgentFactsPrivateChild(argv, inheritedLockValue, dependencyCurrentness);');
-    const childPreparation = sourceBetween('async function runRuntimeConsumedAgentFactsPrivateChild(', 'async function runGeneratorPrivateChild(');
-    expect(childPreparation).not.toContain('readGeneratorDependencyCurrentness(');
-    expect(privatePhase).not.toContain('await synchronizeGeneratorAuthoringRuntimeClosure(');
-    expect(mainSource).not.toContain('inheritedLockValue: publicationLease.heldLockValue');
-    expect(directEntry).not.toContain('async () => await synchronizeGeneratorAuthoringRuntimeClosure(');
-    expect(directEntry).toContain('prepared.dependencyCurrentness');
-    expect(directEntry).toContain('PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV');
-    expect(directEntry.indexOf('delete process.env[PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV];'))
-      .toBeLessThan(directEntry.indexOf('runRuntimeConsumedAgentFactsPrivatePhase('));
-    expect(directEntry).toContain('runRuntimeConsumedAgentFactsPrivatePhase(');
-  });
-
-  it('loads compiler-input dependencies through bounded owner subpaths', () => {
-    // This path runs before the shared workspace build and must stay cheap and
-    // terminating on a cold source-dev filesystem. The package root barrels
-    // pull in the complete Agent/Protocol runtime and may retain live handles.
-    const loader = sourceBetween(
-      'async function loadGeneratedCompilerInputDependencies()',
-      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
-    );
-
-    expect(loader).toContain("importCanonicalWorkspaceModule(");
-    expect(loader).toContain("'@happier-dev/agents'");
-    expect(loader).toContain("'agent-ids'");
-    expect(loader).not.toContain("importCanonicalWorkspaceModule('@happier-dev/protocol'");
-    expect(loader).not.toContain("importCanonicalWorkspaceModule('@happier-dev/agents'),");
-
-    const publication = sourceBetween(
-      'async function publishGeneratedCompilerInputs(',
-      'function collectReleasedFlatSessionMetadataRuntimeDescriptorReaderContributions(',
-    );
-    expect(publication).not.toContain('readSerializedBundledPluginPackages');
-  });
-
-  it('loads the full generator dependency slice without package root barrels', () => {
-    const loader = sourceBetween(
-      'async function loadGeneratorWorkspaceDependencies()',
-      '/**\n * Loads only the Agents runtime',
-    );
-
-    expect(loader).toContain("importCanonicalWorkspaceModule('@happier-dev/agents', 'manifest')");
-    expect(loader).toContain("importCanonicalWorkspaceModule('@happier-dev/agents', 'definitions')");
-    expect(loader).toContain("importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/manifest')");
-    expect(loader).not.toContain("importCanonicalWorkspaceModule('@happier-dev/protocol', 'plugins/ui')");
-    expect(loader).not.toContain("importCanonicalWorkspaceModule('@happier-dev/agents'),");
-    expect(loader).not.toContain("importCanonicalWorkspaceModule('@happier-dev/protocol'),");
   });
 });
 
@@ -1026,7 +801,13 @@ describe('bundled plugin UI translation aggregation', () => {
         'scripts/workspaces/runTypeScriptCli.mjs', '--strict', '--declaration', '--emitDeclarationOnly',
         '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler',
         '--skipLibCheck', '--outDir', join(root, 'declarations'), generated, consumer,
-      ], { cwd: new URL('../../../../', import.meta.url), stdio: 'inherit' });
+      ], {
+        cwd: new URL('../../../../', import.meta.url), stdio: 'inherit',
+        // This isolated declaration fixture runs within the admitted test suite,
+        // not the full-workspace compiler's separate capacity reservation.
+        env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true',
+          HAPPIER_DEV_TARGET_EXECUTION: '0', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '' },
+      });
       const declaration = readFileSync(join(root, 'declarations/translations.d.ts'), 'utf8');
       expect(declaration.length).toBeLessThan(source.length / 4);
     } finally { rmSync(root, { recursive: true, force: true }); }
@@ -1229,6 +1010,73 @@ describe('CLI bundled plugin registry projection', () => {
     } finally { cleanup(); }
   });
 
+  describe('bundled voice runtime export', () => {
+    async function collectVoiceExport(exportTarget: Readonly<Record<string, unknown>>) {
+      const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-voice-conditional-export-');
+      try {
+        writeWorkspacePackageFixture({
+          repoRoot, workspacePath: 'packages/plugins/openai', packageName: '@happier-dev/plugins-openai',
+          manifestOverrides: { exports: { './happier-plugin-ui/voice-runtime': exportTarget } },
+        });
+        const pluginPackage = {
+          packageName: '@happier-dev/plugins-openai', packageVersion: '0.0.0', pluginPackageId: 'openai',
+          pluginId: 'happier.voice.openai',
+          manifest: {
+            schemaVersion: 2 as const, id: 'happier.voice.openai', version: '0.0.0', displayName: 'OpenAI',
+            runtime: { apiVersion: 1 as const }, contributes: { voiceProviders: [{
+              id: 'openai', title: 'OpenAI', kind: 'conversation' as const,
+              roles: ['realtime_conversation' as const], platforms: ['web' as const, 'ios' as const],
+              capabilities: { turn: { cancelResponse: false, bargeIn: false }, tools: { effectCalls: 'none' as const } },
+              client: { artifactId: 'voice-runtime', exportName: 'activate' },
+            }] },
+          },
+        } satisfies Parameters<typeof collectBundledFirstPartyVoiceProjectionSources>[1][number];
+        // Package exports are the filesystem boundary; collect the real runtime projection
+        // without evaluating optional presentation modules unrelated to export admission.
+        return await collectBundledFirstPartyVoiceProjectionSources(repoRoot, [pluginPackage], false);
+      } finally { cleanup(); }
+    }
+
+    it.each([
+      './dist/ui/voice/runtime.native.js',
+      { 'happier-source': './src/ui/voice/runtime.native.ts', default: './dist/ui/voice/runtime.native.js' },
+    ])('accepts a safe built React Native default while preserving conditional source exports (%j)', async (nativeTarget) => {
+      const result = await collectVoiceExport({
+        'happier-source': './src/ui/voice/runtime.ts',
+        'react-native': nativeTarget,
+        default: './dist/ui/voice/runtime.js',
+      });
+      expect(result.failures).toEqual([]);
+      expect(result.sources[0]).toMatchObject({
+        hasConversationProvider: true,
+        conversationPlatforms: ['web', 'ios'],
+        conversationClient: { artifactId: 'voice-runtime', exportName: 'activate' },
+      });
+    });
+
+    it.each([
+      { 'happier-source': './src/ui/voice/runtime.native.ts' },
+      { 'happier-source': './src/ui/voice/runtime.native.ts', default: './dist/ui/voice/../runtime.native.js' },
+      { 'happier-source': './src/ui/voice/runtime.native.ts', default: './dist/ui/runtime.native.js' },
+      { 'happier-source': './src/ui/voice/runtime.native.ts', default: './dist/ui/voice/runtime.native.ts' },
+      { default: './dist/ui/voice/runtime.native.js', 'happier-source': './src/ui/voice/runtime.native.ts' },
+      { 'happier-source': './src/ui/voice/runtime.native.ts', browser: './dist/ui/voice/runtime.native.js', default: './dist/ui/voice/runtime.native.js' },
+    ])('rejects unsafe, incomplete or unordered nested React Native exports (%j)', async (nativeTarget) => {
+      await expect(collectVoiceExport({
+        'happier-source': './src/ui/voice/runtime.ts',
+        'react-native': nativeTarget,
+        default: './dist/ui/voice/runtime.js',
+      })).rejects.toThrow(/Invalid bundled voice export/u);
+    });
+
+    it.each([
+      { 'react-native': './dist/ui/voice/runtime.native.js', default: './dist/ui/voice/../runtime.js' },
+      { default: './dist/ui/voice/runtime.js', 'react-native': './dist/ui/voice/runtime.native.js' },
+    ])('preserves default-path and top-level condition order fences (%j)', async (exportTarget) => {
+      await expect(collectVoiceExport(exportTarget)).rejects.toThrow(/Invalid bundled voice export/u);
+    });
+  });
+
   it('does not inspect a failed Voice presentation leaf and reads repaired source on recovery', async () => {
     const { repoRoot, cleanup } = createPackageLayoutSandbox('happier-voice-presentation-failure-');
     try {
@@ -1272,7 +1120,11 @@ describe('CLI bundled plugin registry projection', () => {
       const pluginPackages = ['google', 'openai'].map((id) => {
         writeWorkspacePackageFixture({
           repoRoot, workspacePath: `packages/plugins/${id}`, packageName: `@happier-dev/plugins-${id}`,
-          manifestOverrides: { exports: { './happier-plugin-ui/voice-runtime': { default: './dist/ui/voice/runtime.js' } } },
+          manifestOverrides: { exports: { './happier-plugin-ui/voice-runtime': {
+            'happier-source': './src/ui/voice/runtime.ts',
+            ...(id === 'openai' ? { 'react-native': './dist/ui/voice/runtime.native.js' } : {}),
+            default: './dist/ui/voice/runtime.js',
+          } } },
           files: { 'src/ui/voice/entries.ts': id === 'google'
             ? failureKind === 'import' ? "throw new Error('optional Voice source invalid');\n"
               : "export const VOICE_PROVIDER_PRESENTATIONS = [{ providerId: 123, settingsSectionId: 'invalid' }];\n"

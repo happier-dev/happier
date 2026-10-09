@@ -11,7 +11,7 @@ import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, Session
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, SessionInputRequest, SessionMessageProvenance, SessionInputAdmissionRejectionCodeV1, SessionInputAdmissionResultV1, SessionMessageSendResultV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingExecutionRunEnqueueByMachineRequestV2, PendingRequestedActionV1, ParticipantRecipientV1, ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
-import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -188,6 +188,8 @@ type SendSessionMessageParams = Readonly<{
   resumeInactiveSession?: boolean;
   permissionModeOverride?: string;
   modelSelectionInput?: SessionMessageModelSelectionInput;
+  modelSelectionUpdatedAt?: number;
+  incomingResumeOptions?: Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions'];
   pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
   /** Deployed CLI compatibility only; new action callers pass modelSelectionInput. */
   modelOverride?: string | null;
@@ -326,19 +328,21 @@ function resolvePermissionIntent(params: Readonly<{
   return resolved?.intent ?? 'default';
 }
 
-function resolveProtectedInputTargetMachineId(params: Readonly<{
+function resolveSessionInputTargetMachineId(params: Readonly<{
   decryptedMetadata: Record<string, unknown> | null;
   rawSession: Readonly<Record<string, unknown>>;
   targetMachineId?: string;
 }>): string | null {
-  const correspondence = SessionCreationCorrespondenceV1Schema.safeParse(
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(
     params.decryptedMetadata?.sessionCreationCorrespondenceV1,
   );
   const observedMachineId = correspondence.success
     ? correspondence.data.recipe.execution.machineId
     : typeof params.rawSession.machineId === 'string'
       ? params.rawSession.machineId.trim()
-      : '';
+      : typeof params.decryptedMetadata?.machineId === 'string'
+        ? params.decryptedMetadata.machineId.trim()
+        : '';
   const suppliedMachineId = params.targetMachineId?.trim() ?? '';
   if (observedMachineId && suppliedMachineId && observedMachineId !== suppliedMachineId) return null;
   if (observedMachineId) return observedMachineId;
@@ -1230,9 +1234,9 @@ export async function sendSessionMessage(
         // A structured override under a caller-supplied localId is part of one
         // retryable transport identity. Keep that authored payload stable;
         // sends whose identity is minted here retain a meaningful timestamp.
-        nowMs: params.localId !== undefined && params.modelSelectionInput !== undefined
+        nowMs: params.modelSelectionUpdatedAt ?? (params.localId !== undefined && params.modelSelectionInput !== undefined
           ? 0
-          : Date.now(),
+          : Date.now()),
       })
     : { modelId: '', selection: null };
   const callerMeta = stripSessionInputProtectedMeta(params.messageMeta);
@@ -1306,7 +1310,7 @@ export async function sendSessionMessage(
   let machineAdmissionInvoked = false;
   try {
     if (requiresMachineAdmission) {
-      const targetMachineId = resolveProtectedInputTargetMachineId({
+      const targetMachineId = resolveSessionInputTargetMachineId({
         decryptedMetadata,
         rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
         ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
@@ -1408,7 +1412,7 @@ export async function sendSessionMessage(
         suppressed: false,
       };
     } else if (executionRunRecipient) {
-      const targetMachineId = resolveProtectedInputTargetMachineId({
+      const targetMachineId = resolveSessionInputTargetMachineId({
         decryptedMetadata,
         rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
         ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
@@ -1425,6 +1429,11 @@ export async function sendSessionMessage(
         ...(params.signal ? { signal: params.signal } : {}),
       });
     } else {
+      const targetMachineId = resolveSessionInputTargetMachineId({ decryptedMetadata,
+        rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
+        ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}) });
+      if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',
+        admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
       enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
         token: params.credentials.token,
         sessionId,
@@ -1432,6 +1441,7 @@ export async function sendSessionMessage(
           ? {
               localId,
               ciphertext: content.c,
+              ...(targetMachineId ? { targetMachineId } : {}),
               messageRole: 'user',
               requestedAction,
               ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}),
@@ -1440,6 +1450,7 @@ export async function sendSessionMessage(
           : {
               localId,
               content,
+              ...(targetMachineId ? { targetMachineId } : {}),
               messageRole: 'user',
               requestedAction,
               ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
@@ -1538,6 +1549,7 @@ export async function sendSessionMessage(
       sessionId,
       localId,
       rawSession: sessionTarget.rawSession,
+      ...(params.incomingResumeOptions ? { incomingOptions: params.incomingResumeOptions } : {}),
       metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
         ? decryptedMetadata as Record<string, unknown>
         : {},

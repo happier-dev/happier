@@ -1,12 +1,22 @@
 import axios, { type AxiosResponse } from 'axios';
 import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, AccountApiTokensServerErrorV1Schema, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
-import type { ActionExecuteFailure, ActionExecutorDeps, ActionExecutorContext, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
+import { ProjectWorkerActionInputSchemasV1, type ActionExecuteFailure, type ActionExecutorDeps, type ActionExecutorContext, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
+import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/workspaces/workspaceWorkerPreferences';
+import { observeProjectServicePlacementActualV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
+import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereServerOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
 import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionAccessActionFamily';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindMachineAccessActionHttpRequestV1, MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol';
 import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
@@ -18,7 +28,7 @@ import {
   isAuthenticationError,
   isAuthenticationStatus,
 } from '@/api/client/httpStatusError';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { configuration } from '@/configuration';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -52,8 +62,11 @@ export type AccountServerActionDeps = Pick<
   | 'accountPasswordRemoveAction'
   | 'accountEmailChangeRequestAction'
   | 'machinePoolAction'
+  | 'machinePresetAction'
   | 'homeDomainAction'
   | 'sessionAccessAction'
+  | 'machineAccessAction'
+  | 'projectWorkerAction'
 >;
 
 type AccountServerActionFixedHome =
@@ -304,6 +317,177 @@ export function createAccountServerActionDeps(input: Readonly<{
     return { ok: false, errorCode: 'api_token_operation_failed', error: 'api_token_operation_failed' };
   };
   return {
+    projectWorkerAction: async ({ actionId, input: actionInput, context, signal }) => {
+      const parsed = ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput);
+      const targetServerId = 'workspace' in parsed ? parsed.workspace.serverId : parsed.serverId;
+      if (targetServerId !== serverId || accountServerTargetMismatch(context)) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      if (actionId === 'machines.worker.policy.get' || actionId === 'machines.worker.policy.set') {
+        // The incumbent metadata socket has no external Action signing carrier.
+        if (context.externalActionCredential) return externalAuthorizationUnavailable();
+        const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+        const client = await createAccountServerMachineFinitePolicyClient({
+          machineId: ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput).machineId,
+          credentials: input.credentials?.token === input.token ? input.credentials : {token: input.token, encryption: null},
+          serverHttpBaseUrl, signal,
+          isCredentialCurrent: async () => lifetime === getActiveAccountSettingsSnapshotLifetimeToken()
+            && (!input.isCredentialCurrent || await input.isCredentialCurrent()),
+        });
+        if (actionId === 'machines.worker.policy.get') return await client.get();
+        const mutation = ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput);
+        return await client.set({expectedPolicy: mutation.expectedPolicy, expectedMetadataVersion: mutation.expectedMetadataVersion, policy: mutation.policy});
+      }
+      if (actionId !== 'projects.worker.preferences.get' && actionId !== 'projects.worker.preferences.set'
+        && actionId !== 'projects.worker.preferences.reset' && actionId !== 'projects.service.placement.get'
+        && actionId !== 'projects.service.placement.set') {
+        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      }
+      const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+      const isCurrent = async () => !signal?.aborted && lifetime === getActiveAccountSettingsSnapshotLifetimeToken()
+        && (!input.isCredentialCurrent || await input.isCredentialCurrent());
+      const client = await createAccountServerWorkspaceWorkerPreferenceClient({
+        token: input.token, credentials: input.credentials, serverHttpBaseUrl, context, actionId, signal,
+        isCredentialCurrent: input.isCredentialCurrent, onRequestIssued: input.onRequestIssued,
+        resolveRequestHeaders: (request) => {
+          const authorization = resolveRequestHeaders(request);
+          return authorization.ok ? authorization.headers : null;
+        },
+      });
+      if (!client) return { status: 'unavailable' };
+      if (actionId === 'projects.service.placement.get') {
+        const request = ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput);
+        const desired = await client.getService(request);
+        if (desired.status !== 'ready') return desired;
+        const unavailable = { ...desired, actual: { status: 'unavailable' as const } };
+        // Project-row discovery has no verified external-effect carrier. Never substitute
+        // the daemon's Account credential for an externally authorized read principal.
+        if (context.externalActionCredential || context.externalActionExecutionAuthorization) return unavailable;
+        const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
+        try {
+          if (!await isCurrent()) return { status: 'unavailable' };
+          const rows = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRows({ credentials, serverId, signal }));
+          const actual = await observeProjectServicePlacementActualV1({ ...request,
+            workspaceRefs: rows.workspaceRefs, relationships: rows.relationships,
+            isCurrent: async () => await isCurrent() && getActiveProjectAccountRowsSnapshot() === rows,
+            readSnapshot: snapshot => callExactMachineRpc({ credentials, serverUrl: serverHttpBaseUrl,
+              machineId: snapshot.machineId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+              request: snapshot, requireCurrentMachine: true, signal }),
+          });
+          return await isCurrent() ? { ...desired, actual } : { status: 'unavailable' };
+        } catch { return await isCurrent() ? unavailable : { status: 'unavailable' }; }
+      }
+      if (actionId === 'projects.service.placement.set') return await client.setService(ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput));
+      if (actionId === 'projects.worker.preferences.get') return await client.get(ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput));
+      if (actionId === 'projects.worker.preferences.set') return await client.set(ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput));
+      if (actionId === 'projects.worker.preferences.reset') return await client.reset(ProjectWorkerActionInputSchemasV1[actionId].parse(actionInput));
+      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    },
+    machineAccessAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
+      const target = MachineAccessPrepareKeysInputV1Schema.parse({
+        serverId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'serverId') : undefined,
+        machineId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'machineId') : undefined,
+      });
+      if (target.serverId !== serverId || accountServerTargetMismatch(actionContext)) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        return { ok: false, errorCode: 'machine_access_stale_scope', error: 'machine_access_stale_scope' };
+      }
+      const prepareKeys = async () => {
+        const { prepareMachineAccessKeyEnvelopes } = await import('@/api/machineAccessGrantEnvelopeHost');
+        return await prepareMachineAccessKeyEnvelopes({
+          credentials: input.credentials, serverHttpBaseUrl, ...target,
+          ...(signal ? { signal } : {}), ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
+          ...(serverIdentityId ? { serverIdentityId } : {}),
+          requestHeaders: (request) => {
+            const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, ...request });
+            if (!headers.ok) throw createAuthenticationHttpStatusError(401, 'Machine key preparation authority unavailable');
+            return headers.headers;
+          },
+        });
+      };
+      if (actionId === 'machines.access.prepareKeys') return await prepareKeys();
+      const spec = getActionSpec(actionId);
+      const request = bindMachineAccessActionHttpRequestV1(actionId, actionInput);
+      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,
+        method: request.method, path: request.path, ...(request.body === undefined ? {} : { body: request.body }) });
+      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      const dispatch = await dispatchAccountServerActionHttpRequest({ headers: requestHeaders.headers,
+        method: request.method, path: request.path, ...(request.body === undefined ? {} : { body: request.body }),
+        sideEffectClass: spec.sideEffectClass, ...(signal ? { signal } : {}) });
+      if (!dispatch.ok) return dispatch;
+      const { response } = dispatch;
+      if (isAuthenticationStatus(response.status)) throw createAuthenticationHttpStatusError(response.status, 'Machine access Action authentication failed');
+      if (response.status < 200 || response.status >= 300) {
+        const refused = MachineAccessRefusalV1Schema.safeParse(response.data);
+        if (refused.success) return refused.data;
+        if ([404, 405, 501].includes(response.status)) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        throw createHttpStatusError(response.status, 'Machine access Action request failed');
+      }
+      const output = actionId === 'machines.access.grants.list'
+        ? MachineAccessGrantsListResultV1Schema.parse(response.data)
+        : MachineAccessMutationResultV1Schema.parse(response.data);
+      if (actionId !== 'machines.access.grant.set' || !('kind' in output) || output.kind !== 'saved' || output.readiness !== 'key_pending') return output;
+      // Permission already committed. A private continuation failure is not a
+      // permission failure and must not invite a second grant mutation.
+      const prepared = await prepareKeys().catch(() => null);
+      if (prepared?.kind !== 'prepared') return output;
+      // Current readiness remains server-derived after the protected continuation.
+      const read = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', target);
+      const readHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: read.method, path: read.path });
+      if (!readHeaders.ok) return output;
+      const refreshed = await dispatchAccountServerActionHttpRequest({ headers: readHeaders.headers, method: read.method, path: read.path,
+        sideEffectClass: 'read', ...(signal ? { signal } : {}) });
+      if (!refreshed.ok || refreshed.response.status !== 200) return output;
+      const audience = MachineAccessGrantsListResultV1Schema.safeParse(refreshed.response.data);
+      if (!audience.success || 'kind' in audience.data) return output;
+      const row = audience.data.grants.find(grant => JSON.stringify(grant.principal) === JSON.stringify(output.grant.principal));
+      return row ? { ...output, readiness: row.readiness } : output;
+    },
+    machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
+      const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);
+      const mismatch = accountServerTargetMismatch(actionContext);
+      if (mismatch) return mismatch;
+      if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      const snapshot = serverIdentityId ? undefined : await input.resolveServerFeaturesSnapshot?.();
+      const homeIdentity = serverIdentityId ?? (snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
+        ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId)
+        : undefined);
+      if (!homeIdentity) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+      if (body.homeId !== homeIdentity) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      }
+      const path = machinePresetActionEndpointPathV1(actionId);
+      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
+      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      const sideEffectClass = getActionSpec(actionId).sideEffectClass;
+      const dispatch = await dispatchAccountServerActionHttpRequest({
+        headers: requestHeaders.headers, method: 'POST', path, body, sideEffectClass,
+        ...(signal ? { signal } : {}),
+      });
+      if (!dispatch.ok) return dispatch;
+      const { response } = dispatch;
+      if (sideEffectClass === 'read' && input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      }
+      if (response.status < 200 || response.status >= 300) {
+        const output = MachinePresetActionOutputSchemasV1[actionId].safeParse(response.data);
+        if (output.success && (output.data.kind === 'conflict' || output.data.kind === 'refused')) return output.data;
+        if (isAuthenticationStatus(response.status)) {
+          throw createAuthenticationHttpStatusError(response.status, 'Machine preset Action authentication failed');
+        }
+        if ([404, 405, 501].includes(response.status)) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        throw createHttpStatusError(response.status, 'Machine preset Action request failed');
+      }
+      return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: MachinePresetActionOutputSchemasV1[actionId], sideEffectClass });
+    },
     machinePoolAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
       if (actionContext?.serverId && actionContext.serverId !== serverId) {
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };

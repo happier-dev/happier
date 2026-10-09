@@ -264,7 +264,7 @@ describe('createStopSession', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
 
     const pidToTrackedSession = new Map<number, any>([
-      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { kill: killDaemonChild }, processCommandHash: 'h1' }],
+      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { pid: 111, exitCode: null, signalCode: null, kill: killDaemonChild }, processCommandHash: 'h1' }],
       [222, { startedBy: 'terminal', pid: 222, happySessionId: 'sess-1', processCommandHash: 'h2' }],
     ]);
 
@@ -371,7 +371,7 @@ describe('createStopSession', () => {
     });
 
     const pidToTrackedSession = new Map<number, any>([
-      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { kill: killDaemonChild }, processCommandHash: 'h1' }],
+      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { pid: 111, exitCode: null, signalCode: null, kill: killDaemonChild }, processCommandHash: 'h1' }],
       [222, { startedBy: 'terminal', pid: 222, happySessionId: 'sess-1', processCommandHash: 'h2' }],
     ]);
 
@@ -518,7 +518,7 @@ describe('createStopSession', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      childProcess: { kill: killDaemonChild },
+      childProcess: { pid: 111, exitCode: null, signalCode: null, kill: killDaemonChild },
       processCommandHash: 'h1',
     };
     const pidToTrackedSession = new Map<number, any>([

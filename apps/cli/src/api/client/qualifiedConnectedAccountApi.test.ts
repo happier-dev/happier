@@ -84,6 +84,27 @@ describe("qualified Connected Account V4 API", () => {
         vi.mocked(axios.delete).mockReset();
     });
 
+    it("preserves retained native review facts and serializes exact removal dispositions", async () => {
+        const resource = { managedId: 'retained-id', homeId: 'home', custodianAccountId: 'account', intentRevision: 3,
+            controller: { machineId: 'controller', installationId: 'installation' }, provider: { pluginId: 'fixture.compute', localId: 'cloud' },
+            allocation: 'may-exist', recovery: { reference: 'native-paid-id', reason: 'manual_recovery' },
+            cleanup: { disposition: 'unavailable', reason: 'credential_missing' } };
+        // Axios rejects 409 unless the actual HTTP owner opts in to parsing it.
+        vi.mocked(axios.delete).mockImplementationOnce(async (_url, config) => {
+            if (!config?.validateStatus?.(409)) throw new Error('Request failed with status code 409');
+            return { status: 409, data: { error: 'managed_resources_review_required', resources: [resource] } };
+        });
+        const dispositions = [{ managedId: 'retained-id', expectedIntentRevision: 3, responsibility: 'manual', expectedAllocation: 'may-exist',
+            expectedRecovery: { reference: 'native-paid-id', reason: 'manual_recovery' } }];
+        await expect(deleteQualifiedConnectedAccountCredentialV4({ token: 'token', deletion: {
+            ref: { service, accountId: 'work' }, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+            cleanupGroupReferences: true, reviewOnly: true, managedResourceDispositions: dispositions,
+        } })).rejects.toMatchObject({ code: 'managed_resources_review_required', resources: [resource] });
+        const url = new URL(String(vi.mocked(axios.delete).mock.calls[0]?.[0]));
+        expect(url.searchParams.get('reviewOnly')).toBe('true');
+        expect(JSON.parse(url.searchParams.get('managedResourceDispositions') ?? 'null')).toEqual(dispositions);
+    });
+
     it("uses the shared structured-query codec and validates the response", async () => {
         vi.mocked(axios.get).mockResolvedValue({
             status: 200,

@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { lstat, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -76,6 +76,10 @@ export function readPrivateOwnerFileSync(path: string): string {
   } catch (error) {
     throw asTypedUnsafeFailure(error, 'private_owner_file_unsafe');
   }
+}
+
+export function createPrivateBearerCredential(): string {
+  return randomBytes(32).toString('base64url');
 }
 
 export function hashPrivateBearer(value: string): string {

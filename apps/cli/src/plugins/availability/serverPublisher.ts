@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityMaterializationsReportActionOutputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityReleasePublishActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
-import type { PluginAvailabilityMaterializationsReportActionInputV1, PluginAvailabilityMaterializationsReportActionOutputV1, PluginAvailabilityReleasePublishActionInputV1, PluginAvailabilityReleasePublishActionOutputV1 } from '@happier-dev/protocol';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityMaterializationsReportActionOutputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityReleasePublishActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import type { ManagedControllerV1, ManagedResourceDependencyV1, ManagedResourceDispositionV1, PluginAvailabilityMaterializationsReportActionInputV1, PluginAvailabilityMaterializationsReportActionOutputV1, PluginAvailabilityReleasePublishActionInputV1, PluginAvailabilityReleasePublishActionOutputV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
@@ -17,6 +17,36 @@ const RELEASE_PUBLISH_PATH = PluginAvailabilityActionHttpPathsV1[
 const MATERIALIZATIONS_REPORT_PATH = PluginAvailabilityActionHttpPathsV1[
   'account.plugins.availability.materializations.report'
 ];
+
+export type PluginManagedResourcePreflightBinding = Readonly<{
+  credentials: StoredCredentials;
+  serverUrl: string;
+  homeId: string;
+  controller: ManagedControllerV1;
+}>;
+
+/** The running daemon's captured Account/Home, never global focus, owns this removal read. */
+export async function readServerPluginManagedResources(
+  binding: PluginManagedResourcePreflightBinding,
+  pluginId: string,
+  managedResourceDispositions?: readonly ManagedResourceDispositionV1[],
+): Promise<Readonly<{ resources: readonly ManagedResourceDependencyV1[]; reviewed: boolean }>> {
+  const input = PluginAvailabilityIntentReadActionInputV1Schema.parse({ pluginId, includeManagedResources: true,
+    controller: binding.controller, homeId: binding.homeId,
+    ...(managedResourceDispositions !== undefined ? { managedResourceDispositions } : {}) });
+  const response = await axios.post(`${binding.serverUrl.replace(/\/+$/, '')}${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']}`, input, {
+    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${binding.credentials.token}` },
+    timeout: configuration.sessionControlHttpTimeoutMs,
+  });
+  const result = PluginAvailabilityIntentReadActionOutputV1Schema.parse(response.data);
+  if (result.managedResources === undefined || result.managedResourcesReviewed === undefined
+    || result.managedResources.some(resource => resource.homeId !== binding.homeId
+      || resource.controller.machineId !== binding.controller.machineId
+      || resource.controller.installationId !== binding.controller.installationId)) {
+    throw new Error('plugin_managed_resource_preflight_unavailable');
+  }
+  return { resources: result.managedResources, reviewed: result.managedResourcesReviewed };
+}
 
 export class PluginAvailabilityReleaseContentConflictError extends Error {
   readonly code = 'plugin_release_content_conflict' as const;

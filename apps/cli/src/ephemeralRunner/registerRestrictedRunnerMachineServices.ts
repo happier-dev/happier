@@ -34,6 +34,8 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   workingDirectory: string;
   machineId: string;
+  /** Account from the verified Session Runner principal, not RPC input. */
+  accountId?: string;
   sessionId: string;
   runtimeOrigin: string;
   runtimeToken: string;
@@ -73,6 +75,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
 
   const localServicesRuntime = input.localServicesRuntime ?? createLocalServicesDaemonRuntime({
     machineId: input.machineId,
+    accountId: input.accountId,
     resolveServerFeaturesSnapshot: async () => await fetchServerFeaturesSnapshot({
       serverUrl: input.runtimeOrigin,
     }),

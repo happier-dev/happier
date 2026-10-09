@@ -21,17 +21,20 @@ import {
     resolveAcceptedPendingQueueV2Delivery,
     resolveAcceptedPendingExecutionRunDelivery,
     settlePendingQueueV2Admission,
+    withdrawPendingQueueV2Message,
 } from './pendingQueueV2Transport';
 
-const { mockGet, mockPost } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockDelete } = vi.hoisted(() => ({
     mockGet: vi.fn(),
     mockPost: vi.fn(),
+    mockDelete: vi.fn(),
 }));
 
 vi.mock('axios', () => ({
     default: {
         get: mockGet,
         post: mockPost,
+        delete: mockDelete,
         isAxiosError: (error: unknown) => Boolean(
             error && typeof error === 'object' && (error as { isAxiosError?: unknown }).isAxiosError === true,
         ),
@@ -42,6 +45,33 @@ describe('pendingQueueV2Transport', () => {
     beforeEach(() => {
         mockGet.mockReset();
         mockPost.mockReset();
+        mockDelete.mockReset();
+    });
+
+    it.each([undefined, 'run/one'])('withdraws through the exact semantic POST owner with full body-bound authority (run %s)', async (targetExecutionRunId) => {
+        mockPost.mockResolvedValueOnce({ data: { ok: true, outcome: 'removed' } });
+        mockDelete.mockResolvedValueOnce({ data: { ok: true, outcome: 'removed' } });
+        const resolveAuthorizationHeaders = vi.fn(() => ({ 'x-execution-proof': 'signed-withdraw' }));
+        const path = targetExecutionRunId
+            ? '/v2/sessions/session%2Fone/execution-runs/run%2Fone/pending/input%2Fone/withdraw'
+            : '/v2/sessions/session%2Fone/pending/input%2Fone/withdraw';
+        expect(await withdrawPendingQueueV2Message({ token: 'daemon-token-must-not-cross', sessionId: 'session/one',
+            localId: 'input/one', ...(targetExecutionRunId ? { targetExecutionRunId } : {}), resolveAuthorizationHeaders,
+        })).toEqual({ outcome: 'removed' });
+        expect(resolveAuthorizationHeaders).toHaveBeenCalledWith({ method: 'POST', path, body: {} });
+        expect(mockPost).toHaveBeenCalledWith(expect.stringContaining(path), {}, expect.objectContaining({
+            headers: expect.objectContaining({ 'x-execution-proof': 'signed-withdraw' }),
+        }));
+        expect(mockPost.mock.calls[0]?.[2]?.headers).not.toHaveProperty('Authorization');
+        expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it('does not turn a malformed semantic withdrawal response into removal', async () => {
+        mockPost.mockResolvedValueOnce({ data: { ok: true } });
+        mockDelete.mockResolvedValueOnce({ data: { ok: true } });
+        expect(await withdrawPendingQueueV2Message({ token: 'token', sessionId: 'session', localId: 'input',
+            resolveAuthorizationHeaders: () => ({ 'x-execution-proof': 'signed-withdraw' }),
+        })).toEqual({ outcome: 'delivery_unknown' });
     });
 
     it.each([

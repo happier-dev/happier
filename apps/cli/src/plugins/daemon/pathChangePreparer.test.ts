@@ -39,6 +39,11 @@ import { runPluginUiArtifactBuild } from '@/plugins/authoring/toolchain';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { loadInstalledPlugins, loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
+import axios from 'axios';
+import * as persistence from '@/persistence';
+import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../packages/plugins/codex');
 
@@ -89,6 +94,8 @@ const pathPreparerOwners = new WeakMap<
 function createDaemonPathPluginChangePreparer(params: PathPreparerParams) {
   const prepare = createBaseDaemonPathPluginChangePreparer({
     ...params,
+    // No retained resources is the suite's ordinary server boundary response.
+    readManagedResources: params.readManagedResources ?? (async () => ({ resources: [], reviewed: true })),
     runPluginUiArtifactBuild: params.runPluginUiArtifactBuild
       ?? (async (input) => ({ ok: true as const, projectRoot: input.projectRoot, built: false })),
   });
@@ -2905,6 +2912,118 @@ describe('createDaemonPathPluginChangePreparer', () => {
       },
     });
     expect(prepareRuntime).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['disable', 'uninstall', 'uninstallAndDeleteData'] as const)('reviews retained managed custody before %s changes runtime or files', async (kind) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-managed-removal-'));
+    roots.push(happyHomeDir);
+    const pluginRoot = await createDescriptorPlugin();
+    const lifecycle = {
+      prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+    };
+    const installed = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({ happyHomeDir, runtimeLifecycle: lifecycle }),
+    });
+    const install = await installed.requestPluginChange({ kind: 'installPath', locator: pluginRoot });
+    if (install.kind !== 'reviewRequired') throw new Error('Expected installation review');
+    await installed.decidePluginChange({ pendingChangeId: install.pendingChangeId, decision: 'installAndTrust' });
+    await installed.shutdown();
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const storagePath = join(paths.storageDir, 'acme.descriptor');
+    await mkdir(storagePath, { recursive: true });
+    await writeFile(join(storagePath, 'daemon.v1.json'), '{"retained":true}', 'utf8');
+    const before = await createPluginRegistryStateStore({ happyHomeDir }).read();
+    const resources = [{
+      managedId: 'managed-retained', homeId: 'home', custodianAccountId: 'account', intentRevision: 4,
+      controller: { machineId: 'controller', installationId: 'installation' },
+      provider: { pluginId: 'acme.descriptor', localId: 'compute' }, allocation: 'bound' as const,
+      resource: { contributionRef: { pluginId: 'acme.descriptor', localId: 'compute' }, schemaVersion: 1, value: { nativeId: 'native-retained' } },
+      cleanup: { disposition: 'pending' as const, reason: 'native_effect_unknown' },
+    }];
+    // The authenticated server read is the system boundary; registry preparation and mutation remain real.
+    const disposition = { managedId: resources[0].managedId, expectedIntentRevision: resources[0].intentRevision,
+      expectedAllocation: resources[0].allocation, expectedResource: resources[0].resource, responsibility: 'manual' as const };
+    const readManagedResources = async (_pluginId: string, dispositions: readonly unknown[] = []) => ({
+      resources, reviewed: JSON.stringify(dispositions) === JSON.stringify([disposition]),
+    });
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir, runtimeLifecycle: lifecycle, ...{ readManagedResources },
+      }),
+    });
+
+    await expect(service.requestPluginChange({ kind, pluginId: 'acme.descriptor' })).resolves.toMatchObject({
+      kind: 'managedResourcesReviewRequired', pluginId: 'acme.descriptor', resources,
+    });
+    expect(await createPluginRegistryStateStore({ happyHomeDir }).read()).toEqual(before);
+    expect(await readFile(join(storagePath, 'daemon.v1.json'), 'utf8')).toBe('{"retained":true}');
+    await expect(service.requestPluginChange({ kind, pluginId: 'acme.descriptor', ...{
+      managedResourceDispositions: [disposition],
+    } })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
+    const after = await createPluginRegistryStateStore({ happyHomeDir }).read();
+    if (kind === 'disable') expect(after.plugins['acme.descriptor'].state.enabled).toBe(false);
+    else expect(after.plugins['acme.descriptor']).toBeUndefined();
+    if (kind === 'uninstallAndDeleteData') await expect(lstat(storagePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect(await readFile(join(storagePath, 'daemon.v1.json'), 'utf8')).toBe('{"retained":true}');
+    await service.shutdown();
+  });
+
+  it('keeps plugin removal bound to the daemon Account when global credentials switch', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-bound-removal-'));
+    roots.push(happyHomeDir);
+    const pluginRoot = await createDescriptorPlugin();
+    const installer = createDaemonPluginChangeService({ prepare: createDaemonPathPluginChangePreparer({
+      happyHomeDir, runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+    }) });
+    const install = await installer.requestPluginChange({ kind: 'installPath', locator: pluginRoot });
+    if (install.kind !== 'reviewRequired') throw new Error('Expected installation review');
+    await installer.decidePluginChange({ pendingChangeId: install.pendingChangeId, decision: 'installAndTrust' });
+    await installer.shutdown();
+    const before = await createPluginRegistryStateStore({ happyHomeDir }).read();
+    const currentCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'account-b', encryption: null });
+    const resources = [{
+      managedId: 'retained-on-home-a', homeId: 'home-a', custodianAccountId: 'account-a', intentRevision: 4,
+      controller: { machineId: 'controller-a', installationId: 'installation-a' },
+      provider: { pluginId: 'acme.descriptor', localId: 'compute' }, allocation: 'may-exist' as const,
+    }];
+    // Only the unrelated focused Home reports an empty census; the daemon's captured Home retains custody.
+    const network = vi.spyOn(axios, 'post').mockImplementation(async (url) => ({ data: { availabilityCursor: 0,
+      hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],
+      managedResources: url.startsWith('https://home-a.example/') ? resources : [],
+      managedResourcesReviewed: !url.startsWith('https://home-a.example/') } }));
+    const reloadController = createPluginReloadController();
+    const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, staleCandidateCleanup: 'disabled', reloadController,
+      connectedAccounts: {
+        getBinding: async () => null,
+        requestSelection: async () => { throw new Error('Unexpected credential selection'); },
+        materialize: async () => { throw new Error('Unexpected credential materialization'); },
+        listAccounts: async () => { throw new Error('Unexpected Account listing'); },
+        materializeListedAccount: async () => { throw new Error('Unexpected credential materialization'); },
+        watch: () => ({ dispose() {} }),
+      },
+      ...{ managedResourcePreflight: { credentials: { token: 'account-a', encryption: null },
+        serverUrl: 'https://home-a.example', homeId: 'home-a',
+        controller: { machineId: 'controller-a', installationId: 'installation-a' } } },
+    });
+    try {
+      const result = await runWithServerHttpBaseUrl('https://home-b.example', () => owner.changeService.requestPluginChange({
+        kind: 'disable', pluginId: 'acme.descriptor',
+      }));
+      expect(result).toMatchObject({ kind: 'managedResourcesReviewRequired', pluginId: 'acme.descriptor', resources });
+      expect(network.mock.calls).toHaveLength(1);
+      expect(network.mock.calls[0]).toMatchObject([
+        expect.stringMatching(/^https:\/\/home-a\.example\//),
+        { pluginId: 'acme.descriptor', includeManagedResources: true,
+          controller: { machineId: 'controller-a', installationId: 'installation-a' } },
+        { headers: { Authorization: 'Bearer account-a' } },
+      ]);
+      expect(await createPluginRegistryStateStore({ happyHomeDir }).read()).toEqual(before);
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      currentCredentials.mockRestore();
+      network.mockRestore();
+    }
   });
 
   it('re-applies enablement from current state when another change commits after preparation', async () => {

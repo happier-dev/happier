@@ -1,24 +1,535 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { RpcHandlerManager } from './RpcHandlerManager';
-import {
-  RPC_ERROR_CODES,
-  RPC_METHODS,
-  SESSION_RPC_METHODS,
-  RPC_ERROR_MESSAGES,
-  SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
-} from '@happier-dev/protocol/rpc';
-import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
 import type { Socket } from 'socket.io-client';
 import type { RpcHandlerContext } from './types';
-import { computeExternalActionSocketRpcRequestDigestV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
+import { computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
+import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import axios from 'axios';
+import tweetnacl from 'tweetnacl';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import type { PrepareExternalActionRequesterAccountContext } from '@/daemon/externalActions/executeExternalAction';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { deriveBoxPublicKeyFromSeed, deriveBoxSecretKeyFromSeed, sealBoxBundle, openBoxBundleWithSecretKey } from '@happier-dev/protocol/crypto/boxBundle';
+import * as installationStore from '@/daemon/identity/store';
+import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { isDeepStrictEqual } from 'node:util';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 
 const bindingCallId = '0123456789abcdef0123456789abcdef';
+const boundWorkspaceModel = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'codex', providerConnectionId: null, modelId: 'bound-model' });
+
+it.each(['ordinary Account-codec baseline', 'installation-sealed request', 'physical-parent installation-sealed request'] as const)(
+  'opens an installation-sealed TARGET and binds its reply without borrowing the chosen child Account key: %s', async transport => {
+  const target = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+  const targetMachineId = 'chosen-target-child';
+  const targetInstallationId = 'chosen-target-installation';
+  const physicalParent = transport === 'physical-parent installation-sealed request';
+  const recipientMachineId = physicalParent ? 'physical-target-parent' : targetMachineId;
+  const recipientInstallationId = physicalParent ? 'physical-target-installation' : targetInstallationId;
+  const homeId = 'srv_installed_target_home';
+  const machineAdmission = { actorAccountId: 'borrower', custodianAccountId: 'target-owner', machineId: targetMachineId,
+    installationId: targetInstallationId, role: 'use' as const, encryptionMode: 'e2ee' as const };
+  const constraints = { models: [boundWorkspaceModel], permissionModes: null };
+  // Home issuance/current grants are independently exercised by the server integration suite.
+  // This owner test mocks only the Home HTTP transport and the installed-key OS reader.
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-target-root', binding: {
+    accountId: 'borrower', principalId: 'borrower', credentialId: 'pat', grant: { ...API_TOKEN_FULL_GRANT_V1, models: [boundWorkspaceModel] },
+    custodianAccountId: 'source-owner', serverIdentityId: homeId, machineId: 'source-child',
+    installationId: 'source-child-installation', actionId: 'session.handoff', requestId: 'workspace-operation',
+    requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'source-child' },
+    handoffAdmission: { sessionId: 'source-session', sourceMachineId: 'source-child', targetMachineId,
+      sourceInstallationId: 'source-child-installation', targetInstallationId },
+  } });
+  const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: root.binding.requestId,
+    accountServerId: homeId, sourceMachineId: 'source-child', sourceRootPath: '/source/workspace', sourceSessionId: 'source-session',
+    sourceContext: { machineAdmission: { actorAccountId: 'borrower', custodianAccountId: 'source-owner', machineId: 'source-child',
+      installationId: 'source-child-installation', role: 'use', encryptionMode: 'e2ee' },
+      callerAuthority: 'account_automation', callerInputConstraints: constraints, workspaceWrites: 'allow' } });
+  const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+    sourceWriter: { machineId: 'physical-source-parent', installationId: 'physical-source-installation' },
+    source, target: { v: 1, phase: 'preflight', operationId: root.binding.requestId,
+      accountServerId: homeId, targetMachineId, targetRootPath: '/chosen/workspace' } });
+  // The second hop retains D's Home admission and original B snapshot; P2 is only the installed physical recipient.
+  const targetRouting = physicalParent ? WorkspaceSyncTargetRoutingV1Schema.parse({ ...routing.target,
+    targetContext: { machineAdmission, callerAuthority: 'account_automation', callerInputConstraints: constraints,
+      workspaceWrites: 'allow' } }) : undefined;
+  const method = `${recipientMachineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+  const params = HandoffTargetReplacementPreflightV1Schema.parse({ v: 1, operationId: root.binding.requestId,
+    serverId: homeId, machineId: targetMachineId, targetPath: routing.target.targetRootPath });
+  const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+    installationId: recipientInstallationId, createdAt: 1,
+    publicKey: Buffer.from(target.publicKey).toString('base64url'), privateKey: Buffer.from(target.secretKey).toString('base64url') });
+  let homeVerified = false;
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+    expect(String(url)).toBe(`https://installed-target-home.invalid/v1/machines/${recipientMachineId}/admission/verify`);
+    const body = raw as { context: typeof machineAdmission; method: string; callerInputAuthorization: typeof root;
+      workspaceSyncSourceWriterTargetRouting: typeof routing; proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
+    expect(body.context).toEqual(machineAdmission);
+    expect(body.callerInputAuthorization).toEqual(root);
+    expect(body.workspaceSyncSourceWriterTargetRouting).toEqual(routing);
+    if (targetRouting) expect(raw).toMatchObject({ workspaceSyncTargetRouting: targetRouting });
+    const payload = { version: 1 as const, machineId: recipientMachineId, installationId: recipientInstallationId,
+      accountId: 'target-owner', rpcAdmission: { context: machineAdmission, method,
+        ...(targetRouting ? { workspaceSyncTargetRouting: targetRouting } : {}),
+        callerInputAuthorization: root, workspaceSyncSourceWriterTargetRouting: routing } };
+    expect(verifyMachineInstallationProof({ payload, proof: body.proof, publicKey: target.publicKey })).toBe(true);
+    homeVerified = true;
+    return { status: 200, data: { v: 1, ok: true } };
+  });
+  const accountKey = new Uint8Array(32).fill(17);
+  const accountContent: SocketRpcContent = { mode: 'e2ee', cipher: {
+    encryptRaw: async value => encodeBase64(encrypt(accountKey, 'dataKey', value)),
+    decryptRaw: async value => decrypt(accountKey, 'dataKey', decodeBase64(value)),
+  } };
+  const rpc = new RpcHandlerManager({ scopePrefix: recipientMachineId, localMachineId: recipientMachineId,
+    encryptionKey: accountKey, encryptionVariant: 'dataKey', logger: () => {},
+    authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: recipientMachineId,
+      resolveCustodianAccountId: async () => 'target-owner', resolveInstallationId: () => recipientInstallationId,
+      verifyMachineAdmission: received => verifyMachineRpcAdmissionCurrent({ ...received, privateKey: target.secretKey,
+        ...(physicalParent ? { workspaceSyncTargetReceiver: { machineId: recipientMachineId, installationId: recipientInstallationId } } : {}),
+        daemonToken: 'installed-target-token', serverHttpBaseUrl: 'https://installed-target-home.invalid' }) }) });
+  let observed = 0;
+  rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, async (input, context) => {
+    expect(homeVerified).toBe(true);
+    expect(input).toEqual(params);
+    expect(context?.callerInputAuthorization).toEqual(root);
+    expect(context?.machineAdmission).toEqual(machineAdmission);
+    expect(context).toMatchObject({ workspaceSyncSourceWriterTargetRouting: routing });
+    observed += 1;
+    return { admitted: true, originalActor: context?.machineAdmission?.actorAccountId };
+  });
+  const request = { method, machineAdmission, callerAuthority: 'account_automation' as const, callerInputConstraints: constraints,
+    callerInputAuthorization: root, workspaceSyncSourceWriterTargetRouting: routing,
+    ...(targetRouting ? { workspaceSyncTargetRouting: targetRouting } : {}) };
+  try {
+    // The same Home/domain baseline must pass before any failure is attributed to cipher selection.
+    const baseline = await rpc.handleRequest({ ...request,
+      params: await socketRpcCodec.encodeParams(accountContent, params, { method, callId: bindingCallId }) });
+    expect(await socketRpcCodec.decodeResult(accountContent, { ok: true, result: baseline }, bindingCallId))
+      .toEqual({ admitted: true, originalActor: 'borrower' });
+    expect(observed).toBe(1);
+    const refused = async (changed: Partial<typeof request>, changedParams: unknown = params) => {
+      const result = await rpc.handleRequest({ ...request, ...changed,
+        params: await socketRpcCodec.encodeParams(accountContent, changedParams, { method, callId: bindingCallId }) });
+      expect(await socketRpcCodec.decodeResult(accountContent, { ok: true, result }, bindingCallId))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    };
+    await refused({ callerInputAuthorization: { ...root, token: 'forged-root' } });
+    await refused({ workspaceSyncSourceWriterTargetRouting: { ...routing,
+      sourceWriter: { ...routing.sourceWriter, installationId: 'forged-writer' } } });
+    await refused({}, { ...params, targetPath: '/unrelated/root' });
+    if (targetRouting) {
+      await refused({ workspaceSyncTargetRouting: { ...targetRouting, operationId: 'unrelated-operation' } });
+      await refused({ workspaceSyncTargetRouting: { ...targetRouting,
+        targetContext: { ...targetRouting.targetContext, callerAuthority: 'present_user' } } });
+    }
+    expect(observed).toBe(1);
+    if (transport === 'ordinary Account-codec baseline') return;
+
+    const replySeed = tweetnacl.randomBytes(32);
+    const recipient = { machineId: recipientMachineId, installationId: recipientInstallationId };
+    // This is an incoming wire fixture, built with the existing canonical box primitives.
+    // Its known installed fixture seed is not delegated to the production caller.
+    const installedContent: SocketRpcContent = { mode: 'e2ee', cipher: {
+      encryptRaw: async value => JSON.stringify({ v: 1, kind: 'workspace_sync_target_request_v1', ...recipient,
+        ciphertext: Buffer.from(sealBoxBundle({ recipientPublicKey: deriveBoxPublicKeyFromSeed(target.secretKey.subarray(0, 32)),
+          plaintext: new TextEncoder().encode(JSON.stringify({ v: 1, kind: 'workspace_sync_target_request_v1', ...recipient,
+            method, routing, replyPublicKey: Buffer.from(deriveBoxPublicKeyFromSeed(replySeed)).toString('base64url'), rpc: value })),
+          randomBytes: tweetnacl.randomBytes })).toString('base64url') }),
+      decryptRaw: async ciphertext => {
+        const outer: unknown = JSON.parse(ciphertext);
+        if (!outer || typeof outer !== 'object' || !('ciphertext' in outer) || typeof outer.ciphertext !== 'string'
+          || !('v' in outer) || outer.v !== 1 || !('kind' in outer) || outer.kind !== 'workspace_sync_target_response_v1'
+          || !('machineId' in outer) || outer.machineId !== recipient.machineId
+          || !('installationId' in outer) || outer.installationId !== recipient.installationId) return null;
+        const opened = openBoxBundleWithSecretKey({ bundle: new Uint8Array(Buffer.from(outer.ciphertext, 'base64url')),
+          recipientSecretKey: deriveBoxSecretKeyFromSeed(replySeed) });
+        if (!opened) return null;
+        const inner: unknown = JSON.parse(new TextDecoder().decode(opened));
+        if (!inner || typeof inner !== 'object' || !('v' in inner) || inner.v !== 1
+          || !('kind' in inner) || inner.kind !== 'workspace_sync_target_response_v1'
+          || !('machineId' in inner) || inner.machineId !== recipient.machineId
+          || !('installationId' in inner) || inner.installationId !== recipient.installationId
+          || !('method' in inner) || inner.method !== method || !('routing' in inner)
+          || !isDeepStrictEqual(inner.routing, routing) || !('rpc' in inner)) return null;
+        return inner.rpc;
+      },
+    } };
+    const sealed = await socketRpcCodec.encodeParams(installedContent, params, { method, callId: bindingCallId });
+    const sealedFrame: unknown = JSON.parse(sealed);
+    if (!sealedFrame || typeof sealedFrame !== 'object' || !('ciphertext' in sealedFrame)
+      || typeof sealedFrame.ciphertext !== 'string') throw new Error('The installed request fixture was not sealed');
+    const fixturePlaintext = openBoxBundleWithSecretKey({
+      bundle: new Uint8Array(Buffer.from(sealedFrame.ciphertext, 'base64url')),
+      recipientSecretKey: deriveBoxSecretKeyFromSeed(target.secretKey.subarray(0, 32)),
+    });
+    if (!fixturePlaintext) throw new Error('The installed request fixture cannot be opened by its recipient');
+    expect(JSON.parse(new TextDecoder().decode(fixturePlaintext))).toMatchObject({
+      method, routing, machineId: recipientMachineId, installationId: recipientInstallationId,
+    });
+    await expect(socketRpcCodec.decodeRequestParams(accountContent, sealed, method)).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    // Unopened frames establish no V2 call id or reply recipient; only a typed refusal can leave the receiver.
+    for (const changedFrame of [
+      { ...sealedFrame, installationId: 'replacement-installation' },
+      { ...sealedFrame, unexpected: true },
+    ]) {
+      const refused = await rpc.handleRequest({ ...request, params: JSON.stringify(changedFrame) });
+      expect(refused).toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    }
+    const changedRouting = await rpc.handleRequest({ ...request, params: sealed,
+      workspaceSyncSourceWriterTargetRouting: { ...routing, source: { ...routing.source, sourceRootPath: '/substituted/source' } } });
+    expect(changedRouting).toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    expect(observed).toBe(1);
+    const result = await rpc.handleRequest({ ...request, params: sealed });
+    expect(await socketRpcCodec.decodeResult(installedContent, { ok: true, result }, bindingCallId))
+      .toEqual({ admitted: true, originalActor: 'borrower' });
+    expect(observed).toBe(2);
+    await expect(socketRpcCodec.decodeResult(accountContent, { ok: true, result }, bindingCallId))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    await expect(socketRpcCodec.decodeResult(installedContent, { ok: true, result }, 'f'.repeat(32)))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    await expect(socketRpcCodec.decodeResult(installedContent, { ok: true, result: sealed }, bindingCallId))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+  } finally { post.mockRestore(); identity.mockRestore(); }
+});
+
+it.each(['scoped PAT', 'terminal', 'narrowed Account'] as const)(
+  'retains the original Home handoff root through verified physical SOURCE ingress without making the parent its signer: %s', async rootKind => {
+  const parent = tweetnacl.sign.keyPair();
+  const machineAdmission = { actorAccountId: 'borrower', custodianAccountId: 'owner', machineId: 'source-child',
+    installationId: 'source-child-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+  const constraints = rootKind === 'scoped PAT' ? { models: [boundWorkspaceModel], permissionModes: null } : undefined;
+  const principal = rootKind === 'scoped PAT'
+    ? { principalId: 'borrower', credentialId: 'pat', grant: { ...API_TOKEN_FULL_GRANT_V1, models: [boundWorkspaceModel] } }
+    : { authentication: { kind: rootKind === 'terminal' ? 'terminal' as const : 'account' as const, tokenEpoch: 1 } };
+  // The Home response is the network boundary; the real issuer is exercised by the server integration suite.
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-root', binding: {
+    accountId: 'borrower', ...principal,
+    custodianAccountId: 'owner', serverIdentityId: 'srv_source_writer_home', machineId: 'source-child',
+    installationId: 'source-child-installation', actionId: 'session.handoff', requestId: 'workspace-operation',
+    requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'source-child' },
+    handoffAdmission: { sessionId: 'source-session', sourceMachineId: 'source-child', targetMachineId: 'target-child',
+      sourceInstallationId: 'source-child-installation', targetInstallationId: 'target-child-installation' },
+  } });
+  const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'workspace-operation',
+    accountServerId: 'srv_source_writer_home', sourceMachineId: 'source-child', sourceRootPath: '/child/workspace',
+    sourceSessionId: 'source-session', sourceContext: { machineAdmission, callerAuthority: 'account_automation',
+      ...(constraints ? { callerInputConstraints: constraints } : {}), workspaceWrites: 'allow' } });
+  if (!routing.sourceContext) throw new Error('SOURCE fixture requires its original context');
+  const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+  const params = { v: 1, phase: 'prepare', input: { operationId: routing.operationId, accountServerId: routing.accountServerId,
+    sourceMachineId: routing.sourceMachineId, sourceRootPath: routing.sourceRootPath, sourceSessionId: routing.sourceSessionId,
+    targetMachineId: 'target-child', targetRootPath: '/target/workspace',
+    action: { kind: 'copy_once', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } } } };
+  let verifiedParent = false;
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+    expect(String(url)).toBe('https://source-writer-home.invalid/v1/machines/physical-parent/admission/verify');
+    const body = raw as { context: typeof machineAdmission; method: string; workspaceSyncSourceRouting: typeof routing;
+      callerInputAuthorization: typeof root;
+      proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
+    expect(body.context).toEqual(machineAdmission);
+    expect(body.callerInputAuthorization).toEqual(root);
+    expect(verifyMachineInstallationProof({ payload: { version: 1, machineId: 'physical-parent',
+      installationId: 'physical-parent-installation', accountId: 'owner', rpcAdmission: { context: machineAdmission,
+        method: body.method, workspaceSyncSourceRouting: routing, callerInputAuthorization: root } }, proof: body.proof, publicKey: parent.publicKey })).toBe(true);
+    verifiedParent = true;
+    return { status: 200, data: { v: 1, ok: true } };
+  });
+  const rpc = new RpcHandlerManager({ scopePrefix: 'physical-parent', localMachineId: 'physical-parent',
+    encryptionMode: 'plain', logger: () => {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+      machineId: 'physical-parent', resolveCustodianAccountId: async () => 'owner',
+      resolveInstallationId: () => 'physical-parent-installation', verifyMachineAdmission: received =>
+        verifyMachineRpcAdmissionCurrent({ ...received, privateKey: parent.secretKey, daemonToken: 'installed-parent-token',
+          serverHttpBaseUrl: 'https://source-writer-home.invalid',
+          workspaceSyncSourceReceiver: { machineId: 'physical-parent', installationId: 'physical-parent-installation' } }),
+    }) });
+  let effects = 0;
+  rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, async (_params, context) => {
+    effects += 1;
+    expect(verifiedParent).toBe(true);
+    expect(context?.callerInputAuthorization).toEqual(root);
+    expect(context?.workspaceSyncSourceRouting).toEqual(routing);
+    expect(context?.machineAdmission).toEqual(machineAdmission);
+    expect(context?.callerAuthority).toBe('account_automation');
+    return { retained: true, signerMachineId: 'physical-parent', originalMachineId: context?.callerInputAuthorization?.binding.machineId };
+  });
+  try {
+    const request = { method: `physical-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`,
+      params, machineAdmission, workspaceSyncSourceRouting: routing, callerAuthority: 'account_automation',
+      callerInputConstraints: constraints, callerInputAuthorization: root } as const;
+    await expect(rpc.handleRequest({ ...request, params: { ...params,
+      input: { ...params.input, targetMachineId: 'unrelated-child' } } })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    if (rootKind !== 'narrowed Account') {
+      await expect(rpc.handleRequest({ ...request, callerAuthority: 'present_user', workspaceSyncSourceRouting: {
+        ...routing, sourceContext: { ...routing.sourceContext, callerAuthority: 'present_user' },
+      } })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    if (constraints) {
+      const widenedConstraints = { models: null, permissionModes: null };
+      await expect(rpc.handleRequest({ ...request, callerInputConstraints: widenedConstraints,
+        workspaceSyncSourceRouting: { ...routing, sourceContext: { ...routing.sourceContext,
+          callerInputConstraints: widenedConstraints } } })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    expect(effects).toBe(0);
+    await expect(rpc.handleRequest(request)).resolves.toMatchObject({
+        retained: true, signerMachineId: 'physical-parent', originalMachineId: 'source-child',
+      });
+    expect(effects).toBe(1);
+  } finally { post.mockRestore(); }
+});
+
+it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody through the existing RPC carrier and real credential factory', async mode => {
+  const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
+  const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
+  const machineKey = new Uint8Array(32).fill(7);
+  const credentials: StoredCredentials = { token: 'bob-private', encryption: mode === 'plain' ? null
+    : { type: 'legacy', secret: new Uint8Array(32).fill(29) } };
+  const method = 'machine:machines.managed.list';
+  const params = { homeId: 'home' };
+  const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-root', binding: {
+    accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
+    accountEncryptionMode: mode, serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+    actionId: 'machines.managed.list', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'machine', machineId: 'machine' },
+  } };
+  const seal = (root = authorization, payload = params) => sealExternalActionRequesterAccountContextV1({ authorization: root,
+    credentials: encodeStoredCredentials(credentials), purpose: { kind: 'machine_rpc', method, params: payload },
+    installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+  const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: mode === 'plain' ? 'plain' : 'encrypted' });
+  let current = true;
+  let retired: (() => Promise<boolean>) | undefined;
+  const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+    expect(config?.headers?.Authorization).toBe('Bearer bob-private');
+    if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+    if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: settings, version: 1 } };
+    if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+      mode, version: 1, signingKeyFingerprint: mode === 'plain' ? null : 'signing',
+      contentKeyFingerprint: credentials.encryption?.type === 'legacy' ? computeContentPublicKeyFingerprint(
+        tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(credentials.encryption.secret)).publicKey) : null, updatedAt: 1,
+    } };
+    throw new Error('Unexpected requester HTTP read');
+  });
+  const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+    expect(String(url)).toContain('/execution-authorization/verify');
+    return { status: current ? 200 : 403, data: { ok: current } };
+  });
+  const prepare: PrepareExternalActionRequesterAccountContext = async ({ authorization: root, purpose, signal }) =>
+    prepareRequesterAccountActionContext({ authorization: root, purpose: purpose ?? { kind: 'external_action' },
+      machineId: 'machine', installationId: 'installation', installationPrivateKey: installation.secretKey,
+      serverId: 'profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://bob-home.test', signal,
+      isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: root,
+        effectActionId: root.binding.actionId, target: root.binding.target, installationId: 'installation',
+        privateKey: installation.secretKey, serverHttpBaseUrl: 'https://bob-home.test', signal }),
+      createExecutor: admitted => {
+        retired = admitted.isCurrent;
+        return createCliActionExecutorFromCredentials({ credentials: admitted.credentials, serverId: 'profile',
+          serverApiUrl: 'https://bob-home.test', serverIdentityId: 'home', machineId: 'machine',
+          externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: installation.secretKey,
+          readCredentials: async () => await admitted.isCurrent() ? admitted.credentials : null,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted.accountSettingsContext.settings.actionsSettingsV1),
+            getAccountSettings: () => admitted.accountSettingsContext.settings },
+          // Native managed provider delivery is the external boundary; real policy and custody stay active.
+          managedMachineAction: async request => {
+            expect(request.context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId).toBe('bob');
+            expect(request.context.externalActionExecutionAuthorization?.requesterHttpProjection?.accountId).toBe('bob');
+            return { machines: [] };
+          },
+        });
+      },
+    });
+  const config = { scopePrefix: 'machine', localMachineId: 'machine', logger: () => {},
+    ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionKey: machineKey, encryptionVariant: 'dataKey' as const }),
+    // Authenticated Home Machine admission is the network boundary; private Home root currentness stays real above.
+    authorizeRequest: async () => ({ ok: true as const }), prepareRequesterAccountContext: prepare };
+  const rpc = new RpcHandlerManager(config);
+  rpc.registerHandler('machines.managed.list', async (args, context) => {
+    const root = context?.callerInputAuthorization;
+    if (!root?.requesterAccountExecutor) throw new Error('Missing admitted requester executor');
+    return await root.requesterAccountExecutor.execute('machines.managed.list', args, { surface: 'ui',
+      authority: context?.callerAuthority, serverId: 'profile', runtimeAccountId: 'bob',
+      externalActionExecutionAuthorization: root, externalActionTarget: root.binding.target, actionRequestId: root.binding.requestId });
+  });
+  const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
+    installationId: 'installation', role: 'manage' as const, encryptionMode: mode };
+  const run = async (root = seal(), payload = params) => {
+    const response = await rpc.handleRequest({ method, params: mode === 'plain' ? payload : await sealRpcRequest(machineKey, method, payload),
+      requestId: 'relay-request', machineAdmission, callerAuthority: 'present_user', callerInputAuthorization: root });
+    return mode === 'plain' ? response : await openRpcResponse(machineKey, response);
+  };
+  try {
+    expect(await run()).toMatchObject({ ok: true, result: { machines: [] } });
+    expect(await retired?.()).toBe(false);
+    expect(await run(seal(), { homeId: 'other' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await run({ ...seal(), token: 'swapped-root' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    current = false;
+    expect(await run()).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  } finally { get.mockRestore(); post.mockRestore(); }
+});
+
+it('refuses unverified physical TARGET routing before exposing the existing preflight receiver', async () => {
+  const machineAdmission = { actorAccountId: 'actor', custodianAccountId: 'owner', machineId: 'target-child',
+    installationId: 'target-child-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+  const workspaceSyncTargetRouting = { v: 1 as const, phase: 'preflight' as const, operationId: 'move-1',
+    accountServerId: 'home-1', targetMachineId: 'target-child', targetRootPath: '/child/workspace',
+    targetContext: { machineAdmission, callerAuthority: 'account_automation' as const, workspaceWrites: 'deny' as const } };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'parent', encryptionMode: 'plain', logger: () => {} });
+  rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, () => ({ effect: 'receiver-reached' }));
+  const request = { method: `parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`,
+    params: { v: 1, operationId: 'move-1', serverId: 'home-1', machineId: 'target-child', targetPath: '/child/workspace' },
+    workspaceSyncTargetRouting, callerAuthority: 'account_automation' as const };
+  expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  expect(await rpc.handleRequest({ ...request, machineAdmission })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+});
+
+it('refuses the private workspace SOURCE member without Home-verified child routing before exposing its receiver', async () => {
+  const method = `parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`;
+  const machineAdmission = { actorAccountId: 'actor', custodianAccountId: 'owner', machineId: 'child',
+    installationId: 'child-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+  const workspaceSyncSourceRouting = { v: 1 as const, phase: 'prepare' as const, operationId: 'move-1',
+    accountServerId: 'home-1', sourceMachineId: 'child', sourceRootPath: '/child/workspace', sourceSessionId: 'session-1' };
+  const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+  const contentPolicy = { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) };
+  const params = { v: 1, phase: 'prepare', input: { operationId: 'move-1', accountServerId: 'home-1',
+    sourceMachineId: 'child', sourceRootPath: '/child/workspace', sourceSessionId: 'session-1',
+    action: { kind: 'copy_once', contentPolicy }, targetMachineId: 'target', targetRootPath: '/target' } };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'parent', encryptionMode: 'plain', logger: () => {} });
+  rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, () => ({ effect: 'receiver-reached' }));
+  for (const request of [
+    { method, params },
+    { method, params, workspaceSyncSourceRouting },
+    { method, params, machineAdmission },
+    { method, params, machineAdmission, workspaceSyncSourceRouting },
+  ]) expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+});
+
+it('opens protected current-service admission on E2EE Machines and keeps its exact witness current', async () => {
+  const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-a',
+    installationId: 'installation-a', role: 'use' as const, encryptionMode: 'e2ee' as const };
+  const authorization = { kind: 'localServices.preview.admission.serverOrigin' as const };
+  let current = true;
+  let admittedWitness: unknown;
+  const boundary = { machineId: 'machine-a', resolveCustodianAccountId: async () => 'alice',
+    resolveInstallationId: () => 'installation-a', verifyMachineAdmission: async () => current };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionKey: new Uint8Array(32).fill(7),
+    encryptionVariant: 'dataKey', logger: () => {}, authorizeRequest: async request => {
+      admittedWitness = request.machineAdmission;
+      return authorizeMachineRpcRequest(request, boundary);
+    } });
+  const method = 'daemon.localServices.preview.admission';
+  rpc.registerHandler(method, async (params: unknown, context?: RpcHandlerContext) => {
+    const sameWitness = context?.machineAdmission === admittedWitness;
+    const initiallyCurrent = await context?.verifyMachineAdmissionCurrent?.();
+    await Promise.resolve();
+    current = false;
+    return { params, sameWitness, initiallyCurrent, currentAfterAwait: await context?.verifyMachineAdmissionCurrent?.() };
+  });
+  const params = { v: 1, kind: 'read', target: { kind: 'managed_service', machineId: 'machine-a', managedServiceId: 'web' } };
+  expect(await rpc.handleRequest({ method: `machine-a:${method}`, params, authorization, machineAdmission }))
+    .toEqual({ params, sameWitness: true, initiallyCurrent: true, currentAfterAwait: false });
+});
+
+it('refuses stamped current-service admission without Machine proof or a verifier', async () => {
+  const authorization = { kind: 'localServices.preview.admission.serverOrigin' as const };
+  const method = 'machine-a:daemon.localServices.preview.admission';
+  const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-a',
+    installationId: 'installation-a', role: 'use' as const, encryptionMode: 'plain' as const };
+  const boundary = { machineId: 'machine-a', resolveCustodianAccountId: async () => 'alice',
+    resolveInstallationId: () => 'installation-a', verifyMachineAdmission: async () => true };
+  for (const authorizeRequest of [undefined, (request: Parameters<typeof authorizeMachineRpcRequest>[0]) => authorizeMachineRpcRequest(request, boundary)]) {
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger: () => {}, authorizeRequest });
+    rpc.registerHandler('daemon.localServices.preview.admission', () => ({ kind: 'admitted' }));
+    const request = { method, params: { v: 1, kind: 'read' }, authorization };
+    expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    if (!authorizeRequest) expect(await rpc.handleRequest({ ...request, machineAdmission }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  }
+});
+
+it('keeps ordinary preview snapshots on the encrypted client transport', async () => {
+  const key = new Uint8Array(32).fill(11);
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionKey: key, encryptionVariant: 'dataKey', logger: () => {} });
+  rpc.registerHandler(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT, () => ({ previews: [] }));
+  const method = `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT}`;
+  expect(await openRpcResponse(key, await rpc.handleRequest({ method, params: await sealRpcRequest(key, method, {}) })))
+    .toEqual({ previews: [] });
+  expect(await openRpcResponse(key, await rpc.handleRequest({ method, params: {},
+    authorization: { kind: 'localServices.preview.admission.serverOrigin' as const } })))
+    .toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+});
+
+it('refuses current-service admission without a protected server origin before exposing the owner', async () => {
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger: () => {} });
+  rpc.registerHandler('daemon.localServices.preview.admission', () => ({ kind: 'admitted' }));
+  expect(await rpc.handleRequest({ method: 'machine-a:daemon.localServices.preview.admission',
+    params: { v: 1, kind: 'read', target: { kind: 'managed_service', machineId: 'machine-a', managedServiceId: 'web' } } }))
+    .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+});
+
+it('refuses Machine access-loss custody without a reserved server-origin stamp', async () => {
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger: () => {} });
+  const cleanup = vi.fn(async () => ({ kind: 'settled' }));
+  rpc.registerHandler('daemon.machineAccessLoss', cleanup);
+  expect(await rpc.handleRequest({ method: 'machine-a:daemon.machineAccessLoss',
+    params: { v: 1, subjectAccountId: 'bob' } })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  expect(cleanup).not.toHaveBeenCalled();
+});
+
+it('rechecks the exact stamped Machine authority after asynchronous handler preparation', async () => {
+  const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-a',
+    installationId: 'installation-a', role: 'use' as const, encryptionMode: 'plain' as const };
+  let current = true;
+  const boundary = { machineId: machineAdmission.machineId,
+    resolveCustodianAccountId: async () => 'alice', resolveInstallationId: () => 'installation-a',
+    verifyMachineAdmission: async () => current };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger: () => {},
+    authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
+  rpc.registerHandler('prepare-effect', async (_params: unknown, context?: RpcHandlerContext) => {
+    await Promise.resolve();
+    current = false;
+    return { effectAllowed: await context?.verifyMachineAdmissionCurrent?.() };
+  });
+  expect(await rpc.handleRequest({ method: 'machine-a:prepare-effect', params: {}, machineAdmission }))
+    .toEqual({ effectAllowed: false });
+});
+
+it.each(['plain', 'e2ee'] as const)('does not disclose confidential continuation errors in %s responses or logs', async (mode) => {
+  const secret = 'd26-recognizable-private-value';
+  const logs: unknown[] = [];
+  const key = new Uint8Array(32).fill(19);
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a',
+    ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionKey: key, encryptionVariant: 'dataKey' as const }),
+    logger: (message, data) => logs.push({ message, data }) });
+  const method = 'daemon.approval.request.secretContinue.v1';
+  rpc.registerHandler(method, () => { throw new Error(`native input echoed ${secret}`); });
+  const request = { method: `machine-a:${method}`, params: mode === 'plain'
+    ? { choice: { kind: 'once', value: secret } }
+    : await sealRpcRequest(key, `machine-a:${method}`, { choice: { kind: 'once', value: secret } }) };
+  const response = await rpc.handleRequest(request);
+  const opened = mode === 'plain' ? response : await openRpcResponse(key, response);
+  expect(JSON.stringify({ opened, logs })).not.toContain(secret);
+  expect(opened).toMatchObject({ errorCode: 'confidential_continuation_failed' });
+});
 function rpcContent(key: Uint8Array): SocketRpcContent {
   return { mode: 'e2ee', cipher: {
     encryptRaw: async value => encodeBase64(encrypt(key, 'dataKey', value)),
@@ -68,7 +579,8 @@ it('binds the Home-issued input proof to the exact opaque RPC before opening it'
   // The authenticated Home transport is the boundary here; downstream HTTP validates its signed token.
   const proof: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-issued-token', binding: {
     accountId: 'account-a', principalId: 'principal-a', credentialId: 'credential-a',
-    serverIdentityId: 'server-a', machineId: 'machine-a', actionId: 'session.message.send',
+    serverIdentityId: 'server-a', machineId: 'machine-a', custodianAccountId: 'account-a',
+    installationId: 'installation-a', actionId: 'session.message.send',
     requestId: request.requestId, target,
     grant: { ...API_TOKEN_FULL_GRANT_V1, permissionModes: ['read-only'] },
     requestEnvelopeDigest: computeExternalActionSocketRpcRequestDigestV1({ ...request, target }),
@@ -88,6 +600,35 @@ it('binds the Home-issued input proof to the exact opaque RPC before opening it'
     expect(await openRpcResponse(encryptionKey, await rpc.handleRequest(refused)))
       .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
   }
+  expect(effect).toHaveBeenCalledOnce();
+});
+
+it('retains the Home-admitted original Session proof at exact Project Machine ingress', async () => {
+  const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'target',
+    installationId: 'target-install', role: 'use' as const, encryptionMode: 'plain' as const };
+  const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 2, turnDepth: 3 },
+    callerPermissionMode: 'default' as const, sourceTurnId: 'original-turn', requestId: 'original-request' };
+  const proof: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-issued-token', binding: {
+    accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+    machineId: 'target', custodianAccountId: 'custodian', installationId: 'target-install', actionId: 'projects.open',
+    requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'target' },
+    sessionActionOrigin: origin, sessionActionSource: { machineId: 'source', installationId: 'source-install' },
+  } };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'target', localMachineId: 'target', encryptionMode: 'plain',
+    authorizeRequest: async () => ({ ok: true }), logger: () => {} });
+  const effect = vi.fn(async (_input: unknown, context?: RpcHandlerContext) => ({ proof: context?.callerInputAuthorization,
+    origin: context?.sessionActionOrigin, authority: context?.callerAuthority }));
+  rpc.registerHandler(RPC_METHODS.PROJECTS_OPEN, effect);
+  // The authenticated Home is the mocked transport boundary. Its relay correlation is distinct from original Action identity.
+  const request = { method: `target:${RPC_METHODS.PROJECTS_OPEN}`, requestId: 'relay-correlation', params: {},
+    machineAdmission, callerAuthority: 'account_automation' as const, sessionActionOrigin: origin, callerInputAuthorization: proof };
+  expect(await rpc.handleRequest(request)).toEqual({ proof, origin, authority: 'account_automation' });
+  for (const binding of [
+    { ...proof.binding, accountId: 'other' }, { ...proof.binding, installationId: 'retired-install' },
+    { ...proof.binding, actionId: 'projects.trust.list' },
+    { ...proof.binding, sessionActionOrigin: { ...origin, sourceTurnId: 'other-turn' } },
+  ]) expect(await rpc.handleRequest({ ...request, callerInputAuthorization: { ...proof, binding } }))
+    .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
   expect(effect).toHaveBeenCalledOnce();
 });
 
@@ -116,6 +657,31 @@ function createDeferredVoid(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+it('settles an admitted held reply with its captured cipher while new requests use the adopted cipher', async () => {
+  const previousKey = new Uint8Array(32).fill(11);
+  const currentKey = new Uint8Array(32).fill(29);
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionKey: previousKey,
+    encryptionVariant: 'dataKey', logger: () => {} });
+  const admitted = createDeferredVoid();
+  const release = createDeferredVoid();
+  let effects = 0;
+  rpc.registerHandler('held', async () => { effects += 1; admitted.resolve(); await release.promise; return { effects }; });
+  rpc.registerHandler('current', () => ({ key: 'current' }));
+  const oldReply = rpc.handleRequest({ method: 'machine:held', params: await sealRpcRequest(previousKey, 'machine:held', {}) });
+  await admitted.promise;
+  rpc.retireEncryptionContext();
+  expect(await rpc.handleRequest({ method: 'machine:held', params: await sealRpcRequest(previousKey, 'machine:held', {}) }))
+    .toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+  expect(effects).toBe(1);
+  rpc.adoptEncryptionContext({ encryptionKey: currentKey, encryptionVariant: 'dataKey' });
+  expect(await openRpcResponse(currentKey, await rpc.handleRequest({
+    method: 'machine:current', params: await sealRpcRequest(currentKey, 'machine:current', {}),
+  }))).toEqual({ key: 'current' });
+  release.resolve();
+  expect(await openRpcResponse(previousKey, await oldReply)).toEqual({ effects: 1 });
+  expect(effects).toBe(1);
+});
 
 function createSocketEventBoundary(clientType?: 'machine-scoped' | 'session-scoped') {
   const handlers = new Map<string, Array<(payload: unknown) => void>>();
@@ -513,15 +1079,24 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     })).resolves.toEqual({ error: 'permission denied' });
   });
 
-  it('returns a method-not-found error object when handler is missing', async () => {
+  it.each(['plain', 'e2ee'] as const)('refuses an unavailable private continuation without disclosing its operand in %s replies or logs', async mode => {
+    const value = 'PRIVATE-UNAVAILABLE-DAEMON-D26';
+    const logs: unknown[] = [];
+    const key = new Uint8Array(32).fill(19);
+    const method = RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE;
+    const params = { choice: { kind: 'once', value } };
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1',
-      encryptionMode: 'plain',
-      logger: () => {},
+      ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionKey: key, encryptionVariant: 'dataKey' as const }),
+      logger: (message, data) => logs.push({ message, data }),
     });
 
-    const res = await rpc.handleRequest({ method: 'sess_1:missing.method', params: {} });
-    expect(res).toEqual({ error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+    const res = await rpc.handleRequest({ method: `sess_1:${method}`,
+      params: mode === 'plain' ? params : await sealRpcRequest(key, `sess_1:${method}`, params) });
+    const opened = mode === 'plain' ? res : await openRpcResponse(key, res);
+    expect(opened).toEqual({ error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+    expect(JSON.stringify({ res, opened, logs })).not.toContain(value);
+    if (mode === 'e2ee') expect(typeof res).toBe('string');
   });
 
   it('passes a server-stamped permission actor to the transport handler but never fabricates one locally', async () => {

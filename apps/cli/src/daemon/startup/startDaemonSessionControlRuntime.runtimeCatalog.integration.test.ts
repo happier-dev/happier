@@ -2,13 +2,27 @@ import { createPersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeov
 import { waitForSessionWebhook } from '../spawn/waitForSessionWebhook';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { PROFILE_ROWS_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { ManagedAdmissionOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, ManagedPolicyCensusInputV1Schema, MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, decodeManagedPolicyProofV1, managedPolicyDigestV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineMachineProvisionerSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type {
     ManagedDependenciesService,
     ManagedServiceSpec,
@@ -22,7 +36,10 @@ import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { encodeBase64, encrypt } from '@/api/encryption';
+import { decodeBase64, encodeBase64, encrypt } from '@/api/encryption';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { materializeNextPendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
@@ -86,8 +103,17 @@ import {
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     openExternalActionResponseV2,
+    openExternalActionRequestV2,
+    prepareExternalActionResponseV2,
     sealExternalActionRequestV2,
+    computeExternalActionRequestEnvelopeDigestV1,
+    ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionExecutionAuthorizationV1Schema,
 } from '@happier-dev/protocol/actions';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { encodeStoredCredentials } from '@/persistence';
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     createResolvedContributionRegistry,
@@ -127,6 +153,19 @@ import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { startDaemonControlServer } from '../controlServer';
 import { executeExternalAction } from '../externalActions/executeExternalAction';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { readStoredCredentials, updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
+import { fixture as managedNativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
+import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { createWorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from './managedMachinePolicyRuntime';
 import * as sessionRunnerRespawnModule from '../processSupervision/sessionRunnerRespawn';
 import { resolveSessionRunnerRestartEligibility } from '../sessionRunnerRuntime/resolveRestartEligibility';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
@@ -420,6 +459,17 @@ it('unregisters the canonical hot-apply target when a post-registration consumer
     expect(registry.getByPid(502)).toBeNull();
 });
 
+const socketIoBoundary = vi.hoisted(() => ({
+    io: vi.fn<typeof import('socket.io-client')['io']>(),
+    actualIo: null as typeof import('socket.io-client')['io'] | null,
+}));
+vi.mock('socket.io-client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    socketIoBoundary.actualIo = actual.io;
+    socketIoBoundary.io.mockImplementation(actual.io);
+    return { ...actual, io: socketIoBoundary.io };
+});
+
 const qualifiedRequestAuthSwitchAfterClassifiedFailureMock = vi.hoisted(
     () => vi.fn(async () => ({ status: 'switched' })),
 );
@@ -488,7 +538,9 @@ const fetchSessionByIdMock = vi.hoisted(() => vi.fn(async () => ({
     id: 'sess-runtime',
     encryptionMode: 'plain',
 })));
-const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn(
+const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn<
+    typeof import('@/api/client/connectedServiceCredentialApi').fetchAccountEncryptionCurrentness
+>(
     async () => ({
         mode: 'plain' as const,
         version: 1,
@@ -497,6 +549,9 @@ const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn(
         updatedAt: 1,
     }),
 ));
+const fetchAccountEncryptionCurrentnessActual = vi.hoisted(() => ({
+    current: null as typeof import('@/api/client/connectedServiceCredentialApi').fetchAccountEncryptionCurrentness | null,
+}));
 const fetchSessionsPageMock = vi.hoisted(() => vi.fn(async () => ({
     sessions: [],
     nextCursor: null,
@@ -853,24 +908,32 @@ function resetFetchSessionByIdCompatMock(): void {
     }));
 }
 
-vi.mock('@/configuration', () => ({
-    configuration: {
-        daemonSpawnExistingSessionWaitForExitMs: 0,
-        daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
-        daemonStopSessionWaitForExitMs: 0,
-        daemonStopSessionWaitForExitPollIntervalMs: 50,
-        apiServerUrl: 'http://127.0.0.1:41001',
-        activeServerId: 'server-test',
-        happyHomeDir: '/tmp/happier-test-home',
-        activeServerDir: '/tmp/happier-test-home/servers/default',
-        daemonStateFile: '/tmp/happier-test-home/servers/default/daemon.state.json',
-    },
-}));
+vi.mock('@/configuration', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/configuration')>();
+    return {
+        configuration: {
+            executionRunsMaxConcurrentPerSession: actual.configuration.executionRunsMaxConcurrentPerSession,
+            oneShotTasksMaxConcurrentPerSession: actual.configuration.oneShotTasksMaxConcurrentPerSession,
+            executionBudgetMaxConcurrentTotalPerSession: actual.configuration.executionBudgetMaxConcurrentTotalPerSession,
+            executionBudgetMaxConcurrentByClass: actual.configuration.executionBudgetMaxConcurrentByClass,
+            daemonSpawnExistingSessionWaitForExitMs: 0,
+            daemonSpawnExistingSessionWaitForExitPollIntervalMs: 50,
+            daemonStopSessionWaitForExitMs: 0,
+            daemonStopSessionWaitForExitPollIntervalMs: 50,
+            apiServerUrl: 'http://127.0.0.1:41001',
+            activeServerId: 'server-test',
+            happyHomeDir: '/tmp/happier-test-home',
+            activeServerDir: '/tmp/happier-test-home/servers/default',
+            daemonStateFile: '/tmp/happier-test-home/servers/default/daemon.state.json',
+        },
+    };
+});
 
 vi.mock('@/ui/logger', () => ({
     logger: {
         debug: vi.fn(),
         info: vi.fn(),
+        infoFile: vi.fn(),
         warn: vi.fn(),
     },
 }));
@@ -1180,13 +1243,16 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
 
 vi.mock(
     '@/api/client/connectedServiceCredentialApi',
-    async (importOriginal) => ({
-        ...await importOriginal<
+    async (importOriginal) => {
+        const actual = await importOriginal<
             typeof import('@/api/client/connectedServiceCredentialApi')
-        >(),
-        fetchAccountEncryptionCurrentness:
-            fetchAccountEncryptionCurrentnessMock,
-    }),
+        >();
+        fetchAccountEncryptionCurrentnessActual.current = actual.fetchAccountEncryptionCurrentness;
+        return {
+            ...actual,
+            fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
+        };
+    },
 );
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -1347,6 +1413,903 @@ async function writeHostedWebStaticAssetsFixture(input: Readonly<{
 }
 
 describe('startDaemonSessionControlRuntime', () => {
+    async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false) {
+        if (!fetchAccountEncryptionCurrentnessActual.current) throw new Error('Account currentness HTTP owner unavailable');
+        fetchAccountEncryptionCurrentnessMock.mockImplementation(fetchAccountEncryptionCurrentnessActual.current);
+        const taskDir = await mkdtemp(join(tmpdir(), 'happier-private-managed-child-'));
+        const originalConfiguration = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
+            installationIdentityFile: configuration.installationIdentityFile, activeServerDir: configuration.activeServerDir,
+            serversDir: configuration.serversDir, privateKeyFile: configuration.privateKeyFile };
+        Object.assign(configuration, { happyHomeDir: taskDir, settingsFile: join(taskDir, 'settings.json'),
+            installationIdentityFile: join(taskDir, 'installation.json'), activeServerDir: join(taskDir, 'servers', 'server-test'),
+            serversDir: join(taskDir, 'servers'), privateKeyFile: join(taskDir, 'servers', 'server-test', 'access.key') });
+        onTestFinished(async () => { Object.assign(configuration, originalConfiguration);
+            resetInMemoryAccountSettingsContextForTests(); await rm(taskDir, { recursive: true, force: true }); });
+        resetInMemoryAccountSettingsContextForTests();
+        getActiveAccountSettingsSnapshotMock.mockImplementation(() => getActiveAccountSettingsSnapshotActual.current?.() ?? null);
+        const homeId = 'srv_private_child';
+        const serverUrl = 'https://private-child.example.test';
+        const machineId = 'private-controller';
+        const token = (account: string) => `header.${Buffer.from(JSON.stringify({ sub: account })).toString('base64url')}.signature`;
+        const bob = { token: token('bob'), encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(31) } };
+        const alice = { token: `header.${Buffer.from(JSON.stringify({ sub: 'alice', session: 'alice-controller-session' })).toString('base64url')}.signature`,
+            encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(12) } };
+        // The controller's incumbent owned operation-record scope uses its
+        // real persisted local custody; Bob remains installed-box-only.
+        await writeStoredCredentialsForServerId(configuration.activeServerId, alice);
+        expect((await readStoredCredentials())?.token).toBe(alice.token);
+        const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(bob.encryption.secret) };
+        const installation = await readOrCreateInstallationIdentity();
+        await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
+            [configuration.activeServerId]: { id: configuration.activeServerId, name: 'Private child Home', serverUrl, webappUrl: serverUrl,
+                createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+                homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } } } }));
+        const selection = { kind: 'one-off' as const, homeId, controller: { machineId, installationId: installation.installationId },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        const input = { selection, agentStart: { directory: { kind: 'managed' as const },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } } } };
+        const enrolled = ManagedMachineV1Schema.parse({ id: 'private-managed', homeId, custodianAccountId: 'alice',
+            controller: selection.controller, enrolledMachineId: 'private-guest', launch: selection.launch,
+            allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: finiteWake ? 'stop' : 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: selection.retention, wakeOnAcceptedMessage: finiteWake });
+        let currentMachine = enrolled;
+        const nativeEffects: string[] = [];
+        const native = managedNativeFixture({ privateNative: true, onNativeRole: role => { nativeEffects.push(role); } });
+        // Installed plugin loading is the system boundary; startup, native Action and child crypto stay real.
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({ registry: native.runtimeRegistry,
+            source: 'active', durableRevision: 1, release: async () => {} });
+        let settingsVersion = 1;
+        let settings = prepareAccountSettingsV2Content({ credentials: bob, raw: finiteWake ? {
+            actionsSettingsV1: { v: 1, actions: { 'machines.managed.power.set': { enabled: refreshRequesterPolicy } } },
+        } : {
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'] } },
+        }, envelopeKind: 'encrypted' });
+        const transportPaths: string[] = [];
+        const requesterSettingsVersions: number[] = [];
+        const requestBoundary = vi.spyOn(axios, 'request').mockImplementation(async options => {
+            const method = String(options.method).toUpperCase();
+            const path = new URL(String(options.url)).pathname;
+            transportPaths.push(`${method} ${path}`);
+            if (method === 'POST' && path === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return { status: 200, data: { tokens: [] } };
+            if (method === 'GET' && path === '/v1/account/security') return { status: 200, data: { v: 1,
+                encryptionMode: 'e2ee', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+                password: { status: 'not_enrolled', revision: null } } };
+            throw new Error(`Unexpected private child Account transport ${method} ${path}`);
+        });
+        const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+            const path = new URL(String(url)).pathname;
+            transportPaths.push(`GET ${path}`);
+            if (path === '/v1/account/profile') {
+                const bearer = config?.headers?.Authorization;
+                expect([`Bearer ${bob.token}`, `Bearer ${alice.token}`]).toContain(bearer);
+                return { status: 200, data: { id: bearer === `Bearer ${bob.token}` ? 'bob' : 'alice' } };
+            }
+            if (path === '/v1/account/security') return { status: 200, data: { v: 1, encryptionMode: 'e2ee',
+                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } } };
+            if (path === '/v2/account/settings') {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${bob.token}`);
+                requesterSettingsVersions.push(settingsVersion);
+                return { status: 200, data: { content: settings, version: settingsVersion } };
+            }
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
+                signingKeyFingerprint: 'bob-signing', contentKeyFingerprint: computeContentPublicKeyFingerprint(
+                    tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey), updatedAt: 1 } };
+            throw new Error(`Unexpected private child GET ${path}`);
+        });
+        const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(
+            FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } } })));
+        let childInput: unknown;
+        let childReached = false;
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+            const path = new URL(String(url)).pathname;
+            transportPaths.push(`POST ${path}`);
+            if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/admit')) return { status: 200, data: { machine: enrolled, replayed: true } };
+            if (path === '/v1/machines/managed/controller/prepare-policy') {
+                const request = ManagedPolicyAdmissionInputV1Schema.parse(body);
+                expect(request).toMatchObject({ managedId: enrolled.id, expectedIntentRevision: enrolled.intentRevision,
+                    purpose: { kind: 'accepted-input-start' } });
+                // Home previews its selected intent without persisting a revision
+                // or currentAdmission; Bob's policy still precedes that mutation.
+                return { status: 200, data: { machine: ManagedMachineV1Schema.parse({ ...enrolled,
+                    desired: 'start', desiredWhen: 'now' }) } };
+            }
+            if (path.endsWith('/admit-policy')) {
+                currentMachine = ManagedMachineV1Schema.parse({ ...enrolled, desired: 'start', intentRevision: 2 });
+                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ machine: currentMachine, requestId: 'private-wake', replayed: false }) };
+            }
+            if (path === '/v1/machines/managed/controller/current') return { status: 200, data: { machine: currentMachine } };
+            if (path === '/v1/actions/session.spawn_new') {
+                childReached = true;
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                if (request.envelope.v !== 2) throw new Error('Expected actual E2EE managed child');
+                const binding = { serverIdentityId: homeId, accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 1 },
+                    actionId: 'session.spawn_new', requestId: 'private-acquire', target: { kind: 'machine' as const, machineId: 'private-guest' } };
+                childInput = openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input;
+                return { status: 200, data: prepareExternalActionResponseV2({ request: request.envelope, binding, material,
+                    executedMachineId: 'private-guest',
+                    execution: { ok: true, result: { type: 'success', disposition: 'rejoined', sessionId: 'bob-child',
+                        executionTarget: { serverId: homeId, machineId: 'private-guest' }, organizationPlacement: { folderId: null, tagIds: [] },
+                        initialInput: { status: 'notRequested' } } }, randomBytes: tweetnacl.randomBytes }).response };
+            }
+            throw new Error(`Unexpected private child POST ${path}`);
+        });
+        onTestFinished(() => { get.mockRestore(); post.mockRestore(); fetchBoundary.mockRestore(); requestBoundary.mockRestore(); });
+        const unavailable = async (): Promise<never> => { throw new Error('Unexpected Provider credential boundary'); };
+        const authority = createManagedProviderOperationAuthority({ materializationBaseDir: taskDir,
+            purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+                store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+                selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+                projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+            }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+            createRedactionLease: () => ({ add() {}, close() {} }) });
+        const apiMachine = finiteWake ? new ApiMachineClient(alice.token, { id: machineId, encryptionMode: 'e2ee',
+            encryptionKey: alice.encryption.secret, encryptionVariant: 'legacy', metadata: null, metadataVersion: 0,
+            daemonState: null, daemonStateVersion: 0 }) : null;
+        onTestFinished(async () => { await apiMachine?.shutdown(); });
+        const runtime = await startDaemonSessionControlRuntime({ machineId, credentials: alice, api: {} as never,
+            serverBaseUrl: serverUrl, serverId: configuration.activeServerId, connectedServicesMaterializationBaseDir: taskDir,
+            getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => apiMachine, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(), externalActionAccountId: 'alice', managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
+            beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(), processEnv: {} });
+        onTestFinished(async () => { await runtime.stopControlServer(); });
+        if (apiMachine) apiMachine.setRPCHandlers({ spawnSession: runtime.spawnSession, stopSession: runtime.stopSession, requestShutdown: () => {} },
+            { ...(runtime.externalActionIngressOwner ? { externalActionIngressOwner: runtime.externalActionIngressOwner } : {}) });
+        if (finiteWake) {
+            const wakeTarget = { homeId, managedId: enrolled.id, enrolledMachineId: enrolled.enrolledMachineId!,
+                expectedIntentRevision: enrolled.intentRevision, controller: enrolled.controller,
+                origin: { kind: 'finite-command' as const, actionRequestId: 'private-finite' }, reason: 'admitted-work' as const };
+            const guest = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(44));
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'private-finite-root', binding: {
+                accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'e2ee',
+                serverIdentityId: homeId, machineId: 'private-guest', installationId: 'guest-installation', actionId: 'projects.prepare',
+                requestId: 'private-finite', target: { kind: 'machine', machineId: 'private-guest' }, requestEnvelopeDigest: 'a'.repeat(43),
+            }, managedFiniteWake: { target: wakeTarget, installationPublicKey: installation.publicKey } });
+            const guestCarrier = sealExternalActionRequesterAccountContextV1({ authorization: root, credentials: encodeStoredCredentials(bob),
+                purpose: { kind: 'external_action' }, installationPublicKey: guest.publicKey, randomBytes: tweetnacl.randomBytes });
+            const controllerCarrier = sealExternalActionRequesterAccountContextV1({ authorization: guestCarrier, credentials: encodeStoredCredentials(bob),
+                purpose: { kind: 'managed_finite_wake', target: wakeTarget },
+                installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+            const prepare = runtime.externalActionIngressOwner?.prepareRequesterAccountContext;
+            if (!prepare) throw new Error('Missing real installed requester factory');
+            const admitted = await prepare({ authorization: controllerCarrier,
+                purpose: { kind: 'managed_finite_wake', target: wakeTarget } });
+            expect(admitted, 'Controller custody must be admitted before policy/native IO').not.toBeNull();
+            if (!admitted) throw new Error('Missing admitted finite controller custody');
+            onTestFinished(() => admitted.dispose());
+            expect(admitted.authorization.requesterAccountProjection?.accountId).toBe('bob');
+            expect(admitted.authorization.requesterAccountContext).toBeUndefined();
+            expect(admitted.authorization.managedFiniteWake?.requesterAccountContext).toBeUndefined();
+            const controllerSettingsBeforeEffect = getActiveAccountSettingsSnapshotActual.current?.() ?? null;
+            if (refreshRequesterPolicy) {
+                // The same admitted invocation must re-read its real requester's
+                // changed policy before a later native effect, without publishing Bob globally.
+                settingsVersion = 2;
+                settings = prepareAccountSettingsV2Content({ credentials: bob, raw: {
+                    actionsSettingsV1: { v: 1, actions: { 'machines.managed.power.set': { enabled: false } } },
+                }, envelopeKind: 'encrypted' });
+            }
+            const policyPurpose = { kind: 'accepted-input-start' as const, target: wakeTarget };
+            const policyCorrelation = { homeId, managedId: enrolled.id, expectedIntentRevision: enrolled.intentRevision,
+                requestId: 'private-policy-proof', controller: enrolled.controller };
+            const policyBody = { ...policyCorrelation, purpose: policyPurpose };
+            // Exercise the real installed signer before native preparation too:
+            // a sanitized carrier must be strict JSON, not optional undefined.
+            expect.soft(() => createManagedPolicyProofV1({ correlation: policyCorrelation, purpose: policyPurpose,
+                custodianAccountId: enrolled.custodianAccountId, resource: enrolled.resource!, body: policyBody,
+                path: '/v1/machines/managed/controller/prepare-policy', privateKey: installation.privateKey,
+                actionOrigin: admitted.authorization }), 'Admitted custody must preserve a signable original root').not.toThrow();
+            const execute = admitted.executeManagedFiniteWake;
+            expect(typeof execute).toBe('function');
+            if (typeof execute !== 'function') throw new Error('Missing genuine requester native policy closure');
+            const execution = await execute({ machine: enrolled, purpose: { kind: 'accepted-input-start', target: wakeTarget },
+                actionOrigin: admitted.authorization });
+            expect.soft(transportPaths, 'Disabled Bob policy must refuse before Home mutates the managed intent')
+                .not.toContain('POST /v1/machines/managed/controller/admit-policy');
+            if (refreshRequesterPolicy) {
+                expect.soft(requesterSettingsVersions.at(-1), 'Later native policy must read Bob current Home Settings revision')
+                    .toBe(2);
+            }
+            expect.soft(execution, JSON.stringify({ transportPaths, nativeEffects })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(getActiveAccountSettingsSnapshotActual.current?.() ?? null).toBe(controllerSettingsBeforeEffect);
+            expect((await readStoredCredentials())?.token).toBe(alice.token);
+            const ownOperations = ActionOperationListV1ResponseSchema.parse(await apiMachine!.getPeerMediationMachineRpcHandlerManager()
+                .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
+            expect.soft(ownOperations.items, 'Bob native work must not be visible in Alice operation scope').toEqual([]);
+            expect(childReached).toBe(false);
+            expect(nativeEffects).not.toContain('power');
+            await admitted.dispose();
+            expect(await execute({ machine: enrolled, purpose: { kind: 'accepted-input-start', target: wakeTarget },
+                actionOrigin: admitted.authorization })).toMatchObject({ ok: false, errorCode: 'requester_account_context_unavailable' });
+            return;
+        }
+        const target = { kind: 'machine' as const, machineId };
+        const envelope = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: 'bob',
+            authentication: { kind: 'account', tokenEpoch: 1 }, actionId: 'machines.managed.acquire',
+            requestId: 'private-acquire', target }, input, material, randomBytes: tweetnacl.randomBytes });
+        const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'private-root', binding: {
+            accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'e2ee',
+            serverIdentityId: homeId, machineId, installationId: installation.installationId, actionId: 'machines.managed.acquire',
+            requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } },
+            credentials: encodeStoredCredentials(bob), purpose: { kind: 'external_action' },
+            installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+        const prepared = await runtime.externalActionIngressOwner?.prepareRequesterAccountContext?.({ authorization });
+        expect(prepared).not.toBeNull();
+        if (!prepared) throw new Error('Expected real installed requester factory');
+        onTestFinished(() => prepared.dispose());
+        const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'bob', generateOperationId: () => 'bob-parent' });
+        await operations.observeExecution({ actionId: 'machines.managed.acquire', input, actionRequestId: envelope.requestId,
+            execute: context => prepared.executor.execute('machines.managed.acquire', input, { ...context, surface: 'ui', authority: 'present_user',
+                serverId: configuration.activeServerId, runtimeAccountId: 'bob', actionCaller: { kind: 'host' }, actionRequestId: envelope.requestId,
+                defaultSessionMachineId: machineId,
+                externalActionExecutionAuthorization: prepared.authorization, externalActionTarget: target }) });
+        const terminal = await operations.handlers.getV2({ operationId: 'bob-parent', waitForTerminal: true });
+        expect(childReached, JSON.stringify(terminal)).toBe(true);
+        expect(childInput, JSON.stringify(terminal)).toMatchObject({ executionTarget: { serverId: homeId, machineId: 'private-guest' }, agentTarget: input.agentStart.agentTarget });
+    }
+    it('seals the managed child from actual admitted Bob custody rather than the controller Alice key', async () => {
+        await runPrivateManagedRequesterFixture();
+    });
+    it('uses actual Bob controller custody and policy for the unchanged guest finite root without borrowing Alice settings', async () => {
+        await runPrivateManagedRequesterFixture(true);
+    });
+    it('refreshes changed Bob policy inside actual admitted controller custody before the later native effect', async () => {
+        await runPrivateManagedRequesterFixture(true, true);
+    });
+    async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown') {
+        const acceptedWake = policy === 'wake-native-refused' || policy === 'wake-native-unknown';
+        const socketPolicy = policy === 'event-driven-policy' || policy === 'creation-cleanup' || policy === 'resource-replacement';
+        if (socketPolicy) {
+            const previousChanges = process.env.HAPPY_ENABLE_V2_CHANGES;
+            process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
+            onTestFinished(() => {
+                if (previousChanges === undefined) delete process.env.HAPPY_ENABLE_V2_CHANGES;
+                else process.env.HAPPY_ENABLE_V2_CHANGES = previousChanges;
+            });
+        }
+        const taskDir = await mkdtemp(join(tmpdir(), 'happier-managed-policy-gate-'));
+        const originalConfiguration = {
+            happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
+            installationIdentityFile: configuration.installationIdentityFile,
+            activeServerDir: configuration.activeServerDir, serversDir: configuration.serversDir,
+            privateKeyFile: configuration.privateKeyFile,
+            serverUrl: configuration.serverUrl, apiServerUrl: configuration.apiServerUrl,
+        };
+        Object.assign(configuration, { happyHomeDir: taskDir, settingsFile: join(taskDir, 'settings.json'),
+            installationIdentityFile: join(taskDir, 'installation.json'), activeServerDir: join(taskDir, 'servers', 'server-test'),
+            serversDir: join(taskDir, 'servers'), privateKeyFile: join(taskDir, 'servers', 'server-test', 'access.key') });
+        onTestFinished(async () => {
+            Object.assign(configuration, originalConfiguration);
+            resetInMemoryAccountSettingsContextForTests();
+            await rm(taskDir, { recursive: true, force: true });
+        });
+        resetInMemoryAccountSettingsContextForTests();
+        getActiveAccountSettingsSnapshotMock.mockImplementation(() => getActiveAccountSettingsSnapshotActual.current?.() ?? null);
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-policy-gate', session: 'terminal-policy-gate',
+            provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+        expect((await readStoredCredentials())?.token).toBe(token);
+        const serverUrl = 'https://policy-gate.example.test';
+        if (socketPolicy) Object.assign(configuration, { serverUrl, apiServerUrl: serverUrl });
+        const homeId = 'srv_policy_gate';
+        const installation = await readOrCreateInstallationIdentity();
+        await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
+            [configuration.activeServerId]: { id: configuration.activeServerId, name: 'Policy Home', serverUrl, webappUrl: serverUrl,
+                createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+                homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } },
+        } }));
+        const publishPolicy = (settingsVersion: number, disabled: boolean) => {
+            const settings = AccountSettingsSchema.parse({
+                actionsSettingsV1: { v: 1, actions: disabled ? { 'machines.managed.delete': { enabled: false } } : {},
+                    ...(policy === 'explicit-delete-waiver' ? { approvalWaivedSurfaces: { 'machines.managed.delete': ['cli'] } } : {}) },
+            });
+            return setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsVersion,
+                source: 'network', loadedAtMs: Date.now(), settingsSecretsReadKeys: [], settings, rawSettings: settings });
+        };
+        publishPolicy(1, policy === 'disabled');
+        let machine = ManagedMachineV1Schema.parse({ id: 'managed-policy-gate', homeId, custodianAccountId: 'account-policy-gate',
+            ...(policy === 'explicit-delete-waiver' ? { enrolledMachineId: 'affected-machine' } : acceptedWake ? { enrolledMachineId: 'guest-policy-gate' } : {}),
+            controller: { machineId: 'controller-policy-gate', installationId: installation.installationId },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', creationState: policy === 'creation-cleanup' ? 'canceled' : 'active', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: acceptedWake ? 'start' : 'delete', desiredWhen: 'now', intentRevision: 1,
+            retention: acceptedWake || policy === 'creation-cleanup' ? { kind: 'until-delete' } : { kind: 'deadline', at: 0, effect: 'delete', interrupts: true }, wakeOnAcceptedMessage: acceptedWake,
+            ...(policy === 'creation-cleanup' ? { cleanup: { disposition: 'pending', reason: 'creation_canceled' } } : {}) });
+        const childResource = (name: string) => ({ contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+            value: { name }, devcontainerObservation: { nativeResourceId: name, user: 'fixture-user', workspaceFolder: '/work/fixture',
+                storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: '/work/fixture' } } });
+        if (policy === 'resource-replacement') {
+            const resource = childResource('native-original');
+            const enrolledMachineId = 'guest-native-original';
+            machine = ManagedMachineV1Schema.parse({ ...machine, resource, enrolledMachineId,
+                devcontainerChild: deriveManagedDevcontainerChildProjectionV1({ managedMachineId: machine.id,
+                    controllerMachineId: machine.controller.machineId, enrolledMachineId, resource }) });
+        }
+        const cleanupPeers = policy === 'creation-cleanup' ? [
+            ManagedMachineV1Schema.parse({ ...machine, id: 'manual-retirement', archivedAt: 1,
+                cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } }),
+            ManagedMachineV1Schema.parse({ ...machine, id: 'ordinary-until-delete', creationState: 'active', cleanup: undefined }),
+        ] : [];
+        const nativeEffects: string[] = [];
+        const nativeInputs: unknown[] = [];
+        let notifyDeleteEffect: () => void = () => {};
+        const deleteEffect = new Promise<void>(resolve => { notifyDeleteEffect = resolve; });
+        const nativeOptions: NonNullable<Parameters<typeof managedNativeFixture>[0]> = { privateNative: true,
+            ...(acceptedWake ? { supportedIntents: ['start' as const], nativeRoleResults: {
+                power: policy === 'wake-native-refused' ? { kind: 'refused', code: 'provider_unavailable' } : { kind: 'unknown' },
+            } } : {}), onNativeRole: (role, input) => {
+            nativeEffects.push(role);
+            if (role === 'destroy') nativeInputs.push(input);
+            if (role === 'destroy') notifyDeleteEffect();
+        } };
+        const baseNative = managedNativeFixture(nativeOptions);
+        const native = (() => {
+            if (policy !== 'resource-replacement') return baseNative;
+            // External module declarations use the same public devcontainer identity
+            // shape as the composed managed child lifecycle fixture.
+            const namedResource = defineProtocolObject({ name: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+            const schemas = defineMachineProvisionerSchemas({ launch: defineProtocolObject({}, { policy: 'closed' }), resource: namedResource });
+            const manifest = baseNative.runtimeRegistry.contributes.activationTargets[0]!.manifest;
+            const inputs = { bootstrap: schemas.bootstrapInput, inspect: schemas.resourceInput, power: schemas.powerInput,
+                destroy: schemas.resourceInput, rebuild: schemas.rebuildInput, exec: schemas.execInput, 'put-file': schemas.putFileInput };
+            const results = { acquire: schemas.acquireResult, rebuild: schemas.rebuildResult };
+            return managedNativeFixture({ ...nativeOptions, fixtureManifest: { ...manifest, contributes: { ...manifest.contributes,
+                machineProvisioners: manifest.contributes.machineProvisioners.map(declaration => ({ ...declaration,
+                    resourceKind: 'devcontainer' as const, resourceSchema: namedResource.jsonSchema })),
+                actions: manifest.contributes.actions.map(action => ({ ...action,
+                    ...(Object.hasOwn(inputs, action.id) ? { inputSchema: inputs[action.id as keyof typeof inputs].jsonSchema } : {}),
+                    ...(Object.hasOwn(results, action.id) ? { resultSchema: results[action.id as keyof typeof results].jsonSchema } : {}) })),
+            } } });
+        })();
+        // Installed plugin module loading is substituted; policy, registry, driver and native invocation owners remain real.
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({ registry: native.runtimeRegistry,
+            source: 'active', durableRevision: 1, release: async () => {} });
+        const approvals: unknown[] = [];
+        const artifacts = new Map<string, Record<string, unknown>>();
+        let exposePolicy = policy !== 'event-driven-policy';
+        let policyCensusReads = 0;
+        const cleanupAdmissions: unknown[] = [];
+        const observedTransport: Array<Readonly<{ method: 'GET' | 'POST'; path: string }>> = [];
+        const activationFailures: unknown[] = [];
+        const nativeIntentReports: unknown[] = [];
+        // Account eligibility uses axios.request; this is the same HTTP boundary as post/get below.
+        const accountRequestBoundary = vi.spyOn(axios, 'request').mockImplementation(async options => {
+            const method = String(options.method).toUpperCase();
+            const path = new URL(String(options.url)).pathname;
+            if (method === 'GET' || method === 'POST') observedTransport.push({ method, path });
+            if (method === 'POST' && path === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return { status: 200, data: { tokens: [] } };
+            throw new Error(`Unexpected policy Account transport ${method} ${path}`);
+        });
+        onTestFinished(() => accountRequestBoundary.mockRestore());
+        const boundaryDiagnostics = () => ({ observedTransport });
+        const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async request => {
+            const path = new URL(typeof request === 'string' ? request : request instanceof URL ? request.href : request.url).pathname;
+            observedTransport.push({ method: 'GET', path });
+            if (path === '/v1/features/authenticated' || path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
+                features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } },
+            }));
+            throw new Error(`Unexpected policy fetch ${path}`);
+        });
+        onTestFinished(() => fetchBoundary.mockRestore());
+        const censusReads: string[] = [];
+        let readsBeforeNativeAdmission: readonly string[] | null = null;
+        if (policy === 'explicit-delete-waiver') {
+            const board = { ...createWorkBoardV1({ id: 'affected-board', name: 'Affected Board' }), source: {
+                picked: [{ kind: 'machine' as const, qualifiedId: { serverId: homeId, id: 'affected-machine' } }] } };
+            artifacts.set(board.id, { id: board.id, ownerAccountId: machine.custodianAccountId, access: 'owner', encryptionMode: 'plain',
+                header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        }
+        let notifyApprovalCreated: (id: string) => void = () => {};
+        const approvalCreated = new Promise<string>(resolve => { notifyApprovalCreated = resolve; });
+        // Only the Socket.IO network boundary is substituted; the real observer/supervisor and shared approval coordinator stay active.
+        class ApprovalSocketBoundary extends EventEmitter {
+            connected = false;
+            io = Object.assign(new EventEmitter(), { timeout() {} });
+            connect() { this.connected = true; this.emit('connect'); return this; }
+            disconnect() { this.connected = false; this.emit('disconnect', 'io client disconnect'); return this; }
+            offAny() {}
+        }
+        const createMachineSocket = () => createApiSessionSocketStub({ emitWithAck: (event, payload) => {
+            if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { result: 'success', revision: 1 };
+            if (payload && typeof payload === 'object' && 'expectedVersion' in payload && typeof payload.expectedVersion === 'number') {
+                return { result: 'success', version: payload.expectedVersion + 1,
+                    ...('daemonState' in payload ? { daemonState: payload.daemonState } : {}),
+                    ...('metadata' in payload ? { metadata: payload.metadata } : {}) };
+            }
+            return { result: 'success', version: 1 };
+        } });
+        const machineSockets = socketPolicy ? [createMachineSocket(), createMachineSocket()] : [];
+        let machineSocketCount = 0;
+        socketIoBoundary.io.mockImplementation((_uri, options) => {
+            const auth: unknown = options?.auth;
+            if (auth && typeof auth === 'object' && 'clientType' in auth && auth.clientType === 'machine-scoped') {
+                const socket = machineSockets[machineSocketCount++];
+                if (!socket) throw new Error('Unexpected extra Machine transport');
+                return socket as never;
+            }
+            return new ApprovalSocketBoundary() as never;
+        });
+        onTestFinished(() => {
+            if (socketIoBoundary.actualIo) socketIoBoundary.io.mockImplementation(socketIoBoundary.actualIo);
+        });
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+            const path = new URL(String(url)).pathname;
+            observedTransport.push({ method: 'POST', path });
+            if (path.endsWith('/activation-failed')) {
+                activationFailures.push(body);
+                const proof = decodeManagedPolicyProofV1(String(options?.headers?.[MANAGED_POLICY_PROOF_HEADER]));
+                expect(proof?.purpose).toEqual({ kind: 'accepted-input-start', target: wakeTarget });
+                expect(proof && verifyMachineInstallationProof({ payload: proof.payload, proof: proof.proof, publicKey: installation.publicKey })).toBe(true);
+                return { status: 200, data: { didFail: true } };
+            }
+            if (path.endsWith('/report-intent')) nativeIntentReports.push(body);
+            if (policy === 'explicit-delete-waiver' && path === managedMachineActionEndpointPathV1('machines.managed.get')) return { status: 200, data: machine };
+            if (policy === 'explicit-delete-waiver' && path.endsWith('/pools/list')) return { status: 200, data: { pools: [] } };
+            if (policy === 'explicit-delete-waiver' && path.endsWith('/admit-control')) {
+                readsBeforeNativeAdmission = [...censusReads];
+                return { status: 200, data: ManagedAdmissionOutputV1Schema.parse({ machine, replayed: false }) };
+            }
+            if (path.endsWith('/policies')) {
+                const census = ManagedPolicyCensusInputV1Schema.parse(body);
+                expect(verifyMachineInstallationProof({ payload: { version: 1, machineId: machine.controller.machineId,
+                    installationId: installation.installationId, accountId: machine.custodianAccountId, managedPolicyCensus: { homeId } },
+                    proof: census.proof, publicKey: installation.publicKey })).toBe(true);
+                policyCensusReads += 1;
+                return { status: 200, data: { machines: exposePolicy ? [machine, ...cleanupPeers] : [], targets: [] } };
+            }
+            if (path.endsWith('/admit-policy')) {
+                if (policy === 'creation-cleanup') {
+                    const admission = ManagedPolicyAdmissionInputV1Schema.parse(body);
+                    cleanupAdmissions.push(admission);
+                    expect(admission).toMatchObject({ homeId, managedId: machine.id, expectedIntentRevision: 1,
+                        controller: machine.controller, purpose: { kind: 'creation-cleanup' } });
+                    const proof = decodeManagedPolicyProofV1(String(options?.headers?.[MANAGED_POLICY_PROOF_HEADER]));
+                    expect(proof?.purpose).toEqual({ kind: 'creation-cleanup' });
+                    expect(proof?.payload.managedPolicy).toMatchObject({ homeId, managedId: machine.id,
+                        expectedIntentRevision: 1, controller: machine.controller, purpose: 'creation-cleanup',
+                        method: 'POST', path, bodyDigest: managedPolicyDigestV1('body', body),
+                        resourceDigest: managedPolicyDigestV1('resource', machine.resource),
+                        purposeDigest: managedPolicyDigestV1('purpose', admission.purpose) });
+                    expect(proof && verifyMachineInstallationProof({ payload: proof.payload, proof: proof.proof,
+                        publicKey: installation.publicKey })).toBe(true);
+                }
+                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ machine, requestId: 'policy-control', replayed: false }) };
+            }
+            if (path.endsWith('/submit-intent')) {
+                if (!body || typeof body !== 'object' || !('requestId' in body) || typeof body.requestId !== 'string') {
+                    throw new Error('Expected the actual submitted native intent correlation');
+                }
+                machine = { ...machine, submittedNativeEffect: { intentRevision: machine.intentRevision, requestId: body.requestId,
+                    intent: machine.desired, controller: machine.controller } };
+                return { status: 200, data: { machine, submitted: true } };
+            }
+            if (path === '/v1/artifacts' && body && typeof body === 'object' && 'body' in body && typeof body.body === 'string' && 'id' in body) {
+                const content = decodePlainArtifactStoredContent(body.body);
+                if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
+                    throw new Error('Unexpected approval Artifact content');
+                }
+                approvals.push(JSON.parse(content.body));
+                artifacts.set(String(body.id), { ...body, ownerAccountId: machine.custodianAccountId, access: 'owner', encryptionMode: 'plain',
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                notifyApprovalCreated(String(body.id));
+                return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+            }
+            if (path.startsWith('/v1/artifacts/') && body && typeof body === 'object' && 'expectedHeaderVersion' in body && 'expectedBodyVersion' in body) {
+                const artifactId = path.split('/').at(-1) ?? '';
+                const current = artifacts.get(artifactId);
+                if (!current) return { status: 404, data: {} };
+                if (body.expectedHeaderVersion !== current.headerVersion || body.expectedBodyVersion !== current.bodyVersion) {
+                    return { status: 200, data: { success: false, error: 'version-mismatch' } };
+                }
+                const next = { ...current, ...body, headerVersion: Number(current.headerVersion) + 1, bodyVersion: Number(current.bodyVersion) + 1 };
+                artifacts.set(artifactId, next);
+                return { status: 200, data: { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion } };
+            }
+            if (path === '/v1/auth/api-tokens/list') return { status: 200, data: { tokens: [] } };
+            if (path.startsWith('/v1/machines/managed/controller/')) return { status: 200, data: { machine } };
+            throw new Error(`Unexpected policy transport ${path}`);
+        });
+        const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            observedTransport.push({ method: 'GET', path });
+            if (path === '/v1/account/profile') return { status: 200, data: { id: machine.custodianAccountId } };
+            if (socketPolicy && path === '/v1/auth/ping') return { status: 200, data: {} };
+            if (policy === 'explicit-delete-waiver') {
+                if (path === '/v1/artifacts') { censusReads.push('boards'); return { status: 200, data: [...artifacts.values()] }; }
+                if (path === '/v3/automations') { censusReads.push('assignments'); return { status: 200, data: { automations: [], nextCursor: null } }; }
+                if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+                if (path === PROFILE_ROWS_ROUTE_V1) { censusReads.push('profile_catalog'); return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+                    complete: false, referenceGuardRevision: 'absent', transferControl: { status: 'absent' }, diagnostics: [] } }; }
+                if (path === `${PROFILE_ROWS_ROUTE_V1}/reference-guard`) return { status: 200, data: { status: 'ready', revision: 'absent' } };
+                if (path === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+                if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            }
+            if (path.endsWith('/security')) return { status: 200, data: { v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed',
+                nativeEmail: null, password: { status: 'not_enrolled', revision: null } } };
+            if (path.endsWith('/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path.startsWith('/v1/artifacts/')) {
+                const artifact = artifacts.get(path.split('/').at(-1) ?? '');
+                return { status: artifact ? 200 : 404, data: artifact };
+            }
+            throw new Error(`Unexpected policy read ${path}`);
+        });
+        const unavailable = async (): Promise<never> => { throw new Error('Unexpected Provider credential boundary'); };
+        const authority = createManagedProviderOperationAuthority({ materializationBaseDir: taskDir,
+            purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+                store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+                selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+                projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+            }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+            createRedactionLease: () => ({ add() {}, close() {} }) });
+        const apiMachine = new ApiMachineClient(token, { id: machine.controller.machineId, encryptionMode: 'plain',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        onTestFinished(async () => { await apiMachine.shutdown(); });
+        const runtime = await startDaemonSessionControlRuntime({ machineId: machine.controller.machineId, credentials, api: {} as never,
+            serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
+            connectedServicesMaterializationBaseDir: taskDir, getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null, pidToTrackedSession: new Map(), pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => apiMachine,
+            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+            externalActionAccountId: machine.custodianAccountId, managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: machine.controller.machineId }),
+            readManagedMachinePolicyCurrent: async (managedId, signal) => (await readManagedMachinePolicyCensus({ homeId,
+                controller: machine.controller, custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey,
+                token, serverUrl, ...(signal ? { signal } : {}) })).machines.find(row => row.id === managedId) ?? null,
+            beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(), processEnv: {},
+        });
+        apiMachine.setRPCHandlers({ spawnSession: runtime.spawnSession, stopSession: runtime.stopSession, requestShutdown: () => {} },
+            { ...(runtime.externalActionIngressOwner ? { externalActionIngressOwner: runtime.externalActionIngressOwner } : {}) });
+        const policyCancellation = new AbortController();
+        const wakeTarget = { homeId, managedId: machine.id, enrolledMachineId: 'guest-policy-gate',
+            expectedIntentRevision: machine.intentRevision, controller: machine.controller,
+            origin: { kind: 'session-input' as const, session: { homeId, sessionId: 'session-policy-gate' },
+                pendingRequestId: 'pending-policy-gate', requestedAt: 1 }, reason: 'admitted-work' as const };
+        try {
+            if (policy === 'resource-replacement') {
+                let settledPolicies = 0;
+                const unavailable: unknown[] = [];
+                apiMachine.connect();
+                const policyRuntime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
+                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: machine.controller,
+                        custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey, token, serverUrl, signal }),
+                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
+                    onSettled: () => { settledPolicies += 1; }, onUnavailable: error => { unavailable.push(error); },
+                });
+                try {
+                    const oldArtifactId = await approvalCreated;
+                    await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(oldArtifactId)).toBe(1));
+                    const held = ActionOperationListV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                        .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
+                    expect(held.items).toHaveLength(1);
+                    const oldOperationId = held.items[0]!.operationId;
+                    expect(nativeEffects).toEqual([]);
+                    const oldRevision = machine.intentRevision;
+                    machine = ManagedMachineV1Schema.parse({ ...machine, resource: childResource('native-replacement'),
+                        intentRevision: oldRevision + 1, enrolledMachineId: undefined, devcontainerChild: undefined,
+                        nativeOperationRef: undefined, submittedNativeEffect: undefined });
+                    expect(machine.intentRevision).toBe(oldRevision + 1);
+                    const beforeReplacement = policyCensusReads;
+                    machineSockets[0]!.trigger('update', { id: 'resource-replacement-edge', seq: 1, createdAt: 1,
+                        body: { t: 'account-change' } });
+                    await vi.waitFor(() => expect(policyCensusReads).toBeGreaterThan(beforeReplacement));
+                    // One actual invalidation must replace the held old native identity;
+                    // no second edge or timer is supplied to restart it after staleness.
+                    await vi.waitFor(() => expect(approvals).toHaveLength(2));
+                    expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(oldArtifactId)).toBe(0);
+                    expect(ActionOperationGetV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                        .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId: oldOperationId, waitForTerminal: true })))
+                        .toMatchObject({ kind: 'found', operation: { operationId: oldOperationId, state: 'cancelled' } });
+                    const newArtifactId = [...artifacts.keys()][1]!;
+                    await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(newArtifactId)).toBe(1));
+                    expect(ApprovalRequestV2Schema.parse(approvals[1]).actionArgs)
+                        .toMatchObject({ managedId: machine.id, expectedRevision: oldRevision + 1 });
+                    expect(nativeEffects).toEqual([]);
+                    const ingress = runtime.externalActionIngressOwner;
+                    if (!ingress) throw new Error('Expected the actual current Actions ingress');
+                    expect(await ingress.executor.execute('approval.request.decide', { artifactId: newArtifactId, decision: 'approve' },
+                        { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-replacement-answer' }))
+                        .toMatchObject({ ok: true });
+                    await vi.waitFor(() => expect(settledPolicies).toBe(2));
+                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(1);
+                    expect(nativeInputs).toEqual([{ resource: { name: 'native-replacement' } }]);
+                    expect(unavailable).toEqual([]);
+                } finally {
+                    await policyRuntime.stop();
+                }
+                return;
+            }
+            if (policy === 'creation-cleanup') {
+                let settledPolicies = 0;
+                const unavailable: unknown[] = [];
+                apiMachine.connect();
+                const policyRuntime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
+                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: machine.controller,
+                        custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey, token, serverUrl, signal }),
+                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
+                    onSettled: () => { settledPolicies += 1; },
+                    onUnavailable: error => { unavailable.push(error); },
+                });
+                try {
+                    const artifactId = await approvalCreated;
+                    await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1));
+                    expect(approvals).toHaveLength(1);
+                    const approval = ApprovalRequestV2Schema.parse(approvals[0]);
+                    expect(approval).toMatchObject({ actionId: 'machines.managed.delete',
+                        actionArgs: { homeId, managedId: machine.id, intent: 'delete', when: 'now', expectedRevision: 1, reviewedDependencies: true },
+                        approval: { flow: 'blocking' }, executionOriginV1: { authority: 'account_automation', caller: { kind: 'host' } } });
+                    expect(nativeEffects).toEqual([]);
+                    const held = ActionOperationListV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                        .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
+                    expect(held.items).toHaveLength(1);
+                    const operationId = held.items[0]!.operationId;
+                    const ingress = runtime.externalActionIngressOwner;
+                    if (!ingress) throw new Error('Expected the actual current Actions ingress');
+                    expect(await ingress.executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+                        { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-creation-cleanup-answer' }))
+                        .toMatchObject({ ok: true });
+                    await vi.waitFor(() => expect(settledPolicies).toBe(1));
+                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(1);
+                    expect(approvals).toHaveLength(1);
+                    expect(cleanupAdmissions).toHaveLength(1);
+                    expect(unavailable).toEqual([]);
+                    expect(ActionOperationGetV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                        .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId, waitForTerminal: true })))
+                        .toMatchObject({ kind: 'found', operation: { operationId, state: 'succeeded' } });
+                    expect(cleanupPeers.every(peer => peer.submittedNativeEffect === undefined)).toBe(true);
+                } finally {
+                    await policyRuntime.stop();
+                }
+                return;
+            }
+            if (policy === 'event-driven-policy') {
+                let deliveredAccountEdges = 0;
+                let onlineTransitions = 0;
+                let settledPolicies = 0;
+                const unavailable: unknown[] = [];
+                const unobserveUpdates = apiMachine.onUpdate(update => {
+                    if (update.body.t === 'account-change') deliveredAccountEdges += 1;
+                });
+                const unobserveConnections = apiMachine.onConnectionStateChange(state => {
+                    if (state.phase === 'online') onlineTransitions += 1;
+                });
+                apiMachine.connect();
+                await vi.waitFor(() => expect(onlineTransitions).toBe(1));
+                // The future lifecycle binding receives the actual installed client,
+                // signed reader and native adapter; no policy or scheduler is substituted.
+                const policyRuntimeParams = {
+                    apiMachine,
+                    readCensus: (signal: AbortSignal) => readManagedMachinePolicyCensus({ homeId,
+                        controller: machine.controller, custodianAccountId: machine.custodianAccountId,
+                        privateKey: installation.privateKey, token, serverUrl, signal }),
+                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
+                    onSettled: () => { settledPolicies += 1; },
+                    onUnavailable: (error: unknown) => { unavailable.push(error); },
+                };
+                const policyRuntime = createDaemonManagedMachinePolicyRuntime(policyRuntimeParams);
+                try {
+                    await vi.waitFor(() => expect(policyCensusReads).toBeGreaterThan(0));
+                    const beforeAccountEdge = policyCensusReads;
+                    exposePolicy = true;
+                    machineSockets[0]!.trigger('update', { id: 'policy-account-edge', seq: 1, createdAt: 1,
+                        body: { t: 'account-change' } });
+                    expect(deliveredAccountEdges).toBe(1);
+                    // Decides missing subscription before approval/native work can hide it.
+                    await vi.waitFor(() => expect(policyCensusReads).toBeGreaterThan(beforeAccountEdge));
+                    await vi.waitFor(() => expect(approvals).toHaveLength(1));
+                    expect(nativeEffects).toEqual([]);
+                    const ingress = runtime.externalActionIngressOwner;
+                    if (!ingress) throw new Error('Expected the actual current Actions ingress');
+                    const firstArtifactId = [...artifacts.keys()][0]!;
+                    expect(await ingress.executor.execute('approval.request.decide', { artifactId: firstArtifactId, decision: 'approve' },
+                        { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-event-policy-answer' }))
+                        .toMatchObject({ ok: true });
+                    await vi.waitFor(() => expect(settledPolicies).toBe(1));
+                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(1);
+
+                    const { submittedNativeEffect: _submitted, ...currentMachine } = machine;
+                    machine = ManagedMachineV1Schema.parse({ ...currentMachine, id: 'managed-policy-reconnected', intentRevision: 2 });
+                    const beforeReconnect = policyCensusReads;
+                    expect(apiMachine.requestServerTransportReconnect()).toBe(true);
+                    await vi.waitFor(() => expect(onlineTransitions).toBe(2));
+                    await vi.waitFor(() => expect(policyCensusReads).toBeGreaterThan(beforeReconnect));
+                    await vi.waitFor(() => expect(approvals).toHaveLength(2));
+                    expect(ApprovalRequestV2Schema.parse(approvals[1]).actionArgs).toMatchObject({ managedId: machine.id, expectedRevision: 2 });
+                    const secondArtifactId = [...artifacts.keys()][1]!;
+                    expect(await ingress.executor.execute('approval.request.decide', { artifactId: secondArtifactId, decision: 'approve' },
+                        { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-reconnected-policy-answer' }))
+                        .toMatchObject({ ok: true });
+                    await vi.waitFor(() => expect(settledPolicies).toBe(2));
+                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(2);
+                    expect(unavailable).toEqual([]);
+
+                    await policyRuntime.stop();
+                    const stoppedReads = policyCensusReads;
+                    machineSockets[1]!.trigger('update', { id: 'policy-after-stop', seq: 2, createdAt: 2,
+                        body: { t: 'account-change' } });
+                    expect(deliveredAccountEdges).toBe(2);
+                    await Promise.resolve();
+                    expect(policyCensusReads).toBe(stoppedReads);
+                    expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(2);
+                } finally {
+                    await policyRuntime.stop();
+                    unobserveUpdates();
+                    unobserveConnections();
+                }
+                return;
+            }
+            if (policy === 'explicit-delete-waiver') {
+                if (!runtime.externalActionIngressOwner) throw new Error('Expected the native public Action ingress');
+                const result = await runtime.externalActionIngressOwner.executor.execute('machines.managed.delete', {
+                    homeId, managedId: machine.id, intent: 'delete', when: 'now', expectedRevision: machine.intentRevision,
+                    reviewedDependencies: true,
+                }, { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'explicit-delete-census' })
+                    .catch((error: unknown) => { throw new Error(`Native Delete pipeline failed: ${JSON.stringify(boundaryDiagnostics())}`, { cause: error }); });
+                expect(result, JSON.stringify(boundaryDiagnostics())).toMatchObject({ ok: true, result: { machineReferences: { homeId, machineId: 'affected-machine',
+                    coverage: 'partial', references: [{ kind: 'board', id: 'affected-board', name: 'Affected Board' }], unavailable: ['profiles'] } } });
+                expect(readsBeforeNativeAdmission).toEqual(expect.arrayContaining(['boards', 'profile_catalog', 'assignments']));
+                await deleteEffect;
+                expect(nativeEffects).toContain('destroy');
+                expect(approvals).toEqual([]);
+                return;
+            }
+            let settled = false;
+            const execution = runtime.managedMachinePolicyAdapter.executePolicy({ machine,
+                purpose: acceptedWake ? { kind: 'accepted-input-start', target: wakeTarget } : { kind: 'retention' }, signal: policyCancellation.signal })
+                .then(result => { settled = true; return result; });
+            if (policy === 'disabled') {
+                const result = await execution;
+                expect(result, JSON.stringify(boundaryDiagnostics())).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                expect(nativeEffects).toEqual([]);
+                expect(machine.submittedNativeEffect).toBeUndefined();
+                return;
+            }
+            const first = await Promise.race([approvalCreated.then(artifactId => ({ kind: 'approval' as const, artifactId })),
+                execution.then(result => ({ kind: 'settled' as const, result }))]);
+            expect(first.kind, JSON.stringify({ first, ...boundaryDiagnostics() })).toBe('approval');
+            if (first.kind !== 'approval') throw new Error('Automatic policy settled before awaiting its current Ask');
+            const artifactId = first.artifactId;
+            await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1));
+            expect(settled).toBe(false);
+            expect(nativeEffects).toEqual([]);
+            expect(machine.submittedNativeEffect).toBeUndefined();
+            expect(approvals).toMatchObject([{ actionId: acceptedWake ? 'machines.managed.power.set' : 'machines.managed.delete',
+                actionArgs: { homeId, managedId: machine.id, when: 'now', expectedRevision: 1 },
+                executionOriginV1: { authority: 'account_automation', caller: { kind: 'host' }, serverId: configuration.activeServerId,
+                    requestId: expect.any(String), accountId: machine.custodianAccountId },
+                approval: { flow: 'blocking' },
+            }]);
+            const approval = ApprovalRequestV2Schema.parse(approvals[0]);
+            expect(approval.actionArgs).toEqual({ homeId, managedId: machine.id, intent: acceptedWake ? 'start' : 'delete', when: 'now', expectedRevision: 1,
+                ...(acceptedWake ? {} : { reviewedDependencies: true }) });
+            const heldOperations = ActionOperationListV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
+            expect(heldOperations.items).toHaveLength(1);
+            const operationId = heldOperations.items[0]!.operationId;
+            const heldOperation = ActionOperationGetV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId }));
+            expect(heldOperation.kind).toBe('found');
+            if (heldOperation.kind !== 'found') throw new Error('Expected the same retained automatic operation');
+            expect(approval.executionOriginV1.requestId).toBe(heldOperation.operation.requestId);
+            if (policy === 'cancel') {
+                policyCancellation.abort();
+                expect(await execution).toMatchObject({ ok: false, errorCode: 'cancelled' });
+            } else {
+                if (policy === 'changed-policy') publishPolicy(2, true);
+                const ingress = runtime.externalActionIngressOwner;
+                if (!ingress) throw new Error('Expected incumbent credentialed Action ingress');
+                // This is the actual interactive CLI decision boundary; its stored credential producer determines present-user authority.
+                const decisionResult = await ingress.executor.execute('approval.request.decide', { artifactId, decision: policy === 'reject' ? 'reject' : 'approve' },
+                    { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'human-policy-answer' });
+                const executionResult = await execution;
+                expect(executionResult, JSON.stringify({ decisionResult, executionResult, ...boundaryDiagnostics() })).toMatchObject(acceptedWake ? { ok: false } : policy === 'approve' ? { ok: true }
+                    : { ok: false, errorCode: policy === 'reject' ? 'approval_rejected' : 'action_disabled' });
+            }
+            if (acceptedWake) {
+                expect(nativeEffects.filter(role => role === 'power')).toHaveLength(1);
+                expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(0);
+                expect(nativeIntentReports).toMatchObject([{ result: policy === 'wake-native-refused'
+                    ? { kind: 'refused', code: 'provider_unavailable' } : { kind: 'unknown' } }]);
+                expect(activationFailures).toEqual(policy === 'wake-native-refused' ? [{ target: wakeTarget, failureCode: 'runtime_start_failed' }] : []);
+            }
+            expect(nativeEffects.filter(role => role === 'destroy')).toHaveLength(policy === 'approve' ? 1 : 0);
+            expect(approvals).toHaveLength(1);
+            expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(0);
+            expect(ActionOperationGetV1ResponseSchema.parse(await apiMachine.getPeerMediationMachineRpcHandlerManager()
+                .invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId, waitForTerminal: true }))).toMatchObject({ kind: 'found',
+                operation: { operationId, state: policy === 'approve' ? 'succeeded' : policy === 'cancel' ? 'cancelled' : 'failed' } });
+        } finally {
+            policyCancellation.abort();
+            await runtime.stopControlServer();
+            post.mockRestore(); get.mockRestore();
+            accountRequestBoundary.mockRestore();
+            fetchBoundary.mockRestore();
+            if (socketIoBoundary.actualIo) socketIoBoundary.io.mockImplementation(socketIoBoundary.actualIo);
+            Object.assign(configuration, originalConfiguration);
+            resetInMemoryAccountSettingsContextForTests();
+            await rm(taskDir, { recursive: true, force: true });
+        }
+    }
+
+    it.each(['disabled', 'approve', 'reject', 'cancel', 'changed-policy', 'explicit-delete-waiver'] as const)(
+        'keeps automatic managed policy behind current %s Actions policy without terminal consent', runManagedPolicyFixture,
+    );
+
+    it('reconstructs managed policy from real Account edges and reconnect', async () => {
+        await runManagedPolicyFixture('event-driven-policy');
+    });
+
+    it('runs signed canceled creation cleanup behind one real Ask while leaving manual retirement and until-delete peers alone', async () => {
+        await runManagedPolicyFixture('creation-cleanup');
+    });
+
+    it('replaces a held policy Ask on one real Account edge and dispatches only the replacement devcontainer resource', async () => {
+        await runManagedPolicyFixture('resource-replacement');
+    });
+
+    it.each(['wake-native-refused', 'wake-native-unknown'] as const)(
+        'reports only definitive accepted-input native failure after the installed policy Action (%s)', runManagedPolicyFixture,
+    );
+
+    it('refuses automatic managed policy when the current Machine operation observer is unavailable', async () => {
+        let currentApiMachine: ReturnType<StartDaemonSessionControlRuntimeTestParams['getApiMachineForSessions']> = null;
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'controller-policy',
+            credentials: { token: 'token-daemon', encryption: null },
+            api: {} as never,
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => currentApiMachine,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        const machine = ManagedMachineV1Schema.parse({
+            id: 'managed-policy', homeId: 'srv_policy', custodianAccountId: 'account-policy',
+            controller: { machineId: 'controller-policy', installationId: 'installation-policy' },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'delete', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        try {
+            await expect(runtime.managedMachinePolicyAdapter.executePolicy({ machine, purpose: { kind: 'retention' } }))
+                .rejects.toMatchObject({ code: 'target_unavailable' });
+            const operations = createHostActionOperationRuntime({ machineId: 'controller-policy', resolveAccountId: async () => null });
+            // The Machine transport is replaced; its operation observer remains the real host owner.
+            currentApiMachine = { observeActionExecution: operations.observeExecution } as never;
+            await expect(runtime.managedMachinePolicyAdapter.executePolicy({ machine, purpose: { kind: 'retention' } }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            currentApiMachine = null;
+            await expect(runtime.managedMachinePolicyAdapter.executePolicy({ machine, purpose: { kind: 'retention' } }))
+                .rejects.toMatchObject({ code: 'target_unavailable' });
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
     it('composes runner custody from a direct retained binding instead of an execution grant', () => {
         const source = readFileSync(
             new URL('./startDaemonSessionControlRuntime.ts', import.meta.url),
@@ -11975,7 +12938,7 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
-    it('observes an already-missing tracked runner before stop attempts signaling', async () => {
+    it('rejects a different handoff attempt before observing an already-missing exact runner', async () => {
         const sessionId = 'session-missing-runner-stop';
         const trackedPid = 2_147_482_997;
         const trackedSessions = new Map<number, TrackedSession>([[
@@ -11986,6 +12949,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 pid: trackedPid,
                 reattachedFromDiskMarker: true,
                 stopRequestedAtMs: 123,
+                spawnOptions: { directory: '/tmp/project', existingSessionId: sessionId, spawnNonce: 'owned-native-nonce' },
             },
         ]]);
         const killSpy = vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
@@ -12023,7 +12987,13 @@ describe('startDaemonSessionControlRuntime', () => {
             processEnv: {},
         });
         try {
-            await expect(runtime.stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
+            killSpy.mockClear();
+            await expect(runtime.stopRequesterSessionForHandoff(sessionId, 'different-native-nonce'))
+                .resolves.toBe('failed');
+            expect(trackedSessions.has(trackedPid)).toBe(true);
+            expect(killSpy).not.toHaveBeenCalled();
+            await expect(runtime.stopRequesterSessionForHandoff(sessionId, 'owned-native-nonce'))
+                .resolves.toBe('stopped');
             expect(trackedSessions.has(trackedPid)).toBe(false);
             expect(killSpy).not.toHaveBeenCalledWith(trackedPid, 'SIGTERM');
             expect(killSpy).not.toHaveBeenCalledWith(-trackedPid, 'SIGTERM');

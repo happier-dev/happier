@@ -79,6 +79,7 @@ import type { StablePluginSettingsHost } from './settings';
 import type { StablePluginConnectedAccountsHost } from './connectedAccounts';
 import type { StableTargetedContributionsOwner } from './targetedContributions';
 import type { StablePluginComposerContentOwner } from './composerContent';
+import { createMachineProvisionersInvocationService } from './machineProvisioners';
 import type { StablePluginHttpHost } from '../../fetch/service';
 import {
     createInteractionTransientRequesterForInvocation,
@@ -516,6 +517,28 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             }) ?? null;
         },
     },
+    machineProvisioners: {
+        id: 'machineProvisioners', publicProperty: 'machineProvisioners', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['machineProvisioners'] {
+            return Object.freeze({
+                materializeBootstrapCredential: unavailableMethod('machineProvisioners', code, diagnostic),
+                withBootstrapCredentialFile: unavailableMethod('machineProvisioners', code, diagnostic),
+            });
+        },
+        createAvailable({ seed, params }): PluginServices['machineProvisioners'] | null {
+            return createMachineProvisionersInvocationService({
+                seed,
+                credentialFiles: params.managedServiceCredentialFiles,
+                ...(params.secretRedactor ? {
+                    registerRawForRedaction: (value: string) => params.secretRedactor!.registerRaw({
+                        pluginId: seed.plugin.id,
+                        occurrenceId: seed.occurrenceId,
+                        correlationId: seed.correlationId,
+                    }, value),
+                } : {}),
+            });
+        },
+    },
     managedServices: {
         id: 'managedServices', publicProperty: 'managedServices', availabilityOwner: 'binding', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(_code?: string, _diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['managedServices'] {
@@ -918,6 +941,8 @@ export function createPluginInvocationServicesFromDescriptors(
             allowedCwdScopes: binding.filesystemScopes,
             signal: seed.signal,
             isOccurrenceCurrent: seed.isOccurrenceCurrent,
+            ...(binding.execOutputObserver ? { observeProcessOutput: binding.execOutputObserver } : {}),
+            ...(binding.execInvocationTimeoutMs === undefined ? {} : { invocationTimeoutMs: binding.execInvocationTimeoutMs }),
             resolveExecutable: (executable) => params.exec!.resolveExecutable(
                 executable,
                 seed.plugin.id,

@@ -4,6 +4,7 @@ import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc/npmRegis
 import { ExpectedMarketplaceListingV1Schema } from '@happier-dev/protocol/marketplace/internal';
 import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 import { WorkflowRunStartedByV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { PluginActionExecutionAttempt } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type { CurrentDaemonPluginCatalogSnapshot } from './currentCatalog';
@@ -65,13 +66,14 @@ const PluginChangeRequestSchema = z.union([
   }).strict(),
   ...([
     'enable',
-    'disable',
     'rollback',
     'forgetTrust',
-    'uninstall',
-    'uninstallAndDeleteData',
   ] as const).map((kind) => (
     z.object({ kind: z.literal(kind), pluginId: PluginIdSchema }).strict()
+  )),
+  ...(['disable', 'uninstall', 'uninstallAndDeleteData'] as const).map((kind) => (
+    z.object({ kind: z.literal(kind), pluginId: PluginIdSchema,
+      managedResourceDispositions: z.array(ManagedResourceDispositionV1Schema).optional() }).strict()
   )),
 ]);
 

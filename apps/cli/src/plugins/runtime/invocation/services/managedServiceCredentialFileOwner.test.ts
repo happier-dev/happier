@@ -7,6 +7,7 @@ import {
     rm,
     stat,
     symlink,
+    writeFile,
 } from 'node:fs/promises';
 import { chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,92 @@ afterEach(async () => {
 });
 
 describe('managed-service credential-file owner', () => {
+    it('reacquires fixed delivery custody for retained cleanup after removal failure', async () => {
+        const root = await createTempDir();
+        const first = createManagedServiceCredentialFileOwner({ rootDir: root });
+        const second = createManagedServiceCredentialFileOwner({ rootDir: root });
+        const scope = { pluginId: 'acme.native' };
+        const request = { scope, relativePathsByFileId: { key: 'state/native-key' },
+            files: { key: new TextEncoder().encode('first') }, signal: new AbortController().signal };
+        let retained: Readonly<{ dispose(): void | Promise<void> }> | undefined;
+        let keyPath = '';
+        await expect(first.withMaterializedFiles!({ ...request, retainCleanup(cleanup) { retained = cleanup; } }, async lease => {
+            keyPath = lease.pathsByFileId.key!;
+            // A real OS removal refusal, without disturbing the lock inode.
+            await rm(keyPath);
+            await mkdir(keyPath);
+            throw new Error('native outcome unknown');
+        })).rejects.toThrow();
+        if (!retained) throw new Error('fixed-file cleanup was not retained');
+        await rm(keyPath, { recursive: true });
+        let started!: () => void;
+        const ready = new Promise<void>(resolve => { started = resolve; });
+        let release!: () => void;
+        const hold = new Promise<void>(resolve => { release = resolve; });
+        const successor = second.withMaterializedFiles!({ ...request,
+            files: { key: new TextEncoder().encode('successor') }, retainCleanup() {},
+        }, async () => { started(); await hold; await expect(readFile(keyPath, 'utf8')).resolves.toBe('successor'); });
+        await ready;
+        let cleaned = false;
+        const retry = Promise.resolve(retained.dispose()).then(() => { cleaned = true; });
+        // Allow the OS removal/lock admission to run while the successor owns
+        // its native read. This is test scheduling, not a product deadline.
+        await new Promise(resolve => setTimeout(resolve, 50));
+        try {
+            expect(cleaned).toBe(false);
+            await expect(readFile(keyPath, 'utf8')).resolves.toBe('successor');
+        } finally {
+            release();
+            await Promise.allSettled([successor, retry]);
+        }
+        await expect(stat(keyPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    it('serializes fixed native credential delivery across owners and preserves native claim state', async () => {
+        const root = await createTempDir();
+        const first = createManagedServiceCredentialFileOwner({ rootDir: root });
+        const second = createManagedServiceCredentialFileOwner({ rootDir: root });
+        const scope = { occurrenceId: 'occurrence', pluginId: 'acme.native', contributionQualifiedId: 'acme.native/acquire' };
+        const relativePathsByFileId = { key: 'state/crabbox/testboxes/cbx_abcdef123456/id_ed25519', public: 'state/crabbox/testboxes/cbx_abcdef123456/id_ed25519.pub' };
+        let entered!: () => void;
+        const ready = new Promise<void>(resolve => { entered = resolve; });
+        let release!: () => void;
+        const hold = new Promise<void>(resolve => { release = resolve; });
+        let claimPath = '';
+        const delivery = first.withMaterializedFiles!({ scope, relativePathsByFileId,
+            files: { key: new TextEncoder().encode('first-key'), public: new TextEncoder().encode('public-key') },
+            signal: new AbortController().signal, retainCleanup() {},
+        }, async lease => {
+            claimPath = join(dirname(lease.pathsByFileId.key!), 'claim.json');
+            await writeFile(claimPath, 'native-claim');
+            entered();
+            await hold;
+            await expect(readFile(lease.pathsByFileId.key!, 'utf8')).resolves.toBe('first-key');
+        });
+        await ready;
+        const abort = new AbortController();
+        const cancelled = second.withMaterializedFiles!({ scope, relativePathsByFileId,
+            files: { key: new TextEncoder().encode('second-key') }, signal: abort.signal, retainCleanup() {},
+        }, async () => { throw new Error('cancelled contender entered native effect'); });
+        abort.abort();
+        await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+        release();
+        await delivery;
+        await expect(readFile(claimPath, 'utf8')).resolves.toBe('native-claim');
+        await expect(stat(join(dirname(claimPath), 'id_ed25519'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(join(dirname(claimPath), 'id_ed25519.pub'))).rejects.toMatchObject({ code: 'ENOENT' });
+        // A restarted owner reuses the same retained state, replacing only a
+        // dead invocation's delivery files rather than deleting native claims.
+        await writeFile(join(dirname(claimPath), 'id_ed25519'), 'orphaned-key', { mode: 0o600 });
+        await second.withMaterializedFiles!({ scope, relativePathsByFileId,
+            files: { key: new TextEncoder().encode('retained-key'), public: new TextEncoder().encode('retained-public') },
+            signal: new AbortController().signal, retainCleanup() {},
+        }, async lease => {
+            await expect(readFile(lease.pathsByFileId.key!, 'utf8')).resolves.toBe('retained-key');
+            await expect(readFile(claimPath, 'utf8')).resolves.toBe('native-claim');
+            if (process.platform !== 'win32') expect((await stat(lease.pathsByFileId.key!)).mode & 0o777).toBe(0o600);
+        });
+        await expect(readFile(claimPath, 'utf8')).resolves.toBe('native-claim');
+    });
     it('writes exact bytes to generated private paths and removes only the lease directory', async () => {
         const root = await createTempDir();
         const ownerRoot = join(root, 'managed-service-credentials');

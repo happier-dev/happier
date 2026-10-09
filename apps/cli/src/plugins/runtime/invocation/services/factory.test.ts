@@ -14,6 +14,7 @@ import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
     createLoggerAndFilesystemServiceBinding,
     createLoggerEventsAndExecServiceBinding,
+    createLoggerAvailablePluginInvocationServiceBinding,
     createPluginInvocationServicesFactory,
     createUnavailablePluginInvocationServiceBinding,
     createUnavailablePluginServicesFactory,
@@ -44,6 +45,17 @@ const seed = Object.freeze({
 });
 
 describe('unavailable plugin invocation services factory', () => {
+    it('refuses bootstrap credential materialization for an ordinary plugin invocation', async () => {
+        for (const [factory, binding] of [
+            [createUnavailablePluginServicesFactory(), createUnavailablePluginInvocationServiceBinding('7', 'binding')],
+            [createPluginInvocationServicesFactory({ loggerSink: { write() {} } }), createLoggerAvailablePluginInvocationServiceBinding('7', 'binding')],
+        ] as const) {
+            const services = factory(seed, binding);
+            await expect(Promise.resolve().then(() => services.machineProvisioners.materializeBootstrapCredential({ kind: 'file' })))
+                .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+        }
+    });
+
     it('exposes the local storage taxonomy and omits unadmitted Account data', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-invocation-storage-taxonomy-'));
         const services = createPluginInvocationServicesFactory({

@@ -2,11 +2,13 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 import type { TrackedSession } from '../types';
+import type { DaemonAdmissionDrain } from './admissionDrain';
 
 type SpawnResultResolver = (result: SpawnSessionResult) => void;
 type PendingRpcDrainApiMachine = Pick<ApiMachineClient, 'awaitPendingRpcRequests'>;
 
 export type CreateBeforeShutdownDrainParams = Readonly<{
+    admissionDrain?: DaemonAdmissionDrain;
     pidToAwaiter: Map<number, unknown>;
     pidToSpawnResultResolver: Map<number, SpawnResultResolver>;
     pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
@@ -16,6 +18,7 @@ export type CreateBeforeShutdownDrainParams = Readonly<{
     getApiMachineForSessions: () => PendingRpcDrainApiMachine | null;
     buildUnexpectedSpawnResult: (errorMessage: string) => SpawnSessionResult;
     buildIncompleteRetirementResult?: () => SpawnSessionResult;
+    retireFiniteExecution?: () => Promise<void>;
     drainBackgroundServerWork?: () => Promise<void>;
     disposePluginRuntimeRegistry?: () => Promise<void>;
 }>;
@@ -40,19 +43,27 @@ async function drainBackgroundServerWorkBestEffort(params: CreateBeforeShutdownD
     }
 }
 
+async function drainFinalRuntimeWork(params: CreateBeforeShutdownDrainParams): Promise<void> {
+    // Early accepted finite work is no longer a pending RPC. Keep its native
+    // owner and observation/Stop transports alive until actual settlement.
+    await params.retireFiniteExecution?.();
+    await drainBackgroundServerWorkBestEffort(params);
+    await disposePluginRuntimeRegistryBestEffort(params);
+}
+
 export function createBeforeShutdownDrain(
     params: CreateBeforeShutdownDrainParams,
 ): () => Promise<void> {
     let beforeShutdownOnce: Promise<void> | null = null;
 
     return async (): Promise<void> => {
+        params.admissionDrain?.beginShutdown();
         if (beforeShutdownOnce) return await beforeShutdownOnce;
         beforeShutdownOnce = (async () => {
             const initialInFlightSpawns = params.pidToAwaiter.size;
             const hasPendingRpcRequests = params.getApiMachineForSessions() !== null;
             if (initialInFlightSpawns === 0 && !hasPendingRpcRequests) {
-                await drainBackgroundServerWorkBestEffort(params);
-                await disposePluginRuntimeRegistryBestEffort(params);
+                await drainFinalRuntimeWork(params);
                 return;
             }
 
@@ -128,8 +139,7 @@ export function createBeforeShutdownDrain(
 
             const apiMachineForSessions = params.getApiMachineForSessions();
             if (!apiMachineForSessions) {
-                await drainBackgroundServerWorkBestEffort(params);
-                await disposePluginRuntimeRegistryBestEffort(params);
+                await drainFinalRuntimeWork(params);
                 return;
             }
 
@@ -137,8 +147,7 @@ export function createBeforeShutdownDrain(
             const remainingRpcGraceMs = Math.max(0, params.shutdownSpawnDrainGraceMs - elapsedMs);
             if (remainingRpcGraceMs === 0) {
                 logger.warn('[DAEMON RUN] No shutdown grace budget left to drain pending RPC requests');
-                await drainBackgroundServerWorkBestEffort(params);
-                await disposePluginRuntimeRegistryBestEffort(params);
+                await drainFinalRuntimeWork(params);
                 return;
             }
 
@@ -165,8 +174,7 @@ export function createBeforeShutdownDrain(
             if (rpcRequestsDrained) {
                 logger.debug('[DAEMON RUN] Pending RPC requests drained; proceeding with shutdown');
             }
-            await drainBackgroundServerWorkBestEffort(params);
-            await disposePluginRuntimeRegistryBestEffort(params);
+            await drainFinalRuntimeWork(params);
         })();
         return await beforeShutdownOnce;
     };

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createManagedProviderOperationAuthority } from './managedProviderOperationAuthority';
+import { createConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 
 const roots: string[] = [];
 
@@ -16,6 +17,41 @@ afterEach(async () => {
 });
 
 describe('managed Provider operation authority', () => {
+  it('fences the exact managed row and role throughout the real purpose and request-auth lease', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-managed-provider-custody-'));
+    roots.push(baseDir);
+    const purpose = { consumer: { pluginId: 'acme.compute', localId: 'vm' }, purpose: 'upstream' } as const;
+    const binding = { purpose, target: { kind: 'account' as const, account: { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'account-1' } } };
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected account transport'); };
+    const purposeBindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected },
+      selectTarget: unexpected, resolveTarget: unexpected, materializeAccount: unexpected,
+      projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+    });
+    const requestAuthRegistry = createConnectedAccountRequestAuthSubjectRegistry();
+    const authority = createManagedProviderOperationAuthority({
+      materializationBaseDir: baseDir, purposeBindingOwner, requestAuthRegistry,
+      resolveRequestAuthHttpPort: () => 43123,
+      createRedactionLease: () => ({ add() {}, close() {} }),
+    });
+    let currentRole = 'acquire';
+    const operation = {
+      identity: purpose.consumer, operationId: 'managed-1/intent-3', purposes: [purpose],
+      purposeBindings: { v: 1 as const, bindings: [binding] },
+      requestAuthUses: [{ purpose, materialization: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] } }],
+      isCurrent: () => true,
+      managedOperation: { role: 'acquire' as const, isCurrent: (role: string) => role === currentRole },
+    };
+    const activation = await authority.activate(operation);
+    const capability = (JSON.parse(await readFile(activation.requestAuth!.capabilityPath, 'utf8')) as { capability: string }).capability;
+    expect(requestAuthRegistry.authenticate(capability)).not.toBeNull();
+    currentRole = 'destroy';
+    expect(activation.requestAuth!.isCurrent()).toBe(false);
+    expect(requestAuthRegistry.authenticate(capability)).toBeNull();
+    await expect(authority.activate(operation)).rejects.toThrow('managed_provider_operation_authority_not_current');
+    await activation.cleanup();
+  });
+
   it('rotates one child-stable capability path across independent daemon authorities and fences retired cleanup', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-managed-provider-authority-'));
     roots.push(baseDir);

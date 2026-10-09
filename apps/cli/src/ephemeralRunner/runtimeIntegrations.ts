@@ -20,6 +20,7 @@ import { createSessionFollowSourceMaterialResolver } from '@/agent/runtime/sessi
 import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { prepareManagedAgentCliLaunch } from '@/packagedRuntime/managedTools/prepareManagedAgentCliLaunch';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -35,10 +36,7 @@ import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { openExactSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { materializeRunnerMcpMaterial } from '@/mcp/servers/materializeRunnerMcpMaterial';
-import {
-  prepareSessionCreationTarget,
-  rollbackSessionCreationTargetCheckout,
-} from '@/session/creation/prepareSessionCreationTarget';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 
 import {
   createEphemeralRunnerHttpControlConnection,
@@ -598,10 +596,9 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
         },
       });
       if (!preparedTarget.ok) throw new Error(`runner_checkout_preparation_${preparedTarget.code}`);
-      if (postMaterializationSignal.aborted && preparedTarget.checkout) {
-        await rollbackSessionCreationTargetCheckout(preparedTarget.checkout);
-        throwIfCancelled(postMaterializationSignal);
-      }
+      // Preparation does not grant exclusive custody: another consumer can
+      // accept the checkout before cancellation is observed. Retain its files.
+      throwIfCancelled(postMaterializationSignal);
       const runtimeDirectory = preparedTarget.directory;
       const sourceMaterial = createSessionFollowSourceMaterialResolver();
       const providerMachineRuntime = await createDaemonMachineIrohRuntime({
@@ -669,6 +666,7 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
               rpcHandlerManager: rpc,
               workingDirectory: runtimeDirectory,
               machineId: binding.machineId,
+              accountId: materialized.principal.accountId,
               sessionId: binding.sessionId,
               runtimeOrigin: materialized.runtimeOrigin,
               runtimeToken: materialized.runtimeToken,
@@ -705,6 +703,14 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
                 sessionId: binding.sessionId,
                 currentServerId: runnerServerId,
                 resolveAccountId: async () => materialized.principal.accountId,
+                resolveInstallationId: () => materialized.principal.installationId,
+                verifyExecutionAuthorization: async (input) =>
+                  await verifyExternalActionExecutionAuthorizationCurrent({
+                    ...input,
+                    privateKey: installationPrivateKey,
+                    installationId: materialized.principal.installationId,
+                    serverHttpBaseUrl: materialized.runtimeOrigin,
+                  }),
                 // A Runner executes inside its own Session and nowhere else:
                 // its own outer Machine target resolves to that Session, and
                 // any other target is refused before the Action runs.

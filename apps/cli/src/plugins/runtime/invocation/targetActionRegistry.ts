@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { logger } from '@/ui/logger';
 
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -48,6 +49,7 @@ import type {
     CreatePluginInvocationServices,
     PluginExternalActionContext,
     PluginInvocationServiceBinding,
+    ManagedBootstrapCredentialInvocationBinding,
 } from './services/types';
 import { createPluginInvocationPresentation } from './services/interactions';
 import {
@@ -176,6 +178,15 @@ export type InvokeTargetActionParams = Readonly<{
     operationProgress?: TargetActionOperationProgressPort;
     /** Host-private custody admission; never projected into plugin context. */
     beforeHandlerInvocation?: () => Promise<void>;
+    /** Live host-owned managed credential lease, never selected by plugin code. */
+    exactPurposeBindingSubjectId?: string;
+    /** Host-only streaming observer for an admitted managed native Exec role. */
+    execOutputObserver?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    execInvocationTimeoutMs?: number | null;
+    /** Host-private exact admitted row material; never projected into SDK context. */
+    managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    /** Host-private cleanup retention for an issued, custody-admitted managed acquire. */
+    retainHandlerResultAfterCancellation?: true;
 }>;
 
 export type TargetActionInvocationPreparation = Readonly<
@@ -459,6 +470,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let operationSettled = false;
         const result = await indexed.invocation.invoke(invocation.input, {
             ...(invocation.signal ? { signal: invocation.signal } : {}),
+            ...(invocation.retainHandlerResultAfterCancellation
+                ? { retainHandlerResultAfterCancellation: () => actionHandlerInvocation === undefined }
+                : {}),
             ...(params.revalidateActionFormInput
                 ? {
                     preDispatch: ({ input, signal }) => (
@@ -475,7 +489,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 : {}),
             handler: async ({ input, qualifiedId, signal }) => {
                 const abortContext = () => {
-                    lifetime.complete();
+                    lifetime.settleContext();
                 };
                 signal.addEventListener('abort', abortContext, { once: true });
                 if (signal.aborted) abortContext();
@@ -532,6 +546,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     signal: lifetime.signal,
                     redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
                     isOccurrenceCurrent: indexed.isCurrent,
+                    retainCleanup: lifetime.retainCleanup,
+                    ...(invocation.managedBootstrapCredential
+                        ? { managedBootstrapCredential: invocation.managedBootstrapCredential }
+                        : {}),
                 });
                 let connectedAccountOperationBinding:
                     | TargetActionConnectedAccountOperationBinding
@@ -554,7 +572,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     // immediately before this handler (the executor `invoke`
                     // callback). Admitted work now runs under its captured
                     // lease; only cancellation stops it.
-                    const operationResult = await params.bindConnectedAccountActionOperation?.({
+                    const operationResult = invocation.exactPurposeBindingSubjectId === undefined
+                        ? await params.bindConnectedAccountActionOperation?.({
                         pluginId: registration.pluginId,
                         localId: registration.localId,
                         input,
@@ -565,7 +584,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             && !lifetime.signal.aborted
                             && indexed.isCurrent()
                         ),
-                    });
+                        })
+                        : null;
                     if (operationResult && 'status' in operationResult) {
                         throw new PluginError({
                             code: operationResult.code,
@@ -579,11 +599,15 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             message: 'Plugin action operation retired before dispatch',
                         });
                     }
-                    const effectiveServiceBinding = connectedAccountOperationBinding
+                    const exactPurposeBindingSubjectId = invocation.exactPurposeBindingSubjectId
+                        ?? connectedAccountOperationBinding?.exactPurposeBindingSubjectId;
+                    const effectiveServiceBinding = exactPurposeBindingSubjectId !== undefined
+                        || invocation.execOutputObserver !== undefined || invocation.execInvocationTimeoutMs !== undefined
                         ? Object.freeze({
                             ...serviceBinding,
-                            exactPurposeBindingSubjectId:
-                                connectedAccountOperationBinding.exactPurposeBindingSubjectId,
+                            ...(exactPurposeBindingSubjectId === undefined ? {} : { exactPurposeBindingSubjectId }),
+                            ...(invocation.execOutputObserver === undefined ? {} : { execOutputObserver: invocation.execOutputObserver }),
+                            ...(invocation.execInvocationTimeoutMs === undefined ? {} : { execInvocationTimeoutMs: invocation.execInvocationTimeoutMs }),
                         })
                         : serviceBinding;
                     const services = params.createServices(seed, effectiveServiceBinding);
@@ -817,13 +841,13 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }
                     : {}),
             });
-            const complete = (): void => {
+            const complete = async (): Promise<void> => {
                 try {
                     params.completeDiagnosticScope?.(diagnosticScope);
                 } catch {
                     // Diagnostic lease cleanup cannot replace the action result.
                 } finally {
-                    lifetime.complete();
+                    await lifetime.complete();
                 }
             };
             const prepared = await executor.prepare({
@@ -837,7 +861,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.requestCurrentIntent ? { requestCurrentIntent: invocation.requestCurrentIntent } : {}),
             });
             if (prepared.kind === 'settled') {
-                complete();
+                await complete();
                 return prepared;
             }
             let runPromise: Promise<TargetActionInvocationResult> | null = null;
@@ -848,7 +872,25 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 }>): Promise<TargetActionInvocationResult> {
                     if (runPromise) return runPromise;
                     operationProgress = options?.operationProgress ?? operationProgress;
-                    runPromise = prepared.run().finally(complete);
+                    runPromise = prepared.run().then(async result => {
+                        try {
+                            await complete();
+                        } catch (error) {
+                            // An issued, validated native fact remains true
+                            // when releasing its private local lease fails.
+                            if (!invocation.retainHandlerResultAfterCancellation || result.status !== 'executed') throw error;
+                            logger.warn('Plugin invocation private cleanup failed', {
+                                code: 'plugin_invocation_private_cleanup_failed',
+                                pluginId: diagnosticScope.pluginId,
+                                occurrenceId: diagnosticScope.occurrenceId,
+                                correlationId: diagnosticScope.correlationId,
+                            });
+                        }
+                        return result;
+                    }, async error => {
+                        await complete();
+                        throw error;
+                    });
                     return runPromise;
                 },
             });

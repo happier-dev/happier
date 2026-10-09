@@ -8,8 +8,116 @@ import {
     createProviderLaunchResourceScope,
 } from '@/providers/lifecycle/resourceScope';
 import { createBeforeShutdownDrain } from './createBeforeShutdownDrain';
+import { createDaemonAdmissionDrain } from './admissionDrain';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 
 describe('createBeforeShutdownDrain', () => {
+    it.each(['no-machine', 'rpc-drained', 'rpc-grace-expired', 'machine-detached'] as const)(
+        'retains finite process custody through unconfirmed Stop before plugin disposal (%s)',
+        async (shutdownPath) => {
+            const admissionDrain = createDaemonAdmissionDrain();
+            const runtime = createHostActionOperationRuntime({
+                machineId: 'worker',
+                resolveAccountId: async () => 'account',
+                generateOperationId: () => 'retained-finite',
+            });
+            const events: string[] = [];
+            let settleProcess!: () => void;
+            const processSettled = new Promise<void>((resolve) => { settleProcess = resolve; });
+            // The process adapter reports Stop uncertainty independently of its
+            // actual exit; the host runtime/retirement/store remain real.
+            await runtime.observeExecution({
+                actionId: 'projects.compute.exec', input: {}, actionRequestId: 'accepted-exec',
+                execute: async ({ signal, operationOwnerUpdate, operationCancellation }) => {
+                    operationCancellation?.onRequest(() => {
+                        events.push('stop');
+                        operationOwnerUpdate.update({
+                            observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' },
+                        });
+                    });
+                    operationOwnerUpdate.update({
+                        state: 'running',
+                        domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: 'home',
+                            machineId: 'worker', workspaceRefId: 'workspace', cwd: '/project' },
+                    });
+                    await processSettled;
+                    events.push('process-settled');
+                    return signal.aborted
+                        ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
+                        : { ok: true, result: {} };
+                },
+            });
+            let machineReads = 0;
+            const apiMachine = { awaitPendingRpcRequests: async () => undefined };
+            const params = {
+                admissionDrain,
+                pidToAwaiter: new Map<number, unknown>(),
+                pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+                shutdownSpawnDrainGraceMs: shutdownPath === 'rpc-grace-expired' ? 0 : 100,
+                shutdownSpawnDrainPollMs: 10,
+                getApiMachineForSessions: () => {
+                    machineReads++;
+                    return shutdownPath === 'no-machine'
+                        || (shutdownPath === 'machine-detached' && machineReads > 1) ? null : apiMachine;
+                },
+                buildUnexpectedSpawnResult: (errorMessage: string) => ({
+                    type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage,
+                }),
+                retireFiniteExecution: runtime.retireProjectFiniteOperations,
+                disposePluginRuntimeRegistry: async () => { events.push('plugin-disposed'); },
+            };
+            const beforeShutdown = createBeforeShutdownDrain(params);
+            let shutdownSettled = false;
+            const shutdown = beforeShutdown().then(() => { shutdownSettled = true; });
+            const repeatedShutdown = beforeShutdown();
+            try {
+                await new Promise<void>((resolve) => setImmediate(resolve));
+                expect(admissionDrain.isFinalShutdown()).toBe(true);
+                expect(events).toEqual(['stop']);
+                expect(shutdownSettled).toBe(false);
+                expect(await runtime.handlers.getV2({ operationId: 'retained-finite' })).toMatchObject({
+                    kind: 'found', operation: { state: 'running', observation: { kind: 'stop_unconfirmed' } },
+                });
+                expect(await runtime.handlers.cancel({ operationId: 'retained-finite' })).toEqual({ kind: 'requested' });
+                expect(await runtime.handlers.cancel({ operationId: 'retained-finite' })).toEqual({ kind: 'requested' });
+                expect(events).toEqual(['stop', 'stop', 'stop']);
+                expect(shutdownSettled).toBe(false);
+                settleProcess();
+                await Promise.all([shutdown, repeatedShutdown]);
+                expect(await runtime.handlers.getV2({ operationId: 'retained-finite', waitForTerminal: true }))
+                    .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+                expect(events).toEqual(['stop', 'stop', 'stop', 'process-settled', 'plugin-disposed']);
+                await beforeShutdown();
+                expect(events).toEqual(['stop', 'stop', 'stop', 'process-settled', 'plugin-disposed']);
+            } finally {
+                settleProcess();
+                await runtime.handlers.getV2({ operationId: 'retained-finite', waitForTerminal: true });
+                await Promise.all([shutdown, repeatedShutdown]);
+            }
+        },
+    );
+    it('keeps temporary drain reversible until final shutdown owns disposal', async () => {
+        const admissionDrain = createDaemonAdmissionDrain();
+        const disposal: string[] = [];
+        const beforeShutdown = createBeforeShutdownDrain({
+            admissionDrain,
+            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 10,
+            getApiMachineForSessions: () => null,
+            buildUnexpectedSpawnResult: (errorMessage) => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
+            disposePluginRuntimeRegistry: async () => { disposal.push('disposed'); },
+        });
+        admissionDrain.beginTemporaryDrain();
+        admissionDrain.resume();
+        expect(admissionDrain.isQuiescing()).toBe(false);
+        expect(disposal).toEqual([]);
+        await beforeShutdown();
+        admissionDrain.resume();
+        expect(admissionDrain.isFinalShutdown()).toBe(true);
+        expect(disposal).toEqual(['disposed']);
+        await beforeShutdown();
+        expect(disposal).toEqual(['disposed']);
+    });
     it('retires each exact tracked startup before resolving a grace-expired spawn', async () => {
         const pid = 44_001;
         const events: string[] = [];

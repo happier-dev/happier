@@ -17,6 +17,7 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServic
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../connectedServices/sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createManagedActivityInventory } from '../lifecycle/managedActivity';
 
 const sessionsHttp = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
@@ -105,6 +106,48 @@ describe('startDaemonRuntimeBootstrap', () => {
     qualifiedConnectedAccountApi.readUsageRecord.mockReset().mockResolvedValue(null);
     qualifiedConnectedAccountApi.readCredential.mockReset();
     vi.useRealTimers();
+  });
+
+  it('proves transfer absence through the bootstrap owner when direct transfer is explicitly disabled', async () => {
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
+    const encodeClaim = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const capturedToken = `${encodeClaim({ alg: 'none' })}.${encodeClaim({ sub: 'alice' })}.signature`;
+    let published: unknown;
+    const result = await startDaemonRuntimeBootstrap({
+      api: {} as never,
+      credentials: { token: capturedToken, encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
+      controlPort: 41233, machineId: 'machine-1', machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1', cliVersion: '0.0.0-test', startupSource: 'manual', serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log', controlToken: 'control-token',
+      // Persisting the daemon publication is an OS boundary. Its assembly and
+      // Account projection run through the actual bootstrap owner.
+      publishDaemonState: state => { published = state; return true; },
+      happyHomeDir: '/tmp/happy-home', activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' }, publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedPids: new Set(), pidToTrackedSession: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async input => ({ status: 'session_not_found', generation: input.generation })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
+      },
+      connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
+    });
+    expect(published).toMatchObject({ machineId: 'machine-1', runtimeId: 'runtime-1', accountId: 'alice' });
+    expect(JSON.stringify(published)).not.toContain(capturedToken);
+    const source = result.transferLiveWorkProducer;
+    expect(result.directPeerServerLifecycle).toBeNull();
+    expect(source).toBeDefined();
+    if (!source) throw new Error('Bootstrap transfer activity is unavailable');
+    const inventory = createManagedActivityInventory({ producers: [source], now: () => 100 });
+    try {
+      expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 100 });
+      await result.stopDirectPeerServer();
+      expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 100 });
+    } finally { inventory.dispose(); }
   });
 
   it('keeps quota automation disabled when authoritative current-source hydration fails', async () => {

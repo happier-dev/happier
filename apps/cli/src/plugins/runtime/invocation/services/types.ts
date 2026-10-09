@@ -55,6 +55,10 @@ export type PluginExternalActionContext = Readonly<{
 }>;
 
 export type PluginInvocationServicesSeed = Readonly<{
+    /** Exact host-admitted managed row; never plugin input or SDK context. */
+    managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    /** Canonical invocation owner retains private material cleanup. */
+    retainCleanup?(cleanup: Readonly<{ dispose(): Promise<void> }>): void;
     /** Host-only absence of an admitted Session-list corpus. */
     sessionListAccess?: import('@happier-dev/protocol').ActionExecutorContext['sessionListAccess'];
     plugin: Readonly<{ id: string; version: string }>;
@@ -93,6 +97,13 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Host-private current-turn authority for runner-owned privileged effects. */
     readActiveTurnAdmissionWitness?(): AgentInvocationTurnAdmissionWitness | null;
     isOccurrenceCurrent(): boolean;
+}>;
+
+export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
+    role: 'acquire' | 'bootstrap' | 'exec' | 'putFile';
+    /** Returns owned bytes from this admitted row's retained SavedSecret only. */
+    readBootstrapCredential(): Promise<Uint8Array>;
+    isCurrent(): boolean | Promise<boolean>;
 }>;
 
 export type PluginProviderOperationsSource = Readonly<{
@@ -209,6 +220,10 @@ export type PluginInvocationServiceBinding = Readonly<{
      * Plugin code never receives or chooses this identifier.
      */
     exactPurposeBindingSubjectId?: string;
+    /** Host-private managed bootstrap output observer; not an SDK capability. */
+    execOutputObserver?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    /** Containing task's budget; only an explicitly selected invocation process consumes it. */
+    execInvocationTimeoutMs?: number | null;
 }>;
 
 export type PluginFileSystemRoots = Readonly<{

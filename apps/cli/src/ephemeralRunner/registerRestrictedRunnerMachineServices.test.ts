@@ -4,17 +4,20 @@ import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/rpc';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
-import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import type { PtyProcess } from '@/terminal/pty/provider';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 
 import { registerRestrictedRunnerMachineServices } from './registerRestrictedRunnerMachineServices';
 import { createRestrictedRunnerLocalServicesRoutes } from './restrictedRunnerLocalServices';
 
-type Handler = (input: unknown) => Promise<unknown>;
+type Handler = (input: unknown, context?: RpcHandlerContext) => Promise<unknown>;
 
 const temporaryDirectories: string[] = [];
 
@@ -85,6 +88,8 @@ describe('restricted Runner ordinary Machine services', () => {
       },
     });
 
+    expect(handlers.has(AGENT_SIGN_IN_STATUS_RPC_METHOD)).toBe(false);
+    expect(handlers.has(AGENT_SIGN_IN_PREPARE_RPC_METHOD)).toBe(false);
     for (const method of handlers.keys()) {
       expect(resolveEphemeralRunnerMachineRpcAuthority(method), method).not.toBeNull();
     }
@@ -172,55 +177,32 @@ describe('restricted Runner ordinary Machine services', () => {
         handlers.set(method, handler as Handler);
       },
     };
-    const terminal = {
-      ensure: vi.fn(() => ({ ok: true as const, terminalId: 'runner-terminal', reused: false })),
-      read: vi.fn(() => ({
-        ok: true as const,
-        terminalId: 'runner-terminal',
-        events: [{ t: 'data' as const, data: 'ready' }],
-        nextCursor: 1,
-        done: false,
-      })),
-      readByteStream: vi.fn(() => ({
-        ok: true as const,
-        terminalId: 'runner-terminal',
-        frames: [],
-        nextByteOffset: 0,
-        availableByteOffset: 0,
-        droppedBeforeByteOffset: 0,
-        done: false,
-      })),
-      readBytes: vi.fn(() => ({
-        ok: true as const,
-        terminalId: 'runner-terminal',
-        mode: 'bytes' as const,
-        chunks: [],
-        nextByteOffset: 0,
-        availableByteOffset: 0,
-        droppedBeforeByteOffset: 0,
-        done: false,
-      })),
-      acknowledgeByteStream: vi.fn(() => ({ ok: true as const })),
-      list: () => [],
-      inputEvent: vi.fn(() => ({ ok: true as const })),
-      input: vi.fn(() => ({ ok: true as const })),
-      resize: vi.fn(() => ({ ok: true as const })),
-      close: vi.fn(() => ({ ok: true as const })),
-      restart: vi.fn(() => ({ ok: true as const, terminalId: 'runner-terminal-2', reused: false })),
-      dispose: vi.fn(),
-      metrics: vi.fn(() => ({
-        activeTerminals: 0,
-        bytesWritten: 0,
-        bytesRead: 0,
-        chunksWritten: 0,
-        chunksDropped: 0,
-        readsWithGaps: 0,
-        legacyOnlyProviders: 0,
-        exits: 0,
-        acknowledgedByteOffsetHighWater: 0,
-        rendererAckLagBytesHighWater: 0,
-      })),
-    } satisfies TerminalPtySessionManager;
+    const writes: string[] = [];
+    const sizes: number[][] = [];
+    const spawned: Array<{ cwd: string | undefined; emitData: (text: string) => void; exit: () => void; killed: boolean }> = [];
+    const terminal = createTerminalPtySessionManager({ env: { SHELL: '/bin/sh' },
+      config: { maxSessions: 10, idleTimeoutMs: 0, bufferMaxBytes: 1000, bufferMaxEvents: 10,
+        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
+      // Only the OS PTY/process-tree boundary is replaced. Session attribution,
+      // terminal lookup, output and stop settlement use the real owner.
+      ptyProvider: { spawn(input) {
+        const data = new Set<(text: string) => void>();
+        const exits = new Set<(event: { exitCode: number }) => void>();
+        const fact = { cwd: input.options.cwd, emitData: (text: string) => { for (const listener of data) listener(text); },
+          exit: () => { for (const listener of exits) listener({ exitCode: 0 }); }, killed: false };
+        spawned.push(fact);
+        const pty: PtyProcess = { pid: spawned.length,
+          write(text) { writes.push(text); }, resize(cols, rows) { sizes.push([cols, rows]); }, kill() { fact.killed = true; fact.exit(); },
+          onData(listener) { data.add(listener); return { dispose() { data.delete(listener); } }; },
+          onExit(listener) { exits.add(listener); return { dispose() { exits.delete(listener); } }; },
+        };
+        return pty;
+      } },
+      stopProcessTree: async ({ pid }) => {
+        if (pid === undefined) throw new Error('PTY process id is missing');
+        spawned[pid - 1]!.exit();
+      },
+    });
 
     const registration = registerRestrictedRunnerMachineServices({
       rpcHandlerManager: registrar,
@@ -261,16 +243,27 @@ describe('restricted Runner ordinary Machine services', () => {
       RPC_METHODS.DAEMON_TERMINAL_RESTART,
     ]) expect(handlers.has(method)).toBe(true);
 
-    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.({
+    const context: RpcHandlerContext = { signal: new AbortController().signal,
+      authorization: { kind: 'session.write', sessionId: 'runner-session' },
+      machineAdmission: { actorAccountId: 'runner-account', custodianAccountId: 'runner-account', machineId: 'runner-machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true };
+    const ensured = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.({
       terminalKey: 'runner-terminal',
       cwd: 'nested',
       cols: 80,
       rows: 24,
-    })).resolves.toMatchObject({ ok: true, terminalId: 'runner-terminal' });
-    expect(terminal.ensure).toHaveBeenCalledWith(expect.objectContaining({
+    }, context);
+    expect(ensured).toMatchObject({ ok: true });
+    const terminalId = terminal.list()[0]!.terminalId;
+    expect(terminal.list()[0]).toMatchObject({
       sessionId: 'runner-session',
       cwd: join(workingDirectory, 'nested'),
-    }));
+    });
+    const sibling = terminal.ensure({ terminalKey: 'sibling', cwd: workingDirectory, sessionId: 'sibling-session' });
+    if (!sibling.ok) throw new Error('Sibling fixture did not open');
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)?.({ terminalId: sibling.terminalId, data: 'forged' })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK)?.({ terminalId: sibling.terminalId, ackedByteOffset: 0 })).resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)?.({ terminalId: sibling.terminalId })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
 
     await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.({
       terminalKey: 'sibling',
@@ -283,17 +276,24 @@ describe('restricted Runner ordinary Machine services', () => {
       cwd: '\0',
     })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_cwd_denied' });
 
-    await handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)?.({ terminalId: 'runner-terminal', data: 'pwd\r' });
-    await handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)?.({ terminalId: 'runner-terminal', cols: 120, rows: 40 });
-    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)?.({ terminalId: 'runner-terminal', cursor: 0 }))
+    await handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)?.({ terminalId, data: 'pwd\r' }, context);
+    await handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESIZE)?.({ terminalId, cols: 120, rows: 40 }, context);
+    spawned[0]!.emitData('ready');
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)?.({ terminalId, cursor: 0 }, context))
       .resolves.toMatchObject({ ok: true, events: [{ t: 'data', data: 'ready' }] });
-    await handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)?.({ terminalId: 'runner-terminal' });
-    expect(terminal.input).toHaveBeenCalledExactlyOnceWith({ terminalId: 'runner-terminal', data: 'pwd\r' });
-    expect(terminal.resize).toHaveBeenCalledExactlyOnceWith({ terminalId: 'runner-terminal', cols: 120, rows: 40 });
-    expect(terminal.close).toHaveBeenCalledExactlyOnceWith({ terminalId: 'runner-terminal' });
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)?.({ terminalKey: 'runner-terminal', cwd: 'nested' }, context)).resolves.toMatchObject({ ok: true, reused: false });
+    const restarted = terminal.list().find(candidate => candidate.sessionId === 'runner-session')!;
+    expect(restarted.terminalId).not.toBe(terminalId);
+    expect(restarted.cwd).toBe(join(workingDirectory, 'nested'));
+    await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)?.({ terminalId: restarted.terminalId }, context)).resolves.toEqual({ ok: true });
+    expect(writes).toEqual(['pwd\r']);
+    expect(sizes).toEqual([[120, 40]]);
+    expect(terminal.list().some(candidate => candidate.terminalId === terminalId)).toBe(false);
+    expect(terminal.list().some(candidate => candidate.terminalId === sibling.terminalId)).toBe(true);
+    expect(spawned[1]!.killed).toBe(false);
 
     await registration.dispose();
-    expect(terminal.dispose).toHaveBeenCalledOnce();
+    expect(terminal.list()).toEqual([]);
   });
 
   it('reuses the ordinary local-service owners through an exact Session/workspace projection', async () => {
@@ -308,6 +308,16 @@ describe('restricted Runner ordinary Machine services', () => {
     };
     const localServicesRuntime = createLocalServicesDaemonRuntime({
       machineId: 'runner-machine',
+      accountId: 'runner-account',
+      // Home HTTP is the external boundary; Session scoping, preview binding,
+      // inventory and lifecycle use the real ordinary service owners.
+      previewServer: { token: 'runner-token', serverBaseUrl: 'https://home.example.test', http: {
+        async post(_url, body) {
+          const resource = LocalServicePreviewResourceV1Schema.parse(body);
+          return { data: { resource, accessUrl: `https://${resource.previewId}.preview.example.test/?previewToken=admitted`, expiresAt: Date.now() + 60_000 } };
+        },
+        async delete() { return { data: { ok: true } }; },
+      } },
       inventoryEnabled: () => true,
       startLoop: false,
       inventoryAnnotations: { read: () => null, write: () => undefined },

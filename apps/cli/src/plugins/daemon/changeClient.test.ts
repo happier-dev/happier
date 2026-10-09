@@ -23,6 +23,30 @@ const completeReview = createPluginInstallationReviewFixture;
 const absoluteFixturePath = resolve('/tmp/example-plugin-source');
 
 describe('requestUserPluginChange', () => {
+  it('reviews exact retained resource responsibility before retrying ordinary plugin removal', async () => {
+    const resource = {
+      managedId: 'managed-review', homeId: 'home', custodianAccountId: 'account', intentRevision: 8,
+      controller: { machineId: 'controller', installationId: 'installation' },
+      provider: { pluginId: 'acme.example', localId: 'cloud' }, allocation: 'may-exist' as const,
+      recovery: { reference: 'native-8', reason: 'credential_missing', consoleUrl: 'https://provider.example/native-8' },
+    };
+    const committed = { kind: 'committed' as const, pluginId: 'acme.example', desiredGeneration: null,
+      appliedGeneration: null, pendingSurfaces: [] };
+    const requestChange = vi.fn().mockResolvedValueOnce({
+      kind: 'managedResourcesReviewRequired', pluginId: 'acme.example', resources: [resource],
+    }).mockResolvedValueOnce(committed);
+    const confirm = vi.fn(async (_message: string) => true);
+
+    await expect(requestUserPluginChange({ request: { kind: 'uninstall', pluginId: 'acme.example' }, approval: 'prompt' }, {
+      ensureDaemon: async () => undefined, confirm, requestChange,
+    })).resolves.toEqual(committed);
+    expect(confirm.mock.calls[0]?.[0]).toContain('native-8');
+    expect(requestChange.mock.calls[1]?.[0]).toEqual({ kind: 'uninstall', pluginId: 'acme.example',
+      managedResourceDispositions: [{ managedId: 'managed-review', expectedIntentRevision: 8,
+        expectedAllocation: 'may-exist', expectedRecovery: resource.recovery, responsibility: 'manual' }],
+    });
+  });
+
   it('rejoins a pending change by status only, without re-requesting or deciding it', async () => {
     const ensureDaemon = vi.fn(async () => undefined);
     const readStatus = vi.fn(async () => ({

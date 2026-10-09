@@ -5,6 +5,8 @@ import {
   type PluginInstallReviewPrincipalDigest,
   type PluginInstallReviewPrincipalPresentationV1,
   type PluginUpdatePolicyV1,
+  type ManagedResourceDependencyV1,
+  type ManagedResourceDispositionV1,
 } from '@happier-dev/protocol';
 import {
   type ExpectedMarketplaceListingV1,
@@ -46,8 +48,9 @@ export type PluginChangeRequest =
       observedRevision?: number;
       sdkRegistryOrigin?: string;
     }>
-  | Readonly<{ kind: 'enable' | 'disable' | 'rollback' | 'forgetTrust'; pluginId: string }>
-  | Readonly<{ kind: 'uninstall' | 'uninstallAndDeleteData'; pluginId: string }>;
+  | Readonly<{ kind: 'enable' | 'rollback' | 'forgetTrust'; pluginId: string }>
+  | Readonly<{ kind: 'disable' | 'uninstall' | 'uninstallAndDeleteData'; pluginId: string;
+      managedResourceDispositions?: readonly ManagedResourceDispositionV1[] }>;
 
 /**
  * Projects one declared request-policy contribution into the serialized
@@ -106,6 +109,7 @@ export type PluginDataRemovalPartial = Readonly<{
 
 export type PluginChangeApplyResult =
   | PluginChangeSuccess
+  | Readonly<{ kind: 'managedResourcesReviewRequired'; pluginId: string; resources: readonly ManagedResourceDependencyV1[] }>
   | Readonly<{ kind: 'projectTrustAccepted'; projectRoot: string }>
   | PluginDataRemovalPartial
   | Readonly<{ kind: 'unavailable'; code: string }>

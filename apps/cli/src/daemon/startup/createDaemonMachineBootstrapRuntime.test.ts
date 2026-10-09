@@ -1,13 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ApiClient } from '@/api/api';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import * as machineTransport from '@/session/transport/rpc/machineRpc';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import {
-  SessionServerStartIngressRequestV1Schema,
   type MachineLiveStreamFrameV1,
   type WorkspaceSyncRuntimeReadinessV1,
   type WorkspaceSyncStatusV1,
 } from '@happier-dev/protocol';
 import type { DaemonState } from '@/api/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { decryptLegacy, encryptLegacy } from '@/api/encryption';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { createLocalServicesDaemonRuntime } from '../local/services/runtime';
 import type { LocalServiceListenerFact } from '../local/services/inventory/scanner';
@@ -23,7 +33,13 @@ import { createServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnap
 import { isWorkflowRuntimeEnabled } from '../automation/workflowFeatureGate';
 import type { WorkflowCoordinatorResult } from '../workflows/coordinator';
 
-import { createDaemonMachineBootstrapRuntime } from './createDaemonMachineBootstrapRuntime';
+import { createDaemonMachineBootstrapRuntime, createProjectFiniteSourceManifestInspector } from './createDaemonMachineBootstrapRuntime';
+import { createBeforeShutdownDrain } from '../lifecycle/createBeforeShutdownDrain';
+import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
+import { retireMachineSyncRuntimeAttempt } from '../machine/bootstrapMachineSyncRuntime';
+import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
+import { getMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 const automationWorkerMocks = vi.hoisted(() => ({
   startAutomationWorker: vi.fn(),
@@ -89,6 +105,190 @@ function createBaseRuntimeParams(overrides: Partial<Parameters<typeof createDaem
 }
 
 describe('createDaemonMachineBootstrapRuntime', () => {
+  it('retains failed-attachment finite custody before plugin disposal while attempt cleanup is still waiting', async () => {
+    const credentials = { token: 'failed-attachment-token', encryption: null };
+    const admissionDrain = createDaemonAdmissionDrain();
+    const admission = createProjectWorkerAdmission({ machineId: 'attachment-worker', admissionDrain,
+      readPolicy: () => getMachineFinitePolicyV1({ read: async () => ({ status: 'ready', metadataVersion: 1,
+        metadata: { finitePolicyV1: { accepting: true, runAtMost: 1 } } }),
+        compareAndSwap: async () => ({ status: 'unavailable' }) }),
+    });
+    // Home profile/publication and the process/peer-stop adapters are the only
+    // controlled boundaries. Bootstrap, Api, registration, runner and drain stay real.
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'attachment-account' } });
+    const bootstrap = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+      api: await ApiClient.create(credentials), credentials, admissionDrain,
+      workspaceSyncHandoffAdapter: undefined,
+    }));
+    const apiMachine = await bootstrap.createConnectedApiMachine({ id: 'attachment-worker',
+      encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy', encryptionMode: 'plain',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    });
+    if (!apiMachine) throw new Error('Missing actual Machine client');
+    apiMachine.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      stopSession: async () => true, requestShutdown() {},
+    }, { createProjectFiniteRuntime: async ports => ({ ...ports,
+      serverId: 'home', machineId: 'attachment-worker', accountId: 'attachment-account', credentials,
+      serverHttpBaseUrl: 'https://attachment-home.invalid', workerAdmission: admission,
+      nativeIo: { resolveTool: async () => null }, resolveWorkspaceExecutionConfig: async () => null,
+      environmentIo: { resolveTool: async () => null, run: async () => { throw new Error('No native evaluation selected'); } },
+    }) });
+    const events: string[] = [];
+    let settleProcess!: () => void;
+    const processSettled = new Promise<void>(resolve => { settleProcess = resolve; });
+    let releasePeerStop!: () => void;
+    const peerStopped = new Promise<void>(resolve => { releasePeerStop = resolve; });
+    let attemptCleanup: Promise<void> | undefined;
+    let shutdown: Promise<void> | undefined;
+    try {
+      expect(await apiMachine.observeActionExecution({ actionId: 'projects.compute.exec', input: {},
+        actionRequestId: 'failed-attachment-exec', execute: operation => {
+          if (!operation.operationAcceptance) throw new Error('Missing actual finite operation');
+          return admission.execute({ operationId: operation.operationAcceptance.operationId,
+            workspaceRefId: 'attachment-copy', signal: operation.signal,
+            accept: handle => {
+              operation.operationOwnerUpdate.update({ domainRef: { kind: 'projectCommand', purpose: 'exec',
+                serverId: 'home', machineId: 'attachment-worker', workspaceRefId: 'attachment-copy', cwd: '/project' } });
+              operation.operationAcceptance?.accept(handle);
+            }, run: async reservation => {
+              reservation.phase('running');
+              operation.operationOwnerUpdate.update({ state: 'running' });
+              operation.operationCancellation?.onRequest(() => {
+                events.push('stop-unconfirmed');
+                operation.operationOwnerUpdate.update({ observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' } });
+              });
+              await processSettled;
+              events.push('process-settled');
+              return { kind: 'process_settled', result: { ok: false, errorCode: 'cancelled', error: 'cancelled' } };
+            },
+          });
+        },
+      })).toMatchObject({ ok: true, result: { operation: { state: 'accepted' } } });
+      await expect.poll(async () => (await admission.load()).running).toBe(1);
+      // The failed handoff cleared the routing projection. Existing attempt
+      // cleanup has not reached Api.shutdown because its peer stop is pending.
+      attemptCleanup = retireMachineSyncRuntimeAttempt({ apiMachine, automationWorker: null,
+        memoryWorker: null, voiceInferenceWorker: null, machineConnectionStateCleanup: null,
+        disposeInactiveSessionUsageLimitRecovery: null, stopMachineIrohAcceptor: async () => await peerStopped,
+        stopPeerMediationLoopbackServer: async () => {},
+      });
+      const beforeShutdown = createBeforeShutdownDrain({ admissionDrain,
+        pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+        shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 10, getApiMachineForSessions: () => null,
+        // Final shutdown consumes the same retained bootstrap owner, not the
+        // cleared session-routing projection.
+        retireFiniteExecution: bootstrap.retireProjectFiniteExecution,
+        buildUnexpectedSpawnResult: errorMessage => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
+        disposePluginRuntimeRegistry: async () => { events.push('plugin-disposed'); },
+      });
+      shutdown = beforeShutdown();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(events).toEqual(['stop-unconfirmed']);
+      expect(await admission.load()).toMatchObject({ running: 1 });
+      settleProcess();
+      await shutdown;
+      expect(events).toEqual(['stop-unconfirmed', 'process-settled', 'plugin-disposed']);
+    } finally {
+      settleProcess();
+      releasePeerStop();
+      await Promise.all([attemptCleanup, shutdown]);
+      await apiMachine.shutdown();
+      vi.restoreAllMocks();
+    }
+  });
+  it('reads the personal SOURCE manifest through the real exact-Home Action and refuses shared, unproved or retired credential custody', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'finite-source-inspection-'));
+    const serverId = 'source-home';
+    const serverHttpBaseUrl = 'https://source-home.invalid';
+    const accountId = 'source-account';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const source = { id: 'source-ref', serverId, machineId: 'source-machine', rootPath: root, projectKey: 'project', createdAtMs: 1 };
+    let current = true;
+    let custodian: string | undefined = accountId;
+    let retireDuringMachineRead = false;
+    let retireDuringReply = false;
+    let malformedReply = false;
+    let issued = 0;
+    try {
+      await mkdir(join(root, '.happier'));
+      await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
+        scripts: { check: { source: { kind: 'command', command: 'must-not-run' }, execution: 'portable',
+          memoryDemand: { bytes: 123, basis: { kind: 'declared' } } } } }));
+      // Home HTTP and the exact Machine transport are genuine boundaries. The
+      // Machine decoder, Action executor/registrar and manifest reader stay real.
+      vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+        expect(url).toMatch(/^https:\/\/source-home\.invalid\//);
+        expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+        if (url.endsWith('/v2/account/settings')) {
+          return { status: 200, data: { content: { t: 'plain', v: {} }, version: 0 } };
+        }
+        if (url.endsWith(`/v1/machines/${source.machineId}`)) {
+          if (retireDuringMachineRead) current = false;
+          return { status: 200, data: { machine: {
+            id: source.machineId, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            storageMode: 'plain', ...(custodian === undefined ? {} : { access: {
+              custodian: { accountId: custodian, displayName: 'Source owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+            } }),
+          } } };
+        }
+        return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      });
+      const handlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+      registerProjectDefinitionHandlers({ machineId: source.machineId,
+        rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+        actionExecutor: createActionExecutor({ projectDefinitionAction: createProjectDefinitionAction({
+          serverId, machineId: source.machineId, workingDirectory: root,
+          accessPolicy: { kind: 'restrictedRoots', roots: [root] },
+        }) }),
+      });
+      vi.spyOn(machineTransport, 'callExactMachineRpc').mockImplementation(async request => {
+        expect(resolveServerHttpBaseUrl()).toBe(serverHttpBaseUrl);
+        expect(request.credentials).toEqual(credentials);
+        expect(request.machineId).toBe(source.machineId);
+        expect(request.authorityCeiling).toBe('account_automation');
+        issued++;
+        const handler = handlers.get(request.method);
+        if (!handler) throw new Error('Wrong source Action transport');
+        const result = await handler(request.request, { signal: request.signal ?? new AbortController().signal });
+        if (retireDuringReply) current = false;
+        return malformedReply ? { definition: result, detection: {}, extraAuthority: true } : result;
+      });
+      vi.spyOn(machineTransport, 'callMachineRpc').mockRejectedValue(new Error('Source inspection must not retarget'));
+      const inspect = createProjectFiniteSourceManifestInspector({ api: await ApiClient.create(credentials),
+        credentials, serverId, serverHttpBaseUrl, accountId,
+        ingress: { signal: new AbortController().signal }, isCurrent: async () => current });
+      const signal = new AbortController().signal;
+      expect(await inspect({ source, signal })).toMatchObject({ document: { status: 'valid', manifest: {
+        scripts: { check: { execution: 'portable', memoryDemand: { bytes: 123 } } },
+      } } });
+      expect(issued).toBe(1);
+      for (const unproved of ['foreign-account', undefined]) {
+        custodian = unproved;
+        await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+      }
+      custodian = accountId;
+      await expect(inspect({ source: { ...source, serverId: 'wrong-home' }, signal })).rejects.toMatchObject({ code: 'target_mismatch' });
+      current = false;
+      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+      expect(issued).toBe(1);
+      current = true;
+      retireDuringMachineRead = true;
+      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+      expect(issued).toBe(1);
+      retireDuringMachineRead = false;
+      current = true;
+      malformedReply = true;
+      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'invalid_action_output' });
+      malformedReply = false;
+      retireDuringReply = true;
+      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+    } finally {
+      vi.restoreAllMocks();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('publishes summary changes once and republishes on reconnect and API replacement', async () => {
     let scanListeners: readonly LocalServiceListenerFact[] = [];
     const scan = vi.fn(async () => ({ listeners: scanListeners, processes: new Map(), workspaces: [], diagnostics: [] }));
@@ -448,27 +648,15 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     );
     await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledOnce());
     const update = updateDaemonState.mock.calls[0]?.[0];
-    expect(update?.(null)).toEqual({
+    // Inspect the entire decrypted shared blob, rather than a redacted UI view.
+    const published = decryptLegacy(encryptLegacy(update?.(null), machine.encryptionKey), machine.encryptionKey);
+    expect(published).toEqual({
       status: 'running',
       workspaceSync: {
         v: 1,
         readiness: {
           engine: { state: 'ready' },
           carrier: { state: 'unavailable', errorCode: 'machine_carrier_unavailable' },
-        },
-        status: {
-          relationshipId: 'relationship_1',
-          controllerMachineId: 'registered-machine',
-          state: 'watching',
-          alphaPath: '/alpha',
-          betaPath: '/beta',
-          mode: 'keep_synced',
-          endpointStates: {
-            alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-            beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-          },
-          conflictCount: 0,
-          lastCycleObservedAtMs: null,
         },
       },
     });
@@ -703,74 +891,6 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     await runtime.recoverWorkflowRuns?.('reconnect');
     expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
     expect(recoverWorkflowRuns).toHaveBeenCalledOnce();
-  });
-
-  it('supplies the connected Session-start ingress to the Automation worker', async () => {
-    const worker: AutomationWorkerHandle = {
-      stop: vi.fn(),
-      refreshAssignments: vi.fn(async () => {}),
-      pause: vi.fn(),
-      resume: vi.fn(),
-      handleServerUpdate: vi.fn(),
-    };
-    const dispatched = {
-      type: 'success' as const,
-      disposition: 'created' as const,
-      sessionId: 'session-automation',
-      executionTarget: { serverId: 'server-1', machineId: 'machine_1' },
-      organizationPlacement: { folderId: null, tagIds: [] },
-      initialInput: { status: 'accepted' as const, localId: 'automation:run:run-1' },
-    };
-    const dispatchSessionServerStart = vi.fn(async () => dispatched);
-    const connectedApiMachine = {
-      enqueueSessionPendingByMachine: vi.fn(),
-      dispatchSessionServerStart,
-    };
-    const machineSyncClient = vi.fn(() => connectedApiMachine);
-    automationWorkerMocks.startAutomationWorker.mockReturnValueOnce(worker);
-    const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
-      api: { machineSyncClient } as never,
-    }));
-    const machine = {
-      id: 'machine_1',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy' as const,
-      metadata: null,
-      metadataVersion: 0,
-      daemonState: null,
-      daemonStateVersion: 0,
-    };
-
-    runtime.createConnectedApiMachine(machine);
-    runtime.startAutomationWorkerForMachine(machine.id);
-
-    const workerParams = automationWorkerMocks.startAutomationWorker.mock.calls.at(-1)?.[0] as
-      | Parameters<typeof startAutomationWorker>[0]
-      | undefined;
-    const request = SessionServerStartIngressRequestV1Schema.parse({
-      v: 1,
-      kind: 'session.serverStart.ingress',
-      runId: 'run-1',
-      attempt: 1,
-      requestEnvelope: {
-        t: 'plain',
-        v: {
-          creationKey: 'automation-run:run-1',
-          executionTarget: { serverId: 'server-1', machineId: 'machine_1' },
-          directory: '/workspace/project',
-          organizationPlacement: { folderId: null, tagIds: [] },
-          agentTarget: {
-            kind: 'agent',
-            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-          },
-          initialMessage: 'Start the automation task.',
-        },
-      },
-    });
-
-    expect(workerParams?.dispatchSessionServerStart).toEqual(expect.any(Function));
-    await expect(workerParams?.dispatchSessionServerStart?.(request)).resolves.toEqual(dispatched);
-    expect(dispatchSessionServerStart).toHaveBeenCalledWith(request, undefined);
   });
 
   it('wires the production peer-mediation live-stream capture adapter into machine bootstrap config', () => {

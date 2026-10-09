@@ -1,4 +1,5 @@
 import type { Credentials, StoredCredentials } from '@/persistence';
+import { createMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { getRandomBytes } from '../encryption';
@@ -55,25 +56,11 @@ export function resolveSessionEncryptionContext(credential: StoredCredentials): 
 
 export function resolveMachineEncryptionContext(credential: StoredCredentials): EncryptionContext {
   const keyedCredential = requireAccountEncryptionCredentials(credential);
-  // Resolve encryption key
-  let dataEncryptionKey: Uint8Array | null = null;
-  let encryptionKey: Uint8Array;
-  let encryptionVariant: 'legacy' | 'dataKey';
-
-  if (keyedCredential.encryption.type === 'dataKey') {
-    // Encrypt data encryption key
-    encryptionVariant = 'dataKey';
-    encryptionKey = keyedCredential.encryption.machineKey;
-    dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({
-      dataKey: keyedCredential.encryption.machineKey,
-      recipientPublicKey: keyedCredential.encryption.publicKey,
+  try {
+    return createMachineDataEncryptionKeyV1({
+      material: keyedCredential.encryption,
+      ...(keyedCredential.encryption.type === 'dataKey' ? { dataKeyPublicKey: keyedCredential.encryption.publicKey } : {}),
       randomBytes: getRandomBytes,
     });
-  } else {
-    // Legacy encryption
-    encryptionKey = keyedCredential.encryption.secret;
-    encryptionVariant = 'legacy';
-  }
-
-  return { encryptionKey, encryptionVariant, dataEncryptionKey };
+  } catch { throw new AccountEncryptionMaterialUnavailableError(); }
 }

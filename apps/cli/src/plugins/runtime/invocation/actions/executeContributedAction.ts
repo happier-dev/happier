@@ -1,5 +1,7 @@
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { MACHINE_PROVISIONER_EFFECT_ROLES_V1, readMachineProvisionerActionRolesV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import { projectPluginActionUnavailableOutcomeCode, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionsSettingsV1, JsonValue, MessageActionAvailableSnapshotV1, PluginMachineExecutionOriginV1, RehydratedPluginContributionPointOperationV1, TargetActionApprovalReplayPlacementV1, UiContributedActionExecuteRequestV1 } from '@happier-dev/protocol';
@@ -10,6 +12,8 @@ import type {
   PluginInvocationCaller,
   PluginInvocationOriginSurface,
 } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
 
 import type {
@@ -26,6 +30,7 @@ import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/s
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 
 export type PluginActionExecutorResult = Readonly<
   | {
@@ -81,6 +86,101 @@ export type AdmittedTargetedOperationExecutionRequest = Readonly<{
   contributorOccurrenceId: string;
   targetProtocol: RehydratedPluginContributionPointOperationV1;
 }>;
+
+/** Managed-resource custody supplied only by the authenticated host operation owner. */
+export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
+  managedId: string;
+  homeId: string;
+  intentRevision: number;
+  controller: Readonly<{ machineId: string; installationId: string }>;
+  contribution: Readonly<{ pluginId: string; localId: string; occurrenceId: string }>;
+  role: MachineProvisionerRoleV1;
+  /** Owned bytes from this exact row's retained SavedSecret; never an SDK selector. */
+  readBootstrapCredential?(): Promise<Uint8Array>;
+  /** Existing purpose lease; the operation owner retains its cleanup lifetime. */
+  exactPurposeBindingSubjectId?: string;
+  /** Host-only live output delivery while the native Exec Action is pending. */
+  onProcessOutput?: (output: PluginProcessOutput) => void;
+  /** Installer/task-owned budget for the explicitly selected native Exec process. */
+  execTimeoutMs?: number | null;
+  /** Rechecks the retained row/native reference, controller, intent and credential lease. */
+  isCurrent(): boolean | Promise<boolean>;
+}>;
+
+/** Exact host-owned launch credential lease before a managed row exists. */
+export type AdmittedConnectedAccountPurposeBindingExecutionRequest = Readonly<{
+  exactPurposeBindingSubjectId: string;
+  isCurrent(): boolean | Promise<boolean>;
+}>;
+
+async function checkManagedProviderOperationCustody(params: Readonly<{
+  contributes: ResolvedContributionRegistry;
+  runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
+  action: ResolvedActionContribution;
+  operation?: AdmittedManagedProviderOperationExecutionRequest;
+  probeBinding?: AdmittedConnectedAccountPurposeBindingExecutionRequest;
+}>): Promise<PluginActionExecutorResult | null> {
+  const matches = (params.contributes.machineProvisioners ?? []).flatMap((contribution) => {
+    if (contribution.pluginId !== params.action.pluginId) return [];
+    return readMachineProvisionerActionRolesV1(contribution.definition)
+      .filter((binding) => binding.action === params.action.definition.id)
+      .map(({ role }) => ({ contribution, role }));
+  });
+  const effectRole = matches.some((binding) => (
+    MACHINE_PROVISIONER_EFFECT_ROLES_V1.some((role) => role === binding.role)
+  ));
+  const requiresManagedCustody = effectRole || matches.some(({ role }) => role === 'reconcile');
+  if (params.operation === undefined && params.probeBinding === undefined && !requiresManagedCustody) return null;
+  const invalid = () => actionHandlerNotStartedFailure(
+    'plugin_managed_provider_operation_custody_invalid',
+    'The native provisioner role requires current managed-resource custody',
+  );
+  if (params.probeBinding !== undefined) {
+    const probe = params.probeBinding;
+    const pluginId = params.action.pluginId;
+    const expectedOccurrenceId = pluginId ? params.contributes.occurrenceIdsByPluginId?.[pluginId] : undefined;
+    if (params.operation !== undefined || requiresManagedCustody || !params.runtimeRegistry
+      || !pluginId || expectedOccurrenceId === undefined
+      || !probe.exactPurposeBindingSubjectId.trim()
+      || !matches.some(({ role }) => role === 'check' || role === 'options')) return invalid();
+    try {
+      if (await probe.isCurrent() !== true
+        || params.runtimeRegistry.readPluginOccurrenceId?.(pluginId) !== expectedOccurrenceId) return invalid();
+    } catch { return invalid(); }
+    return null;
+  }
+  const operation = params.operation;
+  if (!operation || !params.runtimeRegistry
+    || !operation.managedId.trim() || !operation.homeId.trim()
+    || !operation.controller.machineId.trim() || !operation.controller.installationId.trim()
+    || !Number.isSafeInteger(operation.intentRevision) || operation.intentRevision < 0
+    || operation.exactPurposeBindingSubjectId?.trim() === ''
+    || (operation.onProcessOutput !== undefined && operation.role !== 'exec')
+    || (operation.execTimeoutMs !== undefined && operation.role !== 'exec')
+    || !matches.some(({ contribution, role }) => (
+      role === operation.role
+      && contribution.identity.pluginId === operation.contribution.pluginId
+      && contribution.identity.localId === operation.contribution.localId
+      && contribution.definition.id === operation.contribution.localId
+    ))) return invalid();
+  if (operation.exactPurposeBindingSubjectId === undefined) {
+    const purposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({
+      registry: params.contributes,
+      qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: operation.contribution.pluginId, localId: params.action.definition.id }),
+    });
+    // A retained managed invocation may not recapture mutable account defaults.
+    // No declared use needs no lease; declared or unresolved use needs exact custody.
+    if (!purposes || purposes.length > 0) return invalid();
+  }
+  try {
+    if (await operation.isCurrent() !== true
+      || params.runtimeRegistry.readPluginOccurrenceId?.(operation.contribution.pluginId)
+        !== operation.contribution.occurrenceId) return invalid();
+  } catch {
+    return invalid();
+  }
+  return null;
+}
 
 type CurrentTargetExecutionOrigin = Readonly<
   | { status: 'resolved'; origin: PluginMachineExecutionOriginV1 }
@@ -345,6 +445,10 @@ export async function executeContributedAction(params: Readonly<{
   expectedContributorMaterializationId?: string;
   /** Opaque target-operation evidence forwarded only by the original handle owner. */
   admittedTargetedOperation?: AdmittedTargetedOperationExecutionRequest;
+  /** Private current managed-resource admission; never an SDK or Action-input field. */
+  admittedManagedProviderOperation?: AdmittedManagedProviderOperationExecutionRequest;
+  /** Private initial check/options credential scope; never a public call option. */
+  admittedConnectedAccountPurposeBinding?: AdmittedConnectedAccountPurposeBindingExecutionRequest;
   requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
   context: Readonly<{
     defaultSessionId?: string;
@@ -423,6 +527,8 @@ export async function executeContributedAction(params: Readonly<{
     || params.expectedExecutionOrigin !== undefined
     || params.expectedApprovalReplayPlacement !== undefined
     || params.admittedTargetedOperation !== undefined
+    || params.admittedManagedProviderOperation !== undefined
+    || params.admittedConnectedAccountPurposeBinding !== undefined
   )) {
     return {
       matched: true,
@@ -493,6 +599,12 @@ export async function executeContributedAction(params: Readonly<{
   const runtimeRegistry = isExecutablePluginRuntimeRegistry(registry)
     ? registry
     : null;
+  const checkManagedCustody = () => checkManagedProviderOperationCustody({
+    contributes, runtimeRegistry, action, operation: params.admittedManagedProviderOperation,
+    probeBinding: params.admittedConnectedAccountPurposeBinding,
+  });
+  const beforeManagedDemand = await checkManagedCustody();
+  if (beforeManagedDemand !== null) return { matched: true, result: beforeManagedDemand };
   const admittedTargetedOperation = params.admittedTargetedOperation;
   const expectedContributorOccurrenceId = admittedTargetedOperation === undefined
     ? params.expectedContributorOccurrenceId
@@ -560,6 +672,8 @@ export async function executeContributedAction(params: Readonly<{
     // Occurrence admission precedes activation: a retired handle must not
     // activate its replacement or be reported as a missing handler.
     const checkAdmittedCurrentness = async (): Promise<PluginActionExecutorResult | null> => {
+      const managedCustody = await checkManagedCustody();
+      if (managedCustody !== null) return managedCustody;
       if (expectedContributorOccurrenceId !== undefined
         && !(await isExpectedPluginCurrent({
           runtimeRegistry,
@@ -742,6 +856,8 @@ export async function executeContributedAction(params: Readonly<{
           });
         }
       : params.requestCurrentIntent;
+    const exactPurposeBindingSubjectId = params.admittedManagedProviderOperation?.exactPurposeBindingSubjectId
+      ?? params.admittedConnectedAccountPurposeBinding?.exactPurposeBindingSubjectId;
     const targetInvocation = {
       pluginId,
       localId: action.definition.id,
@@ -775,8 +891,41 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.operationProgress
         ? { operationProgress: params.context.operationProgress }
         : {}),
-      ...(params.context.beforeHandlerInvocation
-        ? { beforeHandlerInvocation: params.context.beforeHandlerInvocation }
+      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation
+        ? { beforeHandlerInvocation: async () => {
+            const check = async () => {
+              const refusal = await checkManagedCustody();
+              if (refusal && !refusal.ok) throw new PluginError({ code: refusal.errorCode, message: refusal.error });
+            };
+            await check();
+            if (params.context.beforeHandlerInvocation) {
+              await params.context.beforeHandlerInvocation();
+              await check();
+            }
+          } }
+        : {}),
+      ...(exactPurposeBindingSubjectId === undefined
+        ? {}
+        : { exactPurposeBindingSubjectId }),
+      ...(params.admittedManagedProviderOperation?.onProcessOutput === undefined
+        ? {}
+        : { execOutputObserver: params.admittedManagedProviderOperation.onProcessOutput }),
+      ...(params.admittedManagedProviderOperation?.execTimeoutMs === undefined
+        ? {}
+        : { execInvocationTimeoutMs: params.admittedManagedProviderOperation.execTimeoutMs }),
+      ...(params.admittedManagedProviderOperation?.readBootstrapCredential
+        && (params.admittedManagedProviderOperation.role === 'acquire'
+          || params.admittedManagedProviderOperation.role === 'bootstrap'
+          || params.admittedManagedProviderOperation.role === 'exec'
+          || params.admittedManagedProviderOperation.role === 'putFile')
+        ? { managedBootstrapCredential: {
+            role: params.admittedManagedProviderOperation.role,
+            readBootstrapCredential: params.admittedManagedProviderOperation.readBootstrapCredential,
+            isCurrent: async () => await checkManagedCustody() === null,
+          } }
+        : {}),
+      ...(['acquire', 'rebuild', 'reconcile'].includes(params.admittedManagedProviderOperation?.role ?? '')
+        ? { retainHandlerResultAfterCancellation: true as const }
         : {}),
       ...(replayPlacement ? { replayPlacement } : {}),
       ...(params.expectedApprovalReplayPlacement === undefined

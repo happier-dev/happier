@@ -25,6 +25,8 @@ type PublishedMachineContentInput = Readonly<{
   credentials: StoredCredentials;
   machineId: string;
   publishedDataEncryptionKey: unknown;
+  expectedAccountMode: 'plain' | 'e2ee' | 'unknown';
+  access?: unknown;
   machineKind?: 'persistent' | 'ephemeral_session_runner';
   installationId?: string | null;
   runnerContentKeyBinding?: unknown;
@@ -76,6 +78,9 @@ export function resolvePublishedMachineEncryptionContext(
   params: PublishedMachineContentInput,
 ): MachineContentEncryptionContext {
   const published = params.publishedDataEncryptionKey;
+  if (params.expectedAccountMode === 'unknown') {
+    throw new MachineContentKeyUnavailableError(params.machineId);
+  }
   const encryption = params.credentials.encryption;
   const accountScopedMaterial: AccountScopedCryptoMaterial | null = encryption?.type === 'dataKey'
     ? { type: 'dataKey', machineKey: encryption.machineKey }
@@ -99,10 +104,12 @@ export function resolvePublishedMachineEncryptionContext(
       kind: params.machineKind,
       installationId: params.installationId,
       dataEncryptionKey: published,
+      access: params.access,
       runnerContentKeyBinding: params.runnerContentKeyBinding,
     },
     openedDataEncryptionKey,
-    expectedAccountMode: encryption ? 'e2ee' : 'plain',
+    expectedAccountMode: params.expectedAccountMode,
+    viewerAccountId: readAccountIdFromToken(params.credentials.token) ?? undefined,
     // The verifier identity is the creator's activation signing key, recovered
     // from the creator-sealed fact on the published binding. A daemon holds no
     // creator device custody, so Account material is the whole trust input.

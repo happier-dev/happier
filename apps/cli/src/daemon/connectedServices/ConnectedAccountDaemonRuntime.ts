@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
+import { QualifiedConnectedAccountCredentialConflictError } from '@/api/client/qualifiedConnectedAccountApi';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -237,6 +238,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         | 'establishedRuntimeOwner'
         | 'deleteCredential'
         | 'resolveV4Support'
+        | 'resolveRemovalReviewSupport'
     > & Readonly<{
         legacyCredentialApi?: RevisionedLegacyRevocationInput['api'];
     }>;
@@ -646,6 +648,9 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         && operationTransport.peerClass
                             === 'revisioned_v2_v3'
                     ) {
+                        if (!command.emergencyRevoke && (command.expectedCredentialRevision !== undefined || command.managedResourceDispositions?.length)) {
+                            return Object.freeze({ status: 'unavailable' as const, code: 'connected_account_legacy_operation_unsupported' });
+                        }
                         const legacyCredentialApi =
                             params.revocation.legacyCredentialApi;
                         if (!legacyCredentialApi) {
@@ -659,12 +664,12 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                 },
                             );
                         }
-                        result =
+                        const legacyResult =
                             await revokeRevisionedLegacyConnectedAccount({
                                 account: command.account,
                                 serviceId: operationTransport.serviceId,
                                 cleanupGroupReferences:
-                                    command.cleanupGroupReferences,
+                                    command.emergencyRevoke || command.cleanupGroupReferences,
                                 api: legacyCredentialApi,
                                 resolvePeerOperationTransport: () => {
                                     const current =
@@ -685,12 +690,22 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                     );
                                 },
                             });
+                        // This legacy owner only deletes local credential custody;
+                        // it never issues a provider callback or receives new query fields.
+                        result = command.emergencyRevoke
+                            ? Object.freeze({ ...legacyResult, remoteStatus: 'remoteNotAttempted' as const })
+                            : legacyResult;
                     } else {
                         result = await revokeQualifiedConnectedAccount({
                             ...params.revocation,
                             account: command.account,
+                            ...(command.expectedCredentialRevision === undefined ? {} : { expectedCredentialRevision: command.expectedCredentialRevision }),
                             cleanupGroupReferences:
                                 command.cleanupGroupReferences,
+                            ...(command.emergencyRevoke === undefined ? {} : { emergencyRevoke: command.emergencyRevoke }),
+                            ...(command.managedResourceDispositions === undefined ? {} : {
+                                managedResourceDispositions: command.managedResourceDispositions,
+                            }),
                             ...(options?.signal
                                 ? { signal: options.signal }
                                 : {}),
@@ -836,6 +851,12 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         projectConfigurationControlView(view),
                 });
             } catch (error) {
+                if (command.operation === 'revokeAccount'
+                    && error instanceof QualifiedConnectedAccountCredentialConflictError
+                    && error.code === 'managed_resources_review_required' && error.resources) {
+                    return Object.freeze({ status: 'removalReviewRequired' as const, account: command.account,
+                        resources: Object.freeze([...error.resources]) });
+                }
                 const code = (
                     error
                     && typeof error === 'object'

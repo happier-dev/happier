@@ -22,8 +22,29 @@ import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/a
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { PendingMessageWithdrawOutcomeV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 
 export type PendingMaterializationDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
+/** Semantic withdrawal reuses ordinary pending deletion, including its delivery fence. */
+export async function withdrawPendingQueueV2Message(params: Readonly<{
+    token: string; sessionId: string; localId: string; targetExecutionRunId?: string; signal?: AbortSignal;
+    resolveAuthorizationHeaders: (request: Readonly<{ method: string; path: string; body: Readonly<Record<string, never>> }>) => Readonly<Record<string, string>> | null;
+}>) {
+    const pendingOwner = params.targetExecutionRunId
+        ? `/v2/sessions/${encodeURIComponent(params.sessionId)}/execution-runs/${encodeURIComponent(params.targetExecutionRunId)}/pending`
+        : `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`;
+    const requestPath = `${pendingOwner}/${encodeURIComponent(params.localId)}/withdraw`;
+    const body = {};
+    const authorization = params.resolveAuthorizationHeaders({ method: 'POST', path: requestPath, body });
+    if (!authorization) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+    const response = await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${requestPath}`, body, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorization },
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const outcome = response.data && typeof response.data === 'object' ? Reflect.get(response.data, 'outcome') : undefined;
+    const parsed = PendingMessageWithdrawOutcomeV1Schema.safeParse(outcome);
+    return { outcome: parsed.success ? parsed.data : 'delivery_unknown' as const };
+}
 export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';
 export type { PendingProviderAction } from '@happier-dev/protocol';
 
@@ -211,6 +232,7 @@ export type PendingQueueWriteBody = Readonly<(
     | { localId: string; ciphertext: string; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
     | { localId: string; content: { t: 'plain'; v: unknown }; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
 ) & Readonly<{
+    targetMachineId?: string;
     deliveryMode?: 'continuation_if_no_queued_user_input';
     /** Host-derived only. Account/plugin authors never receive this value. */
     requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;

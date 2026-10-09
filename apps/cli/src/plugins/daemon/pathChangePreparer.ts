@@ -1,4 +1,5 @@
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
+import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
 import {
@@ -124,6 +125,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
   runPluginUiArtifactBuild?: RunPluginUiArtifactBuildBoundary;
   removePluginDataDirectory?: (directoryPath: string) => Promise<void>;
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
+  readManagedResources?: (pluginId: string, dispositions?: readonly ManagedResourceDispositionV1[]) =>
+    Promise<Readonly<{ resources: readonly ManagedResourceDependencyV1[]; reviewed: boolean }>>;
 }>): (
   request: PluginChangeRequest,
   context?: DaemonPathPluginChangePreparationContext,
@@ -467,6 +470,19 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         pluginId: stateRequest.pluginId,
         requiresReview: false,
         async apply(_decision, control) {
+          if (stateRequest.kind === 'disable' || stateRequest.kind === 'uninstall' || stateRequest.kind === 'uninstallAndDeleteData') {
+            let dependencies: Readonly<{ resources: readonly ManagedResourceDependencyV1[]; reviewed: boolean }>;
+            try {
+              if (!params.readManagedResources) throw new Error('plugin_managed_resource_preflight_unavailable');
+              dependencies = await params.readManagedResources(
+                stateRequest.pluginId, stateRequest.managedResourceDispositions,
+              );
+            } catch {
+              return { kind: 'unavailable' as const, code: 'plugin_managed_resource_preflight_unavailable' };
+            }
+            if (!dependencies.reviewed) return { kind: 'managedResourcesReviewRequired' as const,
+              pluginId: stateRequest.pluginId, resources: dependencies.resources };
+          }
           const store = createMutationStore((record) => {
             // Ordinary registry changes may release after the serving swap.
             // Destructive uninstall keeps exclusion through both owned-directory steps.

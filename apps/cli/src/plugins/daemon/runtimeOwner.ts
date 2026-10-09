@@ -5,6 +5,7 @@ import {
 } from '@/plugins/daemon/changeService';
 import { createDaemonNpmPluginChangePreparer } from '@/plugins/daemon/npmChangePreparer';
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
+import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -100,6 +101,7 @@ export type DaemonPluginAvailabilityReporter = Readonly<{
  */
 export function createDaemonPluginRuntimeOwner(params: Readonly<{
   happyHomeDir: string;
+  managedResourcePreflight?: PluginManagedResourcePreflightBinding;
   startupDeadlineAtMs?: number;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
@@ -310,6 +312,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     happyHomeDir: params.happyHomeDir,
     runtimeLifecycle,
     onRegistryApplied,
+    ...(params.managedResourcePreflight ? { readManagedResources: (pluginId, dispositions) =>
+      readServerPluginManagedResources(params.managedResourcePreflight!, pluginId, dispositions) } : {}),
     ...(params.generationCustodyRetirement
       ? { generationCustodyRetirement: params.generationCustodyRetirement }
       : {}),

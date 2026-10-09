@@ -18,6 +18,8 @@ import {
   revalidateRegistryConnectedAccountActionFormInput,
   resolveRegistryConnectedAccountActionPurposeBindingSnapshot,
   resolveRegistryConnectedAccountActionFormPurposeAuthorization,
+  resolveRegistryConnectedAccountActionPurposeAuthorization,
+  resolveRegistryConnectedAccountActionPurposeAuthorizations,
   type RegistryConnectedAccountPurposeAuthorizationProjection,
 } from './deriveRegistryConnectedAccountPurposeAuthorizations';
 
@@ -136,6 +138,26 @@ function actionAndHookManifest(options: Readonly<{ omitConnectedAccountOptionsFi
   if (!parsed) throw new Error('Expected canonical manifest fixture');
   return parsed;
 }
+
+it('derives a retained native credential scope from the actual Action declaration without a form field', () => {
+  const manifest = actionAndHookManifest({ omitConnectedAccountOptionsField: true });
+  const registry = projection({ activationTargets: [{ pluginId: manifest.id, manifest }] });
+  const resolve = (qualifiedActionId: string, purposeId: string) =>
+    resolveRegistryConnectedAccountActionPurposeAuthorization({ registry, qualifiedActionId, purposeId });
+  expect(resolve(`${manifest.id}/run`, 'action-account')).toEqual({
+    action: { pluginId: manifest.id, localId: 'run' },
+    purpose: { consumer: { pluginId: manifest.id, localId: 'run' }, purpose: 'action-account' },
+    serviceRefs: [{ pluginId: manifest.id, localId: 'account' }],
+  });
+  expect(resolve(`${manifest.id}/setup-source`, 'action-account')).toBeNull();
+  expect(resolve(`${manifest.id}/run`, 'hook-account')).toBeNull();
+  expect(resolve(`${manifest.id}/run`, 'missing')).toBeNull();
+  expect(resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry, qualifiedActionId: `${manifest.id}/run` })).toEqual([
+    resolve(`${manifest.id}/run`, 'action-account'),
+  ]);
+  expect(resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry, qualifiedActionId: `${manifest.id}/setup-source` })).toEqual([]);
+  expect(resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry, qualifiedActionId: `${manifest.id}/missing` })).toBeNull();
+});
 
 it('admits a declared native service only within the Action purpose scope and refuses mixed selections', async () => {
   const base = actionAndHookManifest({ omitConnectedAccountOptionsField: true });

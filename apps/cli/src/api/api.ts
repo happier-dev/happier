@@ -1,6 +1,13 @@
-import { resolvePublishedMachineEncryptionContext } from './machine/machineDataEncryptionKey';
+import { resolvePublishedMachineEncryptionContext, MachineContentKeyUnavailableError } from './machine/machineDataEncryptionKey';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineKeyBasisV1Schema, MachinePublishedRowV1Schema, MachineContentKeyTransitionResultV1Schema, prepareMachineContentKeyV1, MachineContentKeyPreparationErrorV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createMachineContentCodec } from './machine/machineStoredContent';
+import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import axios from 'axios'
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -40,6 +47,10 @@ import {
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { ComputerRoutes } from '@/daemon/computer/routes';
+import { createConfidentialSecretFillExecutor } from '@/daemon/surfaces/confidentialSecretFill';
+import type { CurrentMachineExecutionOriginContext } from './machine/resolveCurrentMachineExecutionOriginContext';
+import { fetchAccountEncryptionCurrentness } from './client/connectedServiceCredentialApi';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
 import type { ProvisionBrowserAutomationRuntime } from '@/daemon/browser/actions/runtimeActionExecutor';
 import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
@@ -56,7 +67,7 @@ import {
   fetchServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
-import { decodeBase64, encodeBase64, encrypt, decrypt } from './encryption';
+import { decodeBase64, encodeBase64, encrypt, decrypt, getRandomBytes } from './encryption';
 import { PushNotificationClient } from './pushNotifications';
 import { configuration } from '@/configuration';
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
@@ -67,6 +78,7 @@ import {
 } from '@/session/metadata/sessionMetadataLayout';
 
 import {
+  AccountEncryptionMaterialUnavailableError,
   requireAccountEncryptionCredentials,
   resolveMachineEncryptionContext,
   resolveSessionEncryptionContext,
@@ -74,6 +86,7 @@ import {
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import { logServerEndpointFailure } from './client/serverEndpointFailureLog';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
+import { readAccountEncryptionModeOnce } from './client/accountEncryptionMode';
 import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
 import { SessionCreationPlacementError } from './session/sessionCreationPlacementError';
 import {
@@ -129,7 +142,7 @@ import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialCom
 import { parseBuiltInLegacyConnectedServiceQuotaSnapshotV1, projectBuiltInLegacyConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionOwnerMetadataEnvelopeV1Schema, StoredSessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type {
@@ -157,10 +170,26 @@ import {
   SessionMetadataPrivacyUpgradeRequiredError,
 } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 export { SessionMetadataPrivacyUpgradeRequiredError } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { resolveSessionRoleSnapshotCreationMetadata } from '@/session/metadata/resolveSessionRoleSnapshotCreationMetadata';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
 import { SessionAwarenessOriginV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+
+type PublishedMachineRow = import('@happier-dev/protocol/machines/machineContentKeyTransitionV1').MachinePublishedRowV1;
+
+export class MachineContentKeyOutcomeUnknownError extends Error {
+  readonly code = 'machine_content_key_outcome_unknown' as const;
+  constructor(readonly machineId: string) {
+    super(`The content key transition for Machine ${machineId} could not be confirmed`);
+    this.name = 'MachineContentKeyOutcomeUnknownError';
+  }
+}
+
+export class MachineContentKeyTransitionRefusedError extends Error {
+  constructor(readonly machineId: string, readonly code: 'forbidden' | 'machine_unavailable' | 'machine_storage_mode_mismatch' | 'encryption_material_unavailable') {
+    super(`The content key transition for Machine ${machineId} was refused (${code})`);
+    this.name = 'MachineContentKeyTransitionRefusedError';
+  }
+}
 
 function assertSessionCreationCorrespondenceMatches(
   requested: unknown,
@@ -355,6 +384,31 @@ export class ApiClient {
     });
   }
 
+  createConfidentialSecretFillExecutor(input: Readonly<{
+    machineId(): string | null;
+    readHostIdentity(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
+  }>) {
+    return createConfidentialSecretFillExecutor({
+      expectedScopeKey: resolveAccountSettingsScopeKeyForToken(this.credential.token),
+      expectedAccountId: readAccountIdFromToken(this.credential.token),
+      serverId: configuration.activeServerId,
+      machineId: input.machineId,
+      readHostIdentity: input.readHostIdentity,
+      readAccountMode: async (signal) => (await fetchAccountEncryptionCurrentness({
+        token: this.credential.token, ...(signal ? { signal } : {}),
+      })).mode,
+      prepareTarget: async (args) => {
+        // The pinned native contract cannot prove keyboard focus; never route credentials to raw type.
+        if (args.actionId === 'computer.secret.fill') return { status: 'refused', code: 'field_verification_unsupported' };
+        const routes = this.getBrowserDaemonAutomationRoutes?.();
+        if (!routes) return { status: 'refused', code: 'target_unavailable' };
+        // Browser owns its observation hold and actual-launch qualification. The consumer
+        // refuses missing qualification before materialization; headless needs no native embargo.
+        return routes.prepareConfidentialFill(args.request, args.context);
+      },
+    });
+  }
+
   async getServerFeaturesSnapshot(
     options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>,
   ): Promise<CliServerFeaturesSnapshot | undefined> {
@@ -496,14 +550,7 @@ export class ApiClient {
       serverFeaturesSnapshot,
     } = encryptionModeResolution;
     const initialAccessCreateFields = buildSessionInitialAccessCreateFields(opts, serverFeaturesSnapshot);
-    const creationMetadata = await resolveSessionRoleSnapshotCreationMetadata({
-      metadata: opts.metadata,
-      readLeadSession: (sessionId) => fetchSessionById({
-        token: this.credential.token, sessionId, serverFeaturesSnapshot,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      }),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+    const creationMetadata = opts.metadata;
     const encryptionContext = desiredSessionEncryptionMode === 'e2ee'
       ? resolveSessionEncryptionContext(this.credential)
       : null;
@@ -649,7 +696,7 @@ export class ApiClient {
         const rawOwnerMetadata =
           (raw as Readonly<{ ownerMetadata?: unknown }>).ownerMetadata;
         const parsedOwnerMetadataEnvelope =
-          SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+          StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(
             rawOwnerMetadata,
           );
         const resolveRuntimeMetadata = (decodedMetadata: unknown): Metadata => {
@@ -675,7 +722,7 @@ export class ApiClient {
             throw new SessionMetadataPrivacyUpgradeRequiredError([]);
           }
           return projectSessionOwnerCompatibilityViewV1({
-            sharedMetadata: SessionSharedMetadataV1Schema.parse(decodedMetadata),
+            sharedMetadata: StoredSessionSharedMetadataV1Schema.parse(decodedMetadata),
             ownerMetadata,
           }) as Metadata;
         };
@@ -843,31 +890,93 @@ export class ApiClient {
    * Register or update machine with the server
    * Returns the current machine state from the server with decrypted metadata and daemonState
    */
-  async getMachine(machineId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<Machine | null> {
+  async getMachine(machineId: string, options?: Readonly<{ signal?: AbortSignal;
+    authorization?: ExternalActionExecutionAuthorizationV1;
+    effectActionId?: string }>): Promise<Machine | null> {
+    if (options?.authorization) return ApiClient.getRequesterMachine(machineId, { ...options, authorization: options.authorization });
     options?.signal?.throwIfAborted();
     const accountMode = await this.getAccountEncryptionMode({ signal: options?.signal });
-    const machineStorageMode = accountMode === 'plain' ? 'plain' : 'e2ee';
+    const raw = await this.readPublishedMachineRow(machineId, options);
+    return raw ? this.decodePublishedMachine(machineId, raw, accountMode) : null;
+  }
+
+  /** A private projection supplies crypto; the original carrier supplies every outward request. */
+  static async getRequesterMachine(machineId: string, options: Readonly<{ authorization: ExternalActionExecutionAuthorizationV1;
+    signal?: AbortSignal; effectActionId?: string }>): Promise<Machine | null> {
+    options.signal?.throwIfAborted();
+    const account = options.authorization.requesterAccountProjection;
+    const http = options.authorization.requesterHttpProjection;
+    if (!account || !http || account.accountId !== options.authorization.binding.accountId
+      || account.accountId !== http.accountId || account.serverId !== http.serverId
+      || !await account.isCurrent() || !await http.isCurrent()) throw new MachineContentKeyUnavailableError(machineId);
+    const raw = await ApiClient.readPublishedMachineRowForAuthority(machineId, undefined, options);
+    if (!await account.isCurrent() || !await http.isCurrent()) throw new MachineContentKeyUnavailableError(machineId);
+    options.signal?.throwIfAborted();
+    return raw ? ApiClient.decodePublishedMachineForAuthority(machineId, raw, account.accountEncryptionMode, undefined, options.authorization) : null;
+  }
+
+  private async readPublishedMachineRow(machineId: string, options?: Readonly<{ signal?: AbortSignal;
+    authorization?: ExternalActionExecutionAuthorizationV1;
+    effectActionId?: string }>): Promise<PublishedMachineRow | null> {
+    return ApiClient.readPublishedMachineRowForAuthority(machineId, this.credential, options);
+  }
+
+  private static async readPublishedMachineRowForAuthority(machineId: string, credentials: StoredCredentials | undefined,
+    options?: Readonly<{ signal?: AbortSignal; authorization?: ExternalActionExecutionAuthorizationV1; effectActionId?: string }>): Promise<PublishedMachineRow | null> {
     try {
+      const path = `/v1/machines/${encodeURIComponent(machineId)}`;
+      const http = options?.authorization?.requesterHttpProjection;
+      const requesterHeaders = http ? await http.createRequestHeaders({ effectActionId: options?.effectActionId ?? options!.authorization!.binding.actionId,
+        method: 'GET', path, ...(options?.signal ? { signal: options.signal } : {}) }) : null;
+      if (options?.authorization && !requesterHeaders) throw new MachineContentKeyUnavailableError(machineId);
       const response = await axios.get(
-        `${resolveServerHttpBaseUrl()}/v1/machines/${encodeURIComponent(machineId)}`,
+        `${http?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()}${path}`,
         {
-          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${this.credential.token}` },
+          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...(requesterHeaders ?? { Authorization: `Bearer ${credentials!.token}` }) },
           ...(options?.signal ? { signal: options.signal } : {}),
         },
       );
-      const raw = response.data.machine;
-      const encryptionContext = resolvePublishedMachineEncryptionContext({
-        credentials: this.credential,
+      return MachinePublishedRowV1Schema.parse(response.data.machine);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+      throw error;
+    }
+  }
+
+  private decodePublishedMachine(machineId: string, raw: PublishedMachineRow, accountMode: ConnectedServiceAccountEncryptionMode): Machine & { encryptionMode: 'plain' | 'e2ee' } {
+      return ApiClient.decodePublishedMachineForAuthority(machineId, raw, accountMode, this.credential);
+  }
+
+  private static decodePublishedMachineForAuthority(machineId: string, raw: PublishedMachineRow,
+    accountMode: ConnectedServiceAccountEncryptionMode, credentials?: StoredCredentials, authorization?: ExternalActionExecutionAuthorizationV1): Machine & { encryptionMode: 'plain' | 'e2ee' } {
+      if (raw.id !== machineId) throw new MachineContentKeyUnavailableError(machineId);
+      const access = raw.access === undefined ? undefined : AccessibleMachineAccessV1Schema.parse(raw.access);
+      if (access && access.accessState !== 'ready') throw new MachineContentKeyUnavailableError(machineId);
+      const account = authorization?.requesterAccountProjection;
+      const foreign = access !== undefined && access.custodian.accountId !== (account?.accountId ?? readAccountIdFromToken(credentials!.token));
+      const keyBasis = raw.keyBasis === undefined ? undefined : MachineKeyBasisV1Schema.parse(raw.keyBasis);
+      if (keyBasis && (keyBasis.metadataVersion !== raw.metadataVersion || keyBasis.daemonStateVersion !== raw.daemonStateVersion
+        || (!foreign && keyBasis.dataEncryptionKey !== (raw.dataEncryptionKey ?? null)))) {
+        throw new MachineContentKeyUnavailableError(machineId);
+      }
+      const expectedAccountMode = access?.resourceMode ?? raw.storageMode ?? accountMode;
+      if (authorization && !account?.resolveMachineContentEncryptionContext) throw new MachineContentKeyUnavailableError(machineId);
+      const encryptionContext = account?.resolveMachineContentEncryptionContext?.(raw) ?? resolvePublishedMachineEncryptionContext({
+        credentials: credentials!,
         machineId,
+        expectedAccountMode,
+        access: raw.access,
         publishedDataEncryptionKey: raw.dataEncryptionKey,
         machineKind: raw.kind,
         installationId: raw.installationId,
         runnerContentKeyBinding: raw.runnerContentKeyBinding,
       });
-      if ((encryptionContext.encryptionMode ?? 'e2ee') !== machineStorageMode) {
-        throw new Error('Machine storage mode does not match Account encryption mode');
-      }
       const machineCodec = createMachineContentCodec(encryptionContext);
+      const openedMetadata = raw.metadata ? machineCodec.decodeStored(raw.metadata) : null;
+      const openedDaemonState = raw.daemonState ? machineCodec.decodeStored(raw.daemonState) : null;
+      if ((raw.metadata && openedMetadata === null) || (raw.daemonState && openedDaemonState === null)) {
+        throw new MachineContentKeyUnavailableError(machineId);
+      }
       const operationProtocolCapabilities = readMachineOperationProtocolCapabilitiesProjectionV1({
         machineId,
         value: raw,
@@ -875,9 +984,16 @@ export class ApiClient {
 
       const common = {
         id: raw.id,
-        metadata: raw.metadata ? machineCodec.decodeStored(raw.metadata) as MachineMetadata : null,
+        installationId: raw.installationId,
+        active: raw.active,
+        revokedAt: raw.revokedAt,
+        replacedByMachineId: raw.replacedByMachineId,
+        dataEncryptionKey: raw.dataEncryptionKey ?? null,
+        ...(keyBasis ? { keyBasis } : {}),
+        ...(access ? { access } : {}),
+        metadata: projectMachinePublishedMetadataFromRowV1(raw.metadata ? StoredMachinePublishedMetadataV1Schema.parse(openedMetadata) : null, raw.devcontainerChild),
         metadataVersion: raw.metadataVersion || 0,
-        daemonState: raw.daemonState ? machineCodec.decodeStored(raw.daemonState) as DaemonState : null,
+        daemonState: raw.daemonState ? StoredMachinePublishedDaemonStateV1Schema.parse(openedDaemonState) : null,
         daemonStateVersion: raw.daemonStateVersion || 0,
         operationProtocolCapabilities: operationProtocolCapabilities?.capabilities ?? null,
         operationProtocolCapabilitiesRevision: operationProtocolCapabilities?.revision ?? null,
@@ -890,8 +1006,77 @@ export class ApiClient {
             encryptionKey: encryptionContext.encryptionKey,
             encryptionVariant: encryptionContext.encryptionVariant,
           };
+  }
+
+  /** Owner preparation converts historical content once; an ambiguous POST is never replayed. */
+  async prepareMachineContentKey(machineId: string, options?: Readonly<{
+    signal?: AbortSignal;
+    /** A captured Home/Account transport, including private Action continuation authority. */
+    request?: (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown; signal?: AbortSignal }>) => Promise<Readonly<{ status: number; data: unknown }>>;
+    isCurrent?: () => boolean | Promise<boolean>;
+  }>): Promise<Machine> {
+    const assertCurrent = async () => {
+      if (await options?.isCurrent?.() === false) throw new MachineContentKeyUnavailableError(machineId);
+    };
+    const request = async (method: 'GET' | 'POST', path: string, body?: unknown, signal?: AbortSignal) => {
+      await assertCurrent();
+      const response = options?.request
+        ? await options.request({ method, path, ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) })
+        : method === 'GET'
+          ? await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${path}`, {
+              headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${this.credential.token}` },
+              ...(signal ? { signal } : {}),
+            })
+          : await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, {
+              headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${this.credential.token}` },
+              ...(signal ? { signal } : {}),
+            });
+      await assertCurrent();
+      return response;
+    };
+    options?.signal?.throwIfAborted();
+    const boundAccountMode = options?.request ? await readAccountEncryptionModeOnce({
+      request: () => request('GET', '/v1/account/encryption', undefined, options.signal),
+    }) : null;
+    const accountMode = boundAccountMode
+      ? boundAccountMode.kind === 'resolved' ? boundAccountMode.mode : 'unknown'
+      : await this.getAccountEncryptionMode({ signal: options?.signal });
+    const observe = async (signal?: AbortSignal): Promise<PublishedMachineRow> => {
+      const response = await request('GET', `/v1/machines/${encodeURIComponent(machineId)}`, undefined, signal);
+      if (response.status !== 200) throw new MachineContentKeyUnavailableError(machineId);
+      if (!response.data || typeof response.data !== 'object' || !('machine' in response.data)) throw new MachineContentKeyUnavailableError(machineId);
+      return MachinePublishedRowV1Schema.parse(response.data.machine);
+    };
+    const custodianAccountId = readAccountIdFromToken(this.credential.token);
+    if (!custodianAccountId) throw new MachineContentKeyUnavailableError(machineId);
+    try {
+      return await prepareMachineContentKeyV1({ machineId,
+        custodianAccountId, material: this.credential.encryption,
+        ...(this.credential.encryption?.type === 'dataKey' ? { dataKeyPublicKey: this.credential.encryption.publicKey } : {}),
+        randomBytes: getRandomBytes, observe, signal: options?.signal, isCurrent: options?.isCurrent,
+        open: raw => this.decodePublishedMachine(machineId, raw, accountMode),
+        decodeStored: (machine, ciphertext) => createMachineContentCodec(machine).decodeStored(ciphertext),
+        encodeStored: (encryptionKey, value) => createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey, encryptionVariant: 'dataKey' }).encodeStored(value),
+        transition: async (input, signal) => {
+          try {
+            const response = await request('POST', `/v1/machines/${encodeURIComponent(machineId)}/content-key/transition`, input, signal);
+            return MachineContentKeyTransitionResultV1Schema.parse(response.data);
+          } catch (error) {
+            const refusal = axios.isAxiosError(error) && error.response
+              ? MachineContentKeyTransitionResultV1Schema.safeParse(error.response.data) : null;
+            if (refusal?.success && refusal.data.kind === 'refused') throw new MachineContentKeyPreparationErrorV1(refusal.data.code, true);
+            throw error;
+          }
+        },
+      });
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) return null;
+      if (error instanceof MachineContentKeyPreparationErrorV1) {
+        if (error.code === 'machine_content_key_outcome_unknown') throw new MachineContentKeyOutcomeUnknownError(machineId);
+        if (error.refusal) throw new MachineContentKeyTransitionRefusedError(machineId, error.code);
+        if (error.code === 'machine_unavailable') throw new MachineContentKeyUnavailableError(machineId);
+        if (error.code === 'encryption_material_unavailable') throw new AccountEncryptionMaterialUnavailableError();
+        throw new MachineContentKeyTransitionRefusedError(machineId, error.code);
+      }
       throw error;
     }
   }
@@ -1028,10 +1213,23 @@ export class ApiClient {
     daemonState?: DaemonState,
     timeoutMs?: number,
     registrationIdentity?: MachineRegistrationIdentity,
+    managedEnrollment?: ManagedEnrollmentCorrelationV1,
   }): Promise<Machine> {
-    const accountMode = await this.getAccountEncryptionMode();
+    const managedEnrollment = opts.managedEnrollment
+      ? ManagedEnrollmentCorrelationV1Schema.parse(opts.managedEnrollment) : undefined;
+    const devcontainerChild = managedEnrollment ? deriveManagedDevcontainerChildProjectionV1({
+      managedMachineId: managedEnrollment.managedId, controllerMachineId: managedEnrollment.controller.machineId,
+      enrolledMachineId: opts.machineId, resource: managedEnrollment.resource,
+    }) : undefined;
+    const accountMode = await this.getAccountEncryptionMode({ throwOnTransportError: true });
+    if (accountMode === 'unknown') throw new MachineContentKeyUnavailableError(opts.machineId);
     const machineStorageMode = accountMode === 'plain' ? 'plain' : 'e2ee';
-    const encryptionContext = machineStorageMode === 'e2ee'
+    const incumbentRow = await this.readPublishedMachineRow(opts.machineId);
+    const incumbent = incumbentRow ? this.decodePublishedMachine(opts.machineId, incumbentRow, accountMode) : null;
+    if (incumbent?.access && incumbent.access.custodian.accountId !== readAccountIdFromToken(this.credential.token)) {
+      throw new MachineContentKeyUnavailableError(opts.machineId);
+    }
+    const encryptionContext = !incumbent && machineStorageMode === 'e2ee'
       ? resolveMachineEncryptionContext(this.credential)
       : null;
     const encodeMachineContent = (value: unknown): string => {
@@ -1047,22 +1245,12 @@ export class ApiClient {
         value,
       ));
     };
-    const decodeMachineContent = (value: string): unknown => {
-      if (machineStorageMode === 'plain') {
-        return decodePlainMachineStoredContent(value);
-      }
-      if (!encryptionContext) {
-        throw new Error('Machine encryption context is unavailable for encrypted storage');
-      }
-      return decrypt(
-        encryptionContext.encryptionKey,
-        encryptionContext.encryptionVariant,
-        decodeBase64(value),
-      );
-    };
     const registrationIdentity = opts.registrationIdentity
       ? MachineRegistrationIdentitySchema.parse(opts.registrationIdentity)
       : await this.resolveMachineRegistrationIdentity(opts.machineId);
+    const metadata = devcontainerChild
+      ? parseMachinePublishedMetadataV1({ ...(incumbent?.metadata ?? opts.metadata), devcontainerChild })
+      : parseMachinePublishedMetadataV1(opts.metadata);
     const machinesUrl = `${resolveServerHttpBaseUrl()}/v1/machines`;
 
     // Create machine
@@ -1075,11 +1263,14 @@ export class ApiClient {
         machinesUrl,
         {
           id: opts.machineId,
-          metadata: encodeMachineContent(opts.metadata),
-          daemonState: opts.daemonState
-            ? encodeMachineContent(opts.daemonState)
+          ...(managedEnrollment ? { managedEnrollment } : {}),
+          metadata: incumbentRow
+            ? incumbentRow.metadata ?? createMachineContentCodec(incumbent!).encodeStored(metadata)
+            : encodeMachineContent(metadata),
+          daemonState: incumbentRow ? incumbentRow.daemonState ?? undefined : opts.daemonState
+            ? encodeMachineContent(parseMachinePublishedDaemonStateV1(opts.daemonState))
             : undefined,
-          dataEncryptionKey: machineStorageMode === 'plain'
+          dataEncryptionKey: incumbentRow ? incumbentRow.dataEncryptionKey ?? null : machineStorageMode === 'plain'
             ? MACHINE_PLAIN_DATA_KEY_MARKER
             : encryptionContext?.dataEncryptionKey
               ? encodeBase64(encryptionContext.dataEncryptionKey)
@@ -1134,42 +1325,8 @@ export class ApiClient {
         });
       }
 
-      const operationProtocolCapabilities = readMachineOperationProtocolCapabilitiesProjectionV1({
-        machineId: opts.machineId,
-        value: raw,
-      });
-
-      // Return decrypted machine like we do for sessions.
-      const machineCommon = {
-        id: raw.id,
-        metadata: raw.metadata
-          ? decodeMachineContent(raw.metadata) as MachineMetadata
-          : null,
-        metadataVersion: raw.metadataVersion || 0,
-        daemonState: raw.daemonState
-          ? decodeMachineContent(raw.daemonState) as DaemonState
-          : null,
-        daemonStateVersion: raw.daemonStateVersion || 0,
-        operationProtocolCapabilities:
-          operationProtocolCapabilities?.capabilities ?? null,
-        operationProtocolCapabilitiesRevision:
-          operationProtocolCapabilities?.revision ?? null,
-      };
-      if (machineStorageMode === 'plain') {
-        return {
-          ...machineCommon,
-          encryptionMode: 'plain',
-        };
-      }
-      if (!encryptionContext) {
-        throw new Error('Machine encryption context is unavailable for encrypted storage');
-      }
-      return {
-        ...machineCommon,
-        encryptionMode: 'e2ee',
-        encryptionKey: encryptionContext.encryptionKey,
-        encryptionVariant: encryptionContext.encryptionVariant,
-      };
+      // Registration may return an incumbent/winning row, never the proposed context.
+      return this.decodePublishedMachine(opts.machineId, MachinePublishedRowV1Schema.parse(raw), accountMode);
     } catch (error) {
       if (
         axios.isAxiosError(error)
@@ -1320,6 +1477,7 @@ export class ApiClient {
       ownershipMetadata,
       {
         ...lifecycleDependencies,
+        loadMachine: lifecycleDependencies?.loadMachine ?? ((options) => this.getMachine(machine.id, options)),
         createCapabilitiesApiClient:
           lifecycleDependencies?.createCapabilitiesApiClient
           ?? (async (credentials) => await ApiClient.create(credentials)),
@@ -1421,7 +1579,7 @@ export class ApiClient {
     return await this.connectedServiceCredentialApi.listConnectedServiceProfiles(params);
   }
 
-  async getAccountEncryptionMode(options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>): Promise<ConnectedServiceAccountEncryptionMode> {
+  async getAccountEncryptionMode(options?: Parameters<ConnectedServiceCredentialApi['getAccountEncryptionMode']>[0]): Promise<ConnectedServiceAccountEncryptionMode> {
     const mode = await this.connectedServiceCredentialApi.getAccountEncryptionMode(options);
     if (mode === 'plain') options?.signal?.throwIfAborted();
     return mode;

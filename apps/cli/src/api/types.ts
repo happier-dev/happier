@@ -1,10 +1,9 @@
 import { z } from 'zod'
 import { UsageSchema } from './usage'
-import { LocalServiceMachineSummaryV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
-import { CliUpdateFactsSchema } from '@happier-dev/protocol/machines/cliUpdateFacts';
+import { StoredMachinePublishedMetadataV1Schema, MachinePublishedDaemonStateV1Schema, MachinePublishedTransferListenerV1Schema, MachinePublishedTransferRuntimeV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
 import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
 import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2 } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
@@ -32,13 +31,7 @@ import type {
 import { ContentPublicKeyFingerprintSchema } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { MachineReplacementReasonSchema } from '@happier-dev/protocol/machines/identity/machineReplacement';
-import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { WorkspaceSyncRuntimeEventV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import {
-  DaemonPublicReleaseChannelLabelSchema,
-  DaemonStartupSourceSchema,
-} from '../daemon/ownership/daemonOwnershipMetadata'
 import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeOverrideV1,
@@ -56,12 +49,12 @@ import type {
 } from '@happier-dev/protocol'
 import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import type { SessionStoredMessageContent } from '@happier-dev/protocol';
 export { EphemeralUpdateSchema, MessageAckResponseSchema, SessionEndAckResponseSchema, UpdateMetadataAckResponseSchema, UpdateStateAckResponseSchema } from '@happier-dev/protocol/updates';
 
 import { SessionBroadcastContainerSchema, UpdateBodySchema as ProtocolUpdateBodySchema, UpdateContainerSchema as ProtocolUpdateContainerSchema } from '@happier-dev/protocol/updates';
-import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import type {
   EphemeralUpdate,
   MessageAckResponse,
@@ -176,6 +169,10 @@ export interface ServerToClientEvents {
  * Socket events from client to server
  */
 export interface ClientToServerEvents {
+  'machine-update-metadata': (
+    data: import('@happier-dev/protocol/machines/metadataUpdate').MachineUpdateMetadataRequest,
+    cb?: (answer: import('@happier-dev/protocol/machines/metadataUpdate').MachineUpdateMetadataResponse) => void,
+  ) => void;
   [SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2]: (
     data: import('@happier-dev/protocol').SessionPendingExecutionRunMaterializeNextRequestV2,
     cb?: (answer: import('@happier-dev/protocol').SessionPendingExecutionRunMaterializeNextResponseV2) => void,
@@ -366,18 +363,7 @@ export type SessionCreateOrLoadResult = Session & Readonly<{
 /**
  * Machine metadata - static information (rarely changes)
  */
-export const MachineMetadataSchema = z.object({
-  host: z.string(),
-  platform: z.string(),
-  happyCliVersion: z.string(),
-  homeDir: z.string(),
-  happyHomeDir: z.string(),
-  happyLibDir: z.string(),
-  daemonTerminalSessionAttachSupported: z.boolean().optional(),
-  daemonSessionGoalControlsSupported: z.boolean().optional(),
-  /** K5 (plan R13): this daemon's first-party CLI update facts, published on connect and on each update outcome. */
-  cliUpdate: CliUpdateFactsSchema.optional(),
-})
+export const MachineMetadataSchema = StoredMachinePublishedMetadataV1Schema;
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
 
@@ -403,92 +389,30 @@ export type MachineRegistrationIdentity = Readonly<
  * Daemon transfer runtime capability state - dynamic listener and direct-transfer metadata
  * published by the daemon into machine state.
  */
-export const DaemonTransferListenerStateSchema = z.object({
-  enabled: z.boolean(),
-  configured: z.boolean(),
-  active: z.boolean(),
-  available: z.boolean().optional(),
-})
+export const DaemonTransferListenerStateSchema = MachinePublishedTransferListenerV1Schema;
 
 export type DaemonTransferListenerState = z.infer<typeof DaemonTransferListenerStateSchema>
 
-export const DaemonTransferRuntimeStateSchema = z.object({
-  supported: z.object({
-    import: z.boolean(),
-    export: z.boolean(),
-  }),
-  listenerClasses: z.object({
-    loopback_http: DaemonTransferListenerStateSchema,
-    tailscale_serve_https: DaemonTransferListenerStateSchema,
-  }),
-  lifecycle: z.object({
-    mode: z.literal('lazy_idle_shutdown'),
-    version: z.literal(1),
-  }),
-})
+export const DaemonTransferRuntimeStateSchema = MachinePublishedTransferRuntimeV1Schema;
 
 export type DaemonTransferRuntimeState = z.infer<typeof DaemonTransferRuntimeStateSchema>
-
-const DaemonPeerMediationFlowStateSchema = z.object({
-  active: z.boolean(),
-}).passthrough()
-
-/**
- * One entry per `PeerFlowKindV1` the loopback endpoint can serve. `machine_rpc` was the only
- * declared member while `live_stream`, `tcp_tunnel` and `voice_media` rode `.passthrough()`
- * untyped, which is how `voice_media` came to be absent from the daemon's own state report (§7.5).
- */
-const DaemonPeerMediationLoopbackStateSchema = z.object({
-  endpoint: PeerLoopbackEndpointCandidateV1Schema.optional(),
-  flows: z.object({
-    machine_rpc: DaemonPeerMediationFlowStateSchema.optional(),
-    live_stream: DaemonPeerMediationFlowStateSchema.optional(),
-    tcp_tunnel: DaemonPeerMediationFlowStateSchema.optional(),
-    voice_media: DaemonPeerMediationFlowStateSchema.optional(),
-  }).passthrough().optional(),
-}).passthrough()
-
-const DaemonPeerMediationStateSchema = z.object({
-  loopback: DaemonPeerMediationLoopbackStateSchema.optional(),
-  iroh: z.object({
-    endpoint: IrohEndpointDescriptorV1Schema,
-  }).passthrough().optional(),
-}).passthrough()
 
 /**
  * Daemon state - dynamic runtime information (frequently updated)
  */
-export const DaemonStateSchema = z.object({
-  status: z.union([
-    z.enum(['running', 'shutting-down']),
-    z.string() // Forward compatibility
-  ]),
-  pid: z.number().optional(),
-  httpPort: z.number().optional(),
-  startedAt: z.number().optional(),
-  runtimeId: z.string().optional(),
-  cliVersion: z.string().optional(),
-  publicReleaseChannel: DaemonPublicReleaseChannelLabelSchema.optional(),
-  startupSource: DaemonStartupSourceSchema.optional(),
-  serviceManaged: z.boolean().optional(),
-  serviceLabel: z.string().optional(),
-  daemonPendingSessionActivationSupported: z.boolean().optional(),
-  shutdownRequestedAt: z.number().optional(),
-  shutdownSource:
-    z.union([
-      z.enum(['mobile-app', 'cli', 'os-signal', 'unknown']),
-      z.string() // Forward compatibility
-    ]).optional(),
-  transfer: DaemonTransferRuntimeStateSchema.optional(),
-  peerMediation: DaemonPeerMediationStateSchema.optional(),
-  workspaceSync: WorkspaceSyncRuntimeEventV1Schema.optional(),
-  localServices: LocalServiceMachineSummaryV1Schema.optional(),
-})
+export const DaemonStateSchema = MachinePublishedDaemonStateV1Schema;
 
 export type DaemonState = z.infer<typeof DaemonStateSchema>
 
 type MachineCommon = {
   id: string,
+  installationId?: string | null,
+  active?: boolean,
+  revokedAt?: number | null,
+  replacedByMachineId?: string | null,
+  dataEncryptionKey?: string | null,
+  keyBasis?: import('@happier-dev/protocol/machines/machineContentKeyTransitionV1').MachineKeyBasisV1,
+  access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1,
   metadata: MachineMetadata | null,
   metadataVersion: number,
   daemonState: DaemonState | null,
@@ -665,7 +589,7 @@ export type SessionHandoffMetadataV1 = {
  */
 export type SessionOptionOverrideRuleV1 = AgentModelOptionOverrideRule;
 
-export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
+export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Readonly<SessionIdentityAdditions> & {
   path: string,
   host: string,
   version?: string,

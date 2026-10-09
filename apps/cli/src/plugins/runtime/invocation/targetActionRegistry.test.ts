@@ -690,7 +690,7 @@ describe('target action invocation registry', () => {
                     captured = context;
                     expect(Object.keys(context.services).sort()).toEqual([
                         'actions', 'availability', 'composerContent', 'connectedAccounts', 'events', 'exec', 'fs', 'http',
-                        'interactions', 'logger', 'managedServices', 'mcp', 'notifications', 'providers', 'resources', 'secrets', 'sessions',
+                        'interactions', 'logger', 'machineProvisioners', 'managedServices', 'mcp', 'notifications', 'providers', 'resources', 'secrets', 'sessions',
                         'settings', 'storage',
                         'targetedContributions',
                     ]);
@@ -720,6 +720,7 @@ describe('target action invocation registry', () => {
                         http: ['openWebSocket', 'request'],
                         fs: ['list', 'readFile', 'remove', 'stat', 'writeFile'],
                         exec: ['agentCli', 'clients', 'run', 'spawn', 'systemTools'],
+                        machineProvisioners: ['materializeBootstrapCredential'],
                         managedServices: ['dependencies', 'supervise'],
                         sessions: ['current', 'external', 'get', 'list', 'subagents', 'watch'],
                         resources: ['describe', 'read', 'watch'],
@@ -1243,6 +1244,26 @@ describe('target action invocation registry', () => {
         await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
             .resolves.toMatchObject({ status: 'invalid', code: 'plugin_action_result_schema_invalid' });
         expect(invalidResult).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not preserve ordinary or schema-invalid settlements when private cleanup fails', async () => {
+        const unavailableServices = createUnavailablePluginServicesFactory();
+        for (const [retainIssuedResult, validResult] of [[false, true], [true, false]] as const) {
+            // The disposer is the genuine private-file OS boundary. Registry,
+            // result validation and invocation lifetime remain real.
+            const removalFailure = Object.assign(new Error('Private lease removal refused'), { code: 'EACCES' });
+            const registry = createRegistry({
+                createServices(seed, binding) {
+                    seed.retainCleanup!({ dispose: async () => { throw removalFailure; } });
+                    return unavailableServices(seed, binding);
+                },
+                actions: [{ ...action(), handler: async () => validResult ? { echoed: 'x' } : { wrong: true } }],
+            });
+            await expect(registry.invoke({
+                pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+                ...(retainIssuedResult ? { retainHandlerResultAfterCancellation: true } : {}),
+            })).rejects.toMatchObject({ name: 'AggregateError', errors: [removalFailure] });
+        }
     });
 
     it('normalizes strict JSON at both invocation boundaries and rejects non-JSON values without invoking', async () => {

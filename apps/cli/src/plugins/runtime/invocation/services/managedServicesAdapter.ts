@@ -28,6 +28,16 @@ export type ManagedServiceCredentialFileLease =
     }>;
 
 export type ManagedServiceCredentialFileOwner = Readonly<{
+    withMaterializedFiles?<TResult>(input: Readonly<{
+        scope: Readonly<{ pluginId: string }>;
+        files: Readonly<Record<string, Uint8Array>> | (() => Promise<Readonly<Record<string, Uint8Array>>>);
+        relativePathsByFileId: Readonly<Record<string, string>>;
+        signal: AbortSignal;
+        /** The invocation completion owner reports cleanup failure after a
+         * successful paid allocation result has been validated. */
+        deferCleanupFailure?: boolean;
+        retainCleanup(cleanup: ManagedServiceCredentialFileCleanup): void;
+    }>, effect: (lease: ManagedServiceCredentialFileLease) => Promise<TResult>): Promise<TResult>;
     materialize(input: Readonly<{
         scope: Readonly<{
             occurrenceId: string;
