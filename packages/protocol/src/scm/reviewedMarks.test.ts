@@ -39,9 +39,19 @@ describe('comparison personal marks owner', () => {
     expect(classifyAccountJsonKvKey(buildScmReviewedMarksKey(comparison.id))).toBe('workspace');
     expect(buildScmReviewedMarksKey('other')).not.toBe(buildScmReviewedMarksKey(comparison.id));
   });
-  it('rejects malformed, unknown, duplicate or wrong-comparison persisted marks', () => {
+  it('drops stored extras on read and emits canonical marks while keeping wire records strict', async () => {
+    const writes: unknown[] = [];
+    const port = createScmReviewedMarksRecordPort({ comparison, transport: {
+      read: async () => ({ value: { ...record('exact:0'), future: { nested: true } }, version: 2 }),
+      compareAndSet: async (value) => { writes.push(value); return { success: true, version: 3 }; },
+    } });
+    expect(await port.read()).toEqual({ record: record('exact:0'), version: 2 });
+    expect(await port.setReviewed(['exact:1'], true)).toEqual({ success: true, record: record('exact:0', 'exact:1'), version: 3 });
+    expect(writes).toEqual([record('exact:0', 'exact:1')]);
+  });
+  it('rejects malformed, duplicate or wrong-comparison persisted marks and unknown wire fields', () => {
     expect(ScmReviewedMarksRecordSchema.safeParse({ ...record(), unknown: true }).success).toBe(false);
-    for (const value of [record('c0'), record('exact:0', 'exact:0'), { ...record(), comparisonId: 'other' }, false]) {
+    for (const value of [record('c0'), record('exact:0', 'exact:0'), { ...record(), comparisonId: 'other' }, { ...record(), reviewedChangeRefs: [1] }, false]) {
       expect(() => applyScmReviewedMarkIntent(comparison, value, ['exact:1'], true)).toThrow();
     }
   });

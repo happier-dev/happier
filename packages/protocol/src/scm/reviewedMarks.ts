@@ -1,22 +1,25 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmComparisonSchema, type ScmComparison } from './comparison.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 /** Workspace's existing Account JSON namespace owns mode admission and transition inventory. */
 export const SCM_REVIEWED_MARKS_KV_PREFIX = 'workspace:scm-reviewed:v1:';
 const changeRefs = z.array(z.string().min(1)).refine(refs => new Set(refs).size === refs.length, 'Change references must be unique');
-export const ScmReviewedMarksRecordSchema = z.object({
+export const ScmReviewedMarksRecordSchema = lazyZodSchema(() => z.object({
   v: z.literal(1), comparisonId: z.string().min(1), reviewedChangeRefs: changeRefs,
-}).strict();
+}).strict());
+const storedReviewedMarksRecordSchema = createStoredReadSchema(ScmReviewedMarksRecordSchema);
 export type ScmReviewedMarksRecord = z.infer<typeof ScmReviewedMarksRecordSchema>;
-export const ScmReviewedMarkInputSchema = z.object({
+export const ScmReviewedMarkInputSchema = lazyZodSchema(() => z.object({
   cwd: z.string().min(1), resultId: z.string().min(1), changeRefs: changeRefs.refine(refs => refs.length > 0, 'An explicit selection is required'),
-}).strict();
+}).strict());
 export type ScmReviewedMarkInput = z.infer<typeof ScmReviewedMarkInputSchema>;
-export const ScmReviewedMarkResponseSchema = z.discriminatedUnion('success', [
+export const ScmReviewedMarkResponseSchema = lazyZodSchema(() => z.discriminatedUnion('success', [
   z.object({ success: z.literal(true), record: ScmReviewedMarksRecordSchema, version: z.number().int().min(-1) }).strict(),
   z.object({ success: z.literal(false), errorCode: z.string().min(1), error: z.string().min(1),
     record: ScmReviewedMarksRecordSchema.optional(), version: z.number().int().min(-1).optional() }).strict(),
-]);
+]));
 export type ScmReviewedMarkResponse = z.infer<typeof ScmReviewedMarkResponseSchema>;
 export type ScmReviewedMarksJsonSnapshot = Readonly<{ value: unknown | null; version: number; tombstone?: true }>;
 export type ScmReviewedMarksJsonTransport = Readonly<{
@@ -41,7 +44,7 @@ export function parseScmReviewedMarksRecord(comparison: ScmComparison, value: un
 }
 function parseScmReviewedMarksRecordForId(comparisonId: string, value: unknown): ScmReviewedMarksRecord {
   if (value === null) return { v: 1, comparisonId, reviewedChangeRefs: [] };
-  const parsed = ScmReviewedMarksRecordSchema.safeParse(value);
+  const parsed = storedReviewedMarksRecordSchema.safeParse(value);
   if (!parsed.success || parsed.data.comparisonId !== comparisonId) {
     throw new ScmReviewedMarksError('reviewed_marks_invalid_record', 'Reviewed marks do not identify this exact comparison');
   }
