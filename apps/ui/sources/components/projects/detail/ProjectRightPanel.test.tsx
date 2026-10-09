@@ -16,7 +16,7 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => ({
 installSessionDetailsPanelNonRnModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ router: { replace: router.replace } }).module;
+        return createExpoRouterMock({ pathname: '/projects/wr_1/code', router: { replace: router.replace } }).module;
     },
 });
 vi.mock('react-native', async () => {
@@ -53,7 +53,7 @@ describe('ProjectRightPanel', () => {
         const screen = await renderPanel({ activeWorktreeId: null, onRequestClose: () => {} });
         await screen.pressByTestIdAsync('project-rightpanel-tab:files');
         expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'files' });
-        expect(router.replace).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=%40root');
+        expect(router.replace).toHaveBeenCalledWith(`/projects/wr_1/code?worktreeId=%40root&serverId=${encodeURIComponent(runtime.serverId)}&mobileSurface=browse`);
         expect(screen.findHostByTestId('project-rightpanel-close')).toBeNull();
     });
     it('preserves the selected worktree in the sibling mobile route and pane selection', async () => {
@@ -63,6 +63,6 @@ describe('ProjectRightPanel', () => {
         });
         await screen.pressByTestIdAsync('project-rightpanel-tab:files');
         expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'files' });
-        expect(router.replace).toHaveBeenCalledWith('/projects/wr_1/files?worktreeId=gitwt_feature');
+        expect(router.replace).toHaveBeenCalledWith(`/projects/wr_1/code?worktreeId=gitwt_feature&serverId=${encodeURIComponent(runtime.serverId)}&mobileSurface=browse`);
     });
 });

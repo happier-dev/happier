@@ -31,7 +31,8 @@ function stateWith(input: Readonly<{
     snapshotByRoot: Readonly<Record<string, unknown>>;
 }>) {
     return {
-        settings: { workspaceRefsV1: input.refs },
+        projectAccountRows: { scope: { serverId: 'server-1', accountId: 'account-1' }, status: 'ready', coverage: 'complete', workspaceRefs: input.refs,
+            relationships: [], organizations: [], revisionsByPhysicalKey: {} },
         machines: { 'machine-1': { active: true } },
         getWorkspaceScmSnapshot: (scope: { rootPath: string }) => input.snapshotByRoot[scope.rootPath] ?? null,
     };
@@ -50,6 +51,10 @@ function hostingProvider(overrides: Record<string, unknown> = {}) {
 }
 
 describe('projects.list forge identity', () => {
+    it('reports incomplete coverage instead of claiming an unavailable census is an empty complete registry', async () => {
+        storageState.current = { ...stateWith({ refs: [], snapshotByRoot: {} }), projectAccountRows: null };
+        expect(await listProjectsForActions({})).toEqual({ items: [], truncated: true, coverage: 'unknown' });
+    });
     /**
      * The identity a launch joins on must carry the DEPLOYMENT. `id` is one
      * constant per forge plugin, so without it two Azure DevOps Server

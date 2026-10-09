@@ -1,12 +1,15 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
-import { useMachine } from '@/sync/domains/state/storage';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useServerScopedMachine } from '@/sync/domains/state/storage';
+import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
 import { t } from '@/text';
+import { useEmbeddedTerminalPresentation } from '@/components/terminal/embedded/useEmbeddedTerminalPresentation';
+import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
 
 export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     scopeId: string;
@@ -15,43 +18,59 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     rootPath: string;
     serverId: string;
     terminalInstanceId?: string;
+    attachedTerminalId?: string | null;
     toolbarActionsStart?: React.ReactNode;
     closeOnUnmount?: boolean;
+    workspace: WorkspaceAddressV1;
+    terminalKey: string;
+    title?: string;
+    focused?: boolean;
+    chrome?: 'toolbar' | 'none';
 }>;
 
 export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbeddedTerminalPane(props: WorkspaceEmbeddedTerminalPaneProps) {
     const terminalRendererRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
-    const machine = useMachine(props.machineId);
+    const machine = useServerScopedMachine(props.serverId, props.machineId);
     const machineReachable = Boolean(machine && isMachineOnline(machine));
 
-    const terminalInstanceId = props.terminalInstanceId?.trim() || null;
-    const terminalKey = React.useMemo(
-        () => terminalInstanceId
-            ? `workspace:${props.workspaceRefId}:terminal:${terminalInstanceId}`
-            : `workspace:${props.workspaceRefId}:terminal`,
-        [props.workspaceRefId, terminalInstanceId],
-    );
+    const terminalKey = props.terminalKey;
 
     const controller = useMachineTerminalSession({
         machineId: props.machineId,
+        serverId: props.serverId,
+        ...(props.attachedTerminalId === undefined ? {} : { attachedTerminalId: props.attachedTerminalId, readOnly: true }),
         cwd: props.rootPath,
         machineReachable,
         machineRpcTargetAvailable: true,
         terminalKey,
         terminalRef: terminalRendererRef,
         closeOnUnmount: props.closeOnUnmount ?? false,
+        workspace: props.workspace,
+        scopeId: props.scopeId,
+        memberId: props.terminalInstanceId,
     });
+    const presentation = useEmbeddedTerminalPresentation({ scopeId: props.scopeId, terminalKey,
+        terminalId: props.terminalInstanceId ?? null, available: true, focused: props.focused,
+        controller, terminalRef: terminalRendererRef });
+    const execute = useSessionTerminalActionExecute(props.scopeId);
+    const restart = React.useCallback(() => {
+        if (props.terminalInstanceId) void execute('session.terminals.restart', { terminalId: props.terminalInstanceId });
+    }, [execute, props.terminalInstanceId]);
+    const surfaceController = React.useMemo(() => ({ ...controller, requestRestart: restart, onOpenApproval: presentation.onOpenApproval }), [controller, restart, presentation.onOpenApproval]);
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <EmbeddedTerminalPane
-                title={t('settings.terminal')}
-                controller={controller}
+                title={props.title ?? t('settings.terminal')}
+                controller={surfaceController}
                 terminalRef={terminalRendererRef}
                 toolbarActionsStart={props.toolbarActionsStart}
                 testIdPrefix="workspace-embedded-terminal"
                 nativeSurfaceKey={terminalKey}
-                showQuickKeys={Platform.OS !== 'web'}
+                chrome={props.chrome}
+                machineName={machine ? getMachineDisplayName(machine) : null}
+                focused={props.focused}
+                findSurfaceId={presentation.findSurfaceId}
             />
         </View>
     );

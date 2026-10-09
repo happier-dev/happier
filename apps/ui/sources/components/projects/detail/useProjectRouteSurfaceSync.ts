@@ -18,7 +18,7 @@ export function useProjectRouteSurfaceSync(params: Readonly<{
         activeRootPath: params.activeRootPath,
         activeWorktreeId: params.activeWorktreeId,
     });
-    const routeSyncKey = `${params.workspaceRef.id}\u0000${params.activeRootPath}\u0000${params.activeWorktreeId ?? ''}\u0000${params.surface}`;
+    const routeSyncKey = `${params.workspaceRef.serverId}\u0000${params.workspaceRef.id}\u0000${params.activeRootPath}\u0000${params.activeWorktreeId ?? ''}\u0000${params.surface}`;
     const lastSyncedRouteKeyRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {

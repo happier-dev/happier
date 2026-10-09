@@ -4,7 +4,7 @@ import { createWorkspaceEmptyTab, reduceWorkspaceState, type WorkspaceState } fr
 import { collectSplitCanvasLeaves } from '../splitCanvas/model/splitCanvasTree';
 
 export function workspaceSingletonDestinationIds(catalog: readonly CompactAppDestination[]): readonly string[] {
-    return catalog.filter(item => item.kind === 'plugin' && item.container === 'appPage').map(item => item.id);
+    return catalog.filter(item => item.id === 'workflows' || (item.kind === 'plugin' && item.container === 'appPage')).map(item => item.id);
 }
 
 export function isWorkspaceSingletonDestination(catalog: readonly CompactAppDestination[], target: DestinationRef): boolean {

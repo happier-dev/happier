@@ -19,6 +19,9 @@ import { machineScmBranchCheckout, machineScmBranchCreate } from '@/sync/ops/scm
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { seedAndOpenProjectDraft } from '../activation/projectOpenDraftSeed';
+import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type WorkspaceSourceControlBranchMenuProps = Readonly<{
     serverId?: string | null;
@@ -35,6 +38,7 @@ export type WorkspaceSourceControlBranchMenuProps = Readonly<{
 }>;
 
 export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBranchMenuProps): React.ReactElement {
+    const navigateToOpen = useNavigateToProjectOpen();
     const { theme } = useUnistyles();
     const disabled = props.disabled === true;
     const writeEnabled = props.writeEnabled !== false;
@@ -240,24 +244,15 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     ]);
 
     const createWorktreeFromCurrentBranch = React.useCallback(async () => {
-        if (!canCreateWorktrees) return;
-
-        const response = await repoScmWorktreeService.createWorktreeForMachinePath({
-            ...(serverId ? { serverId } : {}),
-            machineId: props.machineId,
-            path: props.rootPath,
-            baseRef: null,
-        });
-        if (!response.success) {
-            Modal.alert(t('common.error'), response.error || t('files.branchMenu.worktrees.createFailed'));
-            return;
-        }
-
-        await refreshWorkspaceState();
-        if (response.worktreePath) {
-            selectWorkspacePath(response.worktreePath);
-        }
-    }, [canCreateWorktrees, props.machineId, props.rootPath, refreshWorkspaceState, selectWorkspacePath, serverId]);
+        if (!canCreateWorktrees || !serverId) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== serverId) return;
+        closeMenu();
+        await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId: props.machineId,
+            source: { kind: 'folder', path: props.rootPath }, ...(currentBranch ? { ref: currentBranch } : {}),
+            materialization: { kind: 'worktree', checkout: { kind: 'git_worktree', displayName: '', baseRef: currentBranch } } },
+            navigate: navigateToOpen });
+    }, [canCreateWorktrees, closeMenu, currentBranch, navigateToOpen, props.machineId, props.rootPath, serverId]);
 
     const pruneWorktrees = React.useCallback(async () => {
         if (!canCreateWorktrees) return;

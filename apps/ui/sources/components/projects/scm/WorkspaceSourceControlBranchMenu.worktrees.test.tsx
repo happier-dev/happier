@@ -7,7 +7,6 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const createWorktreeForMachinePathMock = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>());
 const pruneWorktreesForMachinePathMock = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>(async () => ({ success: true })));
 const removeWorktreeForMachinePathMock = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>(async () => ({ success: true })));
 const readCachedBranchesForMachinePathMock = vi.hoisted(() => vi.fn<(input: unknown) => unknown>());
@@ -75,7 +74,6 @@ vi.mock('@/scm/repository/repoScmBranchService', () => ({
 
 vi.mock('@/scm/repository/repoScmWorktreeService', () => ({
     repoScmWorktreeService: {
-        createWorktreeForMachinePath: (input: unknown) => createWorktreeForMachinePathMock(input),
         pruneWorktreesForMachinePath: (input: unknown) => pruneWorktreesForMachinePathMock(input),
         removeWorktreeForMachinePath: (input: unknown) => removeWorktreeForMachinePathMock(input),
     },
@@ -146,7 +144,6 @@ function flattenResultItems(results: { props: { categories?: Array<{ items: Arra
 
 describe('WorkspaceSourceControlBranchMenu worktrees', () => {
     beforeEach(() => {
-        createWorktreeForMachinePathMock.mockReset();
         pruneWorktreesForMachinePathMock.mockReset();
         removeWorktreeForMachinePathMock.mockReset();
         readCachedBranchesForMachinePathMock.mockReset();
@@ -291,88 +288,6 @@ describe('WorkspaceSourceControlBranchMenu worktrees', () => {
         });
 
         expect(onSelectRootPath).toHaveBeenCalledWith('/repo/.worktrees/feature-auth');
-    });
-
-    it('selects the newly created worktree after creating one from the current branch', async () => {
-        createWorktreeForMachinePathMock.mockResolvedValue({
-            success: true,
-            worktreePath: '/repo/.worktrees/feature-auth',
-            branchName: 'feature/auth',
-        });
-
-        const onSelectRootPath = vi.fn();
-        const onRefreshSnapshot = vi.fn(async () => {});
-        const { WorkspaceSourceControlBranchMenu } = await import('./WorkspaceSourceControlBranchMenu');
-
-        const screen = await renderScreen(
-            <WorkspaceSourceControlBranchMenu
-                machineId="machine-1"
-                rootPath="/repo"
-                currentBranch="main"
-                snapshot={buildSnapshot() as any}
-                onRefreshSnapshot={onRefreshSnapshot}
-                onSelectWorkspacePath={onSelectRootPath}
-            />,
-        );
-
-        await openWorktreesTab(screen);
-
-        const results = screen.tree.findByType('SelectableMenuResults' as never);
-        const createItem = results.props.categories
-            .flatMap((category: { items: Array<{ id: string }> }) => category.items)
-            .find((item: { id: string }) => item.id === 'worktree:create-current-branch');
-
-        await act(async () => {
-            results.props.onPressItem(createItem);
-        });
-
-        expect(createWorktreeForMachinePathMock).toHaveBeenCalledWith({
-            machineId: 'machine-1',
-            path: '/repo',
-            baseRef: null,
-        });
-        expect(onRefreshSnapshot).toHaveBeenCalled();
-        expect(onSelectRootPath).toHaveBeenCalledWith('/repo/.worktrees/feature-auth');
-    });
-
-    it('passes the workspace server scope when creating a worktree from the current branch', async () => {
-        createWorktreeForMachinePathMock.mockResolvedValue({
-            success: true,
-            worktreePath: '/repo/.worktrees/feature-auth',
-            branchName: 'feature/auth',
-        });
-
-        const { WorkspaceSourceControlBranchMenu } = await import('./WorkspaceSourceControlBranchMenu');
-
-        const screen = await renderScreen(
-            <WorkspaceSourceControlBranchMenu
-                serverId="server-1"
-                machineId="machine-1"
-                rootPath="/repo"
-                currentBranch="main"
-                snapshot={buildSnapshot() as any}
-                onRefreshSnapshot={vi.fn(async () => {})}
-                onSelectWorkspacePath={vi.fn()}
-            />,
-        );
-
-        await openWorktreesTab(screen);
-
-        const results = screen.tree.findByType('SelectableMenuResults' as never);
-        const createItem = results.props.categories
-            .flatMap((category: { items: Array<{ id: string }> }) => category.items)
-            .find((item: { id: string }) => item.id === 'worktree:create-current-branch');
-
-        await act(async () => {
-            results.props.onPressItem(createItem);
-        });
-
-        expect(createWorktreeForMachinePathMock).toHaveBeenCalledWith({
-            serverId: 'server-1',
-            machineId: 'machine-1',
-            path: '/repo',
-            baseRef: null,
-        });
     });
 
     it('passes the workspace server scope when pruning and removing worktrees', async () => {

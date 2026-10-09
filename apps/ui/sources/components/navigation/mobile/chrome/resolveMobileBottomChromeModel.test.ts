@@ -17,6 +17,13 @@ function createChromeInput(
 }
 
 describe('resolveMobileBottomChromeModel', () => {
+    it.each(['/projects/open', '/projects/open/?sourceId=source', '/projects/sources', '/projects/sources/'])('keeps Project selection flows free of floating cockpit chrome (%s)', (pathname) => {
+        expect(resolveMobileBottomChromeModel(createChromeInput({
+            pathname,
+            mobileWorkspaceExperience: 'cockpit',
+        }))).toEqual({ kind: 'hidden' });
+    });
+
     it('returns main app tabs for the authenticated home route', () => {
         expect(resolveMobileBottomChromeModel(createChromeInput({}))).toEqual({ kind: 'mainAppTabs' });
     });

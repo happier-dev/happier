@@ -1,4 +1,5 @@
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { compareProjectWorkspaceRefsV1, projectProjectListV1, type ProjectListGroupV1, type ProjectListOrganizationV1 } from '@happier-dev/protocol/workspaces';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 type MachineGroup = Readonly<{
@@ -9,70 +10,25 @@ type MachineGroup = Readonly<{
 export type ProjectsListGroups = Readonly<{
     pinned: readonly WorkspaceRefV1[];
     machineGroups: readonly MachineGroup[];
+    projectGroups: readonly ProjectListGroupV1[];
+    hiddenProjectGroups: readonly ProjectListGroupV1[];
 }>;
-
-function sortWorkspaceRefsMostRecentFirst(items: readonly WorkspaceRefV1[]): WorkspaceRefV1[] {
-    return [...items].sort((a, b) => {
-        const aOpened = typeof a.lastOpenedAtMs === 'number' ? a.lastOpenedAtMs : -1;
-        const bOpened = typeof b.lastOpenedAtMs === 'number' ? b.lastOpenedAtMs : -1;
-        if (aOpened !== bOpened) return bOpened - aOpened;
-        return (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0);
-    });
-}
 
 export function buildProjectsListGroups(input: Readonly<{
     activeServerId: string;
     workspaceRefs: readonly WorkspaceRefV1[];
     pinnedWorkspaceRefIds: readonly string[];
+    projectOrganizations?: readonly ProjectListOrganizationV1[];
 }>): ProjectsListGroups {
-    const activeServerId = String(input.activeServerId ?? '').trim();
-    const refs = (input.workspaceRefs ?? []).filter((ref) => areServerProfileIdentifiersEquivalent(String(ref.serverId ?? '').trim(), activeServerId));
-
-    const byId = new Map<string, WorkspaceRefV1>();
-    for (const ref of refs) {
-        const id = String(ref.id ?? '').trim();
-        if (!id) continue;
-        if (!byId.has(id)) {
-            byId.set(id, ref);
-        }
-    }
-
-    const pinned: WorkspaceRefV1[] = [];
-    const pinnedIdSet = new Set<string>();
-    for (const rawId of input.pinnedWorkspaceRefIds ?? []) {
-        const id = String(rawId ?? '').trim();
-        if (!id) continue;
-        if (pinnedIdSet.has(id)) continue;
-        pinnedIdSet.add(id);
-        const ref = byId.get(id);
-        if (ref) pinned.push(ref);
-    }
-
-    const unpinned: WorkspaceRefV1[] = [];
-    for (const ref of refs) {
-        const id = String(ref.id ?? '').trim();
-        if (id && pinnedIdSet.has(id)) continue;
-        unpinned.push(ref);
-    }
-
-    const groupsByMachineId = new Map<string, WorkspaceRefV1[]>();
-    for (const ref of unpinned) {
-        const machineId = String(ref.machineId ?? '').trim() || 'unknown';
-        const current = groupsByMachineId.get(machineId);
-        if (current) {
-            current.push(ref);
-        } else {
-            groupsByMachineId.set(machineId, [ref]);
-        }
-    }
-
-    const machineGroups: MachineGroup[] = [...groupsByMachineId.entries()]
-        .filter(([machineId]) => machineId !== 'unknown')
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([machineId, items]) => ({ machineId, items: sortWorkspaceRefsMostRecentFirst(items) }));
-
-    return {
-        pinned,
-        machineGroups,
-    };
+    const projected = projectProjectListV1({ serverId: input.activeServerId, workspaceRefs: input.workspaceRefs,
+        organizations: input.projectOrganizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+    const visible = projected.items.map(item => item.ref);
+    const pinnedIds = [...new Set(input.pinnedWorkspaceRefIds)];
+    const pinnedSet = new Set(pinnedIds);
+    const pinned = pinnedIds.flatMap(id => visible.filter(ref => ref.id === id).sort(compareProjectWorkspaceRefsV1));
+    const machineIds = [...new Set(visible.filter(ref => !pinnedSet.has(ref.id)).map(ref => ref.machineId))].sort();
+    return { pinned,
+        machineGroups: machineIds.map(machineId => ({ machineId,
+            items: visible.filter(ref => ref.machineId === machineId && !pinnedSet.has(ref.id)).sort(compareProjectWorkspaceRefsV1) })),
+        projectGroups: projected.projectGroups, hiddenProjectGroups: projected.hiddenProjectGroups };
 }

@@ -1,8 +1,11 @@
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import { WorkspaceRefV1Schema, type ProjectKeyV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
+import type { ProjectKeyV1, QualifiedProjectKeyV1, WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { readCurrentProjectAccountRows, type ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { Machine, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { isWorkspaceScopeReachableFromState } from '@/sync/domains/workspaces/workspaceReachability';
 
@@ -11,9 +14,8 @@ import { isWorkspaceScopeReachableFromState } from '@/sync/domains/workspaces/wo
  * snapshot already resolved.
  *
  * This is a PROJECTION of two incumbent owners and builds no index of its own.
- * `workspaceRefsV1` in Account Settings
- * (`packages/protocol/src/workspaces/workspaceRefV1.ts`) already holds every
- * project the reader has opened, keyed by `(serverId, machineId, rootPath)`;
+ * The opened Project Account rows hold the reader's accepted checkouts,
+ * preserving opaque reference ids and qualified `(serverId, machineId, rootPath)`;
  * the `projectKey`-keyed working snapshot already holds that project's resolved
  * `hostingProvider` and its worktrees. Reading both and pairing them is the
  * whole implementation.
@@ -43,18 +45,24 @@ export type ProjectsListResult = Readonly<{
      * Whether a caller-supplied `limit` cut the answer short.
      *
      * There is no cap of this projection's own. The registry is
-     * `workspaceRefsV1` in Account Settings — state this client already holds
-     * resident and already renders in full elsewhere
+     * the opened Account row census — state this client already holds
+     * resident and already renders elsewhere
      * (`components/projects/ProjectsListView.tsx`) — so walking it fetches
      * nothing and a row ceiling here would protect no measured resource while
      * silently making a partial answer look complete. Only an explicit `limit`
-     * truncates, and when it does the result says so.
+     * truncates a complete census, and incomplete/unavailable coverage also
+     * reports truncation so callers cannot infer exactness from retained rows.
      */
     truncated: boolean;
+    coverage: 'complete' | 'partial' | 'unknown';
 }>;
 
 export type ProjectsListItem = Readonly<{
     projectKey: ProjectKeyV1;
+    project: QualifiedProjectKeyV1;
+    workspaceAddress: WorkspaceAddressV1;
+    hidden: boolean;
+    pinned: boolean;
     serverId: string;
     machineId: string;
     rootPath: string;
@@ -69,18 +77,6 @@ export type ProjectsListItem = Readonly<{
     }>[];
 }>;
 
-
-function readWorkspaceRefs(state: unknown): readonly WorkspaceRefV1[] {
-    const settings = (state as { settings?: { workspaceRefsV1?: unknown } } | null)?.settings;
-    const raw = settings?.workspaceRefsV1;
-    if (!Array.isArray(raw)) return [];
-    const refs: WorkspaceRefV1[] = [];
-    for (const candidate of raw) {
-        const parsed = WorkspaceRefV1Schema.safeParse(candidate);
-        if (parsed.success) refs.push(parsed.data);
-    }
-    return refs;
-}
 
 /**
  * The resolved forge identity, or nothing.
@@ -147,14 +143,12 @@ function reachabilityOf(
 }
 
 export async function listProjectsForActions(params: Readonly<{
+    serverId?: string;
     machineId?: string;
     limit?: number;
-}>): Promise<ProjectsListResult> {
-    const state = storage.getState() as unknown as ProjectsListMachineInventory & {
-        getWorkspaceScmSnapshot?: (
-            scope: Readonly<{ serverId: string; machineId: string; rootPath: string }>,
-        ) => ScmWorkingSnapshot | null;
-    };
+    includeHidden?: boolean;
+}>, openedRows?: ProjectAccountRowsSnapshot): Promise<ProjectsListResult> {
+    const state = storage.getState();
     const readSnapshot = typeof state.getWorkspaceScmSnapshot === 'function'
         ? state.getWorkspaceScmSnapshot.bind(state)
         : null;
@@ -167,22 +161,20 @@ export async function listProjectsForActions(params: Readonly<{
         : null;
 
     const items: ProjectsListItem[] = [];
-    let truncated = false;
-    for (const ref of readWorkspaceRefs(state)) {
-        if (params.machineId !== undefined && ref.machineId !== params.machineId) continue;
-        if (limit !== null && items.length >= limit) {
-            // A row this projection matched and then declined to send is the
-            // whole reason the answer is not exact. Saying so is what stops a
-            // caller reading the page as the registry.
-            truncated = true;
-            break;
-        }
-
+    const rows = openedRows ?? readCurrentProjectAccountRows(state);
+    const home = params.serverId ?? rows?.scope.serverId ?? activeServerId;
+    if (rows && resolveServerProfileScopeIdForIdentifier(rows.scope.serverId) !== resolveServerProfileScopeIdForIdentifier(home)) {
+        throw Object.assign(new Error('Project Account Home mismatch'), { code: 'server_scope_mismatch' });
+    }
+    const projected = projectProjectListV1({ ...params, ...(limit === null ? {} : { limit }), serverId: home,
+        workspaceRefs: rows?.workspaceRefs ?? [], organizations: rows?.organizations,
+        coverage: rows?.status === 'ready' ? rows.coverage : 'unknown', normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+    for (const { ref, ...item } of projected.items) {
         const scope = { serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath };
         const snapshot = readSnapshot ? readSnapshot(scope) : null;
-        const forge = forgeOf(snapshot);
+        const forge = forgeOf(snapshot) ?? ref.repositoryIdentity;
         items.push({
-            projectKey: { id: ref.id },
+            ...item,
             ...scope,
             ...(ref.label ? { label: ref.label } : {}),
             reachable: reachabilityOf(state, scope, activeServerId),
@@ -190,5 +182,5 @@ export async function listProjectsForActions(params: Readonly<{
             worktrees: worktreesOf(snapshot),
         });
     }
-    return { items, truncated };
+    return { items, truncated: projected.truncated, coverage: projected.coverage };
 }

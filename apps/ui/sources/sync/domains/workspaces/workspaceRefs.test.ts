@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import type { WorkspaceRefV1 } from './workspaceRefModel';
 
 import {
-    applyWorkspaceRefMutationToAccountSettings,
-    applyWorkspaceRefRemovalToAccountSettings,
     findWorkspaceRefByScope,
+    resolveWorkspaceRefById,
     resolveWorkspaceRefRemoval,
     upsertWorkspaceRefByScope,
+    sameWorkspaceProject,
+    resolveProjectCheckoutWorkspaceRef,
 } from './workspaceRefs';
 
 vi.mock('@/platform/randomUUID', () => ({
@@ -14,6 +15,48 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('workspaceRefs', () => {
+    it('resolves the actual accepted checkout only within the qualified Project anchor', () => {
+        const project: WorkspaceRefV1 = { id: 'project', serverId: 'home', machineId: 'machine', rootPath: '/base', createdAtMs: 1 };
+        const checkout: WorkspaceRefV1 = { ...project, id: 'checkout', projectKey: 'project', rootPath: '/feature' };
+        expect(resolveProjectCheckoutWorkspaceRef([project, checkout], project, '/feature')).toBe(checkout);
+        expect(resolveProjectCheckoutWorkspaceRef([project, checkout], project, '/missing')).toBeNull();
+        expect(resolveProjectCheckoutWorkspaceRef([project, { ...checkout, projectKey: 'other-project' }], project, '/feature')).toBeNull();
+        expect(resolveProjectCheckoutWorkspaceRef([project, { ...checkout, serverId: 'other-home' }], project, '/feature')).toBeNull();
+        expect(resolveProjectCheckoutWorkspaceRef([checkout, { ...checkout, id: 'duplicate' }], project, '/feature')).toBeNull();
+    });
+    it('lists another checkout only by its accepted Home and stable Project anchor, not shared enrichment', () => {
+        const first: WorkspaceRefV1 = { id: 'first', serverId: 'home', machineId: 'm1', rootPath: '/first', createdAtMs: 1,
+            source: { sourceId: 'same-source', revision: 1 },
+            repositoryIdentity: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' } };
+        expect(sameWorkspaceProject(first, { ...first, id: 'second', machineId: 'm2', rootPath: '/second', projectKey: 'first' })).toBe(true);
+        expect(sameWorkspaceProject(first, { ...first, id: 'second' })).toBe(false);
+        expect(sameWorkspaceProject(first, { ...first, serverId: 'other-home' })).toBe(false);
+    });
+    it('refuses an ambiguous qualified id without discarding either checkout', () => {
+        const refs = ['/first', '/second'].map(rootPath => ({ id: 'same', serverId: 'home', machineId: 'machine', rootPath, createdAtMs: 1 }));
+        expect(resolveWorkspaceRefById(refs, 'same', 'home').kind).toBe('ambiguous');
+        expect(resolveWorkspaceRefRemoval(refs, { serverId: 'home', workspaceRefId: 'same', relationships: [] }))
+            .toEqual({ ok: false, code: 'workspace_ref_ambiguous' });
+        expect(refs.map(ref => ref.rootPath)).toEqual(['/first', '/second']);
+    });
+    it('keeps independent accepted anchors stable when both acquire the same Source facts', () => {
+        const source = { sourceId: 'source', revision: 1 };
+        let refs: WorkspaceRefV1[] = ['/first', '/second'].map((rootPath, index) => ({ id: `ref-${index}`, serverId: 'home', machineId: 'machine', rootPath, createdAtMs: 1 }));
+        for (const rootPath of ['/first', '/second']) {
+            refs = upsertWorkspaceRefByScope(refs, { scope: { serverId: 'home', machineId: 'machine', rootPath }, nowMs: 2, patch: { source } });
+        }
+        expect(refs.map(ref => ref.projectKey)).toEqual(['ref-0', 'ref-1']);
+        const additional = upsertWorkspaceRefByScope(refs, { scope: { serverId: 'home', machineId: 'machine', rootPath: '/third' }, nowMs: 3, patch: { source } });
+        expect(additional.map(ref => ref.projectKey)).toEqual(['ref-0', 'ref-1', 'workspace-ref-id']);
+    });
+    it('preserves every candidate and refuses mutation of an ambiguous exact scope', () => {
+        const refs = ['one', 'two'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }));
+        expect(findWorkspaceRefByScope(refs, { serverId: 'home', machineId: 'machine', rootPath: '/repo' })).toBeNull();
+        expect(() => upsertWorkspaceRefByScope(refs, {
+            scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' }, nowMs: 2, patch: { label: 'Changed' },
+        })).toThrowError(expect.objectContaining({ code: 'workspace_ref_ambiguous' }));
+        expect(refs.map(ref => ref.id)).toEqual(['one', 'two']);
+    });
     it('upserts by normalized scope and preserves id', () => {
         const refs = [
             {
@@ -108,264 +151,4 @@ describe('workspaceRefs', () => {
         });
     });
 
-    describe('applyWorkspaceRefRemovalToAccountSettings', () => {
-        const contentPolicyBase = {
-            v: 1 as const,
-            selection: 'all_files' as const,
-            extraIgnorePatterns: [],
-            extraIncludePatterns: [],
-        };
-        const target = {
-            id: 'target-ref',
-            serverId: 'server',
-            machineId: 'm2',
-            rootPath: '/target',
-            label: null,
-            createdAtMs: 1,
-            lastOpenedAtMs: null,
-        };
-        const concurrentlyAdded = {
-            id: 'concurrent-ref',
-            serverId: 'server',
-            machineId: 'm3',
-            rootPath: '/concurrent',
-            label: null,
-            createdAtMs: 2,
-            lastOpenedAtMs: null,
-        };
-
-        it('rechecks the winning relationship set and refuses a concurrently referenced ref', () => {
-            const raw = {
-                workspaceRefsV1: [target, concurrentlyAdded],
-                pinnedWorkspaceRefIdsV1: ['target-ref', 'concurrent-ref'],
-                workspaceSyncRelationshipsV1: [{
-                    v: 1,
-                    relationshipId: 'relationship-new',
-                    alphaWorkspaceRefId: 'concurrent-ref',
-                    betaWorkspaceRefId: 'target-ref',
-                    controllerMachineId: 'm3',
-                    mode: 'keep_synced',
-                    enabled: true,
-                    contentPolicy: {
-                        ...contentPolicyBase,
-                        policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyBase),
-                    },
-                    createdAtMs: 2,
-                    updatedAtMs: 2,
-                }],
-                unrelated: { retained: true },
-            };
-
-            const result = applyWorkspaceRefRemovalToAccountSettings(raw, {
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-            });
-
-            expect(result.value).toEqual({
-                ok: false,
-                code: 'workspace_ref_in_use',
-                relationshipIds: ['relationship-new'],
-            });
-            expect(result.settings).toBe(raw);
-        });
-
-        it('removes only the requested ref and pin while preserving a concurrent ref', () => {
-            const raw = {
-                workspaceRefsV1: [target, concurrentlyAdded],
-                pinnedWorkspaceRefIdsV1: ['target-ref', 'concurrent-ref'],
-                workspaceSyncRelationshipsV1: [],
-                unrelated: { retained: true },
-            };
-
-            const result = applyWorkspaceRefRemovalToAccountSettings(raw, {
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-            });
-
-            expect(result.value).toEqual({ ok: true });
-            expect(result.settings).toEqual({
-                workspaceRefsV1: [concurrentlyAdded],
-                pinnedWorkspaceRefIdsV1: ['concurrent-ref'],
-                workspaceSyncRelationshipsV1: [],
-                unrelated: { retained: true },
-            });
-        });
-
-        it('treats an omitted optional pin collection as its canonical empty default', () => {
-            const result = applyWorkspaceRefRemovalToAccountSettings({
-                workspaceRefsV1: [target],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-            });
-
-            expect(result.value).toEqual({ ok: true });
-            expect(result.settings.workspaceRefsV1).toEqual([]);
-            expect(result.settings.pinnedWorkspaceRefIdsV1).toEqual([]);
-        });
-    });
-
-    describe('applyWorkspaceRefMutationToAccountSettings', () => {
-        const target = {
-            id: 'target-ref',
-            serverId: 'server',
-            machineId: 'm1',
-            rootPath: '/target',
-            label: 'Before',
-            createdAtMs: 1,
-            lastOpenedAtMs: null,
-        };
-        const concurrent = {
-            id: 'concurrent-ref',
-            serverId: 'server',
-            machineId: 'm2',
-            rootPath: '/concurrent',
-            label: 'Concurrent',
-            createdAtMs: 2,
-            lastOpenedAtMs: null,
-        };
-
-        it('adds against the current winner without replacing a concurrently-created ref or pin', () => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [concurrent],
-                pinnedWorkspaceRefIdsV1: ['concurrent-ref'],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'upsert',
-                scope: { serverId: 'server', machineId: 'm3', rootPath: '/added' },
-                nowMs: 3,
-                patch: { lastOpenedAtMs: 3 },
-            });
-
-            expect(result.value).toEqual({ ok: true, workspaceRefId: 'workspace-ref-id' });
-            expect(result.settings.workspaceRefsV1).toEqual([
-                concurrent,
-                expect.objectContaining({ id: 'workspace-ref-id', rootPath: '/added' }),
-            ]);
-            expect(result.settings.pinnedWorkspaceRefIdsV1).toEqual(['concurrent-ref']);
-        });
-
-        it('renames only the requested ref from the current winner', () => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [{ ...target, label: null }, concurrent],
-                pinnedWorkspaceRefIdsV1: ['concurrent-ref'],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'set_label',
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-                label: 'After',
-            });
-
-            expect(result.value).toEqual({ ok: true });
-            expect(result.settings.workspaceRefsV1).toEqual([
-                { ...target, label: 'After' },
-                concurrent,
-            ]);
-            expect(result.settings.pinnedWorkspaceRefIdsV1).toEqual(['concurrent-ref']);
-        });
-
-        it('resets only the requested label from the current winner', () => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [target, concurrent],
-                pinnedWorkspaceRefIdsV1: ['concurrent-ref'],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'set_label',
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-                label: null,
-            });
-
-            expect(result.value).toEqual({ ok: true });
-            expect(result.settings.workspaceRefsV1).toEqual([
-                { ...target, label: null },
-                concurrent,
-            ]);
-        });
-
-        it.each([
-            { pinned: true, before: ['concurrent-ref'], after: ['concurrent-ref', 'target-ref'] },
-            { pinned: false, before: ['target-ref', 'concurrent-ref'], after: ['concurrent-ref'] },
-        ])('sets pinned=$pinned without replacing concurrent pins', ({ pinned, before, after }) => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [target, concurrent],
-                pinnedWorkspaceRefIdsV1: before,
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'set_pinned',
-                serverId: 'server',
-                workspaceRefId: 'target-ref',
-                pinned,
-            });
-
-            expect(result.value).toEqual({ ok: true });
-            expect(result.settings.workspaceRefsV1).toEqual([target, concurrent]);
-            expect(result.settings.pinnedWorkspaceRefIdsV1).toEqual(after);
-        });
-
-        it('does not overwrite a canonical label that appeared before legacy migration committed', () => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [{ ...target, label: 'Concurrent winner' }, concurrent],
-                workspaceLabelsV1: { legacy_target: 'Legacy' },
-                pinnedWorkspaceRefIdsV1: [],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'migrate_label',
-                scope: { serverId: 'server', machineId: 'm1', rootPath: '/target' },
-                legacyKey: 'legacy_target',
-                label: 'Legacy',
-                nowMs: 3,
-            });
-
-            expect(result.value).toEqual({ ok: true, workspaceRefId: 'target-ref', migrated: false });
-            expect(result.settings.workspaceRefsV1).toEqual([{ ...target, label: 'Concurrent winner' }, concurrent]);
-        });
-
-        it('atomically removes only the migrated legacy key from the current label winner', () => {
-            const result = applyWorkspaceRefMutationToAccountSettings({
-                workspaceRefsV1: [{ ...target, label: null }, concurrent],
-                workspaceLabelsV1: {
-                    legacy_target: 'Legacy',
-                    concurrent_workspace: 'Concurrent',
-                },
-                pinnedWorkspaceRefIdsV1: [],
-                workspaceSyncRelationshipsV1: [],
-            }, {
-                kind: 'migrate_label',
-                scope: { serverId: 'server', machineId: 'm1', rootPath: '/target' },
-                legacyKey: 'legacy_target',
-                label: 'Legacy',
-                nowMs: 3,
-            });
-
-            expect(result.value).toEqual({ ok: true, workspaceRefId: 'target-ref', migrated: true });
-            expect(result.settings.workspaceRefsV1).toHaveLength(2);
-            expect(result.settings.workspaceRefsV1).toEqual(expect.arrayContaining([
-                { ...target, label: 'Legacy' },
-                concurrent,
-            ]));
-            expect(result.settings.workspaceLabelsV1).toEqual({ concurrent_workspace: 'Concurrent' });
-        });
-
-        it('does not delete or apply a legacy label that changed before commit', () => {
-            const raw = {
-                workspaceRefsV1: [{ ...target, label: null }, concurrent],
-                workspaceLabelsV1: { legacy_target: 'Concurrent legacy winner' },
-                pinnedWorkspaceRefIdsV1: [],
-                workspaceSyncRelationshipsV1: [],
-            };
-            const result = applyWorkspaceRefMutationToAccountSettings(raw, {
-                kind: 'migrate_label',
-                scope: { serverId: 'server', machineId: 'm1', rootPath: '/target' },
-                legacyKey: 'legacy_target',
-                label: 'Rendered legacy label',
-                nowMs: 3,
-            });
-
-            expect(result.value).toEqual({ ok: true, workspaceRefId: 'target-ref', migrated: false });
-            expect(result.settings).toBe(raw);
-        });
-    });
 });

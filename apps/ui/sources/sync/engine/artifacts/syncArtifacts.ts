@@ -32,11 +32,11 @@ import type {
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { artifactKindRequiresTextBodyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindHasSharedWidgetInputsV1, artifactKindRequiresTextBodyV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
-import { prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
-import type { ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
+import { ArtifactPublicAudienceV1ReadSchema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { isArtifactHtmlHeaderV1, artifactHtmlBundleFromBodyV1, buildArtifactHtmlPreviewUrlV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
@@ -77,8 +77,30 @@ async function requireArtifactHtmlWriteContent(params: Readonly<{
 
 function artifactAccessProjection(artifact: Artifact) {
     return { access: artifact.access, ownerAccountId: artifact.ownerAccountId,
+        publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(artifact.publicAudience),
         storageIdentity: { contentKeyEnvelope: artifact.dataEncryptionKey,
             provenanceKeyEnvelope: artifact.provenanceDataEncryptionKey ?? null } };
+}
+
+async function sharedArtifactWriteContext(params: Readonly<{
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request']; signal?: AbortSignal;
+    artifactId: string; current: DecryptedArtifact; header: Readonly<Record<string, unknown>>; candidateBody?: ArtifactBodyV1 | null;
+}>) {
+    const currentHeader = params.current.rawHeader;
+    if (!artifactKindHasSharedWidgetInputsV1(currentHeader?.kind) && !artifactKindHasSharedWidgetInputsV1(params.header.kind)) return undefined;
+    if (!currentHeader) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+    const candidate = { artifactId: params.artifactId, header: currentHeader,
+        ownerAccountId: params.current.ownerAccountId, access: params.current.access };
+    if (params.candidateBody !== undefined && canShareArtifactWriteContentV1(candidate, params.header, params.candidateBody)) return undefined;
+    // A cached private row can precede publication. Re-read exposure at the same
+    // authenticated boundary as CLI writes instead of trusting cached none.
+    const artifact = await fetchArtifactApi(params.credentials, params.artifactId, params);
+    const current = { ...candidate, ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+        publicAudience: artifact.publicAudience };
+    const shared = await readArtifactSharedAudienceV1({ current, signal: params.signal,
+        readGrants: () => createArtifactAccessApi(params.credentials, params).list({ artifactId: params.artifactId }, params.signal) });
+    params.signal?.throwIfAborted();
+    return { current, shared };
 }
 
 type ArtifactContentProjection = Omit<Artifact, 'ownerAccountId' | 'access' | 'encryptionMode'>
@@ -329,6 +351,7 @@ function createLockedArtifactView(params: Readonly<{
     return {
         ...(artifact.ownerAccountId === undefined ? {} : { ownerAccountId: artifact.ownerAccountId }),
         ...(artifact.access === undefined ? {} : { access: artifact.access }),
+        publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(artifact.publicAudience),
         id: artifact.id,
         header: null,
         title: null,
@@ -817,6 +840,7 @@ export async function restoreArtifactBodyRevisionViaApi(params: ArtifactRevision
     const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForRevisionV1({
         artifactId: artifact.id, header: current.rawHeader, body: selected.body, expectedRevision: params.expectedRevision,
         nextRevision: { headerVersion: params.expectedRevision.headerVersion + 1, bodyVersion: params.expectedRevision.bodyVersion + 1 },
+        shared: (await sharedArtifactWriteContext({ ...params, current, header: current.rawHeader, candidateBody: selected.body }))?.shared,
     }), selected.body);
     const key = params.artifactDataKeys.get(artifact.id)?.dataKey;
     if (artifact.encryptionMode === 'e2ee' && !key)
@@ -1082,7 +1106,6 @@ export async function updateArtifactWithHeaderViaApi(params: {
     const { credentials, artifactId, header, encryption, artifactDataKeys, getArtifact, updateArtifact } = params;
     const body = prepareArtifactBody(params.body);
     requireArtifactBodyKind(header, body);
-    const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body), body);
     const envelope = { body };
 
     // Get current artifact from storage
@@ -1093,6 +1116,8 @@ export async function updateArtifactWithHeaderViaApi(params: {
     if (currentArtifact.isDecrypted === false) {
         throw new Error(`Artifact ${artifactId} is locked`);
     }
+    const context = await sharedArtifactWriteContext({ ...params, current: currentArtifact, candidateBody: body });
+    const rawHeader = withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(header, body, context), body);
     const provenance = artifactRevisionProvenance(credentials, params.savedBy, undefined, currentArtifact.provenance?.source);
 
     // Get the data encryption key from memory for encrypted artifacts only.

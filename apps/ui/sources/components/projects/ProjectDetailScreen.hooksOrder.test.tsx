@@ -3,7 +3,6 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 
@@ -24,6 +23,8 @@ vi.mock('react-native', async () => {
         Platform: { OS: 'web' },
         View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
+        Dimensions: { get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }) },
     });
 });
 
@@ -45,8 +46,7 @@ vi.mock('@/text', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSetting: (key: keyof Settings) => {
-            if (key !== 'workspaceRefsV1') return undefined;
+        useWorkspaceRefs: () => {
             return React.useSyncExternalStore(
                 (listener) => {
                     settingListeners.add(listener);
@@ -56,7 +56,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
                 },
                 () => workspaceRefsV1,
                 () => workspaceRefsV1,
-            ) as Settings[typeof key];
+            );
         },
         useLocalSetting: (key: string) => {
             if (key !== 'uiMultiPanePanelsEnabled') return undefined;
@@ -76,10 +76,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
 
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => ({ serverId: 's1' }),
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
 }));
 
 vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
@@ -121,6 +117,8 @@ vi.mock('./detail/ProjectDetailsMainPanel', () => ({
     ProjectDetailsMainPanel: () => React.createElement('ProjectDetailsMainPanelStub'),
 }));
 
+const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
 describe('ProjectDetailScreen', () => {
     it('forwards the fresh Project AppPane owner through the incumbent shell callback', async () => {
         workspaceRefsV1 = [{
@@ -132,7 +130,6 @@ describe('ProjectDetailScreen', () => {
             createdAtMs: 0,
             lastOpenedAtMs: null,
         }];
-        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
         let currentOwner: PluginSurfaceOpenHandler | undefined;
         const onPluginSurfaceOpenChange = vi.fn((next: PluginSurfaceOpenHandler | undefined) => {
             currentOwner = next;
@@ -168,7 +165,6 @@ describe('ProjectDetailScreen', () => {
             createdAtMs: 0,
             lastOpenedAtMs: null,
         }];
-        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
 
         const screen = await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
 
@@ -186,7 +182,6 @@ describe('ProjectDetailScreen', () => {
 
     it('does not change hook ordering when the workspace ref becomes available after initial render', async () => {
         workspaceRefsV1 = [];
-        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
 
         await renderScreen(
             <ProjectDetailScreen workspaceRefId="wr_1" />,

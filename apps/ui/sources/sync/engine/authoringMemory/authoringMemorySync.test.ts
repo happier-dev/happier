@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { createAuthoringMemorySync, importLegacyAuthoringMemory, type AuthoringMemoryTransport } from './authoringMemorySync';
 import type { AuthoringMemoryContentV1 } from '@happier-dev/protocol';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
+import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 
 function harness() {
     const rows = new Map<string, { revision: number; content: AuthoringMemoryContentV1 | null }>();
     const fetched: string[] = [];
+    const applied: unknown[] = [];
+    const projectChanges: unknown[] = [];
     let projection: Record<string, unknown> = {};
     let current = true;
     const transport: AuthoringMemoryTransport = {
@@ -32,12 +35,42 @@ function harness() {
         cipher: createAuthoringMemoryCipher({ mode: 'plain', material: null,
             randomBytes: () => { throw new Error('Plain memory must not request a key or randomness'); } }),
         isCurrent: () => current,
-        apply: (delta) => { projection = { ...projection, ...delta }; },
+        apply: (delta) => { applied.push(delta); projection = { ...projection, ...delta }; },
+        onProjectLastOpenedChanged: (anchor, timestamp) => { projectChanges.push({ anchor, timestamp }); },
     });
-    return { owner, rows, fetched, projection: () => projection, retire: () => { current = false; } };
+    return { owner, rows, fetched, applied, projectChanges, projection: () => projection, retire: () => { current = false; } };
 }
 
 describe('Account authoring memory owner', () => {
+    it('keeps qualified Project recency separate from engine memory and writes only explicit navigation', async () => {
+        const h = harness();
+        const anchor = { serverId: 'home:one', projectKey: 'project/one' };
+        const other = { ...anchor, serverId: 'home:two' };
+        const key = buildProjectLastOpenedMemoryKeyV1(anchor);
+        h.rows.set(key, { revision: 4, content: { t: 'plain', v: 100 } });
+        await h.owner.bootstrap();
+        expect(h.owner.readProjectLastOpened(anchor)).toBe(100);
+        expect(h.owner.readProjectLastOpened(other)).toBeUndefined();
+        expect(h.rows.get(key)?.revision).toBe(4);
+        const authoringApplications = h.applied.length;
+        await h.owner.writeProjectLastOpened(anchor, 200);
+        expect(h.rows.get(key)).toEqual({ revision: 5, content: { t: 'plain', v: 200 } });
+        expect(h.owner.readProjectLastOpened(anchor)).toBe(200);
+        expect(h.projection().lastEngineSelectionsByScopeV1).toEqual({});
+        expect(h.applied).toHaveLength(authoringApplications);
+        expect(h.projectChanges.at(-1)).toEqual({ anchor, timestamp: 200 });
+        await expect(h.owner.writeProjectLastOpened(anchor, -1)).rejects.toThrow();
+        expect(h.rows.get(key)?.revision).toBe(5);
+        await h.owner.importAbsent(key, 50);
+        expect(h.owner.readProjectLastOpened(anchor)).toBe(200);
+        h.rows.set(key, { revision: 6, content: null });
+        await h.owner.refresh(key);
+        expect(h.owner.readProjectLastOpened(anchor)).toBeUndefined();
+        expect(h.projectChanges.at(-1)).toEqual({ anchor, timestamp: undefined });
+        const tombstone = await h.owner.importAbsent(key, 50);
+        expect(tombstone).toEqual({ status: 'deleted', revision: 6 });
+        expect(h.rows.get(key)).toEqual({ revision: 6, content: null });
+    });
     it('projects persisted engine rows with additive carrier fields and keeps opaque selection values', async () => {
         const h = harness();
         const scope = 'home:agent:happier.agent.codex/codex';

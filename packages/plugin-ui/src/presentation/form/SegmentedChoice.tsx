@@ -47,6 +47,11 @@ export const HAPPIER_SEGMENTED_METRICS = Object.freeze({
   disabledOpacity: 0.5,
   /** Separate list-filter pills share the tab interaction owner, without a segmented track. */
   pills: Object.freeze({ gapPx: 8, radiusPx: 999, paddingVerticalPx: 4, paddingHorizontalPx: 8, labelFontSizePx: 13, labelSlotPx: 18 }),
+  /**
+   * A destination's page tabs (lab `p-overview` header): no track, a glyph beside each label, the
+   * chosen tab on the ink selection fill. Controls' radius step; the label on the pill type step.
+   */
+  plain: Object.freeze({ gapPx: 2, radiusPx: HAPPIER_RADIUS_V1.md, paddingVerticalPx: 6, paddingHorizontalPx: 11, labelFontSizePx: 13, labelSlotPx: 18, iconGapPx: 7 }),
 });
 
 export type HappierSegmentedSize = 'default' | 'compact';

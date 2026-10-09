@@ -1,60 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { renderHook } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const routerMock = createExpoRouterMock();
-
+// Expo navigation is the boundary; page and qualified route decisions remain real.
+const routerMock = createExpoRouterMock({ pathname: '/projects/wr_1/context', params: {
+    workspaceRefId: 'wr_1', serverId: 'server-1', dashboardId: 'selected',
+    comparisonId: 'comparison-a', initialFile: 'a.ts' } });
 vi.mock('expo-router', () => routerMock.module);
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) => key === 'mobileWorkspaceExperienceV1' ? 'classic' : null,
-    });
-});
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'phone',
-}));
-
-const workspaceRef: WorkspaceRefV1 = {
-    id: 'wr_1',
-    serverId: 'server-1',
-    machineId: 'machine-1',
-    rootPath: '/repo',
-    label: 'Project Alpha',
-    createdAtMs: 1,
-    lastOpenedAtMs: null,
-};
-
-describe('useProjectRouteActions', () => {
-    beforeEach(() => {
-        routerMock.spies.push.mockClear();
-        routerMock.spies.replace.mockClear();
-    });
-
-    it('preserves hosted browser surface context when pushing the fullscreen details route', async () => {
+const workspaceRef: WorkspaceRefV1 = { id: 'wr_1', serverId: 'server-1', machineId: 'machine-1',
+    rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1, lastOpenedAtMs: null };
+describe('project route actions', () => {
+    beforeEach(() => { routerMock.spies.push.mockClear(); routerMock.spies.replace.mockClear(); });
+    it('changes pages without dropping qualified dashboard, comparison, and file intent', async () => {
         const { useProjectRouteActions } = await import('./useProjectRouteActions');
-        const hook = await renderHook(() => useProjectRouteActions({
-            workspaceRef,
-            activeRootPath: '/repo',
-            activeWorktreeId: null,
-        }));
-
-        hook.getCurrent().navigateToSegment({
-            segment: 'details',
-            method: 'push',
-            sourceSurface: 'browser',
-        });
-
-        expect(routerMock.spies.push).toHaveBeenCalledWith(
-            '/projects/wr_1/details?worktreeId=%40root&sourceSurface=browser',
-        );
-
+        const hook = await renderHook(() => useProjectRouteActions({ workspaceRef,
+            activeRootPath: '/repo/feature', activeWorktreeId: 'checkout-a' }));
+        hook.getCurrent().navigateToSegment({ segment: 'changes', method: 'push' });
+        const href = routerMock.spies.push.mock.calls[0][0];
+        expect(typeof href).toBe('string');
+        const url = new URL(String(href), 'https://happier.test');
+        expect(url.pathname).toBe('/projects/wr_1/changes');
+        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'server-1', dashboardId: 'selected',
+            comparisonId: 'comparison-a', initialFile: 'a.ts', worktreeId: 'checkout-a' });
+        hook.getCurrent().navigateToSegment({ workspaceRef: { ...workspaceRef, id: 'wr_2', rootPath: '/other/repo' } });
+        const checkout = new URL(String(routerMock.spies.push.mock.calls[1][0]), 'https://happier.test');
+        expect(checkout.pathname).toBe('/projects/wr_2/context');
+        expect(Object.fromEntries(checkout.searchParams)).toEqual({ serverId: 'server-1', dashboardId: 'selected',
+            comparisonId: 'comparison-a', initialFile: 'a.ts', worktreeId: '@root' });
         await hook.unmount();
     });
 });

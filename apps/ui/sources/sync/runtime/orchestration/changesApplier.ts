@@ -4,6 +4,7 @@ import {
     changeRequiresSavedSecretCatalogRefresh,
     getChangeSessionDraftHint,
     getChangeAuthoringMemoryHint,
+    getChangeProjectAccountRowHint,
     getChangeTargetMessageSeq,
     type ChangeCheckpointBlockedReason,
     type PlannedChangeActions,
@@ -85,6 +86,7 @@ export async function applyPlannedChangeActions(params: {
     convergePendingForSession?: (sessionId: string) => Promise<void>;
     materializeSessionDraft?: (address: SessionDraftAddressV2) => Promise<void>;
     materializeAuthoringMemory?: (key: string) => Promise<void>;
+    materializeProjectAccountRow?: (physicalKey: string) => Promise<void>;
 }): Promise<PlannedChangesApplyResult> {
     const { planned } = params;
 
@@ -123,6 +125,7 @@ export async function applyPlannedChangeActions(params: {
     const completedSessionDraftAddresses = new Set<string>();
     const failedSessionDraftAddresses = new Set<string>();
     const completedAuthoringMemoryKeys = new Set<string>();
+    const completedProjectAccountRowKeys = new Set<string>();
     const listHydrationSessionIds = Array.from(new Set(
         planned.sessionIdsToCatchUp
             .map((sessionId) => String(sessionId ?? '').trim())
@@ -361,6 +364,18 @@ export async function applyPlannedChangeActions(params: {
         });
     }
 
+    for (const key of planned.projectAccountRowKeys ?? []) {
+        tasks.push(async () => {
+            try {
+                if (!params.materializeProjectAccountRow) return;
+                await params.materializeProjectAccountRow(key);
+                completedProjectAccountRowKeys.add(key);
+            } catch {
+                // The existing checkpoint remains below this unmaterialized row.
+            }
+        });
+    }
+
     if (planned.kv.type === 'refresh-feature' && planned.kv.feature === 'todos') {
         tasks.push(() => params.invalidate.todos?.() ?? Promise.resolve());
     }
@@ -405,6 +420,17 @@ export async function applyPlannedChangeActions(params: {
                 processedChanges,
                 blockedChanges: planned.changes.length - processedChanges,
             };
+        }
+
+        if (classification.materializationProof === 'project-account-rows') {
+            if (!getChangeProjectAccountRowHint(change) || !completedProjectAccountRowKeys.has(change.entityId)) {
+                return { status: 'partial', safeAdvanceCursor, blockedCursor: classification.cursor,
+                    blockedReason: 'partial-materialization', processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges };
+            }
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
         }
 
         if (classification.materializationProof === 'authoring-memory') {

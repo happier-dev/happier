@@ -1,43 +1,31 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import type { RemoveWorkspaceRefFromAccountResult } from '@/sync/ops/workspaceRefs';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const openMachinePathBrowserModalSpy = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>());
-const workspaceListDirectorySpy = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<any>>());
-const modalAlertSpy = vi.hoisted(() => vi.fn());
-const modalConfirmSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true));
-const modalPromptSpy = vi.hoisted(() => vi.fn<(...args: any[]) => Promise<string | null>>());
-const terminateRelationshipSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}));
-const addWorkspaceRefToAccountSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<{ ok: true; workspaceRefId: string }>>(async () => ({ ok: true as const, workspaceRefId: 'added-ref' })));
-const renameWorkspaceRefInAccountSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<{ ok: true }>>(async () => ({ ok: true as const })));
-const resetWorkspaceRefNameInAccountSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<{ ok: true }>>(async () => ({ ok: true as const })));
-const setWorkspaceRefPinnedInAccountSpy = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<{ ok: true }>>(async () => ({ ok: true as const })));
-const removeWorkspaceRefFromAccountSpy = vi.hoisted(
-    () => vi.fn<(...args: unknown[]) => Promise<RemoveWorkspaceRefFromAccountResult>>(async () => ({ ok: true as const })),
-);
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routeState = vi.hoisted(() => ({ pathname: '/projects' }));
-let workspaceSyncRelationshipSummariesMock: any[] = [];
-let translationPrefixMock = '';
 
+let serverId: string;
 let machinesMock: Machine[] = [];
-let workspaceRefsV1Mock: any[] = [];
-let pinnedWorkspaceRefIdsV1Mock: string[] = [];
-let deviceTypeMock: 'phone' | 'tablet' = 'tablet';
-let paneScopesMock: Record<string, { right?: { activeTabId?: string | null } }> = {};
-let localSettingsMock: Record<string, unknown> = {};
-let projectLastMobileSurfacesByWorkspaceRefIdMock: Record<string, string> = {};
-let accountSettingsMock: Record<string, unknown> = {};
-const setWorkspaceRefsV1Spy = vi.hoisted(() => vi.fn());
-const setPinnedWorkspaceRefIdsV1Spy = vi.hoisted(() => vi.fn());
+let workspaceRefsV1Mock: WorkspaceRefV1[] = [];
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -60,12 +48,7 @@ vi.mock('@expo/vector-icons', async () => {
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({
-        translate: (key, params) => {
-            const base = typeof params?.machine === 'string' ? `${key}:${params.machine}` : key;
-            return `${translationPrefixMock}${base}`;
-        },
-    });
+    return createTextModuleMock();
 });
 
 vi.mock('expo-router', async () => {
@@ -78,100 +61,52 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => deviceTypeMock,
-}));
-
-vi.mock('@/components/appShell/panes/AppPaneProvider', async () => {
-    const actual = await vi.importActual<typeof import('@/components/appShell/panes/AppPaneProvider')>(
-        '@/components/appShell/panes/AppPaneProvider',
-    );
-    return {
-        ...actual,
-        useOptionalAppPaneContext: () => ({
-            state: { scopes: paneScopesMock },
-        }),
-    };
-});
-
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: {
-            alert: modalAlertSpy,
-            confirm: (...args: any[]) => modalConfirmSpy(...args),
-            prompt: (...args: any[]) => modalPromptSpy(...args),
-        },
-    }).module;
+    return createModalModuleMock().module;
 });
 
-vi.mock('@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries', () => ({
-    useWorkspaceSyncRelationshipSummaries: () => workspaceSyncRelationshipSummariesMock,
-    resolveWorkspaceSyncStatusScope: (summary: any) => ({
-        serverId: 'server-1',
-        machineId: summary.alpha.machineId,
-        relationshipId: summary.relationshipId,
-    }),
-}));
+const { storage } = await import('@/sync/domains/state/storage');
+const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
 
-vi.mock('@/sync/ops/workspaceSync', () => ({
-    terminatePersistedWorkspaceSyncRelationship: (...args: any[]) => terminateRelationshipSpy(...args),
-}));
-
-vi.mock('@/sync/ops/workspaceRefs', () => ({
-    addWorkspaceRefToAccount: (...args: any[]) => addWorkspaceRefToAccountSpy(...args),
-    renameWorkspaceRefInAccount: (...args: any[]) => renameWorkspaceRefInAccountSpy(...args),
-    resetWorkspaceRefNameInAccount: (...args: any[]) => resetWorkspaceRefNameInAccountSpy(...args),
-    setWorkspaceRefPinnedInAccount: (...args: any[]) => setWorkspaceRefPinnedInAccountSpy(...args),
-    removeWorkspaceRefFromAccount: (...args: any[]) => removeWorkspaceRefFromAccountSpy(...args),
-}));
-
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({ serverId: 'server-1' }),
-}));
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-    openMachinePathBrowserModal: (...args: any[]) => openMachinePathBrowserModalSpy(...args),
-}));
-
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceListDirectory: (...args: any[]) => workspaceListDirectorySpy(...args),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useAllMachines: () => machinesMock,
-        useSetting: (key: string) => {
-            if (key === 'workspaceRefsV1') return workspaceRefsV1Mock;
-            if (key === 'pinnedWorkspaceRefIdsV1') return pinnedWorkspaceRefIdsV1Mock;
-            return accountSettingsMock[key];
-        },
-        useLocalSetting: (key: string) => localSettingsMock[key],
-        useProjectLastMobileSurfacesByWorkspaceRefId: () => projectLastMobileSurfacesByWorkspaceRefIdMock,
-        useSettingMutable: (key: string) => {
-            if (key === 'workspaceRefsV1') return [workspaceRefsV1Mock, setWorkspaceRefsV1Spy];
-            if (key === 'pinnedWorkspaceRefIdsV1') return [pinnedWorkspaceRefIdsV1Mock, setPinnedWorkspaceRefIdsV1Spy];
-            return [undefined, vi.fn()];
-        },
-    });
+beforeEach(async () => {
+    await homes.reset();
+    await loadSyncSingletonForTests();
+    serverId = await homes.addHome({ name: 'Projects Home', serverUrl: 'https://projects-column.test',
+        accountId: 'account-1' });
+    homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: { status: 'listed', coverage: 'complete', rows: [] } });
+    homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+    homes.answer(serverId, '/v2/cursor', { body: { cursor: '0' } });
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://projects-column.test')!.token! });
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    await createDefaultActionExecutor().execute('projects.list', { serverId });
+    storage.setState({ localSettings: { ...localSettingsDefaults } });
+    storage.getState().clearProjectAccountRowsScope();
+    routerPushSpy.mockClear();
+});
+afterEach(async () => {
+    await standardCleanup();
+    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
+    await homes.reset();
 });
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => {
-        const triggerParams = {
-            open: Boolean(props.open),
-            toggle: vi.fn(),
-            openMenu: vi.fn(),
-            closeMenu: vi.fn(),
-            selectedItem: null,
-        };
-        const triggerResult = typeof props.trigger === 'function'
-            ? props.trigger(triggerParams)
-            : props.trigger ?? null;
-        return React.createElement('DropdownMenu', props, triggerResult);
-    },
-}));
+async function renderProjects(element: React.ReactElement) {
+    storage.getState().applyMachines(machinesMock, true);
+    const accountScope = storage.getState().profileScope;
+    if (!accountScope) throw new Error('Project fixture has no connected Account');
+    storage.getState().activateProjectAccountRowsScope(accountScope);
+    homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({ workspaceRefs: workspaceRefsV1Mock }) });
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const result = await createDefaultActionExecutor().execute('projects.list', { serverId });
+    expect(result.ok).toBe(true);
+    expect(storage.getState().projectAccountRows?.workspaceRefs.map(ref => ref.id), JSON.stringify({
+        scope: storage.getState().profileScope, rows: storage.getState().projectAccountRows, result,
+        requests: homes.requestsFor('/v1/account/project-rows/list'),
+    })).toEqual(workspaceRefsV1Mock.map(ref => ref.id));
+    return renderScreen(element);
+}
 
 function createMachine(params: Readonly<{
     id: string;
@@ -179,11 +114,8 @@ function createMachine(params: Readonly<{
     active?: boolean;
     activeAt?: number;
 }>): Machine {
-    return {
+    return createMachineFixture({
         id: params.id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
         active: params.active ?? true,
         activeAt: params.activeAt ?? 1,
         metadata: {
@@ -193,17 +125,26 @@ function createMachine(params: Readonly<{
             happyHomeDir: '/tmp/.happy',
             homeDir: '/Users/tester',
         },
-        metadataVersion: 1,
-        daemonState: null,
-        daemonStateVersion: 1,
-    };
+    });
 }
 
-function workspaceRef(id: string, machineId: string, rootPath: string) {
-    return { v: 1, id, serverId: 'server-1', machineId, rootPath, createdAtMs: 1, updatedAtMs: 1 };
+function workspaceRef(id: string, machineId: string, rootPath: string): WorkspaceRefV1 {
+    return { id, serverId, machineId, rootPath, createdAtMs: 1 };
 }
 
 describe('ProjectsColumn', () => {
+    it('shows saved Sources as content without repeating a no-projects message', async () => {
+        workspaceRefsV1Mock = [];
+        homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: {
+            ok: true, sources: [{ id: 'saved', revision: 1, name: 'Saved repository', createdByAccountId: 'account-1', audience: [],
+                repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'owner/repo' }, protocol: 'https' } }], coverage: { complete: true, nextCursor: null },
+        } });
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        const screen = await renderProjects(<ProjectsColumn />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects-column:tree-saved-saved')).toBeTruthy());
+        expect(screen.findByTestId('projects-column:empty')).toBeNull();
+    });
     beforeEach(() => {
         standardCleanup();
         routeState.pathname = '/projects';
@@ -216,61 +157,86 @@ describe('ProjectsColumn', () => {
             workspaceRef('ref-b', 'm1', '/Users/tester/beta'),
             workspaceRef('ref-c', 'm2', '/Users/tester/gamma'),
         ];
-        pinnedWorkspaceRefIdsV1Mock = ['ref-c'];
-        accountSettingsMock = {};
-        localSettingsMock = {};
-        workspaceSyncRelationshipSummariesMock = [];
-        openMachinePathBrowserModalSpy.mockReset();
         routerPushSpy.mockReset();
     });
 
     const rowIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
         .findAll((node) => typeof node.type === 'string' || typeof node.type === 'function')
         .map((node) => node.props?.testID)
-        .filter((testID): testID is string => typeof testID === 'string' && /^projects-column:(project|group):/.test(testID))
+        .filter((testID): testID is string => typeof testID === 'string' && testID.startsWith('projects-column:tree-row-'))
         .filter((testID, index, all) => all.indexOf(testID) === index);
 
-    it("lists pinned projects, then each machine's projects, and marks the open one", async () => {
-        routeState.pathname = '/projects/ref-b/files';
+    it('draws each Project as one tree row, marks the open checkout, and folds a machine with several checkouts', async () => {
+        routeState.pathname = '/projects/ref-b/code';
+        workspaceRefsV1Mock = [
+            { ...workspaceRef('ref-a', 'm1', '/Users/tester/alpha'), projectKey: 'alpha' },
+            { ...workspaceRef('ref-b', 'm1', '/Users/tester/alpha-wt/fix'), projectKey: 'alpha' },
+            workspaceRef('ref-c', 'm2', '/Users/tester/gamma'),
+        ];
         const { ProjectsColumn } = await import('./ProjectsColumn');
-        const screen = await renderScreen(<ProjectsColumn />);
+        const screen = await renderProjects(<ProjectsColumn />);
 
+        // alpha has two checkouts on one machine: the machine folds into the Project row, which opens
+        // because it holds the open checkout; gamma is a single row.
+        const alphaRowId = 'projects-column:tree-row-alpha/' + JSON.stringify([serverId, 'm1', '/Users/tester/alpha', 'ref-a']);
+        const fixRowId = 'projects-column:tree-row-alpha/' + JSON.stringify([serverId, 'm1', '/Users/tester/alpha-wt/fix', 'ref-b']);
         expect(rowIds(screen)).toEqual([
-            'projects-column:group:pinned',
-            'projects-column:project:ref-c',
-            'projects-column:group:m1',
-            'projects-column:project:ref-a',
-            'projects-column:project:ref-b',
+            'projects-column:tree-row-alpha',
+            alphaRowId,
+            fixRowId,
+            'projects-column:tree-row-ref-c',
         ]);
-        expect(screen.findAllByTestId('projects-column:project:ref-b')[0]?.props.selected).toBe(true);
-        expect(screen.findAllByTestId('projects-column:project:ref-a')[0]?.props.selected).toBe(false);
+        expect(screen.findAllByTestId(fixRowId)[0]?.props.selected).toBe(true);
+        expect(screen.findAllByTestId(alphaRowId)[0]?.props.selected).toBe(false);
     });
 
-    it('opens a project from its row', async () => {
+    it('opens the exact checkout from a leaf row', async () => {
         const { ProjectsColumn } = await import('./ProjectsColumn');
-        const screen = await renderScreen(<ProjectsColumn />);
+        const screen = await renderProjects(<ProjectsColumn />);
         await act(async () => {
-            screen.findAllByTestId('projects-column:project:ref-a')[0]?.props.onPress();
+            screen.findAllByTestId('projects-column:tree-row-ref-a')[0]?.props.onPress();
         });
         expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('/projects/ref-a'));
     });
 });
 
 describe('Projects index', () => {
+    it('invites opening a saved Source and keeps Add as a secondary entrance', async () => {
+        workspaceRefsV1Mock = [];
+        homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: {
+            ok: true, sources: [{ id: 'saved', revision: 1, name: 'Saved repository', createdByAccountId: 'account-1', audience: [],
+                repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'owner/repo' }, protocol: 'https' } }], coverage: { complete: true, nextCursor: null },
+        } });
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const { ProjectsIndexView } = await import('./ProjectsIndexView');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const screen = await renderProjects(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}><ProjectsIndexView /></AppShellColumnContext.Provider>);
+        await vi.waitFor(() => expect(screen.findByTestId('projects-none-open:open-source')).toBeTruthy());
+        expect(screen.findByTestId('projects-none-open:add')).toBeTruthy();
+        await act(async () => { await screen.findAllByType(RoundButton).find(node => node.props.testID === 'projects-none-open:open-source')!.props.action(); });
+        // On a computer Open is the dialog over the page, addressed by its retained draft (never a pushed page).
+        const { Modal } = await import('@/modal');
+        const openings = () => [
+            ...vi.mocked(Modal.show).mock.calls.map(([config]) => ({ dialog: config })),
+            ...routerPushSpy.mock.calls.filter(([route]) => (route as { pathname?: string })?.pathname === '/projects/open').map(([route]) => ({ page: route })),
+        ];
+        await vi.waitFor(() => expect(openings().length).toBeGreaterThan(0));
+        expect(openings()).toEqual([{ dialog: expect.objectContaining({
+            chrome: expect.objectContaining({ testID: 'projects.open.dialog' }),
+            props: { routeParams: expect.objectContaining({ draftId: expect.any(String) }) },
+        }) }]);
+    });
     beforeEach(() => {
         standardCleanup();
         machinesMock = [createMachine({ id: 'm1', host: 'studio' })];
         workspaceRefsV1Mock = [workspaceRef('ref-a', 'm1', '/Users/tester/alpha')];
-        pinnedWorkspaceRefIdsV1Mock = [];
-        accountSettingsMock = {};
-        localSettingsMock = {};
-        workspaceSyncRelationshipSummariesMock = [];
     });
 
     it('does not repeat the list beside the Projects column: it says no project is open', async () => {
         const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
         const { ProjectsIndexView } = await import('./ProjectsIndexView');
-        const beside = await renderScreen(
+        const beside = await renderProjects(
             <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
                 <ProjectsIndexView />
             </AppShellColumnContext.Provider>,
@@ -279,7 +245,7 @@ describe('Projects index', () => {
         expect(beside.findByTestId('projects-list')).toBeNull();
 
         // Collapsed column, or a phone: the page is the list.
-        const alone = await renderScreen(
+        const alone = await renderProjects(
             <AppShellColumnContext.Provider value={{ present: true, columnVisible: false }}>
                 <ProjectsIndexView />
             </AppShellColumnContext.Provider>,

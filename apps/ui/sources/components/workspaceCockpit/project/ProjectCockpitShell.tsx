@@ -1,21 +1,28 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { ProjectDetailsMainPanel } from '@/components/projects/detail/ProjectDetailsMainPanel';
+import { ProjectOverviewWidgets } from '@/components/projects/detail/ProjectOverviewWidgets';
 import { ProjectBrowseFilesSurface } from '@/components/projects/detail/surfaces/ProjectBrowseFilesSurface';
 import { ProjectGitSurface } from '@/components/projects/detail/surfaces/ProjectGitSurface';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { ProjectRightPanelBrowserView } from '@/components/projects/detail/browser/ProjectRightPanelBrowserView';
 import { ProjectRightPanelServicesView } from '@/components/projects/detail/services/ProjectRightPanelServicesView';
+import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
+import { ProjectContextBody } from '@/components/projects/context/ProjectContextBody';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
-import { useProjectOverviewMode } from '@/components/projects/detail/useProjectOverviewMode';
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
+import { ProjectAsideWidgets } from '@/components/widgets/area/ProjectWidgetArea';
+import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import type { ProjectMobileSurface } from './projectCockpitState';
 
 type ProjectCockpitShellProps = Readonly<{
@@ -23,30 +30,22 @@ type ProjectCockpitShellProps = Readonly<{
     scopeId: string;
     activeRootPath: string;
     activeWorktreeId?: string | null;
+    dashboardId?: string;
     surface: ProjectMobileSurface;
     isFocused: boolean;
     onSelectRootPath: (path: string) => void;
 }>;
 
 export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) => {
-    const pane = useAppPaneScope(props.scopeId);
-    const { navigateToSurface } = useProjectSurfaceController({
+    const refs = useWorkspaceRefs();
+    const activeCheckout = React.useMemo(() => resolveProjectCheckoutWorkspaceRef(refs, props.workspaceRef, props.activeRootPath) ?? undefined,
+        [props.activeRootPath, props.workspaceRef, refs]);
+    const { navigateToSurface, selectDashboard, checkoutWorkspace } = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
         activeWorktreeId: props.activeWorktreeId,
     });
-    const exitOverviewForDetails = React.useCallback((showOverview: boolean) => {
-        if (!showOverview) navigateToSurface('tabs');
-    }, [navigateToSurface]);
-    const { forceOverviewMode } = useProjectOverviewMode({
-        showWorktrees: props.surface === 'overview' && props.isFocused,
-        onSetShowWorktrees: exitOverviewForDetails,
-        detailsState: pane.scopeState?.details,
-    });
-    React.useEffect(() => {
-        if (props.surface === 'overview' && props.isFocused) pane.closeDetails();
-    }, [pane.closeDetails, props.isFocused, props.surface]);
     useProjectRouteSurfaceSync({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
@@ -94,24 +93,30 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
         onRevealInFilesTreeNavigate: navigateToBrowse,
     });
 
-    if (props.surface === 'browse') {
+    if (props.surface === 'code' || props.surface === 'browse') {
+        // A Files companion remains a focused browser. Only the canonical Code page hosts its widgets.
+        const aside = props.surface === 'code' ? <ProjectAsideWidgets serverId={props.workspaceRef.serverId}
+            projectName={resolveWorkspaceRefDisplayName(props.workspaceRef)} projectRef={props.workspaceRef}
+            activeCheckout={activeCheckout} dashboardId={props.dashboardId} testID="project-code-aside" /> : null;
+        const browser = <React.Suspense fallback={<PaneLoadingFallback />}>
+            <ProjectBrowseFilesSurface
+                workspaceRef={props.workspaceRef}
+                activeWorktreeId={props.activeWorktreeId}
+                scopeId={props.scopeId}
+                scope={workspaceScope}
+                onOpenFile={openFileInDetails}
+                onOpenFilePinned={openFileInDetailsPinned}
+                aside={aside}
+            />
+        </React.Suspense>;
         return (
             <View testID="project-files-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-                <React.Suspense fallback={<PaneLoadingFallback />}>
-                    <ProjectBrowseFilesSurface
-                        workspaceRef={props.workspaceRef}
-                        activeWorktreeId={props.activeWorktreeId}
-                        scopeId={props.scopeId}
-                        scope={workspaceScope}
-                        onOpenFile={openFileInDetails}
-                        onOpenFilePinned={openFileInDetailsPinned}
-                    />
-                </React.Suspense>
+                {browser}
             </View>
         );
     }
 
-    if (props.surface === 'git') {
+    if (props.surface === 'changes' || props.surface === 'git') {
         return (
             <View testID="project-git-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
                 <React.Suspense fallback={<PaneLoadingFallback />}>
@@ -144,6 +149,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                         machineId={props.workspaceRef.machineId}
                         rootPath={props.activeRootPath}
                         serverId={props.workspaceRef.serverId}
+                        workspace={checkoutWorkspace}
                     />
                 </React.Suspense>
             </View>
@@ -154,7 +160,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
         return (
             <View testID="project-browser-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
                 <React.Suspense fallback={<PaneLoadingFallback />}>
-                    <ProjectRightPanelBrowserView workspaceRefId={props.workspaceRef.id} scopeId={`${props.scopeId}:browser`} />
+                    <ProjectRightPanelBrowserView workspaceRefId={props.workspaceRef.id} scopeId={`${props.scopeId}:browser`} workspaceScope={workspaceScope} />
                 </React.Suspense>
             </View>
         );
@@ -166,13 +172,31 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                 <React.Suspense fallback={<PaneLoadingFallback />}>
                     <ProjectRightPanelServicesView
                         machineId={props.workspaceRef.machineId}
+                        workspaceRefId={props.workspaceRef.id}
                         serverId={props.workspaceRef.serverId}
                         workspaceRoot={props.activeRootPath}
                         onOpenServiceInBrowser={openServiceInBrowser}
+                        presentation="page"
+                        testID="project-services-page"
                     />
                 </React.Suspense>
             </View>
         );
+    }
+
+    if (props.surface === 'overview') {
+        return <ProjectOverviewWidgets workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath} dashboardId={props.dashboardId}
+            onSelectDashboard={selectDashboard} />;
+    }
+
+    const openServices = () => navigateToSurface('services');
+    if (props.surface === 'scripts') {
+        return checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} testID="project-scripts-screen" onOpenServices={openServices} />
+            : <SurfaceStateCard testID="project-scripts-unavailable" kind="unavailable" title={t('common.unavailable')} />;
+    }
+
+    if (props.surface === 'context') {
+        return <ProjectContextBody workspaceRef={props.workspaceRef} testID="project-context-screen" />;
     }
 
     return (
@@ -182,7 +206,6 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                 scopeId={props.scopeId}
                 activeRootPath={props.activeRootPath}
                 activeWorktreeId={props.activeWorktreeId}
-                forceOverviewMode={forceOverviewMode}
                 onSelectRootPath={props.onSelectRootPath}
             />
         </View>

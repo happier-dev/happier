@@ -1,26 +1,45 @@
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { parseSessionFileDeepLinkAnchor, serializeFileTargetAnchor, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import { FILE_TARGET_ANCHOR_PARAM_KEYS, parseSessionFileDeepLinkAnchor, serializeFileTargetAnchor, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import type { PaneDetailsStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import { buildActiveDetailsRouteParams, parseSessionPaneUrlState, serializeSessionPaneUrlState,
+    SESSION_PANE_URL_PARAM_KEYS, type SessionPaneUrlDetailsTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import {
-    migrateProjectRouteSegmentToMobileSurface,
     resolveProjectMobileSurfaceIntent,
-    resolveProjectLegacyRouteSegmentFromState,
     resolveProjectRoutePathForSurface,
+    type ProjectPageV1,
+    type ProjectRouteContext,
     type ProjectMobileSurface,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 export type ProjectFileRouteTarget = Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource }>;
 
+export function readProjectSelectedRouteResource(details: Pick<PaneDetailsStateView, 'isOpen' | 'tabs' | 'activeTabKey'> | null | undefined) {
+    if (!details?.isOpen) return undefined;
+    const resource = parseSessionPaneUrlState(buildActiveDetailsRouteParams(details.tabs, details.activeTabKey))?.details;
+    return resource?.kind === 'file' || resource?.kind === 'commit' ? resource : undefined;
+}
+
 export function readProjectFileRouteTarget(params: Readonly<Record<string, unknown>>): ProjectFileRouteTarget | null {
-    const path = readProjectRouteStringParam(typeof params.initialFile === 'string' || Array.isArray(params.initialFile) ? params.initialFile : undefined);
+    const raw = params.initialFile;
+    const path = typeof raw === 'string' ? raw : Array.isArray(raw)
+        ? raw.find((value): value is string => typeof value === 'string' && value.length > 0) : null;
     if (!path) return null;
     const parsed = parseSessionFileDeepLinkAnchor({ ...params, path });
     return { kind: 'file', path, ...(parsed ? { anchor: parsed.anchor } : {}), ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}) };
 }
 
-export type ProjectRouteSegment = 'details' | 'files' | 'git';
+export { PROJECT_PAGES, type ProjectPageV1 } from '@/components/workspaceCockpit/project/projectCockpitState';
+export type ProjectRouteSegment = ProjectPageV1;
 export const PROJECT_ROUTE_ROOT_SENTINEL = '@root';
 export const PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM = 'worktreeId';
 export type ProjectDetailsSourceSurface = Exclude<ProjectMobileSurface, 'overview' | 'tabs'>;
@@ -110,6 +129,18 @@ export function readProjectRouteWorktreeSelection(input: Readonly<{
     };
 }
 
+/** Unlike the visual selection reader, an execution target cannot guess a root from a worktree id. */
+export function readProjectRouteCheckoutRootPath(input: Parameters<typeof readProjectRouteWorktreeSelection>[0]): string | null {
+    const selected = readProjectRouteWorktreeSelection(input);
+    if (selected.requestedWorktreeId && selected.requestedRootPath === input.defaultRootPath) {
+        const explicitRoot = readProjectRouteStringParam(input.rawLegacyActiveRootPath);
+        const persistedRoot = readProjectRouteStringParam(input.persistedActiveRootPath ?? undefined);
+        const persistedId = readProjectRouteStringParam(input.persistedWorktreeId ?? undefined);
+        if (!explicitRoot && !(persistedRoot && persistedId === selected.requestedWorktreeId)) return null;
+    }
+    return selected.requestedRootPath;
+}
+
 export function resolveProjectRouteActiveRootParam(
     activeRootPath: string,
     defaultRootPath: string,
@@ -154,34 +185,6 @@ export function resolveProjectRouteSelectionQuery(input: Readonly<{
     };
 }
 
-export function resolveProjectCockpitIndexRedirectHref(input: Readonly<{
-    workspaceRefId: string;
-    surface: ProjectMobileSurface;
-    explicitMobileSurfaceHint: string | null;
-    requestedRootPath: string | null;
-    requestedWorktreeId: string | null;
-    activeRootPath: string;
-    defaultRootPath: string;
-    activeWorktreeId: string | null;
-}>): string | null {
-    const selectionQuery = resolveProjectRouteSelectionQuery(input);
-    const canonicalHref = resolveProjectRoutePathForSurface({
-        workspaceRefId: input.workspaceRefId,
-        surface: input.surface,
-        ...selectionQuery,
-    });
-    const indexPathname = resolveProjectRoutePathForSurface({
-        workspaceRefId: input.workspaceRefId,
-        surface: 'overview',
-    }).split('?', 1)[0];
-    const surfaceNeedsRedirect = canonicalHref.split('?', 1)[0] !== indexPathname
-        || (input.surface !== 'overview' && input.explicitMobileSurfaceHint !== input.surface);
-    const shouldCanonicalize = surfaceNeedsRedirect
-        || input.requestedRootPath !== input.activeRootPath
-        || (input.requestedWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL) !== (selectionQuery.rawWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL);
-    return shouldCanonicalize ? canonicalHref : null;
-}
-
 export function normalizeProjectDetailsSourceSurface(value: unknown): ProjectDetailsSourceSurface | null {
     const raw = Array.isArray(value) ? value[0] : value;
     const normalized = typeof raw === 'string' ? raw.trim() : '';
@@ -200,76 +203,57 @@ export function normalizeProjectDetailsSourceSurface(value: unknown): ProjectDet
 export function buildProjectRouteHref(input: Readonly<{
     workspaceRefId: string;
     segment?: ProjectRouteSegment;
+    surface?: ProjectMobileSurface;
     activeRootPath: string;
     defaultRootPath: string;
     activeWorktreeId?: string | null;
     showWorktrees?: boolean;
     sourceSurface?: ProjectDetailsSourceSurface | null;
-    initialResource?: ProjectFileRouteTarget | Readonly<{ kind: 'commit'; sha: string }>;
-}>): string {
-    const basePath = input.segment
-        ? `/projects/${encodeURIComponent(input.workspaceRefId)}/${input.segment}`
-        : `/projects/${encodeURIComponent(input.workspaceRefId)}`;
-    const activeRootParam = resolveProjectRouteActiveRootParam(
-        input.activeRootPath,
-        input.defaultRootPath,
-        input.activeWorktreeId,
-    );
-    const queryParams = new URLSearchParams();
-    if (activeRootParam) {
-        queryParams.set(PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM, activeRootParam);
+    initialResource?: ProjectFileRouteTarget | Readonly<{ kind: 'commit'; sha: string }> | null;
+    /** A newly selected Details destination replaces the old Details and initial-resource intent. */
+    details?: SessionPaneUrlDetailsTarget | null;
+}> & ProjectRouteContext): string {
+    const resourceParams: Record<string, string> = {};
+    if (input.showWorktrees) resourceParams.showWorktrees = '1';
+    const routeParams = { ...input.routeParams };
+    if (input.showWorktrees === false) delete routeParams.showWorktrees;
+    if (input.sourceSurface) resourceParams.sourceSurface = input.sourceSurface;
+    if (input.initialResource !== undefined || input.details !== undefined) {
+        delete routeParams.initialFile;
+        delete routeParams.initialCommit;
+        for (const key of FILE_TARGET_ANCHOR_PARAM_KEYS) delete routeParams[key];
     }
-    if (input.showWorktrees === true) {
-        queryParams.set('showWorktrees', '1');
+    if (input.details !== undefined) {
+        for (const key of SESSION_PANE_URL_PARAM_KEYS) {
+            if (key !== 'right' && key !== 'bottom') delete routeParams[key];
+        }
+        Object.assign(resourceParams, serializeSessionPaneUrlState(input.details ? { details: input.details } : {}));
     }
-    if (input.segment === 'details' && input.sourceSurface) {
-        queryParams.set('sourceSurface', input.sourceSurface);
-    }
-    if (input.initialResource) {
-        queryParams.set(input.initialResource.kind === 'file' ? 'initialFile' : 'initialCommit',
-            input.initialResource.kind === 'file' ? input.initialResource.path : input.initialResource.sha);
+    if (input.initialResource && input.details === undefined) {
+        resourceParams[input.initialResource.kind === 'file' ? 'initialFile' : 'initialCommit'] =
+            input.initialResource.kind === 'file' ? input.initialResource.path : input.initialResource.sha;
         if (input.initialResource.kind === 'file' && input.initialResource.anchor) {
-            for (const [key, value] of Object.entries(serializeFileTargetAnchor(input.initialResource.anchor, input.initialResource.anchorSource))) queryParams.set(key, value);
+            Object.assign(resourceParams, serializeFileTargetAnchor(input.initialResource.anchor, input.initialResource.anchorSource));
         }
     }
-    const query = queryParams.toString();
-    if (!query) return basePath;
-    return `${basePath}?${query}`;
+    return resolveProjectRoutePathForSurface({
+        ...input,
+        page: input.segment ?? 'overview',
+        surface: input.surface ?? input.segment ?? 'overview',
+        ...(input.details !== undefined ? { comparisonId: input.details?.kind === 'scmReview' ? input.details.comparison?.comparisonId ?? null : null } : {}),
+        ...resolveProjectRouteSelectionQuery(input),
+        routeParams: { ...routeParams, ...resourceParams },
+    });
 }
 
-export function replaceProjectRouteSelection(input: Readonly<{
+export function replaceProjectRouteSelection(input: Parameters<typeof buildProjectRouteHref>[0] & Readonly<{
     router: { replace: (href: string) => void };
-    workspaceRefId: string;
-    segment?: ProjectRouteSegment;
-    activeRootPath: string;
-    defaultRootPath: string;
-    activeWorktreeId?: string | null;
-    showWorktrees?: boolean;
 }>): void {
-    input.router.replace(buildProjectRouteHref({
-        workspaceRefId: input.workspaceRefId,
-        segment: input.segment,
-        activeRootPath: input.activeRootPath,
-        defaultRootPath: input.defaultRootPath,
-        activeWorktreeId: input.activeWorktreeId,
-        showWorktrees: input.showWorktrees,
-    }));
+    input.router.replace(buildProjectRouteHref(input));
 }
 
-export { migrateProjectRouteSegmentToMobileSurface, type ProjectMobileSurface };
+export { type ProjectMobileSurface };
 
-export function resolveProjectRouteSegment(
-    activeTabId: string | null | undefined,
-    persistedSegment?: string | null,
-): ProjectRouteSegment {
-    return resolveProjectLegacyRouteSegmentFromState(activeTabId, readProjectRouteStringParam(persistedSegment ?? undefined));
-}
-
-/**
- * Canonical policy for opening an existing project from a list-like surface.
- * It preserves the last project surface and worktree on phones; wider layouts
- * keep the project root as their stable entry point.
- */
 export function resolveProjectOpenHref(input: Readonly<{
     workspaceRef: WorkspaceRefV1;
     deviceType: 'phone' | 'tablet';
@@ -279,38 +263,14 @@ export function resolveProjectOpenHref(input: Readonly<{
     persistedActiveRootPath?: string | null;
     persistedWorktreeId?: string | null;
 }>): string {
-    if (input.deviceType !== 'phone') {
-        return `/projects/${encodeURIComponent(input.workspaceRef.id)}`;
-    }
-
-    const activeRootPath = readProjectRouteStringParam(input.persistedActiveRootPath ?? undefined)
-        ?? input.workspaceRef.rootPath;
-    const activeWorktreeId = readProjectRouteStringParam(input.persistedWorktreeId ?? undefined);
-    if (input.cockpitEnabled) {
-        return resolveProjectRoutePathForSurface({
-            workspaceRefId: input.workspaceRef.id,
-            surface: resolveProjectMobileSurfaceIntent({
-                routeKind: 'index',
-                activeRightTabId: input.rememberedRightTabId,
-                persistedSurface: input.persistedMobileSurface,
-            }),
-            ...resolveProjectRouteSelectionQuery({
-                activeRootPath,
-                defaultRootPath: input.workspaceRef.rootPath,
-                activeWorktreeId,
-            }),
-        });
-    }
-
-    return buildProjectRouteHref({
-        workspaceRefId: input.workspaceRef.id,
-        segment: resolveProjectRouteSegment(
-            input.rememberedRightTabId,
-            input.persistedMobileSurface,
-        ),
-        activeRootPath,
-        defaultRootPath: input.workspaceRef.rootPath,
-        activeWorktreeId,
+    const activeRootPath = readProjectRouteStringParam(input.persistedActiveRootPath ?? undefined) ?? input.workspaceRef.rootPath;
+    const surface = input.deviceType === 'phone' ? resolveProjectMobileSurfaceIntent({
+        routeKind: 'index', activeRightTabId: input.rememberedRightTabId, persistedSurface: input.persistedMobileSurface,
+    }) : 'overview';
+    return resolveProjectRoutePathForSurface({
+        workspaceRefId: input.workspaceRef.id, serverId: input.workspaceRef.serverId, surface,
+        ...resolveProjectRouteSelectionQuery({ activeRootPath, defaultRootPath: input.workspaceRef.rootPath,
+            activeWorktreeId: input.persistedWorktreeId }),
     });
 }
 
@@ -332,4 +292,61 @@ export function resolveProjectRouteHeaderTitle(workspaceRef: WorkspaceRefV1, act
         return baseTitle;
     }
     return `${baseTitle} · ${worktreeLabel}`;
+}
+
+export type ProjectAuthoringReturn =
+    | Readonly<{ kind: 'ready'; origin: PluginUiNewSessionSeedOriginV1; workspaceRef: WorkspaceRefV1; href: string }>
+    | Readonly<{ kind: 'unavailable'; reason: 'origin_invalid' | 'scope_unavailable' | 'workspace_unavailable' }>;
+
+/** Original provenance is qualified independently of the Session's editable launch target. */
+export function resolveProjectAuthoringReturn(origin: unknown, input: Readonly<{
+    scope: ServerAccountScope | null;
+    workspaceRefs: readonly WorkspaceRefV1[];
+}>): ProjectAuthoringReturn {
+    const parsed = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(origin);
+    if (!parsed.success) return { kind: 'unavailable', reason: 'origin_invalid' };
+    const captured = parsed.data;
+    if (!input.scope || input.scope.accountId !== captured.accountId
+        || !areServerProfileIdentifiersEquivalent(input.scope.serverId, captured.workspace.serverId)) {
+        return { kind: 'unavailable', reason: 'scope_unavailable' };
+    }
+    const workspace = resolveWorkspaceRefByAddress(input.workspaceRefs, captured.workspace);
+    if (workspace.kind !== 'resolved') return { kind: 'unavailable', reason: 'workspace_unavailable' };
+    return {
+        kind: 'ready', origin: captured, workspaceRef: workspace.ref,
+        href: buildProjectRouteHref({
+            workspaceRefId: workspace.ref.id,
+            serverId: workspace.ref.serverId,
+            segment: captured.page,
+            activeRootPath: captured.workspace.rootPath,
+            defaultRootPath: workspace.ref.rootPath,
+            ...(captured.comparisonId ? { comparisonId: captured.comparisonId } : {}),
+        }),
+    };
+}
+
+/** Read only the registered private work field, never infer origin from machine/path. */
+export function readProjectSessionAuthoringOrigin(metadata: unknown): PluginUiNewSessionSeedOriginV1 | null {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || !('work' in metadata)) return null;
+    const work = metadata.work;
+    if (!work || typeof work !== 'object' || Array.isArray(work) || !('authoringOriginV1' in work)) return null;
+    const parsed = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(work.authoringOriginV1);
+    return parsed.success ? parsed.data : null;
+}
+
+export function resolveCurrentProjectAuthoringReturn(origin: unknown): ProjectAuthoringReturn {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const state = readRegisteredStorageState();
+    return resolveProjectAuthoringReturn(origin, {
+        scope: lifetime?.isCurrent() ? lifetime.scope : null,
+        workspaceRefs: state ? readProjectWorkspaceRefs(state) : [],
+    });
+}
+
+/** The page and semantic Host API share this admission; no raw route is accepted. */
+export function admitProjectAuthoringOrigin(origin: PluginUiNewSessionSeedOriginV1, scope: ServerAccountScope): boolean {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime?.isCurrent() || lifetime.scope.accountId !== scope.accountId
+        || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, scope.serverId)) return false;
+    return resolveCurrentProjectAuthoringReturn(origin).kind === 'ready';
 }

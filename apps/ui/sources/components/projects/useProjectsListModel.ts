@@ -2,7 +2,8 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { t } from '@/text';
-import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, usePinnedWorkspaceRefIds, useAllMachines, useProjectOrganizations } from '@/sync/domains/state/storage';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
@@ -10,20 +11,27 @@ import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope 
 import { projectWorkspaceSyncSetAttentionByWorkspaceRefId } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { formatWorkspaceSyncSetAttention } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { terminatePersistedWorkspaceSyncRelationship } from '@/sync/ops/workspaceSync';
-import {
-    addWorkspaceRefToAccount,
-    removeWorkspaceRefFromAccount,
-    renameWorkspaceRefInAccount,
-    resetWorkspaceRefNameInAccount,
-    setWorkspaceRefPinnedInAccount,
-} from '@/sync/ops/workspaceRefs';
-import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem';
+import { updateProjectWorkspace, forgetProjectWorkspace } from '@/sync/ops/actions/projectWorkspaceActions';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 import { buildProjectsListGroups } from './projectsListGrouping';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { useOpenProject } from './useOpenProject';
+import { seedAndOpenProjectDraft } from './activation/projectOpenDraftSeed';
+import { useNavigateToProjectOpen } from './activation/projectOpenPresentation';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { ProjectVisibilitySetOutputV1Schema } from '@happier-dev/protocol/projects/projectVisibilityV1';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
+import { useProjectsTreeCheckoutFacts } from './useProjectsTreeCheckoutFacts';
+import { buildProjectsTreeProjects, projectsTreeCheckoutKey } from './projectsTreeRows';
+import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
+import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+
+type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean> }>;
 
 /**
  * The one model of the Projects list — its grouping (pinned, then per machine), each project's
@@ -32,26 +40,35 @@ import { useOpenProject } from './useOpenProject';
  */
 export function useProjectsListModel() {
     const router = useRouter();
+    const navigateToOpen = useNavigateToProjectOpen();
     const openProject = useOpenProject();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
 
-    const workspaceRefsV1 = useSetting('workspaceRefsV1');
-    const pinnedWorkspaceRefIdsV1 = useSetting('pinnedWorkspaceRefIdsV1');
-    // Relationship intent is read from the canonical Account settings projection;
+    const workspaceRefsV1 = useWorkspaceRefs();
+    const pinnedWorkspaceRefIdsV1 = usePinnedWorkspaceRefIds();
+    const projectOrganizations = useProjectOrganizations();
+    const [projectHideUndo, setProjectHideUndo] = React.useState<ProjectHideUndo | null>(null);
+    const [projectActionApproval, setProjectActionApproval] = React.useState<Readonly<{
+        request: ActionApprovalRequestCreatedResult; isCurrent(): boolean;
+    }> | null>(null);
+    const rememberApproval = React.useCallback((result: Awaited<ReturnType<typeof updateProjectWorkspace>>) => {
+        if (!result.ok || !('kind' in result) || result.kind !== 'approval_request_created') return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime?.isCurrent()) setProjectActionApproval({ request: result, isCurrent: lifetime.isCurrent });
+    }, []);
+    // Relationship intent is read from the canonical Account row projection;
     // Projects keeps no relationship state of its own.
-    const workspaceSyncRelationships = useWorkspaceSyncRelationshipSummaries();
+    const workspaceSyncRelationships = useWorkspaceSyncRelationshipSummaries(undefined, activeServer.serverId);
     const workspaceSyncAttentionByRefId = React.useMemo(
         () => projectWorkspaceSyncSetAttentionByWorkspaceRefId(workspaceSyncRelationships),
         [workspaceSyncRelationships],
     );
-    const workspaceSubtitle = React.useCallback((workspaceRef: WorkspaceRefV1) => {
+    /** A checkout's Workspace sync trouble in words ("2 links unavailable"), or null when it has none. */
+    const workspaceAttentionLabel = React.useCallback((workspaceRef: WorkspaceRefV1) => {
         const attention = workspaceSyncAttentionByRefId.get(workspaceRef.id);
-        const label = attention ? formatWorkspaceSyncSetAttention(attention) : null;
-        return label
-            ? `${workspaceRef.rootPath} · ${label}`
-            : workspaceRef.rootPath;
+        return attention ? formatWorkspaceSyncSetAttention(attention) : null;
     }, [workspaceSyncAttentionByRefId]);
     const workspaceSubtitleLines = React.useCallback((workspaceRef: WorkspaceRefV1) => {
         const attention = workspaceSyncAttentionByRefId.get(workspaceRef.id);
@@ -67,40 +84,103 @@ export function useProjectsListModel() {
             activeServerId: String(activeServer.serverId ?? '').trim(),
             workspaceRefs: Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [],
             pinnedWorkspaceRefIds: Array.isArray(pinnedWorkspaceRefIdsV1) ? pinnedWorkspaceRefIdsV1 : [],
+            projectOrganizations,
         });
-    }, [activeServer.serverId, pinnedWorkspaceRefIdsV1, workspaceRefsV1]);
+    }, [activeServer.serverId, pinnedWorkspaceRefIdsV1, projectOrganizations, workspaceRefsV1]);
+
+    const treeRefs = React.useMemo(() => [...groups.projectGroups, ...groups.hiddenProjectGroups]
+        .flatMap(group => group.items), [groups.projectGroups, groups.hiddenProjectGroups]);
+    const openedSourceIds = React.useMemo(() => new Set(treeRefs.flatMap(ref => ref.source ? [ref.source.sourceId] : [])), [treeRefs]);
+    const composition = useProjectsSourcesComposition(openedSourceIds);
+    const checkoutFacts = useProjectsTreeCheckoutFacts(treeRefs);
+    const treeProjection = React.useMemo(() => {
+        const project = (projectGroups: typeof groups.projectGroups) => buildProjectsTreeProjects({
+            groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
+            machine: machineId => { const machine = machinesById.get(machineId); return machine ? {
+                name: getMachineDisplayName(machine) ?? machineId, homeDir: machine.metadata?.homeDir ?? null, online: isMachineOnline(machine),
+            } : null; },
+            sources: composition.sources, teamName: composition.teamName,
+            checkoutFacts: ref => checkoutFacts.get(projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV1(ref) })) ?? null,
+        });
+        return { treeProjects: project(groups.projectGroups), hiddenTreeProjects: project(groups.hiddenProjectGroups) };
+    }, [checkoutFacts, composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesById]);
+    const newSessionHere = React.useCallback((ref: WorkspaceRefV1) => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== ref.serverId) return { kind: 'unavailable' as const };
+        const target = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
+        if (target.kind !== 'resolved') return target;
+        return seedAndOpenNewSession({ seed: { placement: { kind: 'exactTarget', serverId: ref.serverId,
+            machineId: target.ref.machineId, directory: target.ref.rootPath } }, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) }) });
+    }, [router, treeRefs]);
+    const saveAsSource = React.useCallback((ref: WorkspaceRefV1, draft?: Parameters<typeof composition.saveAsSource>[1]) => {
+        const resolved = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
+        return resolved.kind === 'resolved' ? composition.saveAsSource(resolved.ref, draft) : Promise.resolve(resolved);
+    }, [composition.saveAsSource, treeRefs]);
+
+    const openWorkspace = React.useCallback((ref: WorkspaceRefV1) => openProject(ref.id, {
+        workspaceAddress: workspaceAddressFromRefV1(ref),
+    }), [openProject]);
+    const setProjectHidden = React.useCallback(async (project: QualifiedProjectKeyV1 | WorkspaceRefV1, hidden: boolean) => {
+        const target = 'rootPath' in project ? projectWorkspaceRefV1(project) : project;
+        if (target.serverId !== activeServer.serverId) return false;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== target.serverId) return false;
+        const row = projectOrganizations.find(candidate => candidate.key.serverId === target.serverId
+            && candidate.key.projectKey === target.projectKey);
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        if (!lifetime.isCurrent()) return false;
+        const executor = createDefaultActionExecutor();
+        const result = await executor.execute('projects.visibility.set', {
+            target, expectedRevision: row?.revision ?? 'absent', hidden,
+        }, { surface: 'ui', serverId: target.serverId });
+        if (!lifetime.isCurrent()) return false;
+        const receipt = result.ok ? ProjectVisibilitySetOutputV1Schema.safeParse(result.result) : null;
+        if (!receipt?.success || !receipt.data.ok) {
+            Modal.alert(t('common.error'), t('common.saveError'));
+            return false;
+        }
+        if (hidden) {
+            const revision = receipt.data.revision;
+            const undo: ProjectHideUndo = { isCurrent: lifetime.isCurrent, async undo() {
+                if (!lifetime.isCurrent()) return false;
+                const restored = await executor.execute('projects.visibility.set', {
+                    target, expectedRevision: revision, hidden: false,
+                }, { surface: 'ui', serverId: target.serverId });
+                if (!lifetime.isCurrent()) return false;
+                const restoredReceipt = restored.ok ? ProjectVisibilitySetOutputV1Schema.safeParse(restored.result) : null;
+                const ok = restoredReceipt?.success === true && restoredReceipt.data.ok;
+                if (!ok) Modal.alert(t('common.error'), t('common.saveError'));
+                setProjectHideUndo(current => current === undo ? null : current);
+                return ok;
+            } };
+            setProjectHideUndo(undo);
+        } else {
+            setProjectHideUndo(null);
+        }
+        return true;
+    }, [activeServer.serverId, projectOrganizations]);
 
     const addProjectToMachine = React.useCallback(async (machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
         if (!serverId) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== serverId) return;
         const selected = await openMachinePathBrowserModal({
             machineId,
             serverId,
-            title: t('newSession.selectPathTitle'),
+            title: t('projects.open.aFolder'),
+            // The folder picker starts at the Machine's home, not the filesystem root.
+            initialPath: machinesById.get(machineId)?.metadata?.homeDir ?? null,
             selectionMode: 'directory',
         });
-        if (!selected) return;
+        if (!selected || !lifetime.isCurrent()) return;
         const selectedRootPath = selected.trim();
         if (!selectedRootPath) return;
 
-        const preflight = await workspaceListDirectory({ serverId, machineId, rootPath: selectedRootPath }, '');
-        if (!preflight.success) {
-            Modal.alert(t('common.error'), preflight.error);
-            return;
-        }
-
-        const nowMs = Date.now();
-        const added = await addWorkspaceRefToAccount({
-            scope: { serverId, machineId, rootPath: selectedRootPath },
-            nowMs,
-            patch: { lastOpenedAtMs: nowMs },
-        });
-        if (!added.ok || !('workspaceRefId' in added) || typeof added.workspaceRefId !== 'string') {
-            Modal.alert(t('common.error'), t('common.saveError'));
-            return;
-        }
-        router.push(`/projects/${encodeURIComponent(added.workspaceRefId)}`);
-    }, [activeServer.serverId, router]);
+        await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId, source: { kind: 'folder', path: selectedRootPath },
+            materialization: { kind: 'attach' } }, navigate: navigateToOpen });
+    }, [activeServer.serverId, machinesById, navigateToOpen]);
 
     const pinnedIdSet = React.useMemo(() => {
         return new Set(Array.isArray(pinnedWorkspaceRefIdsV1) ? pinnedWorkspaceRefIdsV1 : []);
@@ -111,20 +191,23 @@ export function useProjectsListModel() {
         if (!serverId) return;
         const id = String(workspaceRefId ?? '').trim();
         if (!id) return;
-        const result = await setWorkspaceRefPinnedInAccount({
+        const result = await updateProjectWorkspace({
             serverId,
-            workspaceRefId: id,
+            workspaceId: id,
             pinned: !pinnedIdSet.has(id),
         });
+        rememberApproval(result);
         if (!result.ok) {
             Modal.alert(t('common.error'), t('common.saveError'));
         }
-    }, [activeServer.serverId, pinnedIdSet]);
+    }, [activeServer.serverId, pinnedIdSet, rememberApproval]);
 
     const renameProject = React.useCallback(async (workspaceRef: WorkspaceRefV1) => {
         const serverId = String(activeServer.serverId ?? '').trim();
         if (!serverId) return;
         const currentLabel = resolveWorkspaceRefDisplayName(workspaceRef);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== workspaceRef.serverId) return;
         const newName = await Modal.prompt(
             t('sessionsList.renameWorkspacePromptTitle'),
             undefined,
@@ -139,27 +222,30 @@ export function useProjectsListModel() {
         const trimmed = newName.trim();
         if (!trimmed) return;
 
-        const result = await renameWorkspaceRefInAccount({
+        const result = await updateProjectWorkspace({
             serverId,
-            workspaceRefId: workspaceRef.id,
+            workspaceId: workspaceRef.id,
             label: trimmed,
-        });
+        }, lifetime);
+        rememberApproval(result);
         if (!result.ok) {
             Modal.alert(t('common.error'), t('common.saveError'));
         }
-    }, [activeServer.serverId]);
+    }, [activeServer.serverId, rememberApproval]);
 
     const resetProjectName = React.useCallback(async (workspaceRef: WorkspaceRefV1) => {
         const serverId = String(activeServer.serverId ?? '').trim();
         if (!serverId) return;
-        const result = await resetWorkspaceRefNameInAccount({
-            serverId,
-            workspaceRefId: workspaceRef.id,
+        const result = await updateProjectWorkspace({
+            serverId: workspaceRef.serverId,
+            workspaceId: workspaceRef.id,
+            label: null,
         });
+        rememberApproval(result);
         if (!result.ok) {
             Modal.alert(t('common.error'), t('common.saveError'));
         }
-    }, [activeServer.serverId]);
+    }, [activeServer.serverId, rememberApproval]);
 
     const removeProject = React.useCallback(async (workspaceRef: WorkspaceRefV1) => {
         const serverId = String(activeServer.serverId ?? '').trim();
@@ -167,10 +253,16 @@ export function useProjectsListModel() {
         const id = String(workspaceRef.id ?? '').trim();
         if (!id) return;
 
-        let removal = await removeWorkspaceRefFromAccount({ serverId, workspaceRefId: id });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== workspaceRef.serverId) return;
+        let removal = await forgetProjectWorkspace({ serverId, workspaceId: id }, lifetime);
+        if (removal.ok && 'kind' in removal) { rememberApproval(removal); return removal; }
 
-        if (!removal.ok && removal.code === 'workspace_ref_in_use') {
-            const blockingRelationshipIds = removal.relationshipIds;
+        if (!removal.ok && removal.errorCode === 'workspace_ref_in_use') {
+            const details = 'details' in removal ? removal.details : null;
+            const ids = details && typeof details === 'object' && 'relationshipIds' in details ? details.relationshipIds : null;
+            const blockingRelationshipIds = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+            if (!blockingRelationshipIds.length) { Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed')); return; }
             const blocking = workspaceSyncRelationships.filter(
                 (summary) => blockingRelationshipIds.includes(summary.relationshipId),
             );
@@ -183,33 +275,44 @@ export function useProjectsListModel() {
                 t('projects.actions.removeBlockedBySyncBody', { count: blocking.length }),
                 { confirmText: t('projects.actions.removeBlockedBySyncConfirm'), destructive: true },
             );
-            if (!confirmed) return;
+            if (!confirmed || !lifetime.isCurrent()) return;
             try {
                 // Stop syncing through the canonical daemon relationship owner;
                 // the reference is only released once nothing still points at it.
                 for (const summary of blocking) {
+                    if (!lifetime.isCurrent()) return;
                     await terminatePersistedWorkspaceSyncRelationship(resolveWorkspaceSyncStatusScope(summary));
                 }
             } catch {
                 Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed'));
                 return;
             }
-            removal = await removeWorkspaceRefFromAccount({ serverId, workspaceRefId: id });
+            removal = await forgetProjectWorkspace({ serverId, workspaceId: id }, lifetime);
+            if (removal.ok && 'kind' in removal) { rememberApproval(removal); return removal; }
         }
 
         if (!removal.ok) {
             Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed'));
         }
+        return removal;
     }, [
         activeServer.serverId,
         workspaceSyncRelationships,
+        rememberApproval,
     ]);
 
-    const hasAnyProjects = groups.pinned.length > 0 || groups.machineGroups.length > 0;
-    const projectCount = groups.pinned.length
-        + groups.machineGroups.reduce((count, group) => count + group.items.length, 0);
+    const hasAnyProjects = groups.projectGroups.length > 0 || groups.hiddenProjectGroups.length > 0;
+    const projectCount = groups.projectGroups.length;
 
     return {
+        ...composition,
+        ...treeProjection,
+        newSessionHere,
+        saveAsSource,
+        projectOpenResolution: openProject.resolution,
+        dismissProjectOpenResolution: openProject.dismissResolution,
+        projectActionApproval: projectActionApproval?.isCurrent() ? projectActionApproval.request : null,
+        dismissProjectActionApproval: () => setProjectActionApproval(null),
         groups,
         hasAnyProjects,
         projectCount,
@@ -217,9 +320,15 @@ export function useProjectsListModel() {
         addFirstMachines,
         machinesById,
         pinnedIdSet,
-        workspaceSubtitle,
+        workspaceAttentionLabel,
         workspaceSubtitleLines,
         openProject,
+        openWorkspace,
+        setProjectHidden,
+        // U2 owns the existing toast presentation/lifetime; Undo retains this Hide's acknowledged CAS revision.
+        projectHideUndo: projectHideUndo?.isCurrent() ? projectHideUndo : null,
+        dismissProjectHideUndo: () => setProjectHideUndo(null),
+        hiddenProjectCount: groups.hiddenProjectGroups.length,
         addProjectToMachine,
         togglePinned,
         renameProject,

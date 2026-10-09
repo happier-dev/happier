@@ -1,191 +1,113 @@
 import { describe, expect, it } from 'vitest';
-
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { resolveRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/resolveRepoWorktreeSelection';
+import { buildProjectRouteHref, readProjectFileRouteTarget, readProjectRouteCheckoutRootPath, readProjectRouteWorktreeSelection, resolveProjectOpenHref, resolveProjectRouteHeaderTitle, resolveProjectAuthoringReturn, readProjectSessionAuthoringOrigin } from './projectRouteState';
 
-import {
-    PROJECT_ROUTE_ROOT_SENTINEL,
-    PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM,
-    buildProjectRouteHref,
-    resolveProjectOpenHref,
-    migrateProjectRouteSegmentToMobileSurface,
-    readProjectRouteWorktreeSelection,
-    resolveProjectCockpitIndexRedirectHref,
-    resolveProjectRouteSegment,
-    resolveProjectRouteHeaderTitle,
-} from './projectRouteState';
+const workspaceRef: WorkspaceRefV1 = { id: 'wr_1', serverId: 'home-a', machineId: 'machine-a',
+    rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1, lastOpenedAtMs: null };
 
-const workspaceRef: WorkspaceRefV1 = {
-    id: 'wr_1',
-    serverId: 'server-1',
-    machineId: 'machine-1',
-    rootPath: '/Users/test/repo',
-    label: 'Project Alpha',
-    createdAtMs: 1,
-    lastOpenedAtMs: null,
-};
-
-describe('projectRouteState', () => {
-    it.each(['browser', 'services'] as const)('settles canonical %s index routes and normalizes an omitted surface hint once', (surface) => {
-        const selection = readProjectRouteWorktreeSelection({
-            rawWorktreeId: PROJECT_ROUTE_ROOT_SENTINEL,
-            defaultRootPath: workspaceRef.rootPath,
+describe('project route state', () => {
+    it('requires root proof for a worktree hint, but accepts explicit or matching persisted base checkout roots', () => {
+        const input = { defaultRootPath: '/repo', rawWorktreeId: 'worktree' };
+        expect(readProjectRouteCheckoutRootPath(input)).toBeNull();
+        expect(readProjectRouteCheckoutRootPath({ ...input, rawLegacyActiveRootPath: '/repo' })).toBe('/repo');
+        expect(readProjectRouteCheckoutRootPath({ ...input, persistedActiveRootPath: '/repo', persistedWorktreeId: 'worktree' })).toBe('/repo');
+        expect(readProjectRouteCheckoutRootPath({ ...input, persistedActiveRootPath: '/repo', persistedWorktreeId: 'other' })).toBeNull();
+        expect(readProjectRouteCheckoutRootPath({ ...input, persistedActiveRootPath: '/feature', persistedWorktreeId: 'worktree' })).toBe('/feature');
+        expect(readProjectRouteCheckoutRootPath({ ...input, rawWorktreeId: '@root' })).toBe('/repo');
+    });
+    it.each([' leading /line\nbreak /name ', ' '])('preserves literal file route identity %j', path => {
+        const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+            segment: 'code', activeRootPath: '/repo', defaultRootPath: '/repo', initialResource: { kind: 'file', path } });
+        const params = Object.fromEntries(new URL(href, 'https://happier.test').searchParams);
+        expect(readProjectFileRouteTarget(params)).toEqual({ kind: 'file', path });
+        expect(readProjectFileRouteTarget({ initialFile: ['', path] })).toEqual({ kind: 'file', path });
+    });
+    it('returns to the original exact Scripts or Changes checkout and comparison, not an edited launch target', () => {
+        const origin = { kind: 'project', accountId: 'account-a', workspace: {
+            serverId: 'home-a', workspaceId: workspaceRef.id, machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath,
+        }, page: 'changes', comparisonId: 'comparison-original' } as const;
+        const metadata = { machineId: 'edited-machine', path: '/edited-checkout', work: { authoringOriginV1: origin } };
+        const result = resolveProjectAuthoringReturn(readProjectSessionAuthoringOrigin(metadata), {
+            scope: { serverId: 'home-a', accountId: 'account-a' }, workspaceRefs: [workspaceRef],
         });
-        const input = {
-            workspaceRefId: workspaceRef.id, surface,
-            ...selection,
-            activeRootPath: workspaceRef.rootPath,
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: null,
-        };
-        expect(resolveProjectCockpitIndexRedirectHref({ ...input, explicitMobileSurfaceHint: surface })).toBeNull();
-        const href = resolveProjectCockpitIndexRedirectHref({ ...input, explicitMobileSurfaceHint: null });
-        expect(href).toBe(`/projects/wr_1?worktreeId=%40root&mobileSurface=${surface}`);
-        const url = new URL(href!, 'https://app.happier.test');
-        expect(resolveProjectCockpitIndexRedirectHref({
-            ...input,
-            ...readProjectRouteWorktreeSelection({
-                rawWorktreeId: url.searchParams.get('worktreeId') ?? undefined,
-                defaultRootPath: workspaceRef.rootPath,
-            }),
-            explicitMobileSurfaceHint: url.searchParams.get('mobileSurface'),
-        })).toBeNull();
-    });
-
-    it.each([
-        ['git', 'git'], ['browse', 'files'], ['tabs', 'details'], ['terminal', 'terminal'],
-    ] as const)('continues redirecting the persisted %s index surface to its %s leaf', (surface, leaf) => {
-        expect(resolveProjectCockpitIndexRedirectHref({
-            workspaceRefId: workspaceRef.id, surface, explicitMobileSurfaceHint: surface,
-            requestedRootPath: workspaceRef.rootPath, requestedWorktreeId: null,
-            activeRootPath: workspaceRef.rootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId: null,
-        })).toBe(`/projects/wr_1/${leaf}?worktreeId=%40root`);
-    });
-
-    it('repairs an invalid worktree on a hosted index surface and settles the canonical worktree selection', () => {
-        const availableWorktrees = [{ id: 'gitwt_feature', path: '/Users/test/repo/.worktrees/feature-auth' }];
-        const requested = readProjectRouteWorktreeSelection({
-            rawWorktreeId: 'gitwt_deleted', defaultRootPath: workspaceRef.rootPath,
+        expect(result.kind).toBe('ready');
+        if (result.kind !== 'ready') throw new Error('Return was refused');
+        const url = new URL(result.href, 'https://happier.test');
+        expect(url.pathname).toBe('/projects/wr_1/changes');
+        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', worktreeId: '@root', comparisonId: 'comparison-original' });
+        const scripts = resolveProjectAuthoringReturn({ ...origin, page: 'scripts', comparisonId: undefined }, {
+            scope: { serverId: 'home-a', accountId: 'account-a' }, workspaceRefs: [workspaceRef],
         });
-        const resolved = resolveRepoWorktreeSelection({ ...requested, defaultRootPath: workspaceRef.rootPath, availableWorktrees });
-        const input = {
-            workspaceRefId: workspaceRef.id, surface: 'browser' as const, explicitMobileSurfaceHint: 'browser',
-            ...requested, activeRootPath: resolved.resolvedRootPath,
-            activeWorktreeId: resolved.resolvedWorktreeId, defaultRootPath: workspaceRef.rootPath,
-        };
-        expect(resolveProjectCockpitIndexRedirectHref(input)).toBe('/projects/wr_1?worktreeId=%40root&mobileSurface=browser');
-        expect(resolveProjectCockpitIndexRedirectHref({ ...input, requestedWorktreeId: null })).toBeNull();
-        const selected = readProjectRouteWorktreeSelection({
-            rawWorktreeId: 'gitwt_feature', defaultRootPath: workspaceRef.rootPath,
-            persistedActiveRootPath: availableWorktrees[0].path, persistedWorktreeId: 'gitwt_feature',
-        });
-        const canonical = resolveRepoWorktreeSelection({ ...selected, defaultRootPath: workspaceRef.rootPath, availableWorktrees });
-        expect(resolveProjectCockpitIndexRedirectHref({
-            ...input, ...selected, activeRootPath: canonical.resolvedRootPath, activeWorktreeId: canonical.resolvedWorktreeId,
-        })).toBeNull();
+        expect(scripts).toMatchObject({ kind: 'ready', href: '/projects/wr_1/scripts?worktreeId=%40root&serverId=home-a' });
     });
-
-    it('reads explicit root and persisted route selections', () => {
-        expect(readProjectRouteWorktreeSelection({
-            rawWorktreeId: PROJECT_ROUTE_ROOT_SENTINEL,
-            defaultRootPath: workspaceRef.rootPath,
-        })).toEqual({
-            requestedRootPath: '/Users/test/repo',
-            requestedWorktreeId: null,
-        });
-        expect(readProjectRouteWorktreeSelection({
-            defaultRootPath: workspaceRef.rootPath,
-            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            persistedWorktreeId: 'gitwt_feature',
-        })).toEqual({
-            requestedRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            requestedWorktreeId: 'gitwt_feature',
-        });
+    it('refuses missing, wrong-Account, wrong-Home and replaced workspace origins instead of opening a fallback', () => {
+        const origin = { kind: 'project', accountId: 'account-a', workspace: {
+            serverId: 'home-a', workspaceId: workspaceRef.id, machineId: workspaceRef.machineId, rootPath: workspaceRef.rootPath,
+        }, page: 'scripts' } as const;
+        expect(resolveProjectAuthoringReturn(origin, { scope: null, workspaceRefs: [workspaceRef] }).kind).toBe('unavailable');
+        expect(resolveProjectAuthoringReturn(origin, { scope: { serverId: 'home-a', accountId: 'account-b' }, workspaceRefs: [workspaceRef] }).kind).toBe('unavailable');
+        expect(resolveProjectAuthoringReturn(origin, { scope: { serverId: 'home-b', accountId: 'account-a' }, workspaceRefs: [workspaceRef] }).kind).toBe('unavailable');
+        expect(resolveProjectAuthoringReturn(origin, { scope: { serverId: 'home-a', accountId: 'account-a' }, workspaceRefs: [] }).kind).toBe('unavailable');
+        expect(resolveProjectAuthoringReturn(origin, { scope: { serverId: 'home-a', accountId: 'account-a' }, workspaceRefs: [{ ...workspaceRef, rootPath: '/replacement' }] }).kind).toBe('unavailable');
     });
-
-    it('can use a persisted path to provisionally resolve an explicit worktree id', () => {
-        expect(readProjectRouteWorktreeSelection({
-            rawWorktreeId: 'gitwt_feature',
-            defaultRootPath: workspaceRef.rootPath,
-            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            persistedWorktreeId: 'gitwt_feature',
-        })).toEqual({
-            requestedRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            requestedWorktreeId: 'gitwt_feature',
-        });
+    it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'] as const)('preserves qualified state on %s', (segment) => {
+        const href = buildProjectRouteHref({ workspaceRefId: workspaceRef.id, segment,
+            activeRootPath: '/repo/feature', defaultRootPath: '/repo', activeWorktreeId: 'checkout-a',
+            serverId: 'home-a', dashboardId: 'dashboard-a', comparisonId: 'comparison-a',
+            initialResource: { kind: 'file', path: 'src/a.ts' } });
+        const url = new URL(href, 'https://happier.test');
+        expect(url.pathname).toBe(`/projects/wr_1/${segment}`);
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'home-a', worktreeId: 'checkout-a',
+            dashboardId: 'dashboard-a', comparisonId: 'comparison-a', initialFile: 'src/a.ts' });
     });
-
-    it('builds project route hrefs with an explicit root sentinel for the primary root', () => {
-        expect(buildProjectRouteHref({
-            workspaceRefId: workspaceRef.id,
-            segment: 'git',
-            activeRootPath: workspaceRef.rootPath,
-            defaultRootPath: workspaceRef.rootPath,
-        })).toBe(`/projects/wr_1/git?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=%40root`);
+    it('preserves resource and dashboard while changing checkout and explicitly exiting worktrees', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: 'wr_1', segment: 'changes',
+            activeRootPath: '/repo', defaultRootPath: '/repo', serverId: 'home-a', showWorktrees: false,
+            routeParams: { worktreeId: 'stale', activeRootPath: '/stale', dashboardId: 'selected',
+                initialCommit: 'sha-a', comparisonId: 'comparison-a', showWorktrees: '1' } });
+        expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({
+            worktreeId: '@root', dashboardId: 'selected', initialCommit: 'sha-a', comparisonId: 'comparison-a', serverId: 'home-a' });
     });
-
-    it('builds project route hrefs with an encoded worktree id when a worktree is selected', () => {
-        expect(buildProjectRouteHref({
-            workspaceRefId: workspaceRef.id,
-            segment: 'files',
-            activeRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: 'gitwt_feature',
-        })).toBe(`/projects/wr_1/files?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=gitwt_feature`);
+    it('explicit root beats persisted checkout and exact checkout can recover its known path', () => {
+        expect(readProjectRouteWorktreeSelection({ rawWorktreeId: '@root', defaultRootPath: '/repo',
+            persistedActiveRootPath: '/repo/feature', persistedWorktreeId: 'checkout-a' })).toEqual({
+            requestedRootPath: '/repo', requestedWorktreeId: null });
+        expect(readProjectRouteWorktreeSelection({ rawWorktreeId: 'checkout-a', defaultRootPath: '/repo',
+            persistedActiveRootPath: '/repo/feature', persistedWorktreeId: 'checkout-a' })).toEqual({
+            requestedRootPath: '/repo/feature', requestedWorktreeId: 'checkout-a' });
     });
-
-    it('can include the worktrees details mode query param without dropping the active worktree id', () => {
-        expect(buildProjectRouteHref({
-            workspaceRefId: workspaceRef.id,
-            segment: 'details',
-            activeRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: 'gitwt_feature',
-            showWorktrees: true,
-        })).toBe(`/projects/wr_1/details?${PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM}=gitwt_feature&showWorktrees=1`);
+    it('a newly selected resource replaces stale route intent instead of keeping conflicting file and commit targets', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: 'wr_1', segment: 'changes', activeRootPath: '/repo', defaultRootPath: '/repo',
+            routeParams: { initialFile: 'stale.ts', initialCommit: 'old-sha', anchor: 'range', startLine: '7' },
+            initialResource: { kind: 'commit', sha: 'current-sha' } });
+        expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({ worktreeId: '@root', initialCommit: 'current-sha' });
     });
-
-    it('adds the selected worktree label to the mobile header title', () => {
-        expect(resolveProjectRouteHeaderTitle(workspaceRef, workspaceRef.rootPath)).toBe('Project Alpha');
-        expect(resolveProjectRouteHeaderTitle(workspaceRef, '/Users/test/repo/.worktrees/feature-auth'))
-            .toBe('Project Alpha · feature-auth');
+    it('does not reopen a resource explicitly closed in the current pane when changing pages', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: 'wr_1', segment: 'changes', activeRootPath: '/repo', defaultRootPath: '/repo',
+            routeParams: { initialFile: 'closed.ts', source: 'diff', anchor: 'range', startLine: '7', comparisonId: 'comparison-a' },
+            initialResource: null });
+        expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({ worktreeId: '@root', comparisonId: 'comparison-a' });
     });
-
-    it('migrates legacy mobile route segments to cockpit surfaces', () => {
-        expect(migrateProjectRouteSegmentToMobileSurface('files')).toBe('browse');
-        expect(migrateProjectRouteSegmentToMobileSurface('git')).toBe('git');
-        expect(migrateProjectRouteSegmentToMobileSurface('details')).toBe('tabs');
-        expect(migrateProjectRouteSegmentToMobileSurface('unknown')).toBeNull();
+    it('replaces stale Details and initial resource intent while preserving qualified dashboard and companion state', () => {
+        const href = buildProjectRouteHref({ workspaceRefId: 'wr_1', segment: 'changes', serverId: 'home-a',
+            activeRootPath: '/repo/feature', defaultRootPath: '/repo', activeWorktreeId: 'feature-checkout',
+            routeParams: { dashboardId: 'named-dashboard', right: 'git', bottom: 'terminal', initialFile: 'old.ts', initialCommit: 'old-commit',
+                details: 'file', path: 'old.ts', comparison: 'branch', head: 'old-head', base: 'old-base', comparisonId: 'old-comparison',
+                anchor: 'range', startLine: '7' },
+            details: { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'files' } });
+        expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({ serverId: 'home-a',
+            worktreeId: 'feature-checkout', dashboardId: 'named-dashboard', right: 'git', bottom: 'terminal',
+            details: 'scmReview', comparison: 'workingTree', view: 'files' });
     });
-
-    it('resolves the project route segment from live state, then persisted cockpit state, then files', () => {
-        expect(resolveProjectRouteSegment('git', undefined)).toBe('git');
-        expect(resolveProjectRouteSegment(undefined, 'browse')).toBe('files');
-        expect(resolveProjectRouteSegment(undefined, 'overview')).toBe('details');
-        expect(resolveProjectRouteSegment(undefined, 'terminal')).toBe('details');
-        expect(resolveProjectRouteSegment(undefined, 'git')).toBe('git');
-        expect(resolveProjectRouteSegment(undefined, undefined)).toBe('files');
+    it('opens the remembered canonical page with its Home and exact checkout on phone', () => {
+        const href = resolveProjectOpenHref({ workspaceRef, deviceType: 'phone', cockpitEnabled: false,
+            persistedMobileSurface: 'changes', persistedActiveRootPath: '/repo/feature', persistedWorktreeId: 'checkout-a' });
+        const url = new URL(href, 'https://happier.test');
+        expect(url.pathname).toBe('/projects/wr_1/changes');
+        expect(Object.fromEntries(url.searchParams)).toEqual({ worktreeId: 'checkout-a', serverId: 'home-a' });
     });
-
-    it('opens a project through the persisted mobile surface and worktree policy', () => {
-        expect(resolveProjectOpenHref({
-            workspaceRef,
-            deviceType: 'phone',
-            cockpitEnabled: true,
-            rememberedRightTabId: null,
-            persistedMobileSurface: 'git',
-            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            persistedWorktreeId: 'gitwt_feature',
-        })).toBe('/projects/wr_1/git?worktreeId=gitwt_feature');
-
-        expect(resolveProjectOpenHref({
-            workspaceRef,
-            deviceType: 'phone',
-            cockpitEnabled: false,
-            rememberedRightTabId: null,
-            persistedMobileSurface: 'git',
-            persistedActiveRootPath: '/Users/test/repo/.worktrees/feature-auth',
-            persistedWorktreeId: 'gitwt_feature',
-        })).toBe('/projects/wr_1/git?worktreeId=gitwt_feature');
+    it('titles the selected checkout rather than the primary root', () => {
+        expect(resolveProjectRouteHeaderTitle(workspaceRef, '/repo')).toBe('Project Alpha');
+        expect(resolveProjectRouteHeaderTitle(workspaceRef, '/repo/feature')).toBe('Project Alpha · feature');
     });
 });

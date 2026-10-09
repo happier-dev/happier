@@ -814,7 +814,7 @@ describe('MobileBottomChromeHost', () => {
     });
 
     it('renders the project cockpit bar on cockpit-enabled project routes', async () => {
-        pathState.pathname = '/projects/wr_1/git';
+        pathState.pathname = '/projects/wr_1/changes';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
         settingsState.sessionLastMobileSurfaceBySessionId = null;
@@ -830,7 +830,7 @@ describe('MobileBottomChromeHost', () => {
 
         const bar = screen.tree.findByType('ProjectCockpitTabBar' as never);
         expect(bar.props.workspaceRefId).toBe('wr_1');
-        expect(bar.props.activeSurface).toBe('git');
+        expect(bar.props.activeSurface).toBe('changes');
     });
 
     it('keeps main app bottom chrome mounted while the software keyboard is visible on phone', async () => {
@@ -876,7 +876,7 @@ describe('MobileBottomChromeHost', () => {
     });
 
     it('keeps project cockpit bottom chrome mounted while the software keyboard is visible on phone', async () => {
-        pathState.pathname = '/projects/wr_1/git';
+        pathState.pathname = '/projects/wr_1/changes';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
         settingsState.sessionLastMobileSurfaceBySessionId = null;
@@ -1279,11 +1279,11 @@ describe('MobileBottomChromeHost', () => {
             bar.props.onSurfacePress('overview');
         });
 
-        expect(routerState.replace).toHaveBeenCalledWith('/projects/wr_1?mobileSurface=overview');
+        expect(routerState.replace).toHaveBeenCalledWith('/projects/wr_1/overview');
     });
 
     it('preserves the active root path when project cockpit tab presses happen before worktree canonicalization', async () => {
-        pathState.pathname = '/projects/wr_1/files';
+        pathState.pathname = '/projects/wr_1/code';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
         settingsState.sessionLastMobileSurfaceBySessionId = null;
@@ -1304,7 +1304,7 @@ describe('MobileBottomChromeHost', () => {
         });
 
         expect(routerState.replace).toHaveBeenCalledWith(
-            '/projects/wr_1?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth&mobileSurface=services',
+            '/projects/wr_1/services?activeRootPath=%2Frepo%2F.worktrees%2Ffeature-auth',
         );
     });
 
@@ -1328,7 +1328,7 @@ describe('MobileBottomChromeHost', () => {
     });
 
     it('hides project cockpit chrome after the mobile workspace experience switches back to classic', async () => {
-        pathState.pathname = '/projects/wr_1/files';
+        pathState.pathname = '/projects/wr_1/code';
         authState.isAuthenticated = true;
         settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
         settingsState.sessionLastMobileSurfaceBySessionId = null;

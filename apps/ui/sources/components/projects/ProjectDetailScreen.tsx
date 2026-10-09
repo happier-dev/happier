@@ -1,13 +1,9 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
-import { Typography } from '@/constants/Typography';
-import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSetting, useLocalSettingMutable, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys, writeProjectSelectionPreference } from '@/sync/domains/settings/projectSelectionPersistence';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -17,17 +13,32 @@ import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/wo
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { PROJECT_ROUTE_ROOT_SENTINEL } from './detail/projectRouteState';
+import { PROJECT_ROUTE_ROOT_SENTINEL, type ProjectPageV1, type ProjectMobileSurface } from './detail/projectRouteState';
+import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
+import { WorkspaceDetailsPanel } from '@/components/projects/panes/WorkspaceDetailsPanel';
 import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
 import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail } from './detail/ProjectRightPanel';
-import { ProjectDetailsMainPanel } from './detail/ProjectDetailsMainPanel';
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
-import { useProjectOverviewMode } from './detail/useProjectOverviewMode';
-import { Icon } from '@/components/ui/icons/Icon';
+import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
+import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { useProjectRouteActions } from './detail/useProjectRouteActions';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { resolveProjectRightSidebarTabs } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
+import { ProjectTerminalSurface } from './detail/surfaces/ProjectTerminalSurface';
+import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
+import type { WorkspaceRefResolutionV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 export const ProjectDetailScreen = React.memo((props: Readonly<{
     workspaceRefId: string;
+    serverId?: string | null;
+    /** Qualified candidate/recovery state from the route owner; U2 owns its presentation. */
+    workspaceResolution?: WorkspaceRefResolutionV1;
+    dashboardId?: string;
+    recoveryToastKey?: string | null;
+    page?: ProjectPageV1;
+    surface?: ProjectMobileSurface;
+    activeWorktreeId?: string | null;
     activeRootPath?: string | null;
     isFocused?: boolean;
     showWorktrees?: boolean;
@@ -35,16 +46,18 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     onSetShowWorktrees?: (nextValue: boolean) => void;
     onPluginSurfaceOpenChange?: (handler: PluginSurfaceOpenHandler | undefined) => void;
 }>) => {
-    const { theme } = useUnistyles();
     const deviceType = useDeviceType();
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
     const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId));
+    const workspaceRef = useWorkspaceRefById(props.workspaceRefId, props.serverId);
+    const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
     const pane = useAppPaneScope(scopeId);
-    const workspaceRef = useWorkspaceRefById(props.workspaceRefId);
+    const workspaceRefs = useWorkspaceRefs();
+    const preferenceKeys = React.useMemo(() => workspaceRef
+        ? resolveProjectSelectionPreferenceKeys(workspaceRefs, workspaceRef) : null, [workspaceRef, workspaceRefs]);
     // This direct Project adapter is the one public target/currentness source
     // consumed by AppPane. Keep the projection lookup here rather than giving
     // AppPane a fallback lookup keyed by an opaque scope id.
@@ -52,31 +65,30 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         machineId: workspaceRef?.machineId ?? null,
         serverId: workspaceRef?.serverId ?? null,
     });
-    const [localActiveRootPath, setLocalActiveRootPath] = React.useState<string | null>(null);
+    const [localSelection, setLocalSelection] = React.useState<Readonly<{ storageKey: string; rootPath: string }> | null>(null);
+    const localActiveRootPath = localSelection?.storageKey === preferenceKeys?.storageKey ? localSelection?.rootPath ?? null : null;
     const controlledActiveRootPath = props.activeRootPath ?? null;
     const workspaceRootPath = workspaceRef?.rootPath ?? '';
-    const persistedActiveRootPath = React.useMemo(() => {
-        if (!workspaceRef) return null;
-        const value = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
-        return typeof value === 'string' && value.trim().length > 0 ? value : null;
-    }, [lastActiveRootPathByWorkspaceRefId, workspaceRef]);
+    const persistedActiveRootPath = readProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys);
+    const persistedWorktreeId = readProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys);
     React.useEffect(() => {
-        if (!workspaceRef) return;
+        if (!workspaceRef || !preferenceKeys) return;
         if (controlledActiveRootPath != null) return;
-        setLocalActiveRootPath((currentPath) => {
+        setLocalSelection((currentSelection) => {
+            const currentPath = currentSelection?.storageKey === preferenceKeys.storageKey ? currentSelection.rootPath : null;
             if (currentPath == null) {
-                return persistedActiveRootPath ?? workspaceRef.rootPath;
+                return { storageKey: preferenceKeys.storageKey, rootPath: persistedActiveRootPath ?? workspaceRef.rootPath };
             }
             if (
                 persistedActiveRootPath
                 && currentPath === workspaceRef.rootPath
                 && persistedActiveRootPath !== workspaceRef.rootPath
             ) {
-                return persistedActiveRootPath;
+                return { storageKey: preferenceKeys.storageKey, rootPath: persistedActiveRootPath };
             }
-            return currentPath;
+            return currentSelection;
         });
-    }, [controlledActiveRootPath, persistedActiveRootPath, workspaceRef]);
+    }, [controlledActiveRootPath, persistedActiveRootPath, preferenceKeys, workspaceRef]);
 
     React.useEffect(() => {
         if (!workspaceRef) return;
@@ -97,12 +109,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         pane.setRightTab(preferredTab);
     }, [deviceType, multiPaneEnabled, pane, workspaceRef]);
 
-    const detailsState = pane.scopeState?.details ?? null;
-    const { forceOverviewMode } = useProjectOverviewMode({
-        showWorktrees: props.showWorktrees,
-        onSetShowWorktrees: props.onSetShowWorktrees,
-        detailsState,
-    });
     const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRootPath;
     const {
         requestedRootPath,
@@ -115,34 +121,39 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         machineId: workspaceRef?.machineId ?? '',
         defaultRootPath: workspaceRootPath,
         requestedRootPath: requestedActiveRootPath,
-            requestedWorktreeId: workspaceRef != null
+        requestedWorktreeId: props.activeWorktreeId ?? (workspaceRef != null
             && controlledActiveRootPath == null
             && localActiveRootPath == null
-            && typeof lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRef.id] === 'string'
-            && lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id] !== PROJECT_ROUTE_ROOT_SENTINEL
-                ? lastActiveWorktreeIdByWorkspaceRefId[workspaceRef.id]
-                : null,
+            && persistedWorktreeId !== PROJECT_ROUTE_ROOT_SENTINEL
+                ? persistedWorktreeId
+                : null),
     });
-    const recoveryToastKey = didRecoverMissingWorktree
+    const recoveryToastKey = props.recoveryToastKey ?? (didRecoverMissingWorktree
         ? `${workspaceRef?.id ?? props.workspaceRefId}:${requestedRootPath}`
-        : null;
+        : null);
+    const { navigateToSegment } = useProjectRouteActions({
+        workspaceRef,
+        activeRootPath: resolvedActiveRootPath,
+        activeWorktreeId: resolvedActiveWorktreeId,
+        pane,
+    });
+    const handleSelectPage = React.useCallback((page: ProjectPageV1) => {
+        navigateToSegment({ segment: page });
+    }, [navigateToSegment]);
+    const handleSelectWorkspace = React.useCallback((workspaceRef: WorkspaceRefV1) => {
+        navigateToSegment({ workspaceRef });
+    }, [navigateToSegment]);
     const handleSelectRootPath = React.useCallback((path: string) => {
         const trimmedPath = path.trim();
-        if (!trimmedPath || !workspaceRef) return;
+        if (!trimmedPath || !workspaceRef || !preferenceKeys) return;
         const nextWorktreeId = trimmedPath === workspaceRef.rootPath
             ? null
             : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
         if (controlledActiveRootPath == null) {
-            setLocalActiveRootPath(trimmedPath);
+            setLocalSelection({ storageKey: preferenceKeys.storageKey, rootPath: trimmedPath });
         }
-        setLastActiveRootPathByWorkspaceRefId({
-            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: trimmedPath,
-        });
-        setLastActiveWorktreeIdByWorkspaceRefId({
-            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
-        });
+        setLastActiveRootPathByWorkspaceRefId(writeProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys, trimmedPath));
+        setLastActiveWorktreeIdByWorkspaceRefId(writeProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys, nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL));
         props.onSelectRootPath?.(trimmedPath);
     }, [
         availableWorktrees,
@@ -151,6 +162,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         lastActiveWorktreeIdByWorkspaceRefId,
         props.onSelectRootPath,
         props.workspaceRefId,
+        preferenceKeys,
         setLastActiveRootPathByWorkspaceRefId,
         setLastActiveWorktreeIdByWorkspaceRefId,
         workspaceRef,
@@ -158,20 +170,14 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
 
     React.useEffect(() => {
         if (props.isFocused === false) return;
-        if (!workspaceRef) return;
+        if (!workspaceRef || !preferenceKeys) return;
         if (requestedRootPath === resolvedActiveRootPath) return;
 
-        setLastActiveRootPathByWorkspaceRefId({
-            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: resolvedActiveRootPath,
-        });
-        setLastActiveWorktreeIdByWorkspaceRefId({
-            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
-            [props.workspaceRefId]: resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL,
-        });
+        setLastActiveRootPathByWorkspaceRefId(writeProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys, resolvedActiveRootPath));
+        setLastActiveWorktreeIdByWorkspaceRefId(writeProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys, resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL));
 
         if (controlledActiveRootPath == null) {
-            setLocalActiveRootPath(resolvedActiveRootPath);
+            setLocalSelection({ storageKey: preferenceKeys.storageKey, rootPath: resolvedActiveRootPath });
         }
 
         if (controlledActiveRootPath != null) {
@@ -184,6 +190,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         props.isFocused,
         props.onSelectRootPath,
         props.workspaceRefId,
+        preferenceKeys,
         requestedRootPath,
         resolvedActiveRootPath,
         resolvedActiveWorktreeId,
@@ -200,6 +207,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 machineId: workspaceRef.machineId,
                 serverId: workspaceRef.serverId,
                 pluginUiProjection: pluginProjection.pluginUiProjection,
+                accountLifetime: pluginProjection.accountLifetime,
                 projectionPhase: pluginProjection.phase,
                 interactionEnabled: pluginProjection.interactionEnabled,
                 platform: pluginProjection.platform,
@@ -210,11 +218,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         pluginProjection.phase,
         pluginProjection.platform,
         pluginProjection.pluginUiProjection,
+        pluginProjection.accountLifetime,
         workspaceRef,
     ]);
     const renderProjectRightSidebar = React.useCallback(() => (
         workspaceRef
             ? <ProjectRightPanel
+                activePage={props.page ?? 'overview'}
                 scopeId={scopeId}
                 workspaceRef={workspaceRef}
                 activeRootPath={resolvedActiveRootPath}
@@ -222,19 +232,45 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 onSelectRootPath={handleSelectRootPath}
             />
             : null
-    ), [handleSelectRootPath, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
+    ), [handleSelectRootPath, props.page, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
     const projectRightPaneBuiltinAdapter = React.useMemo(() => ({
-        destinationIds: ['git', 'files', 'browser', 'services'],
+        destinationIds: resolveProjectRightSidebarTabs({ presentation: deviceType === 'phone' ? 'mobile' : 'desktop' })
+            .filter(tab => tab.owner === 'builtin').map(tab => tab.id),
         defaultDestinationId: 'files',
         render: renderProjectRightSidebar,
-    }), [renderProjectRightSidebar]);
+    }), [deviceType, renderProjectRightSidebar]);
     const projectRightSidebarAdapter = React.useMemo(() => ({
         render: renderProjectRightSidebar,
         renderActionRail: () => <ProjectRightSidebarRail />,
     }), [renderProjectRightSidebar]);
+    const projectDetailsPaneAdapter = React.useMemo(() => ({
+        destinationIds: ['details'],
+        defaultDestinationId: 'details',
+        render: () => workspaceRef ? <WorkspaceDetailsPanel
+            workspaceRef={workspaceRef}
+            scopeId={scopeId}
+            activeRootPath={resolvedActiveRootPath}
+            activeWorktreeId={resolvedActiveWorktreeId}
+        /> : null,
+    }), [resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
+    const terminalCheckout = React.useMemo(() => workspaceRef
+        ? resolveProjectCheckoutWorkspaceRef(workspaceRefs, workspaceRef, resolvedActiveRootPath) : null,
+    [resolvedActiveRootPath, workspaceRef, workspaceRefs]);
+    const terminalWorkspace = React.useMemo(() => terminalCheckout ? {
+        serverId: terminalCheckout.serverId, machineId: terminalCheckout.machineId,
+        workspaceId: terminalCheckout.id, rootPath: terminalCheckout.rootPath,
+    } : null, [terminalCheckout]);
+    const projectBottomPaneAdapter = React.useMemo(() => ({
+        destinationIds: ['terminal'],
+        defaultDestinationId: 'terminal',
+        render: () => workspaceRef ? <ProjectTerminalSurface scopeId={scopeId} workspaceRefId={workspaceRef.id}
+            serverId={workspaceRef.serverId} machineId={workspaceRef.machineId} rootPath={resolvedActiveRootPath}
+            workspace={terminalWorkspace} /> : null,
+    }), [resolvedActiveRootPath, scopeId, terminalWorkspace, workspaceRef]);
     const wrapProjectScopeContent = React.useCallback((content: React.ReactNode) => (
         workspaceRef ? (
             <ProjectRightSidebarProvider
+                activePage={props.page ?? 'overview'}
                 scopeId={scopeId}
                 workspaceRef={workspaceRef}
                 activeRootPath={resolvedActiveRootPath}
@@ -244,43 +280,10 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 {content}
             </ProjectRightSidebarProvider>
         ) : content
-    ), [handleSelectRootPath, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
+    ), [handleSelectRootPath, props.page, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
 
     if (!workspaceRef) {
-        return (
-            <ItemList>
-                <ItemGroup>
-                    <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 }}>
-                        <Icon
-                            name="warning"
-                            size={48}
-                            color={theme.colors.text.secondary}
-                            style={{ marginBottom: 12 }}
-                        />
-                        <View style={{ maxWidth: 520 }}>
-                            <Text style={{
-                                fontSize: 16,
-                                ...Typography.default('semiBold'),
-                                color: theme.colors.text.primary,
-                                textAlign: 'center',
-                                marginBottom: 6,
-                            }}>
-                                {t('projects.detail.notFoundTitle')}
-                            </Text>
-                            <Text style={{
-                                fontSize: 14,
-                                ...Typography.default(),
-                                color: theme.colors.text.secondary,
-                                textAlign: 'center',
-                                lineHeight: 20,
-                            }}>
-                                {t('projects.detail.notFoundDescription')}
-                            </Text>
-                        </View>
-                    </View>
-                </ItemGroup>
-            </ItemList>
-        );
+        return <ProjectOpenResolutionPage resolution={props.workspaceResolution} />;
     }
 
     return (
@@ -288,20 +291,50 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
             <AppPaneScopeHost
                 scopeId={scopeId}
                 onPluginSurfaceOpenChange={props.onPluginSurfaceOpenChange}
-                detailsPaneEnabled={false}
+                detailsPaneEnabled
+                detailsPaneBuiltinAdapter={projectDetailsPaneAdapter}
                 surfaceScope={projectSurfaceScope!}
                 rightPaneBuiltinAdapter={projectRightPaneBuiltinAdapter}
+                bottomPaneBuiltinAdapter={projectBottomPaneAdapter}
                 rightSidebarAdapter={projectRightSidebarAdapter}
                 wrapScopeContent={wrapProjectScopeContent}
                 main={(
-                    <ProjectDetailsMainPanel
-                        scopeId={scopeId}
-                        workspaceRef={workspaceRef}
-                        activeRootPath={resolvedActiveRootPath}
-                        activeWorktreeId={resolvedActiveWorktreeId}
-                        forceOverviewMode={forceOverviewMode}
-                        onSelectRootPath={handleSelectRootPath}
-                    />
+                    <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                        {/* The six-page header (12s1); phones keep the navigation bar and the page cockpit. */}
+                        {deviceType !== 'phone' ? (
+                            <ProjectShellHeaderHost
+                                workspaceRef={workspaceRef}
+                                page={props.page ?? 'overview'}
+                                activeRootPath={resolvedActiveRootPath}
+                                activeWorktreeId={resolvedActiveWorktreeId}
+                                onSelectRootPath={handleSelectRootPath}
+                                onSelectPage={handleSelectPage}
+                                onSelectWorkspace={handleSelectWorkspace}
+                                menuActions={[{ id: 'terminal', title: t('settings.terminal'),
+                                    onSelect: () => pane.openBottom({ tabId: 'terminal' }) }]}
+                            />
+                        ) : props.surface === undefined || props.surface === props.page ? (
+                            <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+                                <ProjectPhoneCheckoutRow
+                                    workspaceRef={workspaceRef}
+                                    activeRootPath={resolvedActiveRootPath}
+                                    activeWorktreeId={resolvedActiveWorktreeId}
+                                    onSelectRootPath={handleSelectRootPath}
+                                    onSelectWorkspace={handleSelectWorkspace}
+                                />
+                            </View>
+                        ) : null}
+                        <ProjectCockpitShell
+                            scopeId={scopeId}
+                            workspaceRef={workspaceRef}
+                            activeRootPath={resolvedActiveRootPath}
+                            activeWorktreeId={resolvedActiveWorktreeId}
+                            surface={deviceType === 'phone' ? props.surface ?? props.page ?? 'overview' : props.page ?? 'overview'}
+                            dashboardId={props.dashboardId}
+                            isFocused={props.isFocused !== false}
+                            onSelectRootPath={handleSelectRootPath}
+                        />
+                    </View>
                 )}
             />
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />

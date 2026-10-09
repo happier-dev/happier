@@ -7,17 +7,24 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 type AppTheme = ReturnType<typeof useUnistyles>['theme'];
 
 type ProjectsListItemMenuProps = Readonly<{
     theme: AppTheme;
-    workspaceRef: WorkspaceRefV1;
+    /** The checkout the row opens; `null` on a Project row with several checkouts (Hide only). */
+    workspaceRef: WorkspaceRefV1 | null;
     pinAction?: 'pin' | 'unpin' | null;
     onTogglePinned: (workspaceRefId: string) => void;
     onRename: (workspaceRef: WorkspaceRefV1) => void | Promise<void>;
     onReset: (workspaceRef: WorkspaceRefV1) => void;
     onRemove: (workspaceRef: WorkspaceRefV1) => void;
+    /** U2 renders these intents; their placement/creation authority stays in the shared model. */
+    onNewSession?: (workspaceRef: WorkspaceRefV1) => unknown;
+    onSaveAsSource?: (workspaceRef: WorkspaceRefV1) => unknown;
+    /** Hide the Project this row belongs to (lab p-projects HIDE); its sessions and files stay. */
+    onHideProject?: (() => void) | null;
 }>;
 
 function stopPressEventPropagation(event: unknown): void {
@@ -43,8 +50,34 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
     const renameTitle = t('sessionsList.renameWorkspace');
     const resetTitle = t('sessionsList.resetWorkspaceName');
     const removeTitle = t('projects.actions.remove');
+    const canHide = Boolean(props.onHideProject);
+    const hasWorkspaceRef = props.workspaceRef != null;
+    const canStartSession = Boolean(props.onNewSession);
+    const canSaveAsSource = Boolean(props.onSaveAsSource);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
         const nextItems: DropdownMenuItem[] = [];
+        const hideItem: DropdownMenuItem | null = canHide ? {
+            id: 'hide',
+            title: t('projects.identity.hide'),
+            subtitle: t('projects.identity.hideConsequence'),
+            icon: <Icon name="eye-slash" size={16} color={props.theme.colors.text.secondary} />,
+        } : null;
+        if (!hasWorkspaceRef) return hideItem ? [hideItem] : [];
+        // Lab p-projects HIDE: start work here and keep the repository first, then the row's own edits.
+        if (canStartSession) {
+            nextItems.push({
+                id: 'new-session',
+                title: t('projects.identity.newSessionHere'),
+                icon: <Icon name="plus" size={16} color={props.theme.colors.text.secondary} />,
+            });
+        }
+        if (canSaveAsSource) {
+            nextItems.push({
+                id: 'save-source',
+                title: t('projects.identity.saveAsSource'),
+                icon: <Icon name="books" size={16} color={props.theme.colors.text.secondary} />,
+            });
+        }
         if ((props.pinAction === 'pin' || props.pinAction === 'unpin') && pinTitle) {
             nextItems.push({
                 id: props.pinAction,
@@ -69,10 +102,25 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
                 icon: <Icon name="trash" size={16} color={props.theme.colors.state.danger.foreground} />,
             },
         );
+        // Hide sits before Remove: it keeps everything, Remove forgets the checkout.
+        if (hideItem) nextItems.splice(nextItems.length - 1, 0, hideItem);
         return nextItems;
-    }, [pinTitle, props.pinAction, props.theme.colors.state.danger.foreground, props.theme.colors.text.secondary, removeTitle, renameTitle, resetTitle]);
+    }, [canHide, canSaveAsSource, canStartSession, hasWorkspaceRef, pinTitle, props.pinAction, props.theme.colors.state.danger.foreground, props.theme.colors.text.secondary, removeTitle, renameTitle, resetTitle]);
 
-    const handleSelect = React.useCallback((itemId: string) => {
+    const handleSelect = useEventCallback((itemId: string) => {
+        if (itemId === 'hide') {
+            props.onHideProject?.();
+            return;
+        }
+        if (!props.workspaceRef) return;
+        if (itemId === 'new-session') {
+            void props.onNewSession?.(props.workspaceRef);
+            return;
+        }
+        if (itemId === 'save-source') {
+            void props.onSaveAsSource?.(props.workspaceRef);
+            return;
+        }
         if ((itemId === 'pin' || itemId === 'unpin') && props.pinAction) {
             props.onTogglePinned(props.workspaceRef.id);
             return;
@@ -88,7 +136,7 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
         if (itemId === 'remove') {
             props.onRemove(props.workspaceRef);
         }
-    }, [props]);
+    });
 
     return (
         <DropdownMenu

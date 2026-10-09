@@ -42,8 +42,11 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { ProjectRightPanelBrowserView } from './browser/ProjectRightPanelBrowserView';
 import { ProjectRightPanelServicesView } from './services/ProjectRightPanelServicesView';
+import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ProjectBrowseFilesSurface } from './surfaces/ProjectBrowseFilesSurface';
 import { ProjectGitSurface } from './surfaces/ProjectGitSurface';
+import { ProjectTerminalSurface } from './surfaces/ProjectTerminalSurface';
 import { useProjectSurfaceActions } from './useProjectSurfaceActions';
 import { useProjectSurfaceController } from './useProjectSurfaceController';
 import {
@@ -52,8 +55,10 @@ import {
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { ProjectPageV1 } from './projectRouteState';
+import { useActiveServerAccountScope, useProjectAccountRows } from '@/sync/domains/state/storage';
+import { resolveProjectTerminalScope } from './projectTerminalScope';
 
 type ProjectRightTabId = string;
 
@@ -67,6 +72,7 @@ export type ProjectRightPanelProps = Readonly<{
     scopeId: string;
     activeRootPath: string;
     activeWorktreeId?: string | null;
+    activePage?: ProjectPageV1;
     onSelectRootPath: (path: string) => void;
     onRequestClose?: () => void;
 }>;
@@ -111,6 +117,17 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         machineId: props.workspaceRef.machineId,
         rootPath: props.activeRootPath,
     }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
+    const controller = useProjectSurfaceController({
+        scopeId: props.scopeId,
+        workspaceRef: props.workspaceRef,
+        activeRootPath: props.activeRootPath,
+        activeWorktreeId: props.activeWorktreeId,
+    });
+    const viewerScope = useActiveServerAccountScope(props.workspaceRef.serverId);
+    const projectRowsStatus = useProjectAccountRows()?.status;
+    const terminalTabAvailable = React.useMemo(() => controller.checkoutWorkspace !== null
+        && resolveProjectTerminalScope(props.scopeId, controller.checkoutWorkspace) !== null,
+    [controller.checkoutWorkspace, projectRowsStatus, props.scopeId, viewerScope]);
 
     const pluginProjection = useScopedPluginUiProjection({
         machineId: props.workspaceRef.machineId,
@@ -136,6 +153,8 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const appTabInputs = useAppRightSidebarTabInputs();
     const rightPanelTabs = React.useMemo(() => resolveProjectRightSidebarTabs({
         ...appTabInputs,
+        terminalTabAvailable,
+        activePage: props.activePage,
         presentation: deviceType === 'phone' ? 'mobile' : 'desktop',
         pluginPlacements: pluginRightSidebarPlacements,
         projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
@@ -143,19 +162,16 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
         localize: localizePluginText,
     }), [
         appTabInputs,
+        terminalTabAvailable,
         deviceType,
         localizePluginText,
         pluginProjection.pluginUiProjection?.generation,
         pluginRightSidebarPlacements,
+        props.activePage,
         runtimeAdmission,
     ]);
+    const launcherTabs = React.useMemo(() => rightPanelTabs.filter(tab => !tab.hiddenInLauncher), [rightPanelTabs]);
     const availableTabIds = React.useMemo(() => new Set(rightPanelTabs.map((tab) => tab.id)), [rightPanelTabs]);
-    const controller = useProjectSurfaceController({
-        scopeId: props.scopeId,
-        workspaceRef: props.workspaceRef,
-        activeRootPath: props.activeRootPath,
-        activeWorktreeId: props.activeWorktreeId,
-    });
     const rightTabSelection = React.useMemo(() => resolveRightSidebarTabSelection<ProjectRightTabId>({
         activeTabId: scopeState?.right.activeTabId,
         selectedDestination: scopeState?.right.selectedDestination,
@@ -177,7 +193,7 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const activeInstanceKey = scopeState?.right.selectedDestination?.kind === 'plugin'
         ? scopeState.right.selectedDestination.instanceKey
         : undefined;
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const accountLifetime = pluginProjection.accountLifetime;
     const [paneLaunchStore] = React.useState(createPluginSurfacePaneLaunchStore);
     const scopedLaunchFacts = React.useMemo(() => Object.freeze({
         serverId: pluginProjection.serverId ?? null,
@@ -255,9 +271,9 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
     const pluginBinding = React.useMemo<BoundPluginSurfaceBinding>(() => ({ openSurface }), [openSurface]);
 
     return {
-        pane, workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs,
+        pane, workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
-        activePaneLaunch, pluginBinding, selectTab, setActiveTab,
+        activePaneLaunch, pluginBinding, selectTab, setActiveTab, checkoutWorkspace: controller.checkoutWorkspace,
     };
 }
 
@@ -277,7 +293,7 @@ export function ProjectRightSidebarRail(): React.ReactElement | null {
             surfaceId="workspaceRail"
             testID="project-right-sidebar-action-rail"
             testIDPrefix="project-rightpanel-action"
-            actions={model.rightPanelTabs.map((tab) => ({
+            actions={model.launcherTabs.map((tab) => ({
                 id: tab.id,
                 label: getRightSidebarTabLabel(tab),
                 icon: tab.icon,
@@ -305,9 +321,9 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
     const insets = useChromeSafeAreaInsets();
     const hasActionRail = usePaneActionRail();
     const {
-        workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs,
+        workspaceScope, deviceType, pluginProjection, runtimeAdmission, rightPanelTabs, launcherTabs,
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
-        activePaneLaunch, pluginBinding, selectTab, setActiveTab,
+        activePaneLaunch, pluginBinding, selectTab, setActiveTab, checkoutWorkspace,
     } = props.model;
     const {
         openFileInDetails,
@@ -337,7 +353,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
             {!hasActionRail ? <View style={[styles.header, { paddingTop: 10 + insets.top }]}>
                 <View style={styles.tabBarContainer}>
                     <RightSidebarIconTabBar
-                        tabs={rightPanelTabs}
+                        tabs={launcherTabs}
                         activeTabId={activeTab ?? ''}
                         onSelectTab={selectTab}
                         testIDPrefix="project-rightpanel-tab"
@@ -398,11 +414,29 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                             />
                         </React.Suspense>
                     </RetainedPanelSurface>
+                    {availableTabIds.has('scripts') ? (
+                        <RetainedPanelSurface isActive={activeTab === 'scripts'} testID="project-rightpanel-surface-scripts">
+                            <React.Suspense fallback={<PaneLoadingFallback />}>
+                                {checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} presentation="widget" testID="project-rightpanel-scripts" />
+                                    : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} testID="project-rightpanel-scripts-unavailable" />}
+                            </React.Suspense>
+                        </RetainedPanelSurface>
+                    ) : null}
+                    {availableTabIds.has('terminal') ? (
+                        <RetainedPanelSurface isActive={activeTab === 'terminal'} testID="project-rightpanel-surface-terminal">
+                            <React.Suspense fallback={<PaneLoadingFallback />}>
+                                <ProjectTerminalSurface scopeId={props.scopeId} workspaceRefId={props.workspaceRef.id}
+                                    serverId={props.workspaceRef.serverId} machineId={props.workspaceRef.machineId}
+                                    rootPath={props.activeRootPath} workspace={checkoutWorkspace} />
+                            </React.Suspense>
+                        </RetainedPanelSurface>
+                    ) : null}
                     {availableTabIds.has('browser') ? (
                         <RetainedPanelSurface isActive={activeTab === 'browser'} testID="project-rightpanel-surface-browser">
                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <ProjectRightPanelBrowserView
                                     workspaceRefId={props.workspaceRef.id}
+                                    workspaceScope={workspaceScope}
                                     pluginProjection={pluginProjection}
                                 />
                             </React.Suspense>
@@ -413,6 +447,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <ProjectRightPanelServicesView
                                     machineId={props.workspaceRef.machineId}
+                                    workspaceRefId={props.workspaceRef.id}
                                     serverId={props.workspaceRef.serverId}
                                     workspaceRoot={props.activeRootPath}
                                     onOpenServiceInBrowser={openServiceInBrowser}

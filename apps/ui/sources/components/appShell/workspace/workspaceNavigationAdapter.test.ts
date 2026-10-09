@@ -3,6 +3,7 @@ import { resolveCompactAppDestinations } from '../destinations/compactAppDestina
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
+import { normalizeWorkspaceSingletonTabs } from './workspaceDestinationPolicy';
 
 installPanelCommonModuleMocks();
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
@@ -30,6 +31,30 @@ function harness(pages: Parameters<typeof resolveCompactAppDestinations>[0]['pag
 }
 
 describe('workspace navigation adapter', () => {
+    it('contracts restored duplicate Workflows hubs without dropping distinct workflow details', () => {
+        const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
+        const normalized = normalizeWorkspaceSingletonTabs({ v: 1, order: ['hub-1', 'detail', 'hub-2'], pairs: [], tabsById: {
+            'hub-1': { id: 'hub-1', target: { kind: 'workflows', params: {} }, pinned: false },
+            detail: { id: 'detail', target: { kind: 'workflow', params: { id: 'workflow-1' } }, pinned: false },
+            'hub-2': { id: 'hub-2', target: { kind: 'workflows', params: { subPath: '/runs' } }, pinned: true },
+        } }, catalog);
+        expect(normalized.order).toEqual(['hub-1', 'detail']);
+        expect(normalized.tabsById['hub-1']).toMatchObject({ pinned: true, target: { kind: 'workflows', params: { subPath: '/runs' } } });
+        expect(normalized.tabsById.detail.target.kind).toBe('workflow');
+    });
+    it('reuses the Workflows hub across repeated entrances while keeping distinct workflow details', () => {
+        const h = harness();
+        h.adapter.openHref('/workflows', { mode: 'newTab' });
+        const hub = h.active().id;
+        h.adapter.openHref('/projects', { mode: 'newTab' });
+        h.adapter.openHref('/workflows/runs', { mode: 'newTab' });
+        h.adapter.openHref('/workflows', { mode: 'newTab' });
+        expect(h.active().id).toBe(hub);
+        expect(Object.values(h.state().tabs).filter(tab => tab.target.kind === 'workflows')).toHaveLength(1);
+        h.adapter.openHref('/workflows/first', { mode: 'newTab' });
+        h.adapter.openHref('/workflows/second', { mode: 'newTab' });
+        expect(Object.values(h.state().tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(2);
+    });
     it('qualifies implicit current-realm Session destinations without conflating another Account or Home', () => {
         const h = harness([], { serverId: 'home-a', accountId: 'account-a' });
         h.adapter.dispatch({ type: 'setTarget', tabId: 'A', target: { kind: 'session', params: { id: 'A1' } } });

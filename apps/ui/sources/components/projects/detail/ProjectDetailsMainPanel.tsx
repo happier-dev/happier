@@ -42,7 +42,8 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                 <Pressable
                     onPress={() => routerRef.current.push(buildProjectRouteHref({
                         workspaceRefId: props.workspaceRef.id,
-                        segment: 'git',
+                        serverId: props.workspaceRef.serverId,
+                        segment: 'changes',
                         activeRootPath: props.activeRootPath,
                         defaultRootPath: props.workspaceRef.rootPath,
                         activeWorktreeId: props.activeWorktreeId,
@@ -56,7 +57,8 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                 <Pressable
                     onPress={() => routerRef.current.push(buildProjectRouteHref({
                         workspaceRefId: props.workspaceRef.id,
-                        segment: 'files',
+                        segment: 'code',
+                        serverId: props.workspaceRef.serverId,
                         activeRootPath: props.activeRootPath,
                         defaultRootPath: props.workspaceRef.rootPath,
                         activeWorktreeId: props.activeWorktreeId,
@@ -69,7 +71,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                 </Pressable>
             </>
         );
-    }, [deviceType, props.activeRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath, routerRef]);
+    }, [deviceType, props.activeRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath, props.workspaceRef.serverId, routerRef]);
 
     const renderEmptyStateSupplementaryContent = React.useCallback(() => {
         if (snapshot?.repo.isRepo !== true) return null;

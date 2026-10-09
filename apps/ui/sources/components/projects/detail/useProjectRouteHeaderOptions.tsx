@@ -48,6 +48,8 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         headerTitle: params.workspaceRef && params.activeRootPath
             ? resolveProjectRouteHeaderTitle(params.workspaceRef, params.activeRootPath)
             : t('projects.detail.groupTitle'),
+        // The repository under the name (lab `p-overview` HOMEp); a folder without one stays name-only.
+        headerSubtitle: params.workspaceRef?.repositoryIdentity?.repository,
         headerBackTitle: t('common.back'),
         headerBackVisible: false,
         headerStyle: {

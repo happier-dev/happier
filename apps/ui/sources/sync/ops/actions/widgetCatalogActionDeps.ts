@@ -17,6 +17,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { readConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import { admitWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets';
 
 const unavailable = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -41,11 +42,14 @@ export function canReadActiveWidgetCatalogV1(account: Pick<LazyActionAccountCont
 
 export async function readWidgetActionRuntimeV1(
     surface: WidgetSurfaceRefV1, account: LazyActionAccountContext, signal?: AbortSignal,
-    sessionTarget?: Readonly<{ serverId: string; sessionId: string }>,
+    sessionTarget?: Readonly<{ serverId: string; sessionId: string }>, deps?: ActionExecutorDeps,
 ): Promise<WidgetActionRuntimeV1 | ActionExecuteFailure> {
     account.assertCurrent();
     signal?.throwIfAborted();
-    if (surface.serverId !== account.serverId || surface.accountId !== account.accountId) return unavailable('widget_scope_mismatch');
+    if (deps) {
+        const refusal = await admitWidgetActionSurfaceV1(deps, surface, { surface: 'ui', ...(signal ? { signal } : {}) });
+        if (refusal) return refusal;
+    } else if (surface.serverId !== account.serverId || surface.accountId !== account.accountId) return unavailable('widget_scope_mismatch');
     const owner = surface.owner;
     const selectedSession = sessionTarget ?? (owner.kind === 'sessionBoard' || owner.kind === 'companion' ? { serverId: surface.serverId, sessionId: owner.sessionId } : undefined);
     const accountIsCurrent = () => account.accountLifetime?.isCurrent() === true && canReadActiveWidgetCatalogV1(account);
@@ -96,24 +100,29 @@ export async function readWidgetActionRuntimeV1(
 
 export async function readWidgetActionCandidatesV1(
     surface: WidgetSurfaceRefV1, account: LazyActionAccountContext, signal?: AbortSignal,
-    sessionTarget?: Readonly<{ serverId: string; sessionId: string }>,
+    sessionTarget?: Readonly<{ serverId: string; sessionId: string }>, deps?: ActionExecutorDeps,
 ): Promise<readonly WidgetCandidate[] | ActionExecuteFailure> {
-    const runtime = await readWidgetActionRuntimeV1(surface, account, signal, sessionTarget);
+    const runtime = await readWidgetActionRuntimeV1(surface, account, signal, sessionTarget, deps);
     return 'ok' in runtime ? runtime : runtime.candidates;
 }
 
 export function createWidgetCatalogActionDepsV1(account: LazyActionAccountContext | null | undefined, deps: ActionExecutorDeps): Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetCatalog'> {
     if (!account) return {};
+    const widgetAccountScope: NonNullable<ActionExecutorDeps['widgetAccountScope']> = () => {
+        account.assertCurrent();
+        return { serverId: account.serverId, accountId: account.accountId };
+    };
+    const catalogDeps = { ...deps, widgetAccountScope };
     return {
-        widgetAccountScope: () => { account.assertCurrent(); return { serverId: account.serverId, accountId: account.accountId }; },
+        widgetAccountScope,
         widgetCatalog: { list: async (surface, context, signal, boundSession) => {
-            const candidates = await readWidgetActionCandidatesV1(surface, account, signal, boundSession);
-            if ('ok' in candidates) return candidates;
-            const port = readWidgetSurfaceActionPortV1(deps, surface);
+            const port = readWidgetSurfaceActionPortV1(catalogDeps, surface);
             if (!port) return unavailable('unsupported_widget_surface');
             const read = await port.read(surface, context, signal);
             if ('ok' in read) return read;
-            const definitions = deps.widgetDefinitionArtifacts ? await deps.widgetDefinitionArtifacts.list(signal) : [];
+            const candidates = await readWidgetActionCandidatesV1(surface, account, signal, boundSession, catalogDeps);
+            if ('ok' in candidates) return candidates;
+            const definitions = catalogDeps.widgetDefinitionArtifacts ? await catalogDeps.widgetDefinitionArtifacts.list(signal) : [];
             const authored = definitions.map(summary => describeWidgetDefinitionSummaryV1(summary,
                 summary.sourceDefinition ? candidates.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), summary.sourceDefinition!)) : null));
             account.assertCurrent();

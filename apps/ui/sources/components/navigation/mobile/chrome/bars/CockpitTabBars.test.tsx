@@ -7,6 +7,7 @@ import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScr
 import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import type { ScmStatus, Session } from '@/sync/domains/state/storageTypes';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,14 +105,15 @@ async function seedCockpitState(element: React.ReactNode) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
         const serverId = fixtureSessionServerId ?? route.serverId;
-        const metadata = sessionMetadataState.metadataLayoutVersion === 1 ? sessionMetadataState.metadata : sessionMetadataState.metadata === null ? null : {
+        const metadata = parseDecryptedSessionMetadata(sessionMetadataState.metadataLayoutVersion === 1 ? sessionMetadataState.metadata : sessionMetadataState.metadata === null ? null : {
             ...createSessionFixture().metadata,
             machineId: target.machineId, path: target.basePath,
             ...sessionMetadataState.metadata,
-        } as Session['metadata'];
-        const ownerMetadataView = (sessionMetadataState.metadataLayoutVersion === 1 && sessionMetadataState.ownerMetadataView === undefined
+        }, sessionMetadataState.metadataLayoutVersion);
+        const ownerMetadataViewInput = sessionMetadataState.metadataLayoutVersion === 1 && sessionMetadataState.ownerMetadataView === undefined
             ? { ...createSessionFixture().metadata, machineId: target.machineId, path: target.basePath }
-            : sessionMetadataState.ownerMetadataView) as Session['ownerMetadataView'];
+            : sessionMetadataState.ownerMetadataView;
+        const ownerMetadataView = ownerMetadataViewInput === undefined ? undefined : parseDecryptedSessionMetadata(ownerMetadataViewInput);
         const session = createSessionFixture({ id: route.sessionId, serverId,
             metadata, metadataLayoutVersion: sessionMetadataState.metadataLayoutVersion, ownerMetadataView,
             ...(sessionMetadataState.accessLevel ? { accessLevel: sessionMetadataState.accessLevel } : {}),
@@ -224,32 +226,44 @@ describe('cockpit tab bars', () => {
         );
         const screen = await renderScreen(bar());
         // A same-id live carrier from another Home cannot supply this route's identity or SCM.
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('');
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.machineId).toBeNull();
-        expect(screen.findByTestId('session-cockpit-tab-git-badge')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('');
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props.machineId).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-git-badge')).toBeNull();
 
         fixtureSessionServerId = 'home-b';
         await screen.update(bar());
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
             agentId: 'codex', machineId: 'machine-1', serverId: 'home-b',
         });
-        expect(screen.findByTestId('session-cockpit-tab-git-badge')).not.toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-git-badge')).not.toBeNull();
         expect(screen.getTextContent()).toContain('3');
     });
 
-    it('groups Project tabs into one tablist while preserving selection and navigation', async () => {
+    it('puts the Project pages on the bar in order, the rest behind More with their selected state (D44)', async () => {
         const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const navigate = vi.fn();
         const screen = await renderScreen(<ProjectCockpitTabBar
-            workspaceRefId="workspace-a" activeSurface="git" onSurfacePress={navigate}
+            workspaceRefId="workspace-a" activeSurface="context" terminalTabAvailable={true} onSurfacePress={navigate}
         />);
         const tablists = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'tablist');
         expect(tablists).toHaveLength(1);
-        const tabs = tablists[0].findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'tab');
-        expect(tabs).toHaveLength(7);
-        expect(screen.findByTestId('project-cockpit-tab-git')?.props.accessibilityState.selected).toBe(true);
-        await act(async () => { screen.findByTestId('project-cockpit-tab-browse')?.props.onPress(); });
+        const pages = ['overview', 'code', 'changes', 'scripts', 'services', 'context'];
+        const onBar = pages.filter((page) => screen.findHostByTestId(`project-cockpit-tab-${page}`) !== null);
+        // The bar holds a prefix of the pages; whatever does not fit is reachable from More.
+        expect(onBar).toEqual(pages.slice(0, onBar.length));
+        const menu = screen.root.findByType(DropdownMenu);
+        const behindMore = menu.props.items.map((item: { id: string }) => item.id);
+        expect([...onBar, ...behindMore.filter((id: string) => pages.includes(id))]).toEqual(pages);
+        expect(behindMore).toEqual(expect.arrayContaining(['browse', 'browser', 'terminal', 'tabs']));
+        if (!onBar.includes('context')) {
+            expect(menu.props.selectedId).toBe('context');
+            expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityState?.selected ?? true).toBe(true);
+        }
+        await act(async () => { menu.props.onSelect('browse'); });
         expect(navigate).toHaveBeenCalledWith('browse');
+        await act(async () => { screen.findHostByTestId('project-cockpit-tab-overview')?.props.onPress(); });
+        expect(navigate).toHaveBeenCalledWith('overview');
     });
 
     it('offers the switcher as accessibility actions on every cockpit tab', async () => {
@@ -368,7 +382,7 @@ describe('cockpit tab bars', () => {
         );
 
         expect(screen.getTextContent()).toContain('en:agentInput.agent.codex');
-        const icon = screen.findByTestId('session-cockpit-tab-chat-agent-icon');
+        const icon = screen.findHostByTestId('session-cockpit-tab-chat-agent-icon');
         expect(icon?.type).toBe('SessionAgentCatalogIdentityIcon');
         expect(icon?.props).toMatchObject({
             agentId: 'codex',
@@ -398,7 +412,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('opencode');
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('opencode');
     });
 
     it('uses only strict shared Agent presentation for a layout1 participant', async () => {
@@ -421,7 +435,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('claude');
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('claude');
     });
 
     it('names no Agent on the chat tab when the session Agent is unreadable', async () => {
@@ -444,7 +458,7 @@ describe('cockpit tab bars', () => {
         );
 
         expect(screen.getTextContent()).not.toContain('en:agentInput.agent.claude');
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).not.toBe('claude');
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).not.toBe('claude');
     });
 
     it('renders an external Agent through the machine-scoped catalog identity owner', async () => {
@@ -468,7 +482,7 @@ describe('cockpit tab bars', () => {
         );
 
         expect(screen.findAllByType('AgentIcon' as never)).toHaveLength(0);
-        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
+        expect(screen.findHostByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
             agentId: 'acme.plugin/ultracode',
             machineId: 'machine_external',
             serverId: 'server_external',
@@ -489,7 +503,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-git-badge')).not.toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-git-badge')).not.toBeNull();
         const content = screen.getTextContent();
         expect(content).toContain('3');
         expect(content).not.toContain('+42');
@@ -530,7 +544,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-git-badge')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-git-badge')).toBeNull();
     });
 
     it('omits the git badge for a clean working tree', async () => {
@@ -547,7 +561,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-git-badge')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-git-badge')).toBeNull();
     });
 
     it('hides the open-tab count badge when disabled in settings', async () => {
@@ -564,7 +578,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-tabs-badge')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-tabs-badge')).toBeNull();
     });
 
     it('shows an open-tab count badge on the tabs surface', async () => {
@@ -581,7 +595,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-tabs-badge')).not.toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-tabs-badge')).not.toBeNull();
         expect(screen.getTextContent()).toContain('4');
     });
 
@@ -642,11 +656,11 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        const browserTab = screen.findByTestId('session-cockpit-tab-browser');
-        const servicesTab = screen.findByTestId('session-cockpit-tab-services');
+        const browserTab = screen.findHostByTestId('session-cockpit-tab-browser');
+        const servicesTab = screen.findHostByTestId('session-cockpit-tab-services');
         expect(browserTab?.props.accessibilityRole).toBe('tab');
         expect(browserTab?.props.accessibilityLabel).toBe('en:browserSurface.title');
-        expect(browserTab?.props.accessibilityState).toEqual({ selected: true });
+        expect(browserTab?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
         expect(servicesTab).toBeNull();
         const menu = screen.tree.findByType(DropdownMenu);
         expect(menu.props.items).toEqual(expect.arrayContaining([
@@ -675,9 +689,9 @@ describe('cockpit tab bars', () => {
         );
 
         for (const id of ['chat', 'browse', 'git', 'companion', 'terminal']) {
-            expect(screen.findByTestId(`session-cockpit-tab-${id}`)).toBeTruthy();
+            expect(screen.findHostByTestId(`session-cockpit-tab-${id}`)).toBeTruthy();
         }
-        expect(screen.findByTestId('session-cockpit-tab-tabs')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-tabs')).toBeNull();
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
         const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
         expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(['browse', 'git', 'tabs', 'navigation', 'browser', 'services']));
@@ -685,8 +699,8 @@ describe('cockpit tab bars', () => {
         expect(items.find((item) => item.id === 'tabs')?.category).toBe('en:phoneNav.bar.more');
         // Every tool can be pinned, not only plugins.
         await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
-        expect(screen.findByTestId('session-cockpit-pin:navigation')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-pin:git')?.props.accessibilityState?.checked).toBe(true);
+        expect(screen.findHostByTestId('session-cockpit-pin:navigation')).toBeTruthy();
+        expect(screen.findHostByTestId('session-cockpit-pin:git')?.props.accessibilityState?.checked).toBe(true);
     });
 
     it('renders shared placement ordering and omits hidden tools from the bar and More', async () => {
@@ -697,9 +711,9 @@ describe('cockpit tab bars', () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
         const screen = await renderScreen(<SessionCockpitTabBar sessionId="sess_1" activeSurface="chat"
             terminalTabAvailable={true} openDetailsTabCount={0} onSurfacePress={() => {}} />);
-        expect(screen.findByTestId('session-cockpit-tab-terminal')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-git')).toBeNull();
-        expect(screen.findByTestId('session-cockpit-tab-companion')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-terminal')).toBeTruthy();
+        expect(screen.findHostByTestId('session-cockpit-tab-git')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-companion')).toBeNull();
         const tabs = screen.findAll((node) => typeof node.type === 'string' && /^session-cockpit-tab-(chat|terminal|browse)$/.test(node.props.testID ?? ''))
             .map((node) => node.props.testID as string);
         expect([...new Set(tabs)]).toEqual(['session-cockpit-tab-chat', 'session-cockpit-tab-terminal', 'session-cockpit-tab-browse']);
@@ -726,15 +740,15 @@ describe('cockpit tab bars', () => {
 
         const screen = await renderScreen(bar());
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(1);
-        expect(screen.findByTestId('session-cockpit-tab-browser')).toBeTruthy();
+        expect(screen.findHostByTestId('session-cockpit-tab-browser')).toBeTruthy();
         expect(observed.at(-1)).toBe(true);
 
         // "Always swipe between sessions": the bar keeps what fits; the rest wait in More, labelled.
         swipeSettingsState.always = true;
         await screen.update(bar());
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
-        expect(screen.findByTestId('session-cockpit-tab-tabs')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-navigation')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-tabs')).toBeTruthy();
+        expect(screen.findHostByTestId('session-cockpit-tab-navigation')).toBeNull();
         const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
         expect(items.find((item) => item.id === 'navigation')).toEqual(expect.objectContaining({
             category: 'en:phoneNav.bar.onTheBar',
@@ -750,10 +764,10 @@ describe('cockpit tab bars', () => {
             <SessionCockpitTabBar sessionId="sess_1" activeSurface="services" terminalTabAvailable={true}
                 openDetailsTabCount={0} onSurfacePress={() => {}} />,
         );
-        const more = screen.findByTestId('session-cockpit-tab-more');
+        const more = screen.findHostByTestId('session-cockpit-tab-more');
         expect(more?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
         expect(more?.props.accessibilityLabel).not.toBe('en:common.more');
-        expect(screen.findByTestId('session-cockpit-tab-services')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-services')).toBeNull();
     });
 
     it('discovers admitted plugin tabs in More and puts a pinned one on the bar', async () => {
@@ -776,12 +790,12 @@ describe('cockpit tab bars', () => {
         expect(menu.props.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'plugin:acme.review:review-panel', title: 'Review' }),
         ]));
-        expect(screen.findByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeNull();
 
         cockpitPinsState.value = ['browse', 'plugin:acme.review:review-panel'];
         await screen.update(renderBar());
 
-        expect(screen.findByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeTruthy();
+        expect(screen.findHostByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeTruthy();
     });
 
     it('renders plugin pinning as a focusable Android-minimum effective target with explicit toggle state', async () => {
@@ -808,7 +822,7 @@ describe('cockpit tab bars', () => {
             const screen = await renderScreen(renderBar());
             await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
             const pinTestID = 'session-cockpit-pin:plugin:acme.review:review-panel';
-            const pin = screen.findByTestId(pinTestID);
+            const pin = screen.findHostByTestId(pinTestID);
             const minimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
             expect(minimumTargetSize).toBe(48);
@@ -837,15 +851,15 @@ describe('cockpit tab bars', () => {
             expect(onSurfacePress).not.toHaveBeenCalled();
 
             await act(async () => {
-                screen.findByTestId(pinTestID)?.props.onFocus?.();
+                screen.findHostByTestId(pinTestID)?.props.onFocus?.();
             });
-            expect(screen.findByTestId(`${pinTestID}-tooltip`)).not.toBeNull();
-            await act(async () => { screen.findByTestId(pinTestID)?.props.onBlur?.(); });
-            expect(screen.findByTestId(`${pinTestID}-tooltip`)).toBeNull();
+            expect(screen.findHostByTestId(`${pinTestID}-tooltip`)).not.toBeNull();
+            await act(async () => { screen.findHostByTestId(pinTestID)?.props.onBlur?.(); });
+            expect(screen.findHostByTestId(`${pinTestID}-tooltip`)).toBeNull();
 
             cockpitPinsState.value = ['plugin:acme.review:review-panel'];
             await screen.update(renderBar());
-            const pinnedControl = screen.findByTestId(pinTestID);
+            const pinnedControl = screen.findHostByTestId(pinTestID);
             expect(pinnedControl?.props.accessibilityLabel).toBe('en:phoneNav.bar.removeFromBar');
             expect(pinnedControl?.props.accessibilityState?.checked).toBe(true);
         } finally {
@@ -868,10 +882,10 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        const navigationTab = screen.findByTestId('session-cockpit-tab-navigation');
+        const navigationTab = screen.findHostByTestId('session-cockpit-tab-navigation');
         expect(navigationTab?.props.accessibilityRole).toBe('tab');
         expect(navigationTab?.props.accessibilityLabel).toBe('en:session.transcriptNavigation.title');
-        expect(navigationTab?.props.accessibilityState).toEqual({ selected: true });
+        expect(navigationTab?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
 
         await act(async () => {
             navigationTab?.props.onPress();
@@ -893,7 +907,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-agents')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-tab-agents')).toBeNull();
     });
 
     it('does not render a session cockpit active pill overlay', async () => {
@@ -909,7 +923,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-active-pill')).toBeNull();
+        expect(screen.findHostByTestId('session-cockpit-active-pill')).toBeNull();
     });
 
     it('does not render a project cockpit active pill overlay', async () => {
@@ -923,7 +937,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('project-cockpit-active-pill')).toBeNull();
+        expect(screen.findHostByTestId('project-cockpit-active-pill')).toBeNull();
     });
 
     it('refreshes session tab labels when the language changes and the bar rerenders', async () => {
@@ -961,7 +975,7 @@ describe('cockpit tab bars', () => {
         expect(screen.getTextContent()).not.toContain('fr:common.details');
     });
 
-    it('refreshes project tab labels when the language changes and the bar rerenders', async () => {
+    it('refreshes project page labels when the language changes and the bar rerenders', async () => {
         translationPrefix = 'en';
         const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
 
@@ -973,7 +987,7 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('en:common.files');
+        expect(screen.getTextContent()).toContain('en:projects.pages.overview');
 
         translationPrefix = 'fr';
         await act(async () => {
@@ -986,10 +1000,8 @@ describe('cockpit tab bars', () => {
             );
         });
 
-        expect(screen.getTextContent()).toContain('fr:common.files');
-        expect(screen.getTextContent()).toContain('fr:phoneNav.bar.openFiles');
-        expect(screen.getTextContent()).toContain('fr:session.rightPanel.tabs.git');
-        expect(screen.getTextContent()).not.toContain('fr:common.details');
+        expect(screen.getTextContent()).toContain('fr:projects.pages.overview');
+        expect(screen.getTextContent()).not.toContain('en:projects.pages.overview');
     });
 
     it('exposes the selected state on the active cockpit tab', async () => {
@@ -1005,10 +1017,10 @@ describe('cockpit tab bars', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-cockpit-tab-git')?.props.accessibilityRole).toBe('tab');
-        expect(screen.findByTestId('session-cockpit-tab-git')?.props.accessibilityLabel).toBe('en:session.rightPanel.tabs.git');
-        expect(screen.findByTestId('session-cockpit-tab-browse')?.props.accessibilityLabel).toBe('en:common.files');
-        expect(screen.findByTestId('session-cockpit-tab-git')?.props.accessibilityState).toEqual({ selected: true });
-        expect(screen.findByTestId('session-cockpit-tab-browse')?.props.accessibilityState).toEqual({ selected: false });
+        expect(screen.findHostByTestId('session-cockpit-tab-git')?.props.accessibilityRole).toBe('tab');
+        expect(screen.findHostByTestId('session-cockpit-tab-git')?.props.accessibilityLabel).toBe('en:session.rightPanel.tabs.git');
+        expect(screen.findHostByTestId('session-cockpit-tab-browse')?.props.accessibilityLabel).toBe('en:common.files');
+        expect(screen.findHostByTestId('session-cockpit-tab-git')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: true }));
+        expect(screen.findHostByTestId('session-cockpit-tab-browse')?.props.accessibilityState).toEqual(expect.objectContaining({ selected: false }));
     }, 120_000);
 });

@@ -4,7 +4,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
 import type { ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { decodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
@@ -14,12 +14,108 @@ import { decodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
+import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol';
 
 
 const fileReference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',
   mime: 'application/zip', sizeBytes: 3, sha256: 'a'.repeat(64) };
 
 describe('updateArtifactWithHeaderViaApi', () => {
+  it('refuses private pins with only an active public link and preserves safe writes when its audience cannot be observed', async () => {
+    const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'board' } } as const;
+    const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'private-definition' }, bindings: {} } as const;
+    const board = { ...createWorkBoardV1({ id: 'board', name: 'Board' }), widgets: [{ kind: 'widget' as const,
+      ref: { surface, instanceId: instance.id }, instance, size: 'medium' as const }] };
+    const header = buildWorkBoardArtifactHeaderV1(board);
+    let current: DecryptedArtifact = { id: board.id, title: board.name, header: { ...header, title: board.name }, rawHeader: header,
+      body: JSON.stringify(board), ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', headerVersion: 2, bodyVersion: 2,
+      seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'plain', isDecrypted: true };
+    const before = structuredClone(current);
+    // Cached private exposure must not authorize a pin after a publication is retained.
+    let publicAudience: unknown = 'retained';
+    const writes: ArtifactUpdateRequest[] = [];
+    const request = async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/access/grants')) return Response.json({ artifactId: board.id, ownerAccountId: 'owner', access: 'owner', grants: [] });
+      if (path.startsWith('/v1/public-shares?')) throw new Error('Audience admission must not read feature-gated public links');
+      if (path === `/v1/artifacts/${board.id}` && init?.method !== 'POST') return Response.json({ ...current, publicAudience,
+        encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        header: encodePlainArtifactStoredContent(current.rawHeader), body: encodePlainArtifactStoredContent({ body: current.body }) });
+      if (path.endsWith('/revisions')) return Response.json({ revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: JSON.stringify(pinned) }),
+        createdAt: 1, sizeBytes: 1 }], retentionCount: 1 });
+      if (init?.method !== 'POST') throw new Error('Unexpected HTTP request');
+      const wire = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
+      expect(wire.expectedHeaderVersion).toBe(current.headerVersion);
+      expect(wire.expectedBodyVersion).toBe(current.bodyVersion);
+      writes.push(wire);
+      return Response.json({ success: true, headerVersion: current.headerVersion + 1, bodyVersion: current.bodyVersion! + 1 });
+    };
+    const { updateArtifactWithHeaderViaApi, restoreArtifactBodyRevisionViaApi } = await import('./syncArtifacts');
+    const save = (body: string) => updateArtifactWithHeaderViaApi({ credentials: { token: 'token' }, artifactId: board.id,
+      expectedRevision: { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion! }, header, body, encryption: null, artifactDataKeys: new Map(),
+      request, getArtifact: () => current, updateArtifact: row => { current = row; } });
+    const pinned = { ...board, widgets: [{ ...board.widgets[0], instance: { ...instance, bindings: { cloud: { kind: 'value', value: {
+      nested: [{ service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'private' }],
+    } } } } }] };
+    await expect(save(JSON.stringify(pinned))).rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+    expect(current).toEqual(before);
+    await expect(restoreArtifactBodyRevisionViaApi({ credentials: { token: 'token' }, artifactId: board.id, bodyVersion: 1,
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 }, encryption: null, artifactDataKeys: new Map(), request,
+      updateArtifact: row => { current = row; } })).rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+    expect(current).toEqual(before);
+    publicAudience = undefined;
+    await expect(save(JSON.stringify(pinned))).rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(restoreArtifactBodyRevisionViaApi({ credentials: { token: 'token' }, artifactId: board.id, bodyVersion: 1,
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 }, encryption: null, artifactDataKeys: new Map(), request,
+      updateArtifact: row => { current = row; } })).rejects.toMatchObject({ code: 'content_unavailable' });
+    expect(writes).toHaveLength(0);
+    await save(JSON.stringify({ ...board, name: 'Safe rename' }));
+    expect(current.body).toBe(JSON.stringify({ ...board, name: 'Safe rename' }));
+    expect(decodePlainArtifactStoredContent(writes[0]!.body!)).toEqual({ body: JSON.stringify({ ...board, name: 'Safe rename' }) });
+    publicAudience = 'none';
+    await save(JSON.stringify(pinned));
+    expect(current.body).toBe(JSON.stringify(pinned));
+    await restoreArtifactBodyRevisionViaApi({ credentials: { token: 'token' }, artifactId: board.id, bodyVersion: 1,
+      expectedRevision: { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion! }, encryption: null, artifactDataKeys: new Map(), request,
+      updateArtifact: row => { current = row; } });
+    expect(writes).toHaveLength(3);
+  });
+  it.each(['owner', 'edit'] as const)('admits actual %s audience before generic WorkBoard content writes', async access => {
+    const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'board' } } as const;
+    const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'private-definition' }, bindings: {} } as const;
+    const board = { ...createWorkBoardV1({ id: 'board', name: 'Board' }), widgets: [{ kind: 'widget' as const,
+      ref: { surface, instanceId: instance.id }, instance, size: 'medium' as const }] };
+    const header = buildWorkBoardArtifactHeaderV1(board);
+    let current: DecryptedArtifact = { id: board.id, title: board.name, header: { ...header, title: board.name }, rawHeader: header,
+      body: JSON.stringify(board), ownerAccountId: 'owner', access, headerVersion: 1, bodyVersion: 1,
+      seq: 1, createdAt: 1, updatedAt: 1, storageMode: 'plain', isDecrypted: true };
+    const before = structuredClone(current);
+    const request = async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/access/grants')) return Response.json({ artifactId: board.id, ownerAccountId: 'owner', access,
+        grants: [{ principal: { kind: 'account', accountId: 'viewer' }, accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1, display: { name: 'Viewer' } }] });
+      if (path === `/v1/artifacts/${board.id}` && init?.method !== 'POST') return Response.json({ ...current,
+        publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: current.body }) });
+      if (init?.method !== 'POST') throw new Error('Unexpected HTTP request');
+      const wire = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
+      const opened = decodePlainArtifactStoredContent(wire.body!);
+      expect(opened).toEqual({ body: JSON.stringify({ ...board, name: 'Safe rename' }) });
+      return Response.json({ success: true, headerVersion: 2, bodyVersion: 2 });
+    };
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const save = (candidateHeader: Readonly<Record<string, unknown>>, body: string) => updateArtifactWithHeaderViaApi({
+      credentials: { token: 'token' }, artifactId: board.id, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: candidateHeader,
+      body, encryption: null, artifactDataKeys: new Map(), request, getArtifact: () => current, updateArtifact: row => { current = row; } });
+    const pinned = { ...board, widgets: [{ ...board.widgets[0], instance: { ...instance, bindings: { cloud: { kind: 'value', value: {
+      nested: [{ service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'private' }],
+    } } } } }] };
+    for (const candidateHeader of [header, { kind: 'ordinary' }]) {
+      await expect(save(candidateHeader, JSON.stringify(pinned))).rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+      expect(current).toEqual(before);
+    }
+    const safe = { ...board, name: 'Safe rename' };
+    await save(buildWorkBoardArtifactHeaderV1(safe), JSON.stringify(safe));
+    expect(current.body).toBe(JSON.stringify(safe));
+  });
   it.each([['editor', false], ['editor', true], ['owner', false]] as const)('initializes legacy provenance to the owner when %s saves (first CAS refused: %s)', async (callerId, refuseFirst) => {
     const artifactId = '11111111-1111-4111-8111-111111111111';
     const ownerSecret = new Uint8Array(32).fill(15);

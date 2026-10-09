@@ -58,7 +58,7 @@ describe('useProjectSurfaceController', () => {
         hook.getCurrent().setActiveTab('services');
 
         expect(routerMock.spies.replace).toHaveBeenCalledWith(
-            '/projects/wr_1?activeRootPath=%2Frepo%2Fpackages%2Fui&mobileSurface=services',
+            '/projects/wr_1/overview?activeRootPath=%2Frepo%2Fpackages%2Fui&serverId=server-1&mobileSurface=services',
         );
 
         await hook.unmount();

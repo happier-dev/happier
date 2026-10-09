@@ -1,356 +1,110 @@
 import * as React from 'react';
-import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
-import { type Href } from 'expo-router';
-import { Redirect, Stack, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
-
+import { Stack, useIsFocused, useLocalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
-import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { ProjectDetailScreen } from '@/components/projects/ProjectDetailScreen';
+import { buildProjectPaneScopeId } from './projectPaneScope';
 import { useProjectInitialResource } from './useProjectInitialResource';
-import { useProjectRouteActions } from '@/components/projects/detail/useProjectRouteActions';
-import { useProjectRouteHeaderOptions } from '@/components/projects/detail/useProjectRouteHeaderOptions';
-import {
-    PROJECT_ROUTE_ROOT_SENTINEL,
-    buildProjectRouteHref,
-    readProjectRouteStringParam,
-    readProjectRouteWorktreeSelection,
-    resolveProjectCockpitIndexRedirectHref,
-    resolveProjectRouteSelectionQuery,
-    resolveProjectRouteSegment,
-    replaceProjectRouteSelection,
-} from '@/components/projects/detail/projectRouteState';
-import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
-import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
-import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
-import {
-    migrateProjectRouteSegmentToMobileSurface,
-    type ProjectMobileSurface,
-    resolveProjectMobileSurfaceIntent,
-    resolveProjectRoutePathForSurface,
-} from '@/components/workspaceCockpit/project/projectCockpitState';
-import { useProjectRouteRouterRef } from '@/components/projects/detail/useProjectRouteRouterRef';
+import { useProjectRouteActions } from './useProjectRouteActions';
+import { useProjectRouteHeaderOptions } from './useProjectRouteHeaderOptions';
+import { PROJECT_ROUTE_ROOT_SENTINEL, readProjectRouteStringParam, readProjectRouteWorktreeSelection, readProjectSelectedRouteResource, replaceProjectRouteSelection } from './projectRouteState';
+import { useWorkspaceRefResolutionById } from './useWorkspaceRefById';
+import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
-import {
-    useLocalSetting,
-    useLocalSettingMutable,
-    usePersistProjectLastMobileSurface,
-    useProjectLastMobileSurface,
-} from '@/sync/domains/state/storage';
-import { t } from '@/text';
-
-type ClassicProjectHostedSurface = Extract<ProjectMobileSurface, 'browser' | 'services'>;
-
-function resolveClassicProjectHostedSurface(surface: ProjectMobileSurface): ClassicProjectHostedSurface | null {
-    return surface === 'browser' || surface === 'services' ? surface : null;
-}
-
-function appendClassicProjectHostedSurfaceHint(href: string, surface: ClassicProjectHostedSurface): string {
-    const [pathname = href, queryString = ''] = href.split('?', 2);
-    const searchParams = new URLSearchParams(queryString);
-    searchParams.set('mobileSurface', surface);
-    const query = searchParams.toString();
-    return query ? `${pathname}?${query}` : pathname;
-}
+import { useLocalSetting, useLocalSettingMutable, usePersistProjectLastMobileSurface, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys, writeProjectSelectionPreference } from '@/sync/domains/settings/projectSelectionPersistence';
 
 export const ProjectDestinationBody = React.memo(() => {
     const routerRef = useProjectRouteRouterRef();
     const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{
-        workspaceRefId?: string | string[];
-        mobileSurface?: string | string[];
-        worktreeId?: string | string[];
-        activeRootPath?: string | string[];
-        showWorktrees?: string | string[];
-    }>();
+    const pathname = usePathname();
+    const params = useLocalSearchParams<Record<string, string | string[]>>();
     const workspaceRefId = readProjectRouteStringParam(params.workspaceRefId) ?? '';
-    const explicitMobileSurfaceHint = readProjectRouteStringParam(params.mobileSurface);
-    const rawWorktreeId = readProjectRouteStringParam(params.worktreeId);
-    const rawLegacyActiveRootPath = readProjectRouteStringParam(params.activeRootPath);
+    const serverId = readProjectRouteStringParam(params.serverId);
+    const workspaceResolution = useWorkspaceRefResolutionById(workspaceRefId, serverId);
+    const workspaceRef = workspaceResolution.kind === 'resolved' ? workspaceResolution.ref : null;
+    const workspaceRefs = useWorkspaceRefs();
+    const preferenceKeys = React.useMemo(() => workspaceRef
+        ? resolveProjectSelectionPreferenceKeys(workspaceRefs, workspaceRef) : null, [workspaceRef, workspaceRefs]);
+    const pageRoute = resolveProjectCockpitRouteFromPathname(pathname, null, readProjectRouteStringParam(params.mobileSurface));
+    const page = pageRoute?.page ?? 'overview';
+    const surface = pageRoute?.surface ?? page;
     const showWorktrees = readProjectRouteStringParam(params.showWorktrees) === '1';
-    const {
-        deviceType,
-        cockpitEnabled,
-        showWorkspaceExperienceToggle,
-        workspaceExperienceToggleLabelKey,
-        toggleWorkspaceExperience,
-    } = useMobileWorkspaceExperienceState();
-    const lastMobileSurface = useProjectLastMobileSurface(workspaceRefId || null);
-    const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
-    const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
-    const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
-    const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(workspaceRefId));
+    const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(workspaceRefId, workspaceRef?.serverId ?? serverId));
     const pane = useAppPaneScope(scopeId);
-    useProjectInitialResource(pane);
-    const workspaceRef = useWorkspaceRefById(workspaceRefId);
+    const resourcePending = useProjectInitialResource(pane, workspaceRef);
+    const roots = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
+    const worktreeIds = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
+    const [, setRoots] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
+    const [, setWorktreeIds] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
+    const persistPage = usePersistProjectLastMobileSurface();
     const fallbackRootPath = workspaceRef?.rootPath ?? readProjectRouteStringParam(params.activeRootPath) ?? '';
-    const persistedRootPath = workspaceRefId
-        ? (lastActiveRootPathByWorkspaceRefId?.[workspaceRefId] ?? null)
-        : null;
-    const persistedWorktreeId = workspaceRefId
-        ? (lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRefId] ?? null)
-        : null;
-    const routeSelection = fallbackRootPath
-        ? readProjectRouteWorktreeSelection({
-            rawWorktreeId: params.worktreeId,
-            rawLegacyActiveRootPath: params.activeRootPath,
-            defaultRootPath: fallbackRootPath,
-            persistedActiveRootPath: typeof persistedRootPath === 'string' ? persistedRootPath : null,
-            persistedWorktreeId: typeof persistedWorktreeId === 'string' ? persistedWorktreeId : null,
-        })
-        : { requestedRootPath: null, requestedWorktreeId: null };
-    const {
-        resolvedRootPath: activeRootPath,
-        resolvedWorktreeId: activeWorktreeId,
-        availableWorktrees,
-    } = useResolvedRepoWorktreeSelection({
-        serverId: workspaceRef?.serverId ?? '',
+    const selection = readProjectRouteWorktreeSelection({
+        rawWorktreeId: params.worktreeId,
+        rawLegacyActiveRootPath: params.activeRootPath,
+        defaultRootPath: fallbackRootPath,
+        persistedActiveRootPath: readProjectSelectionPreference(roots, preferenceKeys),
+        persistedWorktreeId: readProjectSelectionPreference(worktreeIds, preferenceKeys),
+    });
+    const { requestedRootPath, didRecoverMissingWorktree, resolvedRootPath: activeRootPath, resolvedWorktreeId: activeWorktreeId, availableWorktrees } = useResolvedRepoWorktreeSelection({
+        serverId: workspaceRef?.serverId ?? serverId ?? '',
         machineId: workspaceRef?.machineId ?? '',
-        defaultRootPath: workspaceRef?.rootPath ?? fallbackRootPath,
-        requestedRootPath: routeSelection.requestedRootPath,
-        requestedWorktreeId: routeSelection.requestedWorktreeId,
+        defaultRootPath: fallbackRootPath,
+        requestedRootPath: selection.requestedRootPath,
+        requestedWorktreeId: selection.requestedWorktreeId,
     });
-
-    const handleSelectRootPath = React.useCallback((path: string) => {
-        if (!workspaceRef) return;
-        const trimmedPath = path.trim();
-        if (!trimmedPath) return;
-        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
-            ? null
-            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
+    const replaceSelection = React.useCallback((path: string, nextShowWorktrees = showWorktrees) => {
+        if (!workspaceRef || !path.trim()) return;
         replaceProjectRouteSelection({
             router: routerRef.current,
-            workspaceRefId: workspaceRef.id,
-            activeRootPath: trimmedPath,
+            workspaceRefId,
+            serverId: workspaceRef.serverId,
+            segment: page,
+            surface,
+            routeParams: params,
+            initialResource: readProjectSelectedRouteResource(pane.scopeState?.details) ?? (resourcePending ? undefined : null),
+            activeRootPath: path,
             defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: nextWorktreeId,
-            showWorktrees,
+            activeWorktreeId: path === workspaceRef.rootPath ? null : findVisibleRepoWorktreeByPath(availableWorktrees, path)?.id ?? null,
+            showWorktrees: nextShowWorktrees,
         });
-    }, [availableWorktrees, routerRef, showWorktrees, workspaceRef]);
-
-    const handleSetShowWorktrees = React.useCallback((nextValue: boolean) => {
-        if (!workspaceRef) return;
-        replaceProjectRouteSelection({
-            router: routerRef.current,
-            workspaceRefId: workspaceRef.id,
-            activeRootPath: activeRootPath ?? fallbackRootPath,
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId,
-            showWorktrees: nextValue,
-        });
-    }, [activeRootPath, activeWorktreeId, fallbackRootPath, routerRef, workspaceRef]);
-
-    const routeActions = useProjectRouteActions({
-        workspaceRef,
-        activeRootPath: activeRootPath ?? fallbackRootPath,
-        activeWorktreeId,
-        showWorktrees,
-        pane,
-    });
-    const replaceOverviewVisibility = routeActions.replaceOverviewVisibility;
-    const openTerminal = routeActions.openTerminal;
-    const handleToggleWorktrees = React.useCallback(() => {
-        replaceOverviewVisibility({ visible: !showWorktrees });
-    }, [replaceOverviewVisibility, showWorktrees]);
-    const handleOpenTerminal = React.useCallback(() => {
-        openTerminal({ exitOverview: true });
-    }, [openTerminal]);
-
+    }, [availableWorktrees, page, pane.scopeState?.details, params, resourcePending, routerRef, showWorktrees, surface, workspaceRef, workspaceRefId]);
+    const selectRootPath = React.useCallback((path: string) => replaceSelection(path), [replaceSelection]);
+    React.useEffect(() => {
+        if (!isFocused || !workspaceRef || !preferenceKeys) return;
+        persistPage(workspaceRefId, page, workspaceRef.serverId);
+        if (roots?.[preferenceKeys.storageKey] !== activeRootPath) setRoots(writeProjectSelectionPreference(roots, preferenceKeys, activeRootPath));
+        const worktreeId = activeWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL;
+        if (worktreeIds?.[preferenceKeys.storageKey] !== worktreeId) setWorktreeIds(writeProjectSelectionPreference(worktreeIds, preferenceKeys, worktreeId));
+    }, [activeRootPath, activeWorktreeId, isFocused, page, persistPage, preferenceKeys, roots, setRoots, setWorktreeIds, worktreeIds, workspaceRef, workspaceRefId]);
+    const setShowWorktrees = React.useCallback((value: boolean) => replaceSelection(activeRootPath, value), [activeRootPath, replaceSelection]);
+    const actions = useProjectRouteActions({ workspaceRef, activeRootPath, activeWorktreeId, showWorktrees, pane });
     const screenOptions = useProjectRouteHeaderOptions({
         workspaceRef,
-        activeRootPath: activeRootPath ?? fallbackRootPath,
-        testIdPrefix: deviceType === 'phone' ? 'project-mobile-header' : 'project-desktop-header',
+        activeRootPath,
+        testIdPrefix: 'project-header',
         showWorktreesButton: true,
-        showWorkspaceExperienceButton: showWorkspaceExperienceToggle,
-        workspaceExperienceToggleA11yLabel: t(workspaceExperienceToggleLabelKey),
-        onToggleWorkspaceExperience: showWorkspaceExperienceToggle ? toggleWorkspaceExperience : undefined,
-        onToggleWorktrees: handleToggleWorktrees,
-        onOpenTerminal: handleOpenTerminal,
+        onToggleWorktrees: () => actions.replaceOverviewVisibility({ visible: !showWorktrees }),
+        onOpenTerminal: () => actions.openTerminal({ exitOverview: true }),
     });
-
-    const persistedSurface = migrateProjectRouteSegmentToMobileSurface(lastMobileSurface);
-    const rootMobileSurface = resolveProjectMobileSurfaceIntent({
-        routeKind: 'index',
-        activeRightTabId: pane.scopeState?.right?.activeTabId,
-        detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
-        overviewVisible: showWorktrees,
-        persistedSurface,
-        explicitSurfaceHint: explicitMobileSurfaceHint,
-    });
-    const canonicalActiveRootPath = activeRootPath ?? fallbackRootPath;
-    const canonicalRouteSelectionQuery = workspaceRef
-        ? resolveProjectRouteSelectionQuery({
-            activeRootPath: canonicalActiveRootPath,
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId,
-        })
-        : { rawWorktreeId: null, rawActiveRootPath: null };
-    const canonicalWorktreeQueryValue = canonicalRouteSelectionQuery.rawWorktreeId;
-    const canonicalCockpitRedirectHref = isFocused && workspaceRef && cockpitEnabled
-        ? resolveProjectCockpitIndexRedirectHref({
-            workspaceRefId: workspaceRef.id,
-            surface: rootMobileSurface,
-            explicitMobileSurfaceHint,
-            ...routeSelection,
-            activeRootPath: canonicalActiveRootPath,
-            defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId,
-        })
-        : null;
-    const handleSelectCockpitRootPath = React.useCallback((path: string) => {
-        if (!workspaceRef) return;
-        const trimmedPath = path.trim();
-        if (!trimmedPath) return;
-        const nextWorktreeId = trimmedPath === workspaceRef.rootPath
-            ? null
-            : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
-        routerRef.current.replace(resolveProjectRoutePathForSurface({
-            workspaceRefId: workspaceRef.id,
-            surface: 'overview',
-            ...resolveProjectRouteSelectionQuery({
-                activeRootPath: trimmedPath,
-                defaultRootPath: workspaceRef.rootPath,
-                activeWorktreeId: nextWorktreeId,
-            }),
-        }));
-    }, [availableWorktrees, routerRef, workspaceRef]);
-
-    React.useEffect(() => {
-        if (!isFocused) return;
-        if (!workspaceRefId) return;
-        if (lastMobileSurface === rootMobileSurface) return;
-        persistProjectLastMobileSurface(workspaceRefId, rootMobileSurface);
-    }, [
-        isFocused,
-        lastMobileSurface,
-        persistProjectLastMobileSurface,
-        rootMobileSurface,
-        workspaceRefId,
-    ]);
-
-    React.useEffect(() => {
-        if (!isFocused) return;
-        if (!workspaceRefId) return;
-        if (!canonicalActiveRootPath) return;
-        const nextStoredWorktreeId = canonicalWorktreeQueryValue ?? PROJECT_ROUTE_ROOT_SENTINEL;
-        const rootPathIsCurrent = lastActiveRootPathByWorkspaceRefId?.[workspaceRefId] === canonicalActiveRootPath;
-        const worktreeIsCurrent = lastActiveWorktreeIdByWorkspaceRefId?.[workspaceRefId] === nextStoredWorktreeId;
-        if (rootPathIsCurrent && worktreeIsCurrent) return;
-        setLastActiveRootPathByWorkspaceRefId({
-            ...(lastActiveRootPathByWorkspaceRefId ?? {}),
-            [workspaceRefId]: canonicalActiveRootPath,
-        });
-        setLastActiveWorktreeIdByWorkspaceRefId({
-            ...(lastActiveWorktreeIdByWorkspaceRefId ?? {}),
-            [workspaceRefId]: nextStoredWorktreeId,
-        });
-    }, [
-        canonicalActiveRootPath,
-        canonicalWorktreeQueryValue,
-        isFocused,
-        lastActiveRootPathByWorkspaceRefId,
-        lastActiveWorktreeIdByWorkspaceRefId,
-        setLastActiveRootPathByWorkspaceRefId,
-        setLastActiveWorktreeIdByWorkspaceRefId,
-        workspaceRefId,
-    ]);
-
-    if (
-        workspaceRef
-        && cockpitEnabled
-        && workspaceRefId
-    ) {
-        if (canonicalCockpitRedirectHref) {
-            return <Redirect href={canonicalCockpitRedirectHref as Href} />;
-        }
-        return (
-            <>
-                <Stack.Screen options={screenOptions} />
-                <ProjectCockpitShell
-                    workspaceRef={workspaceRef}
-                    scopeId={scopeId}
-                    activeRootPath={canonicalActiveRootPath}
-                    activeWorktreeId={activeWorktreeId}
-                    surface={rootMobileSurface}
-                    isFocused={isFocused}
-                    onSelectRootPath={handleSelectCockpitRootPath}
-                />
-            </>
-        );
-    }
-
-    if (isFocused && workspaceRefId && showWorkspaceExperienceToggle) {
-        const classicHostedSurface = resolveClassicProjectHostedSurface(rootMobileSurface);
-        if (!workspaceRef) {
-            const href = (
-                cockpitEnabled
-                    ? resolveProjectRoutePathForSurface({
-                        workspaceRefId,
-                        surface: rootMobileSurface,
-                        rawWorktreeId,
-                        rawActiveRootPath: rawLegacyActiveRootPath,
-                    })
-                    : resolveProjectRouteSegment(
-                        pane.scopeState?.right?.activeTabId,
-                        lastMobileSurface,
-                    )
-            ) as Href;
-            if (cockpitEnabled) {
-                return <Redirect href={href} />;
-            }
-            const legacySegment = resolveProjectRouteSegment(
-                pane.scopeState?.right?.activeTabId,
-                lastMobileSurface,
-            );
-            const queryParams = new URLSearchParams();
-            if (rawWorktreeId) {
-                queryParams.set('worktreeId', rawWorktreeId);
-            } else if (rawLegacyActiveRootPath) {
-                queryParams.set('activeRootPath', rawLegacyActiveRootPath);
-            }
-            if (classicHostedSurface) {
-                queryParams.set('mobileSurface', classicHostedSurface);
-            }
-            const query = queryParams.toString();
-            const legacyHref = (
-                query
-                    ? `/projects/${encodeURIComponent(workspaceRefId)}/${classicHostedSurface ? 'files' : legacySegment}?${query}`
-                    : `/projects/${encodeURIComponent(workspaceRefId)}/${classicHostedSurface ? 'files' : legacySegment}`
-            ) as Href;
-            return <Redirect href={legacyHref} />;
-        }
-        const href = buildProjectRouteHref({
-            workspaceRefId,
-            segment: classicHostedSurface
-                ? 'files'
-                : resolveProjectRouteSegment(
-                    pane.scopeState?.right?.activeTabId,
-                    lastMobileSurface,
-                ),
-            activeRootPath: activeRootPath ?? fallbackRootPath,
-            defaultRootPath: workspaceRef?.rootPath ?? '',
-            activeWorktreeId,
-        });
-        const redirectHref = classicHostedSurface
-            ? appendClassicProjectHostedSurfaceHint(href, classicHostedSurface)
-            : href;
-        return <Redirect href={redirectHref as Href} />;
-    }
-
-    return (
-        <>
-            <Stack.Screen options={screenOptions} />
-            <ProjectDetailScreen
-                workspaceRefId={workspaceRefId}
-                activeRootPath={activeRootPath}
-                isFocused={isFocused}
-                showWorktrees={showWorktrees}
-                onSelectRootPath={handleSelectRootPath}
-                onSetShowWorktrees={handleSetShowWorktrees}
-            />
-        </>
-    );
+    return <>
+        <Stack.Screen options={screenOptions} />
+        <ProjectDetailScreen
+            workspaceRefId={workspaceRefId}
+            serverId={serverId}
+            workspaceResolution={workspaceResolution}
+            dashboardId={readProjectRouteStringParam(params.dashboardId) ?? undefined}
+            recoveryToastKey={didRecoverMissingWorktree ? `${workspaceRefId}:${requestedRootPath}` : null}
+            page={page}
+            surface={surface}
+            activeRootPath={activeRootPath}
+            activeWorktreeId={activeWorktreeId}
+            isFocused={isFocused}
+            showWorktrees={showWorktrees}
+            onSelectRootPath={selectRootPath}
+            onSetShowWorktrees={setShowWorktrees}
+        />
+    </>;
 });

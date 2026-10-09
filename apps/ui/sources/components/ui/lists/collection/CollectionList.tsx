@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { Item } from '@/components/ui/lists/Item';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
@@ -73,6 +73,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     dimmedTitle: {
         color: theme.colors.text.secondary,
+    },
+    // A path under a row's title (the open checkout's folder): mono, at the subtitle's size.
+    monoSubtitle: {
+        ...Typography.mono(),
     },
     troubleDot: {
         width: HAPPIER_COLLECTION_LIST_METRICS.troubleDotSize,
@@ -167,6 +171,14 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     subtitle?: string;
     /** An inline mark before the subtitle: the collection's trouble dot when the row needs the person. */
     subtitleLeading?: React.ReactNode;
+    /** A quiet qualifier on the title's line, after the title (a project's Team, a folded machine). */
+    titleAccessory?: React.ReactNode;
+    /** The subtitle is a path: drawn in the mono face. */
+    subtitleMono?: boolean;
+    /** A row that is there but not active (an offline machine's last-known checkout, a saved source not open). */
+    dimmed?: boolean;
+    /** A tree item's semantics and roving focus, from the shared tree interaction owner (a column tree). */
+    treeItem?: Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'accessibilityExpanded' | 'pressableRef' | 'onFocus' | 'onKeyDown'>;
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
     leftElementWhenHovered?: React.ReactNode;
@@ -187,6 +199,9 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             title={props.title}
             subtitle={props.subtitle}
             subtitleLeading={props.subtitleLeading}
+            titleAccessory={props.titleAccessory}
+            {...props.treeItem}
+            subtitleStyle={props.subtitleMono ? styles.monoSubtitle : undefined}
             {...(props.leftElement
                 ? { leftElement: props.leftElement, leftElementWhenHovered: props.leftElementWhenHovered }
                 : { icon: props.icon })}
@@ -196,7 +211,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             selected={props.selected}
             showChevron={false}
             pressableStyle={props.selected ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, styles.navigationRowSelected] : HAPPIER_COLLECTION_LIST_ROW_STYLE}
-            titleStyle={props.selected ? styles.navigationRowTitleSelected : undefined}
+            titleStyle={props.selected ? styles.navigationRowTitleSelected : props.dimmed ? styles.dimmedTitle : undefined}
             style={resolveHappierCollectionListRowPadding(props.indentPx ?? 0)}
             onPress={props.onPress}
         />

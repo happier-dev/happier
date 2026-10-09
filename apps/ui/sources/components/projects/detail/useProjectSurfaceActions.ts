@@ -1,13 +1,14 @@
 import * as React from 'react';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenProjectDraft } from '../activation/projectOpenDraftSeed';
+import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useWorkspaceFilePaneNavigation } from '@/components/workspaces/files/useWorkspaceFilePaneNavigation';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { createProjectCommitDetailsTab, createProjectFileDetailsTab } from './projectDetailsTabBuilders';
 
 export function useProjectSurfaceActions(params: Readonly<{
@@ -18,7 +19,7 @@ export function useProjectSurfaceActions(params: Readonly<{
     onOpenChangesNavigate?: () => void;
 }>) {
     const pane = useAppPaneScope(params.scopeId);
-    const routerRef = useProjectRouteRouterRef();
+    const navigateToOpen = useNavigateToProjectOpen();
 
     const openFileInDetails = React.useCallback((fullPath: string) => {
         deferOnWeb(() => {
@@ -61,18 +62,13 @@ export function useProjectSurfaceActions(params: Readonly<{
     }, [pane]);
 
     const openCreateWorktreeFlow = React.useCallback(() => {
-        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
-        routerRef.current.push({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({
-                draftId,
-                machineId: params.workspaceRef.machineId,
-                directory: params.activeRootPath,
-                worktree: 'new',
-                targetServerId: params.workspaceRef.serverId,
-            }),
-        });
-    }, [params.activeRootPath, params.workspaceRef.machineId, params.workspaceRef.serverId, routerRef]);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== params.workspaceRef.serverId) return;
+        fireAndForget(seedAndOpenProjectDraft({ lifetime, selection: { serverId: params.workspaceRef.serverId,
+            machineId: params.workspaceRef.machineId, source: { kind: 'folder', path: params.activeRootPath },
+            materialization: { kind: 'worktree', checkout: { kind: 'git_worktree', displayName: '', baseRef: null } } },
+            navigate: navigateToOpen }), { tag: 'Project.openCreateWorktree' });
+    }, [navigateToOpen, params.activeRootPath, params.workspaceRef.machineId, params.workspaceRef.serverId]);
 
     const openCommitInDetails = React.useCallback((sha: string) => {
         const tab = createProjectCommitDetailsTab(sha);

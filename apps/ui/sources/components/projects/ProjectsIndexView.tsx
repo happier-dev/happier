@@ -22,20 +22,30 @@ export const ProjectsIndexView = React.memo(function ProjectsIndexView() {
 
 const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
     const model = useProjectsListModel();
+    // The same "+" as the column: a folder, a clone, your Sources, each Team's, Manage (plan 10 §2).
+    const { addSources, cloneRepository } = model;
+    const firstSaved = model.saved?.items[0] ?? null;
+    const hasContent = model.hasAnyProjects || Boolean(firstSaved);
     return (
         <View testID="projects-none-open" style={{ flex: 1, justifyContent: 'center' }}>
             <EmptyState
                 layout="page"
                 scene="noProjects"
-                title={model.hasAnyProjects ? t('projects.noneOpenTitle') : t('projects.emptyTitle')}
-                subtitle={model.hasAnyProjects ? t('projects.noneOpenDescription') : t('projects.emptyDescription')}
+                title={hasContent ? t('projects.noneOpenTitle') : t('projects.emptyTitle')}
+                subtitle={hasContent ? t('projects.noneOpenDescription') : t('projects.emptyDescription')}
                 action={(
+                    <>
+                    {firstSaved ? <RoundButton testID="projects-none-open:open-source" size="normal"
+                        title={`${t('common.open')} ${firstSaved.title}`}
+                        action={async () => { model.saved?.onOpen(firstSaved.key); }} /> : null}
                     <ProjectsAddMenu
                         testID="projects-none-open:add"
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
+                        onClone={cloneRepository}
+                        sources={addSources}
                         // The page's one primary action, drawn as the empty state draws it.
-                        renderTrigger={(open) => (
+                        renderTrigger={firstSaved ? undefined : (open) => (
                             <RoundButton
                                 testID="projects-none-open:add-button"
                                 size="normal"
@@ -45,6 +55,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                             />
                         )}
                     />
+                    </>
                 )}
             />
         </View>

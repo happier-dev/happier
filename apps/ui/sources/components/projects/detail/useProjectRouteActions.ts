@@ -1,36 +1,11 @@
 import * as React from 'react';
-
+import { useLocalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { useSetting } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { useDeviceType } from '@/utils/platform/responsive';
-import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
-import {
-    resolveProjectRoutePathForSurface,
-    type ProjectMobileSurface,
-} from '@/components/workspaceCockpit/project/projectCockpitState';
-
-import {
-    buildProjectTerminalDetailsInstanceId,
-    openProjectTerminalDetailsTab,
-} from './openProjectTerminalDetailsTab';
-import {
-    buildProjectRouteHref,
-    resolveProjectRouteSelectionQuery,
-    type ProjectRouteSegment,
-    type ProjectDetailsSourceSurface,
-} from './projectRouteState';
+import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { buildProjectTerminalDetailsInstanceId, openProjectTerminalDetailsTab } from './openProjectTerminalDetailsTab';
+import { buildProjectRouteHref, readProjectSelectedRouteResource, type ProjectRouteSegment, type ProjectDetailsSourceSurface } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
-
-function resolveProjectSurfaceForSegment(segment?: ProjectRouteSegment): ProjectMobileSurface {
-    if (segment === 'git') {
-        return 'git';
-    }
-    if (segment === 'files') {
-        return 'browse';
-    }
-    return 'tabs';
-}
 
 export function useProjectRouteActions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -41,158 +16,53 @@ export function useProjectRouteActions(params: Readonly<{
     pane?: AppPaneScopeApi | null;
 }>) {
     const routerRef = useProjectRouteRouterRef();
-    const deviceType = useDeviceType();
-    const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
-    const workspaceRefId = params.workspaceRef?.id ?? null;
-    const workspaceRootPath = params.workspaceRef?.rootPath ?? null;
-    const openDetailsTab = params.pane?.openDetailsTab;
-    const cockpitEnabled = isMobileWorkspaceCockpitEnabled({
-        deviceType,
-        mobileWorkspaceExperience,
-    });
-
+    const routeParams = useLocalSearchParams<Record<string, string | string[]>>();
+    const pathname = usePathname();
+    const page = resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
     const buildHref = React.useCallback((input?: Readonly<{
         segment?: ProjectRouteSegment;
         showWorktrees?: boolean;
         sourceSurface?: ProjectDetailsSourceSurface | null;
-    }>): string => {
-        if (!workspaceRefId || !workspaceRootPath) {
-            return '/projects';
-        }
-        const sourceSurface = input?.segment === 'details'
-            ? (input.sourceSurface ?? params.sourceSurface ?? null)
-            : null;
-        return buildProjectRouteHref({
-            workspaceRefId,
-            segment: input?.segment,
-            activeRootPath: params.activeRootPath,
-            defaultRootPath: workspaceRootPath,
-            activeWorktreeId: params.activeWorktreeId,
-            showWorktrees: input?.showWorktrees,
-            sourceSurface,
-        });
-    }, [
-        params.activeRootPath,
-        params.activeWorktreeId,
-        params.sourceSurface,
-        workspaceRefId,
-        workspaceRootPath,
-    ]);
-
-    const buildCockpitHref = React.useCallback((surface: ProjectMobileSurface): string => {
-        if (!workspaceRefId || !workspaceRootPath) {
-            return '/projects';
-        }
-        const routeSelectionQuery = resolveProjectRouteSelectionQuery({
-            activeRootPath: params.activeRootPath,
-            defaultRootPath: workspaceRootPath,
-            activeWorktreeId: params.activeWorktreeId,
-        });
-        return resolveProjectRoutePathForSurface({
-            workspaceRefId,
-            surface,
-            rawWorktreeId: routeSelectionQuery.rawWorktreeId,
-            rawActiveRootPath: routeSelectionQuery.rawActiveRootPath,
-        });
-    }, [
-        params.activeRootPath,
-        params.activeWorktreeId,
-        workspaceRefId,
-        workspaceRootPath,
-    ]);
-
+        workspaceRef?: WorkspaceRefV1;
+    }>) => {
+        const workspaceRef = input?.workspaceRef ?? params.workspaceRef;
+        return workspaceRef ? buildProjectRouteHref({
+            workspaceRefId: workspaceRef.id,
+            serverId: workspaceRef.serverId,
+            segment: input?.segment ?? page,
+            routeParams,
+            activeRootPath: input?.workspaceRef ? workspaceRef.rootPath : params.activeRootPath,
+            defaultRootPath: workspaceRef.rootPath,
+            activeWorktreeId: input?.workspaceRef ? null : params.activeWorktreeId,
+            showWorktrees: input?.showWorktrees ?? params.showWorktrees,
+            sourceSurface: input?.sourceSurface ?? params.sourceSurface,
+            initialResource: params.pane ? readProjectSelectedRouteResource(params.pane.scopeState?.details) ?? null : undefined,
+        }) : '/projects';
+    }, [page, params.activeRootPath, params.activeWorktreeId, params.pane?.scopeState?.details, params.showWorktrees, params.sourceSurface, params.workspaceRef, routeParams]);
     const navigateToSegment = React.useCallback((input: Readonly<{
         segment?: ProjectRouteSegment;
         showWorktrees?: boolean;
         method?: 'push' | 'replace';
         sourceSurface?: ProjectDetailsSourceSurface | null;
+        workspaceRef?: WorkspaceRefV1;
     }>) => {
-        if (!workspaceRefId) return;
-        const href = buildHref({
-            segment: input.segment,
-            showWorktrees: input.showWorktrees,
-            sourceSurface: input.sourceSurface,
-        });
-        if (input.method === 'replace') {
-            routerRef.current.replace(href);
-            return;
-        }
-        routerRef.current.push(href);
-    }, [buildHref, routerRef, workspaceRefId]);
-
-    const replaceOverviewVisibility = React.useCallback((input: Readonly<{
-        segment?: ProjectRouteSegment;
-        visible: boolean;
-    }>) => {
-        if (cockpitEnabled) {
-            routerRef.current.replace(buildCockpitHref(
-                input.visible
-                    ? 'overview'
-                    : resolveProjectSurfaceForSegment(input.segment),
-            ));
-            return;
-        }
-        navigateToSegment({
-            segment: input.segment,
-            showWorktrees: input.visible,
-            method: 'replace',
-        });
-    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, routerRef]);
-
+        if (!params.workspaceRef) return;
+        routerRef.current[input.method ?? 'push'](buildHref(input));
+    }, [buildHref, params.workspaceRef, routerRef]);
+    const replaceOverviewVisibility = React.useCallback((input: Readonly<{ segment?: ProjectRouteSegment; visible: boolean }>) => {
+        navigateToSegment({ segment: input.visible ? 'overview' : input.segment ?? page, showWorktrees: input.visible, method: 'replace' });
+    }, [navigateToSegment, page]);
     const openWorktreesInDetails = React.useCallback((method: 'push' | 'replace' = 'push') => {
-        if (cockpitEnabled) {
-            const href = buildCockpitHref('overview');
-            if (method === 'replace') {
-                routerRef.current.replace(href);
-                return;
-            }
-            routerRef.current.push(href);
-            return;
-        }
-        navigateToSegment({
-            segment: 'details',
-            showWorktrees: true,
-            method,
-        });
-    }, [buildCockpitHref, cockpitEnabled, navigateToSegment, routerRef]);
-
-    const openTerminal = React.useCallback((input?: Readonly<{
-        segment?: ProjectRouteSegment;
-        exitOverview?: boolean;
-    }>) => {
-        if (!workspaceRefId || !openDetailsTab) return;
-        if (input?.exitOverview === true && params.showWorktrees === true) {
-            if (cockpitEnabled) {
-                routerRef.current.replace(buildCockpitHref(resolveProjectSurfaceForSegment(input.segment)));
-            } else {
-                navigateToSegment({
-                    segment: input.segment,
-                    showWorktrees: false,
-                    method: 'replace',
-                });
-            }
-        }
+        navigateToSegment({ segment: 'overview', showWorktrees: true, method });
+    }, [navigateToSegment]);
+    const openTerminal = React.useCallback((input?: Readonly<{ segment?: ProjectRouteSegment; exitOverview?: boolean }>) => {
+        if (!params.workspaceRef || !params.pane) return;
+        if (input?.exitOverview && params.showWorktrees) navigateToSegment({ segment: input.segment ?? page, showWorktrees: false, method: 'replace' });
         openProjectTerminalDetailsTab({
-            openDetailsTab,
+            openDetailsTab: params.pane.openDetailsTab,
             cwd: params.activeRootPath,
-            terminalInstanceId: buildProjectTerminalDetailsInstanceId(workspaceRefId),
+            terminalInstanceId: buildProjectTerminalDetailsInstanceId(params.workspaceRef.id),
         });
-    }, [
-        buildCockpitHref,
-        cockpitEnabled,
-        navigateToSegment,
-        openDetailsTab,
-        params.activeRootPath,
-        params.showWorktrees,
-        routerRef,
-        workspaceRefId,
-    ]);
-
-    return {
-        buildHref,
-        navigateToSegment,
-        openTerminal,
-        openWorktreesInDetails,
-        replaceOverviewVisibility,
-    };
+    }, [navigateToSegment, page, params.activeRootPath, params.pane, params.showWorktrees, params.workspaceRef]);
+    return { buildHref, navigateToSegment, openTerminal, openWorktreesInDetails, replaceOverviewVisibility };
 }

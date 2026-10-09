@@ -30,7 +30,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { usePaneFocusMode } from '@/components/appShell/panes/focusMode/usePaneFocusMode';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { useAllMachines, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, useAllMachines, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import {
     type LocalServiceLauncherState,
@@ -38,21 +38,22 @@ import {
 } from '@/sync/domains/local/services/launch';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { buildWorkspaceCacheKey, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
-import { openProjectTerminalDetailsTab } from '@/components/projects/detail/openProjectTerminalDetailsTab';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { createWorkspaceDetailsSurfaceRenderers } from './details/surfaces/workspaceDetailsSurfaceRegistry';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { WorkspaceSyncRelationshipList } from '@/components/workspaces/sync/WorkspaceSyncRelationshipList';
 import { openWorkspaceSyncAddMachine } from '@/components/workspaces/sync/openWorkspaceSyncAddMachine';
 import { createWorkspaceSyncConflictDetailsTab } from '@/components/workspaces/sync/workspaceSyncConflictDetailsTab';
@@ -98,7 +99,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     const deviceType = useDeviceType();
     const requestClose = props.onRequestClose ?? pane.closeDetails;
     const effectiveRootPath = props.activeRootPath ?? props.workspaceRef.rootPath;
-    const workspaceRefs = useSetting('workspaceRefsV1');
+    const workspaceRefs = useWorkspaceRefs();
     const selectedWorkspaceRef = React.useMemo(() => {
         const selectedKey = tryBuildWorkspaceCacheKey({
             serverId: props.workspaceRef.serverId,
@@ -107,8 +108,10 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         });
         if (!selectedKey) return null;
         if (selectedKey === tryBuildWorkspaceCacheKey(props.workspaceRef)) return props.workspaceRef;
-        return (Array.isArray(workspaceRefs) ? workspaceRefs : []).find((ref) =>
-            tryBuildWorkspaceCacheKey(ref) === selectedKey) ?? null;
+        const result = resolveWorkspaceRefByScope(Array.isArray(workspaceRefs) ? workspaceRefs : [], {
+            serverId: props.workspaceRef.serverId, machineId: props.workspaceRef.machineId, rootPath: effectiveRootPath,
+        });
+        return result.kind === 'resolved' ? result.ref : null;
     }, [effectiveRootPath, props.workspaceRef, workspaceRefs]);
     const filesController = useProjectSurfaceController({ scopeId: props.scopeId, workspaceRef: props.workspaceRef, activeRootPath: effectiveRootPath, activeWorktreeId: props.activeWorktreeId });
     const navigateFiles = React.useCallback(() => {
@@ -257,6 +260,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
             <WorkspaceSyncRelationshipList
+                serverId={props.workspaceRef.serverId}
                 workspaceRefId={selectedWorkspaceRef?.id ?? null}
                 onAddMachine={openWorkspaceSyncAddMachineForProject}
                 onOpenDetails={openWorkspaceSyncDetails}
@@ -292,6 +296,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
             <WorkspaceSyncRelationshipList
+                serverId={props.workspaceRef.serverId}
                 workspaceRefId={selectedWorkspaceRef?.id ?? null}
                 onAddMachine={openWorkspaceSyncAddMachineForProject}
                 onOpenDetails={openWorkspaceSyncDetails}
@@ -343,6 +348,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         rootPath: props.workspaceRef.rootPath,
         activeRootPath: effectiveRootPath,
         presentation: deviceType === 'phone' ? 'screen' : 'panel',
+        terminalWorkspace: filesController.checkoutWorkspace,
         sessionIdForAugmentation: props.sessionIdForAugmentation ?? null,
         pinDetailsTab: pane.pinDetailsTab,
         openDetailsTab: pane.openDetailsTab,
@@ -353,6 +359,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         launchpadRefreshError: browserLaunchpad.refreshError,
         pluginUiProjection,
         pluginUiProjectionPhase: scopedPluginProjection.phase,
+        pluginAccountLifetime: scopedPluginProjection.accountLifetime,
         pluginUiInteractionEnabled: pluginInteractionEnabled,
         pluginBrowserProjection,
         pluginBrowserActionSessionId: props.sessionIdForAugmentation ?? null,
@@ -364,6 +371,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         openChanges,
         browserLaunchpad,
         deviceType,
+        filesController.checkoutWorkspace,
         effectiveRootPath,
         openFileTab,
         pane.openDetailsTab,
@@ -371,6 +379,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         props.browserProductModels,
         pluginInteractionEnabled,
         scopedPluginProjection.phase,
+        scopedPluginProjection.accountLifetime,
         pluginUiProjection,
         pluginBrowserProjection,
         props.scopeId,
@@ -435,14 +444,15 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
 
     const renderHeaderActions = React.useCallback(() => {
         const openNewSessionWithReviewComments = () => {
-            const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
-            router.push({
-                pathname: '/new',
-                params: buildNewSessionLaunchRouteParams({
-                    draftId,
-                    machineId: props.workspaceRef.machineId,
-                    directory: effectiveRootPath,
-                    targetServerId: props.workspaceRef.serverId,
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) return;
+            seedAndOpenNewSession({
+                seed: { placement: { kind: 'exactTarget', serverId: props.workspaceRef.serverId,
+                    machineId: props.workspaceRef.machineId, directory: effectiveRootPath } },
+                scope: lifetime.scope,
+                isCurrent: lifetime.isCurrent,
+                navigateToNewSession: ({ draftId }) => router.push({
+                    pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
                 }),
             });
         };
@@ -468,10 +478,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 {props.showTerminalHeaderAction !== false && deviceType !== 'phone' ? (
                     <Pressable
                         onPress={() => {
-                            openProjectTerminalDetailsTab({
-                                openDetailsTab: pane.openDetailsTab,
-                                cwd: effectiveRootPath,
-                            });
+                            pane.openBottom({ tabId: 'terminal' });
                         }}
                         testID="workspace-details-open-terminal"
                         style={iconButtonStyle}
@@ -537,11 +544,12 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         if (details?.kind !== 'file' && details?.kind !== 'commit') return null;
         return buildProjectRouteHref({
             workspaceRefId: props.workspaceRef.id,
-            segment: 'details', activeRootPath: effectiveRootPath, defaultRootPath: props.workspaceRef.rootPath,
+            serverId: props.workspaceRef.serverId,
+            segment: details.kind === 'file' ? 'code' : 'changes', activeRootPath: effectiveRootPath, defaultRootPath: props.workspaceRef.rootPath,
             activeWorktreeId: props.activeWorktreeId,
             sourceSurface: details.kind === 'file' ? 'browse' : 'git', initialResource: details,
         });
-    }, [effectiveRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.rootPath]);
+    }, [effectiveRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.serverId, props.workspaceRef.rootPath]);
 
     return (
         <DetailsSplitWorkspace
