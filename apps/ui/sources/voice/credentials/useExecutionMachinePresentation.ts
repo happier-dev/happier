@@ -5,6 +5,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 export type VoiceExecutionMachinePresentation = Readonly<{
   selectedMachineId: string | null;
@@ -15,7 +16,8 @@ export type VoiceExecutionMachinePresentation = Readonly<{
 
 function machineLabelFromState(state: ReturnType<typeof storage.getState>, selectedMachineId: string | null): string | null {
   if (!selectedMachineId) return null;
-  return getMachineDisplayName(resolveMachineForActiveServerFromState(state, selectedMachineId)) ?? selectedMachineId;
+  return getMachineDisplayName(resolveMachineForActiveServerFromState(state, selectedMachineId,
+    { serverId: getAppliedActiveServerSnapshot().serverId })) ?? selectedMachineId;
 }
 
 /** The same machine facts used by mounted controls and prepared settings mutations. */

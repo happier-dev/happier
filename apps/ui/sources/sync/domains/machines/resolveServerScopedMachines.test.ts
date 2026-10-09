@@ -1,185 +1,138 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-const areServerProfileIdentifiersEquivalentMock = vi.hoisted(() =>
-    vi.fn((left: string | null | undefined, right: string | null | undefined) => String(left ?? '').trim() === String(right ?? '').trim())
-);
-const resolveServerProfileForPortableIdentityMock = vi.hoisted(() => vi.fn());
+import { adoptHomeProfile, setActiveServerId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import {
+    resolveExactServerScopedMachine,
+    resolvePortableMachineAdministrationTarget,
+    resolveServerScopedMachines,
+} from './resolveServerScopedMachines';
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    areServerProfileIdentifiersEquivalent: (
-        left: string | null | undefined,
-        right: string | null | undefined,
-    ) => areServerProfileIdentifiersEquivalentMock(left, right),
-    resolveServerProfileForPortableIdentity: (
-        serverIdentityId: string | null | undefined,
-    ) => resolveServerProfileForPortableIdentityMock(serverIdentityId),
-}));
-
-type TestMachine = Readonly<{
-    id: string;
-    activeAt?: number;
-    revokedAt?: number | null;
-}>;
+type TestMachine = Readonly<{ id: string; activeAt: number; revokedAt: number | null }>;
+const identity = 'srv_machine_inventory_owner';
+let profile: ServerProfile;
 
 function createMachine(id: string, activeAt: number): TestMachine {
     return { id, activeAt, revokedAt: null };
 }
 
 describe('resolveServerScopedMachines', () => {
-    beforeEach(() => {
-        areServerProfileIdentifiersEquivalentMock.mockImplementation(
-            (left, right) => String(left ?? '').trim() === String(right ?? '').trim(),
-        );
-        resolveServerProfileForPortableIdentityMock.mockReset();
+    beforeEach(async () => {
+        profile = await adoptHomeProfile({ descriptor: {
+            v: 1, homeServerIdentityId: identity,
+            canonicalServerUrl: 'https://machine-inventory-owner.example.test',
+            revision: 1, endpoints: [{ kind: 'https', url: 'https://machine-inventory-owner.example.test' }],
+        }, source: 'manual' });
+        expect(profile.id).not.toBe(identity);
+        await setActiveServerId(profile.id);
     });
+    afterEach(() => standardCleanup());
 
-    it('prefers live active-server machines over a stale scoped cache when the requested server id is an active-server alias', async () => {
-        areServerProfileIdentifiersEquivalentMock.mockImplementation((left, right) => {
-            const ids = new Set([String(left ?? '').trim(), String(right ?? '').trim()]);
-            return ids.has('localhost-53288') && ids.has('srv_identity');
-        });
-
-        const { resolveServerScopedMachines } = await import('./resolveServerScopedMachines');
+    it('prefers live active-server machines over a stale scoped cache when the requested server id is an active-server alias', () => {
         const freshMachine = createMachine('machine-live', 200);
         const staleMachine = createMachine('machine-stale', 100);
-
         expect(resolveServerScopedMachines({
-            serverId: 'srv_identity',
-            activeServerId: 'localhost-53288',
-            activeMachines: [freshMachine],
-            machineListByServerId: {
-                srv_identity: [staleMachine],
-            },
+            serverId: identity, activeServerId: profile.id, activeMachines: [freshMachine],
+            machineListByServerId: { [identity]: [staleMachine] },
         })).toEqual([freshMachine]);
     });
 
-    it('returns only the requested machine from the resolved server scope when machine ids repeat across servers', async () => {
-        const module = await import('./resolveServerScopedMachines');
-        const resolver = module as unknown as Readonly<{
-            resolveExactServerScopedMachine?: (params: Readonly<{
-                machineId: string;
-                serverId: string;
-                activeServerId: string;
-                activeMachines: ReadonlyArray<TestMachine>;
-                machineListByServerId: Readonly<Record<string, ReadonlyArray<TestMachine>>>;
-            }>) => TestMachine | null;
-        }>;
+    it.each([true, false])('uses canonical settled inventory for both equivalent routes, canonical contains machine = %s', (containsMachine) => {
+        const machine = createMachine('machine-review', 100);
+        const canonicalRows = containsMachine ? [machine] : [];
+        const machineListByServerId = {
+            [identity]: canonicalRows, [profile.id]: containsMachine ? [] : [machine],
+        };
+        const machineListStatusByServerId = { [identity]: 'idle' as const, [profile.id]: 'idle' as const };
+        for (const serverId of [identity, profile.id]) {
+            const context = { serverId, activeServerId: 'foreign-home', activeMachines: [], machineListByServerId, machineListStatusByServerId };
+            expect(resolveServerScopedMachines(context)).toBe(canonicalRows);
+            expect(resolveExactServerScopedMachine({ ...context, machineId: machine.id })).toBe(containsMachine ? machine : null);
+        }
+        expect(resolvePortableMachineAdministrationTarget({
+            target: { serverIdentityId: identity, machineId: machine.id },
+            activeServerId: 'foreign-home', activeMachines: [], machineListByServerId, machineListStatusByServerId,
+        })).toMatchObject({ kind: containsMachine ? 'resolved' : 'missingMachine' });
+    });
+
+    it('keeps canonical priority without list-status evidence instead of selecting a nonempty alias', () => {
+        const machine = createMachine('machine-stale', 100);
+        for (const serverId of [identity, profile.id]) {
+            expect(resolveExactServerScopedMachine({
+                machineId: machine.id, serverId, activeServerId: 'foreign-home', activeMachines: [],
+                machineListByServerId: { [identity]: [], [profile.id]: [machine] },
+            })).toBeNull();
+        }
+    });
+
+    it('retains active hydration fallback for an unqualified empty scoped snapshot', () => {
+        const machine = createMachine('machine-active', 100);
+        expect(resolveServerScopedMachines({
+            serverId: identity, activeServerId: profile.id, activeMachines: [machine],
+            machineListByServerId: { [identity]: [] },
+        })).toEqual([machine]);
+    });
+
+    it('preserves active fallback while canonical inventory is loading, but settled absence wins', () => {
+        const machine = createMachine('machine-live', 100);
+        for (const serverId of [identity, profile.id]) {
+            const context = { machineId: machine.id, serverId, activeServerId: profile.id, activeMachines: [machine] };
+            for (const loadingRows of [null, []]) {
+                expect(resolveExactServerScopedMachine({ ...context,
+                    machineListByServerId: { [identity]: loadingRows }, machineListStatusByServerId: { [identity]: 'loading' },
+                })).toBe(machine);
+            }
+            expect(resolveExactServerScopedMachine({ ...context,
+                machineListByServerId: { [identity]: [] }, machineListStatusByServerId: { [identity]: 'idle' },
+            })).toBeNull();
+        }
+    });
+
+    it('uses settled inventory to reject a portable target missing from the list despite a stale active row', () => {
+        const stale = createMachine('machine-gone', 200);
+        const other = createMachine('machine-other', 100);
+        expect(resolvePortableMachineAdministrationTarget({
+            target: { serverIdentityId: identity, machineId: stale.id },
+            activeServerId: profile.id, activeMachines: [stale],
+            machineListByServerId: { [identity]: [other] }, machineListStatusByServerId: { [identity]: 'idle' },
+        })).toMatchObject({ kind: 'missingMachine' });
+    });
+
+    it('returns only the requested machine from the resolved server scope when machine ids repeat across servers', () => {
         const activeMachine = createMachine('machine-shared', 200);
         const remoteMachine = createMachine('machine-shared', 100);
-
-        expect(resolver.resolveExactServerScopedMachine?.({
-            machineId: 'machine-shared',
-            serverId: 'server-b',
-            activeServerId: 'server-a',
-            activeMachines: [activeMachine],
-            machineListByServerId: { 'server-b': [remoteMachine] },
-        })).toBe(remoteMachine);
+        const context = { serverId: 'server-b', activeServerId: profile.id,
+            activeMachines: [activeMachine], machineListByServerId: { 'server-b': [remoteMachine] } };
+        expect(resolveExactServerScopedMachine({ ...context, machineId: 'machine-shared' })).toBe(remoteMachine);
+        expect(resolveExactServerScopedMachine({ ...context, machineId: 'missing' })).toBeNull();
     });
 
-    it('routes a portable administration target through this device local profile without falling back to an active duplicate machine id', async () => {
-        const module = await import('./resolveServerScopedMachines');
-        const resolver = module as unknown as Readonly<{
-            resolvePortableMachineAdministrationTarget?: (params: Readonly<{
-                target: Readonly<{ serverIdentityId: string; machineId: string }>;
-                activeServerId: string;
-                activeMachines: ReadonlyArray<TestMachine>;
-                machineListByServerId: Readonly<Record<string, ReadonlyArray<TestMachine>>>;
-            }>) => unknown;
-        }>;
-        const remoteProfile = {
-            id: 'device-local-server-b',
-            name: 'Server B',
-            serverUrl: 'https://b.example.test',
-            serverIdentityId: 'srv_server_b',
-            createdAt: 1,
-            updatedAt: 1,
-            lastUsedAt: 1,
-        };
+    it('routes a portable administration target through this device local profile without falling back to an active duplicate machine id', () => {
         const activeDuplicate = createMachine('machine-shared', 200);
         const remoteDuplicate = createMachine('machine-shared', 100);
-        resolveServerProfileForPortableIdentityMock.mockReturnValue({
-            kind: 'resolved',
-            serverIdentityId: 'srv_server_b',
-            profile: remoteProfile,
-        });
-
-        expect(resolver.resolvePortableMachineAdministrationTarget?.({
-            target: { serverIdentityId: 'srv_server_b', machineId: 'machine-shared' },
-            activeServerId: 'device-local-server-a',
-            activeMachines: [activeDuplicate],
-            machineListByServerId: {
-                'device-local-server-b': [remoteDuplicate],
-            },
-        })).toEqual({
-            kind: 'resolved',
-            target: { serverIdentityId: 'srv_server_b', machineId: 'machine-shared' },
-            serverId: 'device-local-server-b',
-            profile: remoteProfile,
-            machine: remoteDuplicate,
+        expect(resolvePortableMachineAdministrationTarget({
+            target: { serverIdentityId: identity, machineId: 'machine-shared' },
+            activeServerId: 'foreign-home', activeMachines: [activeDuplicate],
+            machineListByServerId: { [profile.id]: [remoteDuplicate] },
+        })).toMatchObject({
+            kind: 'resolved', target: { serverIdentityId: identity, machineId: 'machine-shared' },
+            serverId: profile.id, profile: { id: profile.id, serverIdentityId: identity }, machine: remoteDuplicate,
         });
     });
 
-    it('resolves a non-active portable target from the canonical identity cache key instead of falsely reporting it missing', async () => {
-        const { resolvePortableMachineAdministrationTarget } = await import('./resolveServerScopedMachines');
-        const profile = {
-            id: 'device-local-server-b',
-            name: 'Server B',
-            serverUrl: 'https://b.example.test',
-            serverIdentityId: 'srv_server_b',
-            legacyServerIds: ['legacy-server-b'],
-            createdAt: 1,
-            updatedAt: 1,
-            lastUsedAt: 1,
-        };
+    it('resolves a non-active portable target from the canonical identity cache key instead of falsely reporting it missing', () => {
         const exactMachine = createMachine('machine-b', 100);
-        resolveServerProfileForPortableIdentityMock.mockReturnValue({
-            kind: 'resolved',
-            serverIdentityId: 'srv_server_b',
-            profile,
-        });
-
         expect(resolvePortableMachineAdministrationTarget({
-            target: { serverIdentityId: 'srv_server_b', machineId: 'machine-b' },
-            activeServerId: 'device-local-server-a',
-            activeMachines: [],
-            machineListByServerId: {
-                srv_server_b: [exactMachine],
-            },
-        })).toEqual({
-            kind: 'resolved',
-            target: { serverIdentityId: 'srv_server_b', machineId: 'machine-b' },
-            serverId: 'device-local-server-b',
-            profile,
-            machine: exactMachine,
-        });
+            target: { serverIdentityId: identity, machineId: exactMachine.id },
+            activeServerId: 'foreign-home', activeMachines: [], machineListByServerId: { [identity]: [exactMachine] },
+        })).toMatchObject({ kind: 'resolved', serverId: profile.id, machine: exactMachine });
     });
 
-    it('returns an exact revoked row to Administration instead of applying the visible-machine filter', async () => {
-        const { resolvePortableMachineAdministrationTarget } = await import('./resolveServerScopedMachines');
-        const profile = {
-            id: 'device-local-server-b',
-            name: 'Server B',
-            serverUrl: 'https://b.example.test',
-            serverIdentityId: 'srv_server_b',
-            createdAt: 1,
-            updatedAt: 1,
-            lastUsedAt: 1,
-        };
+    it('returns an exact revoked row to Administration instead of applying the visible-machine filter', () => {
         const revoked = { id: 'machine-revoked', activeAt: 50, revokedAt: 90 };
-        resolveServerProfileForPortableIdentityMock.mockReturnValue({
-            kind: 'resolved',
-            serverIdentityId: 'srv_server_b',
-            profile,
-        });
-
         expect(resolvePortableMachineAdministrationTarget({
-            target: { serverIdentityId: 'srv_server_b', machineId: 'machine-revoked' },
-            activeServerId: 'device-local-server-a',
-            activeMachines: [],
-            machineListByServerId: { srv_server_b: [revoked] },
-        })).toEqual(expect.objectContaining({
-            kind: 'resolved',
-            machine: revoked,
-        }));
+            target: { serverIdentityId: identity, machineId: revoked.id },
+            activeServerId: 'foreign-home', activeMachines: [], machineListByServerId: { [identity]: [revoked] },
+        })).toMatchObject({ kind: 'resolved', machine: revoked });
     });
 });

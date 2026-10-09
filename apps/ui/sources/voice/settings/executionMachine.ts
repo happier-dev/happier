@@ -7,6 +7,7 @@ import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString'
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
 import { readVoiceExecutionMachineSettings } from '@/sync/domains/settings/voiceSettings';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 export type VoiceExecutionMachineOverride = Readonly<{ machineId: string }>;
 export type VoiceExecutionMachineSelection =
@@ -14,18 +15,18 @@ export type VoiceExecutionMachineSelection =
   | Readonly<{ kind: 'selected_unreachable'; machineId: string }>
   | Readonly<{ kind: 'none' }>;
 
-function resolveReplacementAwareSelection(state: any, requestedMachineId: unknown): VoiceExecutionMachineSelection {
+function resolveReplacementAwareSelection(state: any, requestedMachineId: unknown, serverId: string): VoiceExecutionMachineSelection {
   const originMachineId = normalizeNonEmptyString(requestedMachineId);
   if (!originMachineId) return { kind: 'none' };
 
-  const machines = resolveVisibleMachinesForActiveServerFromState(state);
+  const machines = resolveVisibleMachinesForActiveServerFromState(state, { serverId });
   const target = resolveReplacementAwareMachineRpcTarget({
     machineId: originMachineId,
     machines,
   });
   if (!target) return { kind: 'selected_unreachable', machineId: originMachineId };
 
-  const machine = resolveMachineForActiveServerFromState(state, target.machineId);
+  const machine = resolveMachineForActiveServerFromState(state, target.machineId, { serverId });
   return machine && isMachineOnline(machine)
     ? { kind: 'resolved', machineId: target.machineId }
     : { kind: 'selected_unreachable', machineId: target.machineId };
@@ -40,7 +41,10 @@ export function resolveVoiceExecutionMachineSelectionFromState(
   state: any,
   override?: VoiceExecutionMachineOverride | null,
 ): VoiceExecutionMachineSelection {
-  if (override) return resolveReplacementAwareSelection(state, override.machineId);
+  // Runtime dispatch belongs to the applied Home, not a focused selection
+  // staged while its connection is still being established.
+  const serverId = getAppliedActiveServerSnapshot().serverId;
+  if (override) return resolveReplacementAwareSelection(state, override.machineId, serverId);
 
   const target = readVoiceExecutionMachineSettings(state?.settings?.voice);
   if (!target) return { kind: 'none' };
@@ -49,10 +53,10 @@ export function resolveVoiceExecutionMachineSelectionFromState(
     ? normalizeNonEmptyString(target?.machineId)
     : readVoiceAutoTargetMachineId(state);
 
-  if (persistedMachineId) return resolveReplacementAwareSelection(state, persistedMachineId);
+  if (persistedMachineId) return resolveReplacementAwareSelection(state, persistedMachineId, serverId);
   if (mode === 'fixed') return { kind: 'none' };
 
-  const visibleMachines = resolveVisibleMachinesForActiveServerFromState(state);
+  const visibleMachines = resolveVisibleMachinesForActiveServerFromState(state, { serverId });
   const preferredMachineIds = listPreferredMachineIds({
     machines: visibleMachines,
     recentMachinePaths: Array.isArray(state?.authoringMemory?.recentMachinePaths)
@@ -62,7 +66,7 @@ export function resolveVoiceExecutionMachineSelectionFromState(
   });
 
   for (const candidateMachineId of preferredMachineIds) {
-    const resolved = resolveReplacementAwareSelection(state, candidateMachineId);
+    const resolved = resolveReplacementAwareSelection(state, candidateMachineId, serverId);
     if (resolved.kind === 'resolved') return resolved;
   }
   return { kind: 'none' };

@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resolveVoiceExecutionMachinePresentationFromState } from '@/voice/credentials/useExecutionMachinePresentation';
 
 import {
   isCapturedVoiceExecutionMachineCurrent,
@@ -16,6 +19,31 @@ function machine(id: string, active: boolean, extra: Record<string, unknown> = {
 describe('resolveVoiceExecutionMachineIdFromState', () => {
   const settingsScope = { serverId: 'execution-home', accountId: 'execution-account' };
   beforeEach(() => useVoiceTargetStore.setState({ autoTargetMachineByScope: {} }));
+  it('selects the Machine belonging to the applied Home while another Home is staged', () => {
+    const original = getAppliedActiveServerSnapshot();
+    const originalAvailable = isAppliedActiveServerRuntimeAvailable();
+    const stagedServerId = getActiveServerSnapshot().serverId;
+    const appliedServerId = `${stagedServerId}-execution-owner`;
+    const state = {
+      ...storage.getState(),
+      machines: {},
+      machineListByServerId: {
+        [stagedServerId]: [machine('wrong-staged-machine', true)],
+        [appliedServerId]: [machine('admitted-machine', true, { metadata: { displayName: 'Admitted machine', host: 'admitted-host' } })],
+      },
+      settings: { ...storage.getState().settings, voice: { ...storage.getState().settings.voice,
+        executionMachine: { mode: 'auto' as const, machineId: null } } },
+    };
+    try {
+      publishAppliedActiveServerSnapshot({ serverId: appliedServerId, serverUrl: 'https://execution-owner.test', generation: 1 });
+      expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('admitted-machine');
+      expect(resolveVoiceExecutionMachineIdFromState(state, { machineId: 'wrong-staged-machine' })).toBeNull();
+      expect(resolveVoiceExecutionMachinePresentationFromState(state).machineLabel).toBe('Admitted machine');
+    } finally {
+      publishAppliedActiveServerSnapshot(original, originalAvailable);
+    }
+  });
+
   it('keeps an unresolved captured target current until the selected execution machine changes', () => {
     const previous = storage.getState();
     storage.setState({

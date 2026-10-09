@@ -1,50 +1,37 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 
-function resolveActiveServerMachineSource(state: any): readonly Machine[] | null {
+type MachineServerScope = Readonly<{ serverId?: string | null }>;
+
+type MachineInventoryState = Readonly<{
+    machines?: Readonly<Record<string, Machine | undefined>>;
+    machineListByServerId?: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
+}>;
+
+function resolveActiveServerMachineSource(state: MachineInventoryState, scope?: MachineServerScope): readonly Machine[] | null {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    if (!activeServerId) {
-        const globalMachines = Object.values(state?.machines ?? {});
-        return globalMachines as Machine[];
-    }
+    const serverId = String(scope?.serverId ?? activeServerId).trim();
+    const activeMachines = Object.values(state.machines ?? {}).filter((machine): machine is Machine => Boolean(machine));
+    if (!serverId) return activeMachines;
 
-    const machineListByServerId = state?.machineListByServerId;
-    const hasActiveServerMachineList = Boolean(
-        machineListByServerId
-        && typeof machineListByServerId === 'object'
-        && Object.prototype.hasOwnProperty.call(machineListByServerId, activeServerId),
-    );
-    const activeServerMachines = hasActiveServerMachineList ? machineListByServerId[activeServerId] : undefined;
-    if (Array.isArray(activeServerMachines) && activeServerMachines.length > 0) return activeServerMachines;
-
-    if (machineListByServerId && typeof machineListByServerId === 'object') {
-        const equivalentEntry = Object.entries(machineListByServerId).find(([serverId, machines]) => (
-            areServerProfileIdentifiersEquivalent(serverId, activeServerId)
-            && Array.isArray(machines)
-            && machines.length > 0
-        ));
-        if (equivalentEntry) {
-            const [, equivalentMachines] = equivalentEntry;
-            return Array.isArray(equivalentMachines) ? equivalentMachines : [];
-        }
-    }
-
-    if (hasActiveServerMachineList) {
-        return Array.isArray(activeServerMachines) ? activeServerMachines : [];
-    }
-
-    const globalMachines = Object.values(state?.machines ?? {});
-    return globalMachines as Machine[];
+    return resolveServerScopedMachines({
+        serverId,
+        activeServerId,
+        activeMachines,
+        machineListByServerId: state.machineListByServerId ?? {},
+        machineListStatusByServerId: state.machineListStatusByServerId,
+    });
 }
 
-export function resolveMachineForActiveServerFromState(state: any, machineId: string): Machine | null {
+export function resolveMachineForActiveServerFromState(state: MachineInventoryState, machineId: string, scope?: MachineServerScope): Machine | null {
     const normalizedMachineId = normalizeNonEmptyString(machineId);
     if (!normalizedMachineId) return null;
 
-    const activeServerMachines = resolveActiveServerMachineSource(state);
+    const activeServerMachines = resolveActiveServerMachineSource(state, scope);
     if (Array.isArray(activeServerMachines)) {
         const activeServerMachine = activeServerMachines.find(
             (machine): machine is Machine =>
@@ -72,8 +59,8 @@ function sortVisibleMachines(a: Machine, b: Machine): number {
     return a.id.localeCompare(b.id);
 }
 
-export function resolveVisibleMachinesForActiveServerFromState(state: any): Machine[] {
-    const activeServerMachines = resolveActiveServerMachineSource(state);
+export function resolveVisibleMachinesForActiveServerFromState(state: MachineInventoryState, scope?: MachineServerScope): Machine[] {
+    const activeServerMachines = resolveActiveServerMachineSource(state, scope);
     const sourceMachines = Array.isArray(activeServerMachines) ? activeServerMachines : [];
 
     return sourceMachines

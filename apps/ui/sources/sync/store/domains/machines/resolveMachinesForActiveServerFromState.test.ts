@@ -1,20 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { adoptHomeProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'server-a' })));
-const areServerProfileIdentifiersEquivalentMock = vi.hoisted(() => vi.fn((left: string | null | undefined, right: string | null | undefined) => left === right));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => getActiveServerSnapshotMock(),
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    areServerProfileIdentifiersEquivalent: (
-        left: string | null | undefined,
-        right: string | null | undefined,
-    ) => areServerProfileIdentifiersEquivalentMock(left, right),
-}));
+let homeId: string;
+const identity = 'srv_active_inventory_owner';
 
 function createMachine(input: Readonly<{
     id: string;
@@ -42,22 +32,27 @@ describe('resolveMachinesForActiveServerFromState', () => {
         const selectors = await import('./resolveMachinesForActiveServerFromState');
         const persistent = createMachine({ id: 'persistent' });
         const temporary = { ...createMachine({ id: 'temporary' }), kind: 'ephemeral_session_runner' as const };
-        const state = { machineListByServerId: { 'server-a': [persistent, temporary] } };
+        const state = { machineListByServerId: { [homeId]: [persistent, temporary] } };
 
         expect(selectors.resolveVisibleMachinesForActiveServerFromState(state)).toEqual([persistent]);
         expect(selectors.resolveMachineForActiveServerFromState(state, temporary.id)).toBe(temporary);
     });
 
-    beforeEach(() => {
-        getActiveServerSnapshotMock.mockReturnValue({ serverId: 'server-a' });
-        areServerProfileIdentifiersEquivalentMock.mockImplementation((left, right) => left === right);
+    beforeEach(async () => {
+        const profile = await adoptHomeProfile({ descriptor: {
+            v: 1, homeServerIdentityId: identity, canonicalServerUrl: 'https://active-inventory-owner.example.test',
+            revision: 1, endpoints: [{ kind: 'https', url: 'https://active-inventory-owner.example.test' }],
+        }, source: 'manual' });
+        homeId = profile.id;
+        expect(homeId).not.toBe(identity);
+        await setActiveServerId(homeId);
     });
 
     it('resolves a single visible machine for the active server by trimmed id', async () => {
         const selectors = await import('./resolveMachinesForActiveServerFromState');
         const state = {
             machineListByServerId: {
-                'server-a': [
+                [homeId]: [
                     createMachine({ id: 'machine-a', createdAt: 10 }),
                     createMachine({ id: 'machine-b', createdAt: 20 }),
                 ],
@@ -74,7 +69,7 @@ describe('resolveMachinesForActiveServerFromState', () => {
         const selectors = await import('./resolveMachinesForActiveServerFromState');
         const state = {
             machineListByServerId: {
-                'server-a': [
+                [homeId]: [
                     createMachine({ id: 'machine-a', revokedAt: 10 }),
                 ],
             },
@@ -84,18 +79,19 @@ describe('resolveMachinesForActiveServerFromState', () => {
         expect(selectors.resolveMachineForActiveServerFromState(state, 'missing')).toBeNull();
     });
 
-    it('does not leak a stale global machine when the active server cache is empty during bootstrap', async () => {
+    it('does not leak a stale global machine when the active server inventory has settled empty', async () => {
         const selectors = await import('./resolveMachinesForActiveServerFromState');
         const state = {
             machines: {
                 'machine-stale': createMachine({ id: 'machine-stale', createdAt: 99 }),
             },
             machineListByServerId: {
-                'server-a': [],
+                [homeId]: [],
                 'server-b': [
                     createMachine({ id: 'machine-b', createdAt: 20 }),
                 ],
             },
+            machineListStatusByServerId: { [homeId]: 'idle' as const },
         };
 
         expect(selectors.resolveMachineForActiveServerFromState(state, 'machine-stale')).toBeNull();
@@ -103,19 +99,13 @@ describe('resolveMachinesForActiveServerFromState', () => {
     });
 
     it('uses an equivalent scoped machine cache when active server id is an alias', async () => {
-        getActiveServerSnapshotMock.mockReturnValue({ serverId: 'localhost-49598' });
-        areServerProfileIdentifiersEquivalentMock.mockImplementation((left, right) => {
-            const ids = new Set([left, right]);
-            return ids.has('localhost-49598') && ids.has('srv_local_relay');
-        });
-
         const selectors = await import('./resolveMachinesForActiveServerFromState');
         const machine = createMachine({ id: 'machine-relay', createdAt: 10 });
         const state = {
             machines: {},
             machineListByServerId: {
-                'localhost-49598': [],
-                srv_local_relay: [machine],
+                [homeId]: [],
+                [identity]: [machine],
             },
         };
 
@@ -123,5 +113,27 @@ describe('resolveMachinesForActiveServerFromState', () => {
             id: 'machine-relay',
         });
         expect(selectors.resolveVisibleMachinesForActiveServerFromState(state)).toEqual([machine]);
+    });
+    it.each([true, false])('uses canonical settled absence/rows for active lookup and launch lists, contains machine = %s', async (containsMachine) => {
+        const selectors = await import('./resolveMachinesForActiveServerFromState');
+        const machine = createMachine({ id: 'machine-conflict' });
+        const state = {
+            machines: { [machine.id]: machine },
+            machineListByServerId: { [identity]: containsMachine ? [machine] : [], [homeId]: containsMachine ? [] : [machine] },
+            machineListStatusByServerId: { [identity]: 'idle' as const, [homeId]: 'idle' as const },
+        };
+        for (const serverId of [identity, homeId]) {
+            expect(selectors.resolveMachineForActiveServerFromState(state, machine.id, { serverId })).toBe(containsMachine ? machine : null);
+            expect(selectors.resolveVisibleMachinesForActiveServerFromState(state, { serverId })).toEqual(containsMachine ? [machine] : []);
+        }
+    });
+
+    it('does not borrow the active inventory for an explicit foreign Home scope', async () => {
+        const selectors = await import('./resolveMachinesForActiveServerFromState');
+        const machine = createMachine({ id: 'machine-active' });
+        expect(selectors.resolveVisibleMachinesForActiveServerFromState({
+            machines: { [machine.id]: machine }, machineListByServerId: { 'foreign-home': null },
+            machineListStatusByServerId: { 'foreign-home': 'loading' },
+        }, { serverId: 'foreign-home' })).toEqual([]);
     });
 });

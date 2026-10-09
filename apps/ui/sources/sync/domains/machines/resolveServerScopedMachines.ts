@@ -1,9 +1,9 @@
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol';
 
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     areServerProfileIdentifiersEquivalent,
     resolveServerProfileForPortableIdentity,
+    resolveServerProfileScopeIdForIdentifier,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 
@@ -44,38 +44,50 @@ export type PortableMachineAdministrationTargetResolution<T extends MachineWithI
         profile: ServerProfile;
     }>;
 
+/** The same ordered Home keys drive inventory reads and their subscription signatures. */
+export function resolveServerScopedMachineInventoryKeys(params: Readonly<{
+    serverId: string;
+    serverIdAliases?: readonly string[];
+    machineListByServerId: Readonly<Record<string, unknown>>;
+}>): readonly string[] {
+    const requestedServerIds = [params.serverId, ...(params.serverIdAliases ?? [])]
+        .map((serverId) => String(serverId ?? '').trim())
+        .filter((serverId, index, ids) => serverId.length > 0 && ids.indexOf(serverId) === index);
+    // Scoped inventories can be keyed by either the portable Home identity or
+    // this device's profile id. Resolve that correspondence once for every reader.
+    const canonicalServerId = resolveServerProfileScopeIdForIdentifier(params.serverId);
+    return [...new Set([
+        canonicalServerId,
+        ...[...requestedServerIds, ...Object.keys(params.machineListByServerId)].sort().filter((key) => requestedServerIds.some((serverId) => (
+            key === serverId || areServerProfileIdentifiersEquivalent(key, serverId)
+        ))),
+    ])].filter(Boolean);
+}
+
 export function resolveServerScopedMachines<T extends MachineLike>(params: Readonly<{
     serverId: string;
     activeServerId: string;
     serverIdAliases?: readonly string[];
     activeMachines: ReadonlyArray<T>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): ReadonlyArray<T> | null {
     const activeServerId = String(params.activeServerId ?? '').trim();
-    const serverIds = [params.serverId, ...(params.serverIdAliases ?? [])]
-        .map((serverId) => String(serverId ?? '').trim())
-        .filter((serverId, index, ids) => serverId.length > 0 && ids.indexOf(serverId) === index);
+    const serverIds = resolveServerScopedMachineInventoryKeys(params);
+    const settledServerId = serverIds.find((serverId) => (
+        params.machineListStatusByServerId?.[serverId] === 'idle'
+        && Array.isArray(params.machineListByServerId[serverId])
+    ));
+    if (settledServerId) return params.machineListByServerId[settledServerId] ?? null;
+    const scopedServerId = serverIds.find((serverId) => Array.isArray(params.machineListByServerId[serverId]));
+    const scopedMachines = scopedServerId ? params.machineListByServerId[scopedServerId] : null;
     const targetsActiveServer = activeServerId.length > 0
         && serverIds.some((serverId) => areServerProfileIdentifiersEquivalent(serverId, activeServerId));
     if (targetsActiveServer && params.activeMachines.length > 0) {
         return params.activeMachines;
     }
 
-    const scopedEntries = serverIds
-        .filter((serverId) => Object.prototype.hasOwnProperty.call(params.machineListByServerId, serverId))
-        .map((serverId) => params.machineListByServerId[serverId]);
-    const scopedMachines = scopedEntries.find((machines) => Array.isArray(machines) && machines.length > 0)
-        ?? scopedEntries[0];
-
-    if (Array.isArray(scopedMachines) && scopedMachines.length > 0) {
-        return scopedMachines;
-    }
-
-    if (Array.isArray(scopedMachines)) {
-        return scopedMachines;
-    }
-
-    return null;
+    return scopedMachines ?? null;
 }
 
 /**
@@ -89,6 +101,7 @@ export function resolveExactServerScopedMachine<T extends MachineWithId>(params:
     serverIdAliases?: readonly string[];
     activeMachines: ReadonlyArray<T>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): T | null {
     const machineId = String(params.machineId ?? '').trim();
     if (!machineId) return null;
@@ -99,8 +112,8 @@ export function resolveExactServerScopedMachine<T extends MachineWithId>(params:
 
 /**
  * Converts an Administration-owned portable `{ serverIdentityId, machineId }`
- * into the incumbent machine-RPC routing pair. It has no active-server or
- * first-machine fallback: unavailable profile correspondence and a missing
+ * into the incumbent machine-RPC routing pair. It never borrows another Home or
+ * chooses a different machine: unavailable profile correspondence and a missing
  * exact machine remain distinct terminal results for the Administration owner.
  * `resolved` proves correspondence only; revoked/replaced/offline/locked facts
  * still require Administration availability admission before any RPC.
@@ -110,6 +123,7 @@ export function resolvePortableMachineAdministrationTarget<T extends MachineWith
     activeServerId: string;
     activeMachines: ReadonlyArray<T>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): PortableMachineAdministrationTargetResolution<T> {
     const profileResolution = resolveServerProfileForPortableIdentity(params.target.serverIdentityId);
     if (profileResolution.kind === 'missing') {
@@ -141,6 +155,7 @@ export function resolvePortableMachineAdministrationTarget<T extends MachineWith
         activeServerId: params.activeServerId,
         activeMachines: params.activeMachines,
         machineListByServerId: params.machineListByServerId,
+        machineListStatusByServerId: params.machineListStatusByServerId,
     });
     if (!machine) {
         return Object.freeze({
