@@ -1,7 +1,6 @@
 import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
-import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 export function isToolCallMessageGroupableInTranscript(message: Message): message is ToolCallMessage {
     if (message.kind !== 'tool-call') return false;
@@ -10,9 +9,7 @@ export function isToolCallMessageGroupableInTranscript(message: Message): messag
         return false;
     }
 
-    return !isPendingUserActionRequest({
-        toolName: message.tool.name,
-        requestKind: message.tool.permission?.kind,
-        permissionStatus: message.tool.permission?.status,
-    });
+    // An unanswered permission, question or credential request owns interactive
+    // controls; ordinary tool disclosure must never conceal those controls.
+    return message.tool.permission?.status !== 'pending';
 }

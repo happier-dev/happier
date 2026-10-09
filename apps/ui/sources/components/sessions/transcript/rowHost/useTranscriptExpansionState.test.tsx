@@ -13,6 +13,24 @@ vi.mock('react-native', async () => {
 });
 
 describe('useTranscriptExpansionState', () => {
+    it('collapses existing disclosure when tools are hidden and permits local reveal afterwards', async () => {
+        const mutations: TranscriptRowLayoutMutation[] = [];
+        const params = { showToolCalls: true, recordLocalTranscriptInteractionIntent: () => {},
+            prepareLocalHeightChange: (mutation: TranscriptRowLayoutMutation) => { mutations.push(mutation); return 'none' as const; } };
+        const hook = await renderHook((input: typeof params) => useTranscriptExpansionState(input), { initialProps: params });
+        await act(async () => { hook.getCurrent().applyToolCallsGroupExpanded({
+            toolCallsGroupId: 'tools', toolMessageIds: ['tool-1', 'tool-2'], expanded: true,
+        }); });
+        expect(hook.getCurrent().expandedToolCallsAnchorMessageIds.size).toBe(1);
+        await hook.rerender({ ...params, showToolCalls: false });
+        expect(hook.getCurrent().expandedToolCallsAnchorMessageIds.size).toBe(0);
+        expect(mutations.some((mutation) => mutation.reason === 'collapse')).toBe(true);
+        await act(async () => { hook.getCurrent().setToolCallsGroupExpanded({
+            toolCallsGroupId: 'tools', toolMessageIds: ['tool-1', 'tool-2'], expanded: true,
+        }); });
+        expect(hook.getCurrent().expandedToolCallsAnchorMessageIds.has('tool-2')).toBe(true);
+        await hook.unmount();
+    });
     it('prepares detached visible-anchor ownership before rendering controlled thinking expanded', async () => {
         const ordering: string[] = [];
         const recordLocalTranscriptInteractionIntent = vi.fn();
