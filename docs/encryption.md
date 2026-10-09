@@ -63,6 +63,247 @@ locked/inconsistent/migration-required result before content disclosure or mutat
 while preserving the stored value; it must not become absence, defaults, or a
 fallback to the other branch.
 
+### Private Profile rows (0.3 development)
+
+The development Profile row contract uses the reserved Account-row owner, not
+Resource grants or arbitrary user KV. `profiles/profileRecordV1.ts` owns the
+strict record: Profile identity and definition, enablement, private prompt stack,
+and SavedSecret bindings. Stored readers project known fields recursively and
+verify the addressed identity; canonical writes reject unknown fields.
+
+The Account envelope is explicit: `{t:'plain',v:record}` needs no Account
+encryption material, while `{t:'encrypted',c}` uses the
+`account_profile_record` cipher purpose. Clients open E2EE records and verify the
+inner Profile identity. A Profile's private stack and bindings are not implicitly
+published with its launch-profile Artifact; Artifact access remains separately
+owned.
+
+Private binding overrides distinguish absence from an explicit `null`: absence
+inherits the Artifact's string reference, while `null` suppresses that slot.
+`readEffectiveProfileSecretBindingsV1` is the common addressed Artifact/reference-census
+owner; it validates the selected Artifact's Profile identity before applying
+`resolveEffectiveProfileSecretBindingsV1`. Masked slots are not SavedSecret references. Artifact defaults and retained
+predecessor Settings bindings remain string-only. An explicit private mask must
+not be projected back into either of those formats.
+
+Profile mutations carry the selected Artifact's addressed header/body revision.
+An opaque E2EE row must supply that capture or explicit `null` for a non-Artifact
+definition; omission is not evidence of absence. The server rechecks current
+Artifact access and revisions. It derives effective Plain bindings from the real
+Artifact, while E2EE bindings remain opened and admitted by the captured client.
+Inherited bindings participate in the same SavedSecret resource-revision check
+as private overrides; merely displaying an unattached Artifact does not retain a
+credential.
+
+Creating actual BuiltIn private membership captures its prior no-entity
+enablement and retires only that BuiltIn's Settings enablement key. The same
+transaction always performs a captured Settings CAS, even when the key is absent,
+before committing the row and reference guard. Favorites, defaults and unrelated
+Settings remain unchanged.
+
+`loadProfileCatalogV1` consumes paged rows, the Profile reference guard and the
+transfer-control read under one captured Account scope. Its `ready`, `partial`,
+`loading` and `unavailable` states are distinct from legacy-transfer authority.
+Usable neighbors may be displayed from a partial inventory, but it is not a
+complete runtime, conversion or destructive-reference census. The reference guard
+contains only a versioned null-content tombstone, never a plaintext binding index.
+
+A genuine predecessor transfer keeps its prepared/active proof in one
+Account-mode envelope using the `account_profile_transfer` cipher purpose. Only
+the authorized client opens encrypted phase and inventory; the server validates
+captured identities, access and revisions without decrypting that proof. The
+Plain destination census uses the same effective-binding owner after opening
+current addressed Artifacts, so unmasked inherited SavedSecret defaults require
+their own usable, current resource inventory. A private `null` mask does not.
+Preparation refusal rolls back imported rows and the guard with its control;
+activation refusal leaves the prepared proof unchanged. The
+Account-mode conversion owner includes records and control, preserves tombstones
+and guard revision, and rejects an incomplete census. These are development-source
+contracts, not released availability or loaded-runtime certification.
+
+Callers pass the complete captured catalog, including its paired opened records,
+Artifact bodies and revisions, into Profile/SavedSecret transactions. They do not
+reconstruct authority from a missing control or from a loose record array.
+Source cleanup retains the original transfer-control revision through history
+normalization; a later control winner leaves the inventoried history versions
+cleanup-pending instead of authorizing a different rewrite.
+After SavedSecret source cleanup, a fresh invocation can resume retained-history
+cleanup using the exact current raw Settings/version and admitted owned, usable
+resources with the deterministic Account/source identity. A still-present,
+uncharacterized or stale source supplies no recovered proof. Unrecognized
+historical credentials remain cleanup-pending rather than being removed wholesale.
+
+The predecessor UI's `accountLegacySettingDefinitions` admits
+`inferenceOpenAIKey` as a nullable bare Account string, not a SavedSecret object
+or binding. The same importer preserves its exact opened value as an `apiKey`
+resource under the canonical `legacy-inference-openai-key` source identity, then
+removes only that root through captured Settings CAS. Its closed history proof
+and fresh-invocation recovery use the same owned-resource authority. Unknown
+root shapes remain pending; no replacement inference consumer is introduced.
+The retained alias reader is needed until this source and its retained history
+have been transferred, not as a second credential writer.
+
+### Private Agent, Provider and Connected Account catalogs (0.3 development)
+
+The development contracts define five singleton private catalogs through the
+existing reserved Account-row owner, not arbitrary user KV or Resource grants.
+Their envelope domains are allocated by
+`packages/protocol/src/crypto/accountScopedCipherEnvelope.ts`:
+
+| Catalog | Reserved Account key | Cipher domain / byte |
+| --- | --- | --- |
+| Provider connections | `@happier/account/provider-connections/v1/catalog` | `account_provider_connections` / 40 |
+| Connected configurations | `@happier/account/connected-configurations/v1/catalog` | `account_connected_configuration` / 41 |
+| Connected purposes | `@happier/account/connected-purposes/v1/catalog` | `account_connected_purposes` / 42 |
+| MCP definitions and bindings | `@happier/account/mcp/v1/catalog` | `account_mcp_catalog` / 43 |
+| Configured ACP definitions | `@happier/account/acp/v1/catalog` | `account_acp_catalog` / 44 |
+
+Plain envelopes are keyless `{t:'plain',v}`. E2EE envelopes use
+`{t:'encrypted',c}` with the exact catalog domain; a different domain or
+unavailable key must not be interpreted as an empty Plain catalog. Connected
+records also bind their inner `key` to `configurations` or `purposes`. Purpose
+records retain the distinct qualified Team resource selection arm; moving these
+records does not move Connected credentials or authentication groups.
+
+The Protocol row contracts live in `providers/connections/connectionRowsV1.ts`,
+`connect/connectedAccountConfigurationRowsV1.ts`,
+`mcp/servers/serverRowsV1.ts`, and `acp/catalog/catalogRowsV1.ts`.
+Current writes are strict. Stored readers must preserve recognizable reference
+carriers until the domain owner can establish a complete inventory; safe partial
+display does not authorize runtime, destructive reference changes, source/history
+cleanup or Account-mode conversion. A retained deletion keeps its revision and
+must not be reseeded from an older Settings root.
+
+The five ciphertext purposes have focused source-level isolation evidence.
+Consumer contraction, complete partial-inventory handling and the composed
+five-domain conversion/live journey are still being integrated. This describes
+development-source ownership, not released availability or runtime certification.
+
+### Private prompt catalogs and Role overrides (0.3 development)
+
+Account coding and Voice stacks, folders, invocations, external links, registry
+sources, context selections and Role overrides use the reserved Account-row
+owner. Profile stacks remain in the Profile record; document, bundle and Role
+bodies remain Artifacts with their independent access rules. Plain catalogs use
+keyless `{t:'plain',v:record}` envelopes. E2EE uses `{t:'encrypted',c}` with
+`account_prompt_catalog` (kind byte 38), and the opened record binds its catalog
+key to the requested row. `account_profile_record` uses the distinct development
+allocation 37; Project setup trust retains 36.
+
+The strict row writer and tolerant stored projection share the Protocol domain
+schema. First initialization compares the captured Settings version under the
+existing Account transition fence before row CAS. A present row or versioned
+tombstone is destination authority; absence alone permits the explicit retained
+source reader. Malformed, unavailable or future-version source data cannot become
+a successful empty import. Guidance retention remains with the existing
+deterministic Role Artifact migration and refuses an incomplete inventory.
+
+Role source reads preserve usable BuiltIn, plugin and Artifact entries alongside
+typed diagnostics for unreadable Artifacts or pre-import guidance. The canonical
+selection resolver can serve a known Role from that partial inventory, but an
+unknown origin returns `role_source_incomplete`; a fresh complete child snapshot
+also requires a complete inventory. An inherited full Session Role snapshot
+remains independent of unavailable Account sources. Guidance source cleanup
+requires readable Account-owned Role Artifacts and their actual composite
+revisions, preserving already edited Role bodies rather than overwriting them.
+The shared Role-domain deletion admission rejects a target still derived from
+current guidance Settings with `role_source_incomplete`, preventing a retained
+source from recreating a deleted Role. It does not import Artifacts or deny
+unrelated documents because another guidance entry is malformed. Once the
+captured Account observes source cleanup, that source no longer protects the
+target; historical Settings are sanitized, never re-imported as deleted Roles.
+
+The existing atomic Account-mode transition inventories and reseals every live
+prompt catalog through `promptLibrary:{items}` / `promptLibrary:{rows}`. Missing
+coverage, wrong mode or stale revisions aborts the transition; client response
+admission checks exact identities, revisions and replacement content before
+adopting the target mode. Account catalog publication uses the existing scope
+and lifetime, independently of the Settings revision. These are development
+source contracts; complete consumer contraction and loaded-runtime validation
+remain separate evidence.
+
+Prompt-source conversion uses the original Account's fresh admitted raw Settings
+and version together. Parsed defaults do not recreate absent retained prompt or
+guidance roots, and retained source values are preserved exactly while the
+existing conversion owner reseals the destination catalogs.
+
+The UI's Profile and prompt catalog readers publish checked destination rows
+before retained Settings/history cleanup settles. The existing scoped snapshot
+loader owns that cleanup under its captured Account lifetime. Wakes still withdraw
+current authority and coalesce a fresh foreground read; a read that defers cleanup
+to the incumbent also schedules a cleanup-resuming read after it settles. Account
+retirement prevents obsolete publication or reuse of the retired cleanup. Role
+override mutation reads still await their canonical source/history cleanup before
+returning; rendering readiness does not relax mutation admission.
+
+The existing `folders` catalog is the single personal folder tree for library
+Artifacts, including prompts, documents and memory documents. Its
+`artifactHeadersById` map stores the generic `folderId` and `tags` metadata for
+the current Account. Moving a received Artifact changes this private row, never
+the shared Artifact or its grants. New prompt authoring follows the same owner.
+Owned 0.2 header metadata remains a read-only fallback for fields without a
+personal override; recipients do not inherit it. Folder deletion reparents child
+folders and clears placements through explicit private overrides, including
+owned legacy placements, without reading or rewriting document bodies.
+Retained folder identities and topology survive catalog transfer unchanged;
+semantic folder mutations reject cycles and missing parents. Folder Actions use
+the observed row revision and refuse incomplete deletion inventories. These are
+0.3 development contracts; the common tree model and drag/drop bindings are
+non-visual, with browser hierarchy presentation supplied by its UI owner.
+Content and personal organization have independent acknowledgments. If the
+private-row mutation fails after content commits, the typed failure retains the
+Artifact identity and, when supplied by its update receipt, the content revision;
+callers must not replay content creation or adopt an unrelated current revision.
+
+Prompt and skill references use the existing `PromptArtifactRefV1` address:
+`{kind: 'doc' | 'bundle', artifactId, serverId?}`. The optional `serverId`
+qualifies the Home; omission retains the admitted owner's Home. The address
+does not grant access or select another Account's credentials. CLI and UI
+readers capture the addressed Home/Account and use its canonical Artifact store
+for header, body and revision facts. Reads are reused within one preparation,
+not across turns or Account lifetimes. Display caches do not supply authoritative
+prompt content. Plain and E2EE reads retain the Account-mode rules above.
+
+Registry downloads and installation may target an Administration Machine on
+another Home; that does not select the destination library Account. UI imports
+and installs require the library's original Account authority, independently of
+the Machine target. The canonical install operation preserves a consumed
+successful Machine commit
+ACK when later Artifact creation or catalog publication fails. Public Action
+failures carry that effect receipt in `details` without the fetched private
+title or body. A preview is not a commit, and cancellation before the ACK is
+consumed does not prove whether the Machine wrote anything. Callers must not
+claim rollback or blindly repeat an acknowledged installation.
+
+External links retain the admitted Machine's portable `serverIdentityId`, not
+its device-local routing ID. Matching and replacement use that Home together
+with the existing Machine, Artifact, asset type, scope and workspace fields.
+Predecessor links without a Home qualifier retain their original library-Home
+interpretation; selecting an independent Home never adopts them there. New
+writes qualify the relationship through the existing Protocol owner. Bare
+cross-Home links written by unreleased intermediate code cannot be recovered
+automatically without provenance.
+
+Source/Project associations do not widen that authority. Preparation admits shared
+Source context and the personal Project stack through the current qualified
+workspace association, then resolves their references with the same Home/Account
+reader. Worker preparation uses the worker's own persisted Profile and excludes
+the Lead's Session stack; a Profile selection is not permission to read another
+Account's documents.
+
+The current D47/D48 memory block label carries the admitted document title, layer
+and reference only after the same authorized read. Its always-loaded text is the
+canonical index projection (key facts plus topic titles/summaries), not topic or
+archive fact detail. Index/topics share the existing `memory_doc.v1` Artifact's
+encryption, revision and grant authority; the projection adds no per-topic store,
+grant or read transport.
+
+Current reference and stack-entry writes are strict. Stored reads preserve valid
+predecessor entries and all four placements while dropping obsolete `editPolicy`
+annotations; `skill_instructions` still renders the bundle's root `SKILL.md`.
+See [prompt context preparation](actions.md#prompt-context-preparation-03-development)
+for composition and unavailable-document behavior.
+
 ### Authoring memory (0.3 development)
 
 Recent machine paths, the last-used profile, and remembered engine selections use
@@ -72,6 +313,17 @@ with a strict JSON value. E2EE content is `{t:'encrypted',c}` in the
 payload is the strict `{key,value}` record; clients verify its key against the
 requested row before returning the value. Opaque engine carriers remain strict
 JSON, without reinterpretation at the server boundary.
+
+Project navigation recency uses that same owner, with the qualified opaque key
+`projectLastOpened:<encodeURIComponent(serverId)>:<encodeURIComponent(projectKey)>`
+and a finite nonnegative timestamp value. Strict canonical encoding keeps distinct
+Homes and Project anchors separate. Plain timestamp values are validated before
+mutation or disclosure; opened E2EE payloads verify both timestamp and row binding.
+Recency joins the Project projection without updating a structural ref or graph
+revision. Rendering and normal Open do not write it; explicit Project navigation
+does. Historical ref timestamps transfer through the existing absence-only memory
+import before source retirement; conflicting retained values or tombstones must
+remain observable to the cutover caller rather than silently discarding recency.
 
 Stored readers derive their known-field projections from those canonical schemas,
 dropping additive envelope, payload and engine-carrier fields while preserving opaque
@@ -84,6 +336,138 @@ mutations. It never opens E2EE content. Tombstones retain the CAS revision, and
 push hints carry only the row key and revision. These are development source
 contracts; loaded-runtime validation and released availability are separate
 claims. The [HTTP API](api.md#authoring-memory-03-development) owns the route shapes.
+
+### Workspace execution config (0.3 development source)
+
+Checkout worker preferences and service placement share one private reserved Account
+KV row. Its opaque identity derives from the exact Home/ref pair; the authenticated
+transport supplies the Account. Plain content uses `{t:'plain',v}` and requires no
+Account encryption material. E2EE uses `{t:'encrypted',c}` with the
+`workspace_execution_config` Account blob purpose (kind byte 35). The opened private
+payload binds `{rowId,value}` to the requested row. The server validates the
+representation and persisted Account mode while leaving E2EE content opaque.
+
+The shared reserved-row owner enforces the Account transition fence, row CAS and
+versioned tombstones. Account-side semantic edits preserve the finite/service
+sibling fields and do not write Account settings or settings history. Stored
+readers project known fields; mutation requests remain strict. Mode mismatch,
+malformed content or inconsistent Account state refuses before disclosure or write.
+
+The atomic Account conversion accepts `workspaceExecutionConfig:{items}` and
+returns `workspaceExecutionConfig:{rows}`. It requires every active row and its
+exact source revision, validates the target mode, and preserves tombstones.
+Missing or incomplete inventory aborts the switch. Exact acknowledged replay
+compares committed rows without writing. This is a development source contract;
+release availability and loaded-runtime validation are separate evidence.
+
+### Project setup trust (0.3 development source)
+
+Setup consent belongs to the approving Account and its Home-qualified Project,
+not the execution Machine or its custodian. The reserved Account-row adapter in
+`app/projects/trust/projectTrustRowService.ts` stores one current
+`{project:{serverId,projectId},reviewedEffectDigest,approvedAtMs}` value. Re-approval
+replaces that value; Forget tombstones it through row CAS and affects future
+preparation, not already admitted work. Physical keys contain only opaque qualified
+ids, never a checkout path or private effect digest. Trust does not write Account
+Settings or its history.
+
+Plain Accounts use a keyless `{t:'plain',v}` envelope. E2EE uses `{t:'encrypted',c}`
+with the `project_setup_trust` Account blob purpose (kind byte 36). The server
+checks persisted Account mode and envelope grammar without opening ciphertext;
+the approving-Account reader opens the value and binds its Project to the requested
+row. Invalid content, mode mismatch and unavailable encryption material fail closed,
+never become absent trust. Stored readers drop unknown fields recursively; mutation
+inputs and canonical writes stay strict.
+
+The same reserved-row owner participates in atomic Account conversion through
+`projectTrust:{items}` and returns `projectTrust:{rows}`. Every live row and its
+exact revision must be supplied in the target representation; missing, stale or
+inconsistent inventory aborts the switch. Tombstones are retained, and exact
+acknowledged replay checks the committed state without writing again. The client
+conversion adapter must inventory, open and reseal these rows before submitting
+the switch; ordinary mode-aware writes alone are not migration participation.
+
+The Account-side human-decision producer admits only the current reviewed effect.
+The authenticated Trust mutation route uses the canonical present-user guard for
+non-null grants; automation credentials cannot create or replace consent. Forget
+remains a separate CAS tombstone operation governed by its Action policy.
+Configurable Action invocation approval cannot grant setup consent. Completion is
+a separate target-local fact outside the checkout and Workspace Sync, persisted
+only after every applicable setup step succeeds. The storage and consent ports are
+development source contracts; integrated preparation/launch and released availability
+require their own evidence.
+
+The development-source UI client, `sync/api/account/apiProjectTrust.ts`, captures
+the approving Home and Account for human Remember and shared purpose36 opening.
+Account-mode inventory conversion delegates to that same opener. List and Forget
+use `defaultActionExecutor`'s canonical `projectAction` family after configurable
+Action policy; Remember uses the present-user-only non-Action mutation route.
+
+### Project Account rows (0.3 development)
+
+Private accepted workspaces, the Account's Workspace Sync relationship graph,
+and Home-qualified Project organization use the reserved Account-row owner in
+`app/projects/projectAccountRowService.ts`. Plain Accounts remain keyless.
+E2EE content uses `project_account_row` (kind byte 34), with an opened
+`{key,value}` payload bound to the exact requested row. The server validates
+the envelope purpose and persisted Account mode without opening ciphertext.
+Stored readers drop unknown fields recursively; mutation inputs remain strict.
+
+One Account-wide graph row serializes relationship changes and ref insertion,
+root changes, and Forget. Mutations compare its revision and the reached ref
+revisions in one transaction; any conflict rolls back every row and its change
+publication. Ordinary labels, facts, Hide, and pins use their own row revisions.
+Navigation recency uses the authoring-memory row described above, not a structural
+workspace field; strict Project ref writes reject `lastOpenedAtMs`, and retained
+row projections drop it after the cutover transfers the timestamp.
+Physical keys contain qualified opaque ids, and change hints contain only keys
+and revisions. Row mutations do not update Account Settings or its history.
+Account-mode transitions include a complete active-row census in the existing
+transition request; tombstones retain their revisions and no private content.
+Private Project Actions use the actual captured Account's credentialed row
+channel. Workspace update admits label/pin metadata only; Forget is idempotent
+when absent, protects even paused relationship endpoints, and never deletes
+checkout bytes. UI and CLI consume the same Protocol removal decision. A foreign
+requester's signed Source-metadata authorization does not authorize opening or
+mutating the custodian's private rows or reading their Artifacts. Missing
+requester-owned crypto/Artifact context fails closed, without credential fallback.
+Cancellation after a row mutation reaches HTTP leaves settlement indeterminate;
+it is not proof that no row changed.
+These are development source contracts; loaded-runtime and released availability
+remain separate evidence.
+
+### Project Source metadata (0.3 development)
+
+The shared Source catalog is a disclosed, server-readable metadata exception for
+both plain and E2EE Accounts. `ProjectSource` stores the name, credential-free SCM
+repository selection, optional default revision and contained folder, current
+audience references, creator, revision, and purpose-tagged Artifact references.
+It does not store repository bytes, setup commands, Git credentials, Artifact
+keys, or Machine encryption material. Source metadata is not converted into a
+private Account-row envelope when the Account changes encryption mode.
+
+The Source owner in `app/projects/sources/projectSourceService.ts` admits reads
+from current Account, Team and group membership. Management belongs to the
+creator or current Team administration; an audience grant supplies view/use,
+not edits or Machine authority. Strict writes select supported credential-free
+locator fields, and stored readers drop nested unknown fields. Metadata edits
+and exact attachment intents use the Source revision CAS.
+Creation reuses the existing actor-scoped request identity and RepeatKey retention;
+an acknowledged replay reads current admitted metadata rather than creating another
+Source. A changed payload or unavailable recorded row refuses instead of duplicating.
+
+Attaching requires independent current Artifact access. Plain Artifact headers
+also receive server-side kind admission; E2EE headers stay opaque and their
+kind is admitted by the Account-side Action client after its real Artifact read.
+Source visibility never supplies an Artifact grant, key, content access, or
+checkout permission. Detach and Source deletion remove metadata only, leaving
+Artifact bytes, grants, and checkout files intact. Qualified foreign references
+retain their exact Home and use the canonical Account-side Artifact reader for
+access and kind admission. The Source transaction never substitutes a same-id
+local Artifact or grants rights at either Home.
+
+These are development source contracts; loaded-runtime and released availability
+remain separate evidence.
 
 ### Review Comment CRUD (0.3 development)
 
@@ -251,6 +635,17 @@ historical credentials even when an inventory finds no encrypted dependencies:
 another key-holding client can create an E2EE Session after that read. Returned
 encrypted trigger definitions and opaque predecessor Run summaries retain their
 existing locked/plain-Account reader rules.
+
+In current 0.3 development source, a retained encrypted Automation bound to an
+E2EE Session on a now-plain Account is paused and listed as **Needs your review**.
+An ordinary list read may pause it, but never opens or replaces its ciphertext.
+Opening the row deliberately uses that device's authenticated retained-Session
+key path to prepare an in-memory Workflow draft. The draft is not published into
+the shared trigger-list state. **Save** is explicit consent to write a normal
+Account-plain Workflow through the canonical trigger writer; the Session's own
+E2EE envelope and key custody do not change. Missing keys, failed authentication
+and conflicts leave the template untouched. Automatic Account recovery still
+reports `retained_e2ee`, not a plain conversion.
 
 On a plain Account holding historical credentials, **Forget the old encryption key**
 uses the client-placed `account.encryption.historicalKey.forget` Action. Settings,
@@ -672,6 +1067,21 @@ fallback. It clears opened material when the client closes.
 These are observed source mechanics and focused-test results, not proof of the
 still-unrun composed live journey.
 
+Managed-machine development origination also consumes whole-Action protection
+with a genuine ordinary Account credential, not a fabricated API Token or grant.
+The existing signed Machine relay binds that credential's epoch and authentication
+evidence, and the issuer derives `accountEncryptionMode` from the Account row.
+The verifier rereads mode and current authority before allowing effects. Plain
+Accounts use the legitimate V1 carrier without content keys; E2EE requests and
+results stay in V2 and never fall back to Plain. A sealed managed acquire exposes
+only its strict compute admission projection and whether a continuation exists;
+the receiver checks that projection against the opened request before effects.
+Agent text and guest startup instructions remain protected. An offline admission
+receipt contains only the durable managed id, not a manufactured encrypted Action
+result. Exact enrolled-guest continuation uses the same signed dispatcher with
+current creation and guest authority checks. These are source contracts; the
+composed ordinary-client/controller/guest journey remains unverified.
+
 ### Native password credential (0.3 development)
 
 Native email/password authentication adds one server-persisted credential row per
@@ -786,6 +1196,10 @@ server persistence layer.
   `{ t:'encrypted', c:<account-scoped ciphertext> }` for E2EE ownership. The plain
   branch requires no Account key; the encrypted branch requires real compatible
   material.
+- Current 0.3 development stored owner/shared readers discard unknown extensions
+  recursively while validating known fields; creation and mutation remain strict.
+  The reversible Bot marker alone is recipient-safe. Its birth fact, memory choice
+  and tool-call view override remain inside the Account-scoped owner envelope.
 - Fresh layout-1 creation and owner-driven layout-0 migration activate only after the
   complete compatibility-declared Session/CPX writer, reader, tuple-CAS, and recipient
   projection vertical is green. Schema presence alone does not activate it.
@@ -1146,12 +1560,85 @@ reserved server-origin Session start, Action API, and Automation reply-handoff
 methods retain their existing plain transport and inner-envelope contracts.
 
 ### Machine metadata + daemon state
+
+- In 0.3 development source, `machines/machinePublishedContentV1.ts` owns one
+  share-wide opened-content shape for the custodian and recipients. CLI registration,
+  daemon publication, and UI metadata, policy, Runner and Account-conversion
+  writers consume its write admission before serialization. It
+  permits declared host identity/version, OS-home and installation-root facts,
+  host-maintenance diagnostics, capability/readiness, nonsecret endpoint facts, and
+  Local Services count/readiness. Private Sync relationship ids, controllers, paths
+  and status, foreign work ids/commands/content, and undeclared peer/transfer native
+  bags are not part of that projection. This is producer-side admission, not
+  recipient-specific UI redaction, and does not claim an arbitrary path-free blob.
+- Machine Sync publication carries only engine/carrier readiness. Its existing
+  daemon-state version advance invalidates demanded private status/conflict reads
+  for the exact Home and controller. Those reads remain at the admitted relationship
+  owner; the existing UI status store and conflict paging owner preserve last-known
+  values and reject responses begun before invalidation. No private status is
+  hydrated from the Machine channel.
+- Tolerant stored readers can discard retired fields, but their output is not proof
+  that retained bytes are safe to disclose. Recipient preparation must open both
+  entire current blobs and consume `isMachinePublishedContentSafeV1` before sealing;
+  delivery commits bind the checked metadata/state versions. Retained unsafe
+  ciphertext still requires an authorized custodian publication that commits
+  rewritten content. The content-key conversion preserves the opened content and
+  does not establish this privacy transition. A projected cache, a valid key alone,
+  or a metadata-only Manage write cannot establish that transition. These are
+  development-source contracts, not certification of a loaded or released runtime.
+- Development Machine access-loss effects compare the canonical effective-access
+  union before the mutation and after its final state. The Team membership wrapper
+  captures Machine and Session impacts together around the enclosing transaction;
+  a surviving grant prevents intermediate loss from becoming final revocation.
+  Final loss publishes Account invalidation and, after commit, disconnects the
+  actor's exact Machine/AccessKey-bound Session sockets. Session history and
+  AccessKey bytes remain intact. Socket invalidation does not prove settled
+  cancellation of running processes; that composed cleanup remains incomplete.
+- In 0.3 development source, stored Plain Machine envelopes are opened through
+  the canonical stored-read projection: extra envelope fields are dropped,
+  required `{ t: 'plain', v }` content remains validated, and re-encoding emits
+  only the canonical envelope. Encoded metadata/state mutation admission stays
+  strict; tolerant reads never reinterpret encrypted or malformed content as Plain.
 - E2EE Machines retain the client-encrypted per-Machine branch. In current development
   source, a present `dataEncryptionKey` envelope selects the exact Machine content key
   for metadata and RPC. Account content material opens that envelope, including the
   existing content-key derivation for recovery-secret credentials; it does not replace
   the selected key. Only a genuinely absent/null envelope retains the historical
-  credential-specific Account-key or legacy-secret reader.
+  credential-specific Account-key or legacy-secret reader, and only for the
+  authenticated custodian. An admitted recipient uses the Machine access projection's
+  resource mode and its own envelope; pending, refused or malformed access cannot
+  reach the historical fallback. The persisted custodian Account mode is the storage
+  authority, not possession of keys or the viewer's Account mode.
+- New persistent E2EE registrations use a random 32-byte Machine content key for
+  both credential forms. Registration adopts the returned winning envelope before
+  opening content. Repeated or losing proposals cannot replace existing metadata,
+  daemon state or envelope through registration. Plain registration remains keyless.
+- CLI `ApiClient.prepareMachineContentKey` and UI `Encryption.prepareMachineContentKey`
+  consume the same Protocol `prepareMachineContentKeyV1` owner lifecycle and
+  `createMachineDataEncryptionKeyV1` resource-key producer. They prepare historical owner content through
+  `POST /v1/machines/:id/content-key/transition`. The transaction compares the exact
+  existing owner envelope and both content revisions, then commits the matching new
+  envelope and opaque metadata/state together, advancing both revisions even for
+  null state. The server never opens content. A lost acknowledgement is resolved
+  only by observing that exact proposed post-state; it does not replay the write.
+  Conversion preserves the entire opened blobs, including display name and finite
+  policy, and does not itself authorize wider disclosure.
+  Machine recipient preparation captures the Home/Account transport, refetches the
+  current worklist after conversion, and checks the exact owner fingerprint, caller
+  wrapping and both content revisions. The entire raw metadata/state must satisfy
+  the published-content safety predicate before sealing; retained private bytes
+  remain pending until actual safe custodian publication. Current Manage holders
+  service later recipient changes through the existing Machine invalidation and
+  Account-change lifecycles, reusing the Session preparation pass rather than a
+  separate queue.
+- Encoded Machine metadata/state writers carry `expectedDataEncryptionKey` with
+  their expected content revision. `keyBasis` projects that owner-envelope identity
+  separately from the caller-openable `dataEncryptionKey` recipient wrapping.
+  A retired-envelope writer fails even with current content revisions. Ordinary
+  update carriers project committed basis revisions; conversion also changes the
+  opening envelope. Only affected Machine caches and contexts retire. Results begun
+  under a retired context cannot install it again; an already-issued RPC retains
+  its captured reply codec without effect replay or a universal process drain.
 - A malformed or unopenable present Machine envelope fails closed. UI hydration locks
   the Machine and retires its previous cipher and decrypted Machine cache; a later
   valid envelope can hydrate it again. The CLI's
@@ -1546,6 +2033,62 @@ Account rather than by projection generation or app/runtime compatibility metada
 ### Access keys
 - `AccessKey.data` is treated as an **opaque encrypted string**.
 - The server does not decode it or inspect its contents.
+
+The 0.3 development schema binds an AccessKey to the exact requester
+`(accountId, machineId, sessionId)` tuple. Its Machine foreign key references
+`Machine.id`, not the Machine custodian's Account: Session ownership and Machine
+custody are separate. The schema transition preserves existing key bytes and
+versions. This structural preparation does not admit foreign requesters by
+itself; grant admission and a verified requester runtime channel must authorize
+that flow before it can create or use a tuple.
+
+Requester bootstrap remains development work. Its ordinary owner metadata is
+sealed with the requester Account's crypto material, separately from the Session
+DEK. Ordinary startup/model updates can change that owner projection; retaining
+an unchanged owner envelope therefore does not make a Session-only key sufficient
+for the full runtime. The selected documented D3 path prepares the ordinary
+requester's credential in per-Session private custody, with truthful Account-wide
+sign-in and OS-visibility disclosure before launch. It is not Session-scoped auth,
+a failure-triggered credential upgrade, or permission to use the custodian's
+sign-in. Plain Accounts remain token-only and never acquire fabricated E2EE keys.
+This selection alone establishes neither reachable shared launch nor cleanup.
+
+Admitted requester Account effects use host-local ports on the existing
+`ExternalActionExecutionAuthorizationV1` carrier: the requester's Project-row
+cipher, qualified Artifact reader, captured-Home HTTP signer and fresh custody
+checks. These ports are non-enumerable and are not part of its strict wire
+schema, approvals or serialized outputs. They do not expose the custodian's
+bearer or turn Machine access into private Session access. An original Session
+Action additionally carries its installed source's Home-authenticated origin;
+the receiving host retains that caller's permission ceiling and automation
+authority rather than treating the ordinary Account credential as a present
+user. Current source publisher, Session tuple, installation and grant checks
+remain at their existing owners. This is development integration, not a claim
+that every requester lifecycle or a loaded cross-account journey is verified.
+
+Cold delivery uses the nonsecret exact placement on the existing Session row,
+committed by its admitted runtime publisher. This fact contains only Home,
+requester Account, Session, Machine and installation identifiers; it contains no
+key, bearer, prompt, title or native conversation content. Publisher close retains
+it, and an admitted publisher move replaces it. Pending input and Workflow origin
+delivery recheck the exact tuple and current Machine access before using it.
+AccessKeys and encrypted metadata never choose cold placement, and a retired
+placement cannot redirect delivery to another Machine or installation.
+
+Development work-summary attribution also contains only the admitted Home,
+Account, Machine and installation identifiers. Execution Run budget custody and
+its existing markers/private lifecycle and terminal-delivery records retain that
+tuple; Automation claim and Workflow coordinator custody retain their host's
+admission. It is an observation fact, not a credential, Session disclosure grant,
+execution authorization or replacement placement owner. Current public Run
+projections and Agent launch options exclude the host-local field. Authored Run
+requests cannot select it, and missing legacy attribution remains unknown.
+Session-owned Run admission takes this fact from the same decoded protected
+child credential object, paired with its exact Session, Home and token Account.
+An ordinary daemon-launched Session can use its accepted marker only after the
+current process generation and command hash match. Metadata and public Run
+input never fill a missing or mismatched tuple; the private in-process Action
+context can carry an already admitted Workflow tuple without serializing it.
 
 ### Key-value store
 - `UserKVStore.value` is intentionally opaque bytes encoded as base64 on the wire.
@@ -2050,6 +2593,16 @@ the snapshot, notes, and admitted memory reference. Existing work-state and
 headline fields keep their flat domain shape; role snapshots gain no flat alias
 and never enter the recipient-safe shared projection.
 
+Development authoring drafts retain their admitted original Scripts or Changes
+destination in the existing device-local draft supplement. Explicit Send carries
+that destination into `work.authoringOriginV1` through the same Session owner
+metadata tuple writer. Editing the launch Machine or folder preserves the
+original qualified Account, Home and workspace destination. Cold materialized
+Temporary computer recovery publishes the retained origin before retiring draft
+and creator custody; a failed publication keeps that recovery retryable. The field remains
+owner-private in both Account encryption modes and does not establish Project
+setup readiness.
+
 Sharing rules:
 
 - Plain sessions can share without `encryptedDataKey` because access is server-managed.
@@ -2236,6 +2789,30 @@ reference to a deleted resource simply resolves as deleted and offers replacemen
 Possessing an envelope or a previously disclosed value is not current authorization. Every read
 rechecks the current grant and Home-local Team/Group membership. Revocation stops later reads but
 cannot erase material a direct recipient already obtained.
+
+### Confidential fill consumer (0.3 development)
+
+Confidential entry uses the existing authenticated Machine RPC and Account mode,
+not a new vault. A one-time value is ephemeral and never belongs in an approval
+Artifact, Action input/result, Session transcript or replay. Plain transport may
+have authenticated transient relay ingress; E2EE delivery must remain encrypted.
+Transport routing alone does not prove that error, telemetry or recording
+boundaries suppress the value; those boundaries require their own evidence.
+
+The Saved Secret picker sends a value-free catalog revision fingerprint. The CLI
+materializer independently retains and rechecks its private material fingerprint;
+the two are not interchangeable. The current consumer can resolve only its bound
+Account's catalog and rejects another or absent deciding Account instead of
+borrowing the Machine custodian's personal material. Foreign Saved Secret use
+requires a requester-owned catalog context from the existing admission producer.
+
+The private continuation rechecks immutable Home identity and current Account mode.
+Equivalent client-local Home aliases do not change the reviewed request. Remember
+is explicit and off by default, uses the existing mode-aware Saved Secret writer,
+and reports persistence separately from physical entry. Save failure or uncertain
+acknowledgment must never replay the fill or claim that the value was saved.
+Mutable delivery buffers are wiped after settlement; managed strings do not offer
+forensic erasure or isolation from an Agent with same-user shell access.
 
 Session data-key persistence:
 
@@ -2507,7 +3084,7 @@ An administrator erasing their own Account must pass initial administrative admi
 that admitted invocation may continue through its own revocation. An independent administrator
 is checked again before final row deletion. This adds no separate erasure state or cleanup owner.
 
-Every active new-Session draft participates in the incumbent atomic Account mode-transition
+Every active Account-owned new-Session or development Project Open draft participates in the incumbent atomic Account mode-transition
 request. Existing-Session drafts do not participate: their envelope remains bound to the owning
 Session. A missing or incomplete draft census, a revision mismatch, or a wrong target envelope
 aborts the Account transition without partially changing the mode. The partially adopted staged
@@ -2524,8 +3101,18 @@ refusal. The success response returns the committed rows, and exact lost-respons
 checks their revisions and envelopes without writing or publishing changes. Missing E2EE
 material or an invalid row binding fails closed before the client submits the switch.
 
-The development draft V2 contract includes new-Session authoring that released strict V1 cannot
-generally preserve. Such Account transitions select `sessionDrafts: { v: 2, items }` and receive
+Development private Project rows use `projectRows: { items }` in that same atomic request.
+The explicit row grammar covers Home-qualified accepted refs, the Account relationship graph,
+and Home-qualified Project organization. The client reads the complete remote census, opens
+each payload bound to its row key, and reseals through the `project_account_row` Account cipher
+purpose. Plain Accounts require no encryption material. Source mode, complete coverage,
+target mode, and row revisions are checked before commit; malformed or mixed source content
+refuses the whole switch. Row CAS advances storage revisions while preserving semantic ids,
+relationships, Project organization, and tombstones. Exact replay validates committed rows
+without writing. The older empty-only PATCH ingress refuses populated Project rows.
+
+The development draft V2 contract includes new-Session authoring and agent-free Project Open
+documents that released strict V1 cannot generally preserve. Such Account transitions select `sessionDrafts: { v: 2, items }` and receive
 `sessionDrafts: { v: 2, records }`, including on exact lost-response replay. The same draft service,
 Account cipher, revision CAS, and document reconciliation owner serve both versions.
 

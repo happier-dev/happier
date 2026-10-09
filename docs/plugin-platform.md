@@ -232,6 +232,11 @@ Measured `FrameRect` placement and `resolveFloatingFrameRect` share companion ge
 
 Public `/presentation` exports `FloatingFrame` / `FloatingFrameProps`: one controlled neutral frame (`floating`, `expanded`, `docked`, `closed`) with a controls band and one body. It owns only geometry and shell mode: drag, velocity and release use the shared companion interaction owner, settling uses `resolveFloatingFrameRect` and asks to dock when nothing fits, arrow keys snap corners and the grip resizes with the body's aspect. `moveInput` decides whether the body or only the controls band and grip move it; the host decides that from its own control facts. The platform pointer boundary comes from the `pointer` prop or the presentation host's `companionPointer`; without one the frame moves by keyboard and menu only. It has no target, Session, network or trust props. In 0.3 development source the Session viewer is its first consumer: it frames the retained Computer or Browser body, publishes its settled rectangle to the shell's measured Voice/pet geometry and moves the reading column aside on snap. Development-only until 0.3 ships.
 
+The public root and `/components` export the themed `FloatingFrame` adapter and
+its props over that same neutral owner. It supplies host theme and accessibility
+defaults, including reduced motion, without another geometry or interaction
+engine; `/presentation` retains the neutral primitive for host composition.
+
 The app shell supplies plugin-column physical focus eligibility through the existing presentation provider, using its dock visibility and peek focus facts. Hover previews may remain presented without receiving programmatic focus; deferred or exiting peek content cannot receive it. Columns explicitly do not publish semantic current UI context: that authority remains with the active page's existing owner.
 
 ### Entity drag sources and drop targets (0.3 development)
@@ -1057,6 +1062,10 @@ on the lease's runtime view. The incumbent managed-service admission captures
 `captureNativeServiceLifecycle(instance)` while that occurrence is current.
 Inspection remains currentness-checked; Stop retains only that exact adapter
 and native resource after retirement so the existing supervisor can settle it.
+An accepted-only retired Stop remains typed termination-incomplete and retains
+custody. When the adapter becomes current again, existing Project-owner recovery
+inspects the exact resource through the current lease before replacement or
+control retry; only a definitive stopped witness settles native custody.
 Retirement cannot admit a new service or transfer the captured Stop capability
 to another native instance.
 

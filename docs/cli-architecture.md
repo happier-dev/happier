@@ -50,6 +50,465 @@ graph TB
 
 Executable Agents and model Providers are different domains. `happier agents ...` manages Agent runtimes; `happier providers ...` manages configured model-source connections. Provider contributions, connections, grants, settings, and structured model selections are protocol-owned. See [Providers](./providers.md) for the complete ownership and safety contract.
 
+### Checkout directory mapping (0.3 development)
+
+`workspaces/activation/resolveDirectoryInCheckout.ts` owns mapping a selected
+source subdirectory into an SCM-materialized checkout. Session target preparation
+and Workflow workspace realization consume it; neither maintains a separate
+directory mapper. It preserves the selected relative subpath and checks both
+lexical and filesystem-resolved destination containment, including symlinks above
+a not-yet-created descendant. An escaping destination is refused rather than
+redirected to a guessed directory.
+
+SCM still owns checkout realization through
+`scm/workspace/workspaceCheckoutOperations.ts`. The mapper does not materialize a
+checkout, grant filesystem access, run setup, accept a WorkspaceRef, or start an
+Agent. Session-private managed directories retain their Session lifecycle owner.
+Pre-spawn refusal or cancellation retains a prepared checkout: a historical
+`created` receipt does not prove that no other consumer has since accepted it.
+File removal remains an explicit operation at the canonical SCM owner.
+These internal development-source contracts do not establish that agent-free
+Project Open is available; its accepted-ref, setup and client integration are
+separate required parts of that flow.
+
+In 0.3 development, Project Open target admission uses
+`server/serverProfiles.ts#isServerProfileHomeIdentity` to relate a daemon's local
+profile id to the caller's qualified Home identity. An alternate identity requires
+the profile's exact Home connection descriptor and an unambiguous profile binding;
+names, URL equality and advisory descriptors cannot authorize it. Open and its
+private Sync source route retain the local profile for credentials and requester
+custody, while Workspace and Source addressing uses the admitted Home id. Current
+Machine admission and requester authorization remain required.
+
+Retained Project Open intent belongs to Protocol's
+`projects/openProjectDraftV1.ts` and the existing V2 draft repository at
+`apps/ui/sources/sync/ops/sessionDrafts/sessionDraftRepository.ts`. Its
+`project-open/<draftId>` address is Account-owned, not a Session or Composer.
+Incomplete selections are draft data; only confirmed submission is admitted as
+the complete `OpenProjectInputV1`. Uncertain and late outcomes stay associated
+with their captured input rather than granting setup authority or choosing a
+different checkout. This development draft contract is separate from completing
+the Open screen and its live Machine/setup composition.
+
+Open consumes the passive `prepareProjectSetup` owner for setup classification;
+it never launches setup or records completion. The `prepared` classification
+means the reviewed execution plan is ready with consent, not that setup completed.
+Completed setup remains the exact target-local success owner's fact, and Agent
+launch still performs the independent setup admission/recheck.
+
+Saved-Source Open uses `projects/sources/projectSourceV1.ts#admitProjectSourceSelectionV1`
+at both the retained UI draft and the admitted daemon boundary. The existing
+authenticated Source read route rechecks current visibility on the exact Home.
+Admission compares effective hosting/repository/clone-protocol selection, ref
+and contained subdirectory, applying explicit overrides to captured and current
+defaults alike. Metadata-only revisions and overridden default changes remain
+usable; changed execution selection or withdrawn access refuses before
+materialization while preserving the draft. Accepted refs record the current
+admitted Source revision through the existing private-row writer. Revision is
+provenance and metadata-write CAS, not an Open freshness gate. Source-based
+copy also reauthorizes at the existing source-host Sync route. Foreign or
+restricted requester Open still requires the original requester carriers and
+cannot borrow the daemon's full Account credential.
+
+In 0.3 development source, Source clone uses the contributed Git materializer
+and GitHub's existing REST metadata owner. Public GitHub repositories can be
+discovered anonymously for HTTPS cloning; inaccessible repositories still
+require the bound Connected Account, never ambient machine credentials.
+Known failures before checkout publication refuse with their typed code.
+Unconfirmed publication, ref selection after clone, and Account row submission
+retain `outcomeUnknown` rather than authorizing replay. Open's existing redacting
+file logger records failed and uncertain settlements, including the underlying
+materialization error. These source contracts do not certify the loaded daemon.
+
+Git's `activate(api)` registration is captured by the SDK's existing static SCM
+snapshot owner, including entry history and commit capture/settlement handlers.
+The host still rejects advertised capabilities without their handlers; Open
+does not bypass that registry or fabricate repository visibility for saved
+locators. The canonical clone parser supplies the provider URL-safety defaults.
+
+Where the daemon's incumbent Action Operations observer is available, the
+receiving Open route observes the original attempt once and `outcomeUnknown`
+retains that operation id. The mounted Open controller's Check invokes the
+existing `action.operations.get` Action against the captured Home and Machine,
+not the currently edited destination. Only the original scoped `opened` or
+`refused` settlement clears the retained uncertainty; a running, missing,
+mismatched or still-unknown observation never replays Open or deletes files.
+The operation owner keeps its existing retention and unsupported cancellation
+contract. Without an original handle, the screen offers inspection of the
+destination folder and Projects list, not a guaranteed Check, resume or cancel.
+An edited selection may retain a settled original attempt without focusing it.
+
+In current 0.3 development source, finite Sync preparation and a true same-Workspace
+linked no-op retain that same private caller context through the existing handoff
+adapter's preparation and finalization. Requester rows remain invocation-local;
+they do not replace the daemon's Account snapshot. Persistent relationship
+creation, reuse or a linked route needing synchronization requires a lifecycle
+and native transport that preserve the original caller authority. Where that
+producer is unavailable, the initial preparation owner refuses with
+`workspace_sync_update_required` before Account or workspace mutation. Project
+Open reports that exact initial prerequisite refusal as not started; later,
+replayed or uncertain failures retain their existing effect/outcome classification.
+No background requester controller or custodian-credential fallback is implied.
+
+### Accepted Session checkouts and the private Project library (0.3 development)
+
+The daemon's `sessions/onHappySessionWebhook.ts` enrolls a checkout only after
+the canonical Session report is accepted. Ignored reports, failed readiness and
+PID placeholders do not enroll anything. `registerAcceptedSessionWorkspace.ts`
+checks the authenticated Session ownership before using the private Account row
+writer; a shared-machine custodian cannot write the requester's library through
+its own credential. An unavailable requester channel is reported, not redirected.
+SCM's inspected repository root is enrolled while the Session keeps its selected
+nested directory. Proven hosting facts come from the selected SCM contribution,
+not a second remote parser. Non-repositories are not enrolled automatically.
+
+Protocol's `projects/projectListProjectionV1.ts` is the shared UI/CLI projection
+of accepted refs and Home-qualified organization rows. It groups by retained
+Project anchors, never by guessed repository identity. Hide/Show changes only
+`hidden` on the anchored organization row through `projects.visibility.set`
+and caller-revision CAS, retaining pins and context. New accepted checkouts can
+join a uniquely proven anchor without clearing Hide; identity enrichment does
+not move an existing anchor. Unknown or ambiguous associations do not merge.
+`projects.list` is an Account Action: hidden Projects are omitted unless
+`includeHidden:true`, exact checkout addresses stay separate from presentation
+keys, and incomplete or explicitly limited results report their coverage.
+The Projects renderer opens full checkout addresses and does not enroll folders;
+folder selection goes through the admitted Open workflow.
+
+### Project definitions and guarded files (0.3 development)
+
+`.happier/project.json` is a user-authored repository file. Protocol's
+`workspaces/projectSetup/projectManifestV1.ts` owns its versioned known fields;
+`projectManifestDocument.ts` keeps the known-field projection, original object,
+exact text and diagnostics together. Unknown keys are diagnosed without disabling
+otherwise valid declarations. Missing or invalid required fields remain invalid,
+and unknown content supplies no execution authority. Structured field edits splice
+the original text rather than serializing the stripped projection, preserving
+untouched known and unknown values. Raw saves submit the intended text unchanged.
+
+CLI `workspaces/projectSetup/projectDefinitionInspection.ts` owns passive native
+detection. It returns tool/file/target references and separate environment and
+Devcontainer selections, never copied command bodies. Unreadable, invalid or
+dynamically unresolved sources produce per-file partial diagnostics while keeping
+successfully detected entries. Inspection does not evaluate project code, launch
+a tool, import declarations or write the project file. Package discovery and
+package-manager selection live in `nativePackageScripts.ts`, shared with Local
+Services rather than reconstructed by each consumer. Detection is not proof of
+installed-tool availability or completed setup.
+
+The strict `projects.inspect` Action takes the qualified checkout address
+`{serverId, workspaceId, machineId, rootPath}` under `workspace` and returns
+`{definition, detection, importCandidates, commands, tools}`. The definition includes exact file
+text and its absent/present basis. CLI
+`projectNativeResolution.ts#inspectProjectImportCandidates` owns the import
+selection projection: offers are available, unavailable, unresolved or ambiguous,
+and only verified available, unambiguous offers are preselected. Passive PATH
+resolution proves tool presence, not a pinned version; an unproved requested
+version stays unresolved. Plugin detection offers also stay unresolved until
+admitted effect resolution. Inspection runs neither version commands nor plugin
+command/environment effects. Native import offers and named manifest native
+commands carry optional `invocation` facts (`tool`, native `args`, `cwd`, requested
+version), supplied by the same static intent owner as launch, even when the
+installed tool is unavailable. They never copy a package script body into argv.
+Tool rows derive from those references, detected toolchains and static Mise
+tool declarations, not a fixed prerequisite inventory. `requestedVersion` is
+the declaration; optional `version` is an observed installed fact, and
+availability reports host presence, not satisfaction inside a native environment.
+The managed JS-runtime owner resolves installed npm/yarn/pnpm metadata to the
+actual JS entrypoint and an absolute runtime tuple, preserving its PATH overlay;
+arbitrary PATH/Corepack shims do not establish installed manager/version facts.
+
+`workspaces/projectSetup/projectManifestFile.ts` owns project-file reads and
+updates through the existing filesystem `writeFileForRpc` owner. Creation requires
+an absent-file basis; editing requires the observed file's SHA-256 basis. Invalid
+intended documents are refused before writing. A changed basis returns a conflict
+and the current file, so a caller can retain its draft, reload and review before
+another save. This is the filesystem owner's best-effort check-then-write guard;
+external editors can race the check, and it is not an atomic lock.
+
+`projects.manifest.update` takes that same qualified `workspace`, `expectedBasis`
+and intended `bytes`, returning saved/conflict/refused. It is classified as a
+dangerous write and uses the shared configurable Ask-first default. The editor
+model's Form, raw, native/plugin import, remove and reorder operations share this
+Action through `projectManifestActionClient.ts`; none owns a second file writer.
+Invalid raw drafts remain text and disable Form/save until valid. The Action
+catalog projects these operations as `happier project inspect` and
+`happier project manifest update` through the existing CLI compiler.
+
+These are development-source contracts, with integrated package and loaded-runtime
+validation pending. Visual editor composition is a separate integration step.
+Setup consent, preparation and process execution have separate owners; inspecting
+or saving this file grants none of them.
+
+### Project preparation and finite commands (0.3 development)
+
+`workspaces/projectSetup/projectSetupPreparation.ts` owns current-effect review
+and preparation. It binds the accepted Home, Machine, checkout and qualified
+Project from the canonical Account rows; a working directory is not Project
+identity. Review includes selected native definitions, raw setup-input bytes and
+revision-qualified environment binding references, not secret values. Configured
+Action invocation approval and actual human setup consent remain independent.
+The approving-Account client in `projectSetupTrust.ts` consumes the reserved-row
+and persisted Account-mode contract in [encryption](encryption.md#project-setup-trust-03-development-source).
+
+The safe `reviewedEffect.presentation` carries authenticated saved-secret display
+names and read-only provenance from the incumbent SCM backend: the project-file
+path, repository HEAD, branch and observed modified/untracked state. Missing
+labels stay null and unavailable SCM stays explicit. Repository HEAD is context,
+not proof that the reviewed file bytes were committed; clean or ignored files
+without that proof remain unknown. These labels and repository context are
+excluded from the semantic effect and execution-environment digests. Renaming a
+secret or committing unrelated files does not invalidate consent; exact binding
+references and relevant command, configuration and setup-input bytes still do.
+
+Built-in native resolution keeps the semantic invocation from its static intent
+separate from the installed tool's target-local runtime prefix and launch PATH.
+Review and queued-command freshness use that semantic invocation and the actual
+installed tool identity/version; execution still consumes the complete resolved
+launch tuple. Equal installed versions in different directories do not invalidate
+cross-Machine setup consent. Selected config overlays and contained executable
+bytes remain reviewed inputs. The ordinary setup-authoring prompt and read-only
+GUIDE disclosure forward `projects.inspect`'s same commands/tools facts without
+guessing installed versions or treating advisory availability as admission.
+
+The strict `projects.prepare` input can retain a review preference as
+`consentScope:'thisTime'|'untilChanged'`, only beside the existing
+`expectedEffectDigest`. The canonical D18 review projection preserves it, but
+the preference is not authenticated human consent, a Trust write or an invocation
+approval waiver. A held operation keeps its original input and awaits the actual
+human continuation owner; choosing a scope cannot silently resume it.
+
+The Scripts review's explicit human “Until it changes” decision separately uses
+`projectSetupConsentDecision.ts` and the approving-Account Trust API to remember
+the exact accepted Project and reviewed effect before requesting preparation.
+This is not authority supplied by the Action's scope field. The Session-mounted
+human continuation and its original held invocation remain a separate integration
+contract, not a request replay or an invocation-approval waiver.
+
+`projectSetupSuccess.ts` stores completion under the target's Happier home,
+outside the checkout and Workspace Sync. Reuse requires the same qualified
+target, platform, reviewed effect, setup inputs and environment references.
+Execution invalidates that fact before a new attempt; only observed success of
+every applicable setup step can write it again. Consent is not completion.
+
+`projectFiniteAction.ts` owns `projects.prepare`, `projects.script.run` and
+`projects.compute.exec` intake through the shared Action policy and authenticated
+requester/currentness boundary. Ad-hoc argv and cwd retain their exact semantic
+input and require the current Project opt-in. Worker execution inspects the
+immutable SOURCE declaration, reserves before canonical clean Sync, then reviews
+copied TARGET bytes; changed demand never silently widens a held reservation.
+
+CLI and UI finite delivery share
+`actions/executor/projectActionPlacement.ts#resolveProjectActionMachineV1` in
+Protocol. The shared composition reads current SOURCE declarations and Account
+execution preferences through the same Action executor, then delegates exact or
+pool placement to the existing worker owners. Clients retain their captured
+Home/Account and original request identity; selection does not grant execution
+authority or replace the receiving daemon's admission and preparation checks.
+
+`projectSetupExecution.ts` consumes final host-authorized tuples and the existing
+held PTY/process-tree owner. Accepted work is not success: sequential setup and
+the requested command settle only on actual exit. Unconfirmed Stop or native
+cleanup retains custody rather than settling cancellation. These finite commands
+do not manufacture Sessions or enter Agent-start admission. The incumbent mounted
+`session.terminals.run_script` path consumes this same finite owner instead of a
+private shell `initialCommand`; literal interactive terminals remain unchanged.
+These are development-source contracts, not a claim of released availability or
+completed package and loaded-runtime certification.
+
+The existing operation attachment separates original admitted
+`sourceWorkspace` and actual Script `{name?,source}` from the current output
+Home/Machine/checkout/cwd/terminal. Script identity survives its setup steps;
+standalone preparation and ad-hoc execution do not invent a Script. After the
+real PTY exit observation, that same attachment retains a numeric `exitCode`
+when one was observed, including failed setup and Script runs. Unknown exit
+observations are not converted to zero. These facts feed Account-qualified
+operation selectors for runs started by any client, not a client-local run log;
+arbitrary executor failure details remain private.
+
+### Sessionless Project Services (0.3 development)
+
+`daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration
+Start and fresh-review Restart. It consumes the accepted WorkspaceRef and exact
+Home/Machine/requester, B1's declaration/native resolution, the setup preparation
+owner above, and the existing final host Exec authorization. A reviewed service
+effect is not a setup-trust grant. Restart reviews the current declaration before
+Stop and then uses the independent full Start Action; it never replays captured
+argv after a changed declaration or treats failed replacement as rollback.
+
+`managedServicesOwner.ts` and `managedProcessSupervisor.ts` retain the one actual
+service lifetime and requester attribution. An endpoint-none owned process can
+be Running without being HTTP Healthy. Native resource custody requires an actual
+native instance and its lifecycle witness; starter-process exit is not native
+resource termination. Unsupported or unconfirmed native Stop retains custody.
+Plugin-native service resolution carries the real manifest-declared native
+instance; the same selected lease supplies its lifecycle codec. Built-in
+detached Compose/Flox resources still lack a characterized lifecycle producer,
+so their Start is typed unavailable rather than replaced by an owned-child launch.
+
+The existing launcher feed projects that same managed occurrence and exact
+workspace/declaration/cwd. Hide and history clear change only presentation, not
+process custody. History Clear retains explicit Workspace scope through the
+shared Action and Machine RPC adapters. The history owner dismisses only the
+selected feed's recorded targets; an explicitly empty Workspace scope never
+clears the Machine-wide history. Its receipt updates only the matching subscribed
+Workspace feed. An unresolved Session-to-Workspace lookup refuses the mutation
+rather than adopting the feed's Machine-wide read fallback. Snapshot Actions and
+qualified Start receipts also retain Workspace scoping through their adapters.
+The mounted UI callback retains the initiating Account and
+cancellation through the same Artifact continuation as other controls.
+Managed controls use the shared Action catalog and approval
+policy through their individual Machine RPCs; the retained aggregate control
+RPC delegates to those same handlers rather than bypassing approval. CLI, tools
+and nonvisual UI adapters retain the actual target, with configurable Ask-first
+defaults for dangerous operations.
+
+Authenticated final effective Machine access loss retires serving authority
+immediately and attempts exact-resource cleanup through this same owner.
+Overlapping grants preserve effective access; uncertain termination does not
+keep preview disclosure alive. Protected preview read/wait binds the current
+Machine installation, actual starter and exact retained occurrence, as detailed
+in [peer mediation](peer-mediation.md#sessionless-managed-service-admission-03-development).
+These source-tested contracts are not completed package, loaded-runtime or native
+device qualification, and the later Services visual composition remains separate.
+
+### Project native environment production (0.3 development)
+
+`workspaces/environment/produceProjectNativeEnvironment.ts` owns admitted native
+environment effects, separately from passive definition inspection. Its ready
+result is the complete environment, not an additive patch: launch integration
+must replace the inherited environment so native removals survive, then apply
+exact Saved Secret bindings. The callable adapter is characterized for Mise
+2026.10.4 on Linux x64; uncharacterized tools, versions and platforms refuse without
+a host fallback. The selected config must be resolved and reviewed before this
+call. It reuses the passive owner's contained-file reader before evaluation;
+missing or escaping files refuse. Config paths are resolved against the reviewed
+Project root, separately from a command's nested working directory. Native process IO retains the incumbent
+process-tree custody owner, not parent-only cancellation. Unverified native
+cleanup remains `outcome_uncertain`; a structured termination error is preserved
+as the host-private `ProjectNativeEnvironmentUncertainError`, never a settled
+cancellation refusal. Operation-local IO retains the actual supervised resources,
+publishes uncertainty and keeps production pending until physical settlement;
+repeated Stop reaches that same capture. Consumers retain accepted reservations.
+
+Plugin toolchains consume a real retained production from the canonical admitted
+occurrence lease. Command and environment productions retain their own selected
+invocations, including when they belong to different plugins. Environment-only
+preparation omits launch intent; supporting adapters return a complete environment
+without a wrapper. Wrapper-only adapters explicitly refuse that intent, and a
+wrapper returned without an admitted command is never silently discarded or run
+with a fabricated command. Its optional managed launch wrapper and reviewed file facts
+belong to final host resolution before authorization; they are not PATH guesses
+or plugin-supplied launch authority. Public fixture conformance does not qualify
+the corresponding installed native tool.
+
+`projectSetup/projectNativeIo.ts` composes passive command lookup with admitted
+native process IO. It preserves installed argument prefixes and characterizes
+Linux x64 Mise's actual version using its documented [`--version`](https://mise.jdx.dev/cli/version.html)
+command through the same operation-scoped supervised IO as environment production;
+the retained invocation covers the version probe too. It does not probe during inspect, infer
+a version from a declaration or download a missing tool. Only the qualified
+Mise version is activated by the environment owner above.
+
+`plugins/runtime/invocation/services/exec.ts` owns final tuple production for
+admitted Project effects. The host-only authorization entries take the prepared
+current-effect binding; ordinary SDK Exec options and purpose text cannot opt
+into it. Native production and exact secret overlays run before the final
+command/argv/cwd/env tuple is captured. Managed wrappers resolve through the
+selected native adapter's admitted executable owner, not the original Agent's
+namespace, while the installed Agent identity remains separate from that tuple.
+Resolver environment overlays cannot revive native removals. Refusal returns no
+authorized launch, and executable leases remain exactly-once released.
+
+Environment-only setup uses the same environment body without inventing a
+command. The plugin request's launch is optional; an adapter that returns a
+wrapper without a real command explicitly refuses
+`native_environment_launch_required`. Finite PTY launches preserve the complete final environment under
+the existing token-filtering policy, without interactive prompt defaults. On
+Windows, an already-rendered verbatim argv passes unchanged as a command-line
+string rather than being escaped again by the PTY codec. This does not replace
+the canonical Windows renderer or establish native Windows tool qualification.
+
+`settings/secrets/secretReferenceOverlay.ts` owns exact binding materialization
+for Profile, Execution Run and Project launches, delegating value admission to
+the existing Saved Secret catalog. The historical Profile module re-exports
+the generic API and retains only Profile-specific defaults and recovery policy.
+Stored binding readers discard additive unknown fields; ingress remains strict
+and malformed known references refuse rather than acquiring launch authority.
+
+This producer neither grants setup consent nor captures launch authorization.
+Cold-launch integration, plugin adapter qualification and composed process
+validation remain separate obligations; this internal source contract does not
+establish an available end-to-end Project execution flow.
+
+### Devcontainer native roles (0.3 development)
+
+`packages/plugins/devcontainer` contributes through the existing
+`machineProvisioners` family. Its acquire role runs Devcontainer `up`; native
+Docker inspection and child execution then establish the actual container id,
+OS user, workspace root, bind source and named volumes. Discovery never runs
+initialization or lifecycle hooks. Running namespace inspection uses Devcontainer
+exec, which may execute configured environment-probe shell startup; the same
+reviewed-effect guard therefore runs before inspection IO. Stopped/paused
+inspection remains passive. Private bootstrap exec/file roles address the
+retained container id and recheck its namespace before delivering bytes. Binary
+installation, credentials and registration remain with the ordinary managed
+enrollment owner in `machines/managed/enrollment.ts`.
+
+Native Stop retains the container, bind source and named volumes. Exact container
+deletion uses no volume-removal option. The reviewed rebuild role rechecks the
+retained id and selected config's container inventory, removes only that exact
+container without deleting volumes, then realizes and observes its replacement.
+It does not use Devcontainer's broader remove-existing-container selection.
+Unknown or canceled native outcomes retain their recovery reference rather than
+confirming absence or acquiring again. These source-level roles are development
+implementation, not a released child-open or rebuild availability claim. Managed
+admission, enrollment, root resolution and lifecycle remain host responsibilities.
+
+The admitted managed row produces the nullable top-level `devcontainerChild`
+field in the canonical ordinary Machine publication: managed kind/id, exact
+physical controller and observed native user/root/storage. One Protocol owner
+applies that server-derived fact after decoding metadata. The metadata copy is
+enrollment context, not authority: an older client's whole-metadata write can
+erase it without erasing the retained-row relationship. Content-access readiness
+also governs disclosure of this field. It is not a second relationship store.
+Fresh protected enrollment checks the current row and actual child namespace
+before installation or credential delivery. Retained-home rebuild refreshes the
+ordinary daemon metadata through its existing metadata writer.
+
+Project Open resolves the child before accepting a Workspace. Bind-backed Sync
+preparation resolves to the existing physical parent endpoint while preserving
+the child's execution WorkspaceRef; independent child storage stays independent.
+Missing/stale native facts or unavailable bind control refuse preparation instead
+of creating a host/child mirror. The existing same-row intent reconciler owns
+Start, Stop and the reviewed `machines.managed.rebuild` Action. Replacement needs
+fresh enrollment and never retargets an existing Session or erases its history.
+
+In current 0.3 development, creation-scope Stop/Delete policies are ordinary FIN
+triggers placed on the admitted controller, not fields on the managed row. Their
+single managed Action selects the row's current revision when it fires. The
+installed controller operation owns after-idle waiting even after FIN accepts
+the leaf. Its signed Action root retains the assigned FIN Run and exact request;
+Home rechecks the canonical trigger revision, exact admitted workflow recipe
+receipt and source occurrence. Replacing or resealing that stored recipe retires
+the old unused effect; Home does not decrypt it or infer content equivalence.
+Clearing or changing that trigger, unarchiving its source Session, or revoking the admitted
+authority closes the pending effect. A later archive cannot revive the earlier
+occurrence. Native custody rechecks currentness after credential and idle awaits,
+before Stop/Delete IO. A definite pre-IO refusal retires its submitted tuple and
+reopens the drain; an uncertain issued effect retains recovery custody. Reporting
+the exact already-submitted native fact is permitted without renewing effect
+authority. Existing FIN lifecycle, Action operations and Account socket changes
+own cancellation and wake-up; there is no second scope store or watcher.
+This source path requires the requester and controller custodian to be the same
+Account under the owner-only Automation placement contract. On a shared
+controller, creation offers Keep and reports automatic archive Stop/Delete as
+owner-only unavailable before any FIN write; ordinary creation remains usable.
+Requester Manage still permits manual native Stop/Delete. Actual failed or
+unacknowledged own-controller FIN writes remain incomplete rather than being
+reinterpreted as this intentional unavailability. A custodian sign-in does not
+substitute for requester authority.
+
 ### Shared planet presentation (0.3 development)
 
 `@happier-dev/brand/planet` owns the dependency-free planet model: palettes,
@@ -104,6 +563,17 @@ app; it does not own conversation state. The existing iOS Focus activity is
 session-attention delivery. A dedicated Voice Live Activity remains deferred.
 
 ### Local-service Machine summary (0.3 development)
+
+Plugin managed-service lifetime remains at
+`plugins/runtime/invocation/services/managedServicesOwner.ts` and the incumbent
+`managedProcessSupervisor.ts`. An owned endpoint-free process is Running without
+an invented port or HTTP-health claim. Native mode retains its exact resource
+after starter exit and consumes the admitted `projectNativeAdapters` lifecycle's
+phase/readiness/endpoint observation. Definitive stop is authoritative;
+accepted-only stop needs a stopped observation, while unsupported or uncertain
+stop retains custody. Runner transport is not a second native-lifetime owner.
+These contracts do not establish that the Project declaration starter, accepted
+root discovery, requester attribution or shared sessionless previews are complete.
 
 The daemon pushes `daemonState.localServices` through the existing Machine-state
 transport. `LocalServiceMachineSummaryV1` is a small strict presentation union:
@@ -233,6 +703,22 @@ correspondence are retained; an unavailable frozen contract stays unresolved,
 and capturing a result never reopens a terminal parent. Integrated package and
 loaded-runtime validation of this development path remains pending.
 
+HB-4's development causal-loop work is partial, not a completed guarantee.
+The server's `automationTriggerCauseChain.ts` reads retained Run causes, exact
+Workflow turn origins and Session-birth origins before lifecycle trigger-budget
+reservation. A later user turn is not attributed to the Run that created its
+Session. Generic write-origin persistence remains blocked: current database
+cause-arm constraints do not admit the proposed host wrapper around Account
+evidence, and HB-4 has no migration authority. Legacy raw/null envelopes remain
+unchanged. History clearing uses the same walker to retain ancestors referenced
+by actual live Run/turn custody. Signed execution origins use the existing
+Run-lifecycle cause JSON arm; they do not wrap private Account evidence.
+Execution-Run retention/observation and local plugin callback Action provenance
+carry host origin, never event-payload claims. Producer completion and integrated
+validation remain open. Delayed cross-Machine Stop needs an approved durable
+actor-authority contract; external GitHub deliveries need a proven outbound
+correspondence. Neither gap is replaced by a cap or payload-based inference.
+
 Workflow Action leaves validate bound input against the accepted snapshot before
 admission and use the real executor's prepared one-shot invocation. The private
 correspondence retains the Action request id and original input; an Action that
@@ -324,6 +810,50 @@ advancing past nonmatching pages with the server's bound keyset cursor. The
 server never learns E2EE destination content. Definitions and Automation trigger
 sets derive their destinations through the same Protocol walker and authorized
 definition resolver; unresolved references remain explicit.
+
+The 0.3 development UI consumes this same relation for the Session Work tab's
+**Writes here** group. Upcoming rows and the global Work sidebar's **Scheduled**
+group consume `workflow.trigger.list { scope: 'account_all' }`, including
+Account-inline, saved-workflow and Session-scoped sets. The existing trigger
+projection retains `scopeSessionId`; optional leaf names and authored sibling
+ordinals come from the materializer's shared traversal, not a UI walker.
+Concurrent Account trigger reads share pending work while keeping consumer
+cancellation independent. Data remains in the incumbent Automation store.
+
+Habit history uses the shared Run window filtered by `automationId`; last
+results page the shared Account window until the relevant latest Runs are
+known, rather than issuing a request per trigger row. Active destination rows
+reuse R22 and the existing viewport-demanded live map. Neither scheduled
+occurrences nor transcript event order manufacture a Run or step identity.
+Upcoming occurrences open the existing trigger or workflow detail; admitted
+occurrences open their Run. Transcript first display batches exact Run ids and
+invocation references through the same lean `workflow.run.list` owner, including
+host-numbered messages whose private result provenance has not been opened.
+Its optional private provenance sidecar opens only those invocation envelopes
+and derives the visible number through `workflowBlockOrdinalV1` in the frozen
+definition (including frozen nested workflows), never from sibling position or
+event sequence. A host-stamped number takes precedence. Resolved facts merge
+into the existing Account Run/invocation maps; only pending batch reads are
+shared and Account retirement cancels/discards them. Chip selectors read their
+exact title and ordinal, without replacing messages or subscribing the transcript
+list to Run changes. Public snapshots and other-Home transcripts issue no private
+hydration. The Account-change reader retains its lean exact-summary read and
+refreshes only already-hydrated invocation references in the same response;
+neither path pages invocation history or loads full Run detail to decorate messages.
+
+Notify me's quiet-report option composes the existing `onlyWhen` condition
+with a whole reachable text result not equal to `''`. It adds no execution or
+notification delivery path and retains independently authored conditions.
+In the 0.3 development implementation, the coordinator records the actual
+Notify me `onlyWhen` evaluation against the whole text result's physical
+invocation id. The mutable private root retains `resultProvenance`, so a later
+condition does not rewrite a completed result. The authorized list provenance
+sidecar exposes `notificationCondition?: 'matched' | 'suppressed'` on that exact
+invocation fact. A matching consumer wins over a suppressed consumer of the
+same result; absence means unknown, not quiet. This is condition provenance,
+not notification-delivery success. New writes remain strict and retained
+progress reads tolerate extra fields. Transcript rendering can consume this fact;
+it must not infer suppression from empty text, a sentinel or the last step.
 
 Workflow machine start capacity is independent of trigger scope. The incumbent Automation
 worker's active-execution map reserves the existing server-configured budget
@@ -583,6 +1113,13 @@ The same compiler owns the one-shot execution-run lifecycle commands (`list`,
 Their friendly `--agent`, `--intent`, permission, retention, class, and I/O
 flags bind into the canonical `execution.run.*` Action schemas; there is no
 separate CLI-only `--backend` interpretation or hand-written lifecycle parser.
+In current development, `start`, `get`, `wait`, and `stop` declare `--machine`
+as a friendly spelling of the existing exact `--machine-id` transport selector.
+The compiler projects the same transport flag list into parsing, help, and
+completion; neither spelling becomes strict Action input. `start --cwd` without
+an authored Session selects detached scope. An explicitly authored Session in
+canonical JSON remains selected when `--cwd` is an overlay, and explicit
+`sessionId: null` remains detached rather than borrowing an active Session.
 The multi-step `session run action` workflow remains dedicated because it
 selects and invokes another Action dynamically.
 
@@ -602,17 +1139,47 @@ in every block dialect; dynamic bindings are permitted in `env`, not shell
 syntax. The CLI host routes commands through the existing Machine BASH RPC in
 the resolved step workspace, inheriting the Machine environment and passing
 the containing cancellation signal. Explicit zero disables BASH's incumbent
-legacy caller deadline; the new Action adds none. Both exec arms preserve output
-without Node's incidental shell-buffer cap.
+legacy caller deadline; the new Action adds none. Workflow callers opt into
+suffix capture at the same process owner, using the existing complete stored
+envelope ceiling rather than a new output quota. Durable fact admission fits
+command tails to the actual plain/E2EE envelope, including input, metadata and
+duplicated cancellation output; `stdoutTruncated`/`stderrTruncated` expose lost
+prefixes. Small output is unchanged. Direct standalone Action calls keep their
+incumbent response owner; Workflow starts and reads through Actions/MCP see the
+same persisted tail. Integrated verification of this correction remains pending.
 
 Webhook Actions and Activity notifications share destination admission and
 pinned POST in `sendWebhookActivityNotification.ts`. JSON Actions collect the
 response without redirects and fail on status 300 or higher; notifications
-retain their existing delivery deadline and signing behavior. Workflow Action
+retain their existing delivery deadline and signing behavior. Authored Actions
+accept HTTP or HTTPS, while automatic notifications still require HTTPS for
+public destinations. Both retain the same SSRF and DNS-pinning decisions. Workflow Action
 request identities are `run/logical-invocation/attempt`, while the Session input
 identity remains separate. Definitive JSON Action failure details are sealed
 as invocation output without changing the failed lifecycle; a lost or malformed
 post-effect acknowledgement remains uncertain rather than authorizing replay.
+An authoritative Stop retains a known immediate effect response and closes the
+leaf as cancelled; the durable CAS owner merges only the exact admitted Action
+identity into refreshed cancellation custody, without retrying admission.
+
+Development authoring's `runWhen` is owned by the canonical Workflow block
+schema and coordinator's ordered-list execution. Omission means success;
+failure inspects the preceding row's persisted lifecycle in the same sequence.
+Ordinary success follows the persisted frontier, and always needs no predecessor
+read. Only definitive, collectable failure can enter a handler. Holds,
+cancellation, runtime interruption and uncertain outcomes retain their owning
+control flow. Failed rows and the completed-with-failures aggregate remain
+visible after a handler succeeds. Loop evaluators must make a decision every
+round and do not admit conditional skipping.
+
+The editor's in-place Test run admits `source: saved` with the exact reviewed
+Artifact revision, not the unsaved editor document. Its results use the existing
+`workflow.run.invocations.list` Action's opt-in `includeContent` page, incumbent
+mode-aware progress opening and Account-scoped invocation fact store. The
+default page remains an index-only read. No new activity stream or per-card
+detail requests are introduced; exact invocation reads still own recovery
+decisions. Card timing is the recorded creation-to-last-update interval,
+including waiting, not a fabricated execution-only duration.
 
 The Agent/MCP catalog derives the direct `workflow_run_start`,
 `workflow_run_get`, `workflow_run_wait`, and `workflow_run_cancel` tools from
@@ -1020,6 +1587,24 @@ inconsistent Home identities and existing advisory profiles cannot authorize
 pairing. Stack seeding does not manufacture a descriptor or copy routing trust
 from another Home.
 
+Managed enrollment in 0.3 development extends this normal terminal ceremony.
+The admitted Home, controller, intent revision, request and retained resource
+are carried through protected guest stdin into normal Machine registration;
+the server validates and links the managed row in that registration transaction.
+The guest receives the ordinary terminal bearer (`terminal` kind,
+`account_automation` authority), not a resource-restricted guest credential.
+The existing pairing task asks for Account-wide automation approval. Managed
+enrollment persists the credential only after registration succeeds; ordinary
+pairing retains its existing path. Prepared SSH/native tasks share the live
+system-task runner, so existing setup status/respond/cancel consumers retain
+prompt and cancellation custody without a second installer or task controller.
+SSH retains its single-process streaming ceremony. Native exec needs only a
+buffered process result: finite normal `auth request` and `auth wait` share the
+existing protected pending state. The request returns a non-secret profile id;
+wait selects that exact profile without focusing it until successful enrollment.
+Both lifetimes use the credential owner's same managed registration-before-save
+policy and emit only non-secret bootstrap completion facts.
+
 Stack's named-profile endpoint reconciliation refreshes an existing descriptor
 through the requested HTTPS or loopback carrier using that profile's credential.
 The authenticated Home publication supplies routing facts; the existing descriptor
@@ -1238,6 +1823,15 @@ the ordinary shipped-bit shape in [feature-gating.md](./feature-gating.md). It i
 unreleased, not off: the composed Runner, broker and native-host journeys are
 release checks, so this is not an availability claim.
 
+Current development Session detail readers keep the negotiated
+`accessProjectionVersion=1` response strict. A rejected envelope or current
+projection reports `session_detail_invalid_response` with the rejected schema
+and structural issue paths/codes, never payload values. A missing negotiated
+detail route reports `session_detail_projection_unavailable` with HTTP 404,
+not a schema rejection or a legacy-list fallback. The ordinary JSON command
+error mapper retains the diagnostic message; these local transport codes do
+not extend the public Session-control error union.
+
 The metadata authorities are:
 
 - `{ kind: 'owner', credentials }` — the ordinary CLI/daemon composition. It
@@ -1309,12 +1903,53 @@ owner, and closing them or an Agent attachment never stops that process.
 Closing an owned shell stops its PTY before removing the view; hiding retains it.
 
 Package-script launch intent is resolved after directory admission by the existing
-Local services run-target owner. The daemon injects the selected package manager's
-`run` command into the ordinary shell PTY; it neither executes display previews
-nor spawns a host package manager directly. Local services Start still refuses
-package scripts. Terminal URL discovery reuses the existing output detector and
+Local services run-target owner and admitted through the finite Project Action
+owner. Its reviewed native executable, argv, cwd and environment reach the same
+PTY manager directly; display previews are never executable authority. Local
+services Start still refuses package scripts. Terminal URL discovery reuses the existing output detector and
 `terminal_url` inventory. These are development-source contracts; the redesigned
 strip, list, Jump and phone controls require the terminal UI integration.
+
+Finite Project commands use the same `TerminalPtySessionManager` with a direct
+executable/argv/cwd and the final native environment. Admission acquires a
+`holdUntilExit` on that terminal; idle reap and capacity replacement skip it.
+Capacity replacement considers only terminals with the admitting requester's
+custody and returns the existing `terminal_busy` refusal when none is eligible.
+`waitForExit` observes real exit, including nonzero, rather than shell readiness;
+abandoning an observer leaves the process running. `requestStop` delegates to
+the existing cross-platform process-tree owner and keeps retained output and
+the hold while stop is requested or unconfirmed. A root exit after an
+unconfirmed descendant stop cannot settle the operation or free that capacity.
+This manager contract is current development source. Script/setup/ad-hoc
+ingress, shared requester authorization and the composed app journey must
+consume and verify it before their integration is considered complete.
+
+Standalone Project shells use an exact accepted `WorkspaceAddressV1`, not a fake
+Session. The Machine RPC owner resolves the requester's current Account Project
+rows and privately stamps Home, requester, Machine installation and accepted
+checkout onto the actual PTY. Logical keys are scoped by that custody; list,
+read, input, resize, ACK, restart and close recheck it before disclosure or effect.
+Project reattachment and owned-view close use the list request's qualified
+Workspace address; a copied logical key and the same physical root cannot
+select a shell belonging to a different accepted Project association. Unqualified
+listing remains the existing current-authorized Session/Jump census.
+Restricted Runner Session terminals retain the existing exact Session receiver
+authority. Ordinary own-Account Session shells freshly read the authenticated
+owner projection and private root, using the canonical Machine-locality and
+replacement proof rather than requiring a Project catalog association. Restart
+and close observe process exit after requesting the
+existing process-tree stop; detaching a borrowed view does not stop its process.
+
+This is development-source behavior, not loaded-runtime certification. Foreign
+Project shells remain unavailable where the transport supplies Machine admission
+without requester Account Project-row authority and E2EE material. The daemon
+does not substitute custodian credentials. Retained predecessor terminals without
+private requester custody have unknown attribution and cannot be selected for
+requester-revocation cleanup by guessed paths or logical keys. A freshly proved
+Session owner can reuse an existing exact Session/root association; that does not
+infer standalone predecessor attribution. Revocation closes stamped interactive
+shells even when presented in a Session, while held finite work remains with its
+existing finite cancellation owner.
 
 The development permission-mode controller verifies the current composer footer
 before cycling modes. A clipped footer is unknown, rather than evidence of default
@@ -1802,6 +2437,20 @@ sequenceDiagram
 
 The CLI talks to this server via `controlClient.ts`, using a port stored in `daemon.state.json`.
 
+In 0.3 development, ordinary CLI Action dispatch uses that local control path only
+when the selected live publication matches the captured requester's Account and
+target Machine. Startup publishes the non-secret Account id from its captured
+connection credentials alongside the Machine and runtime ids; Machine rollover
+and heartbeats preserve that Account fact. A current credential file is not proof
+of which Account an already-running daemon serves. Legacy publications without
+an Account id require Home's positive own-target check before using the incumbent
+local path. Foreign targets retain Home admission and explicit private-custody
+consent. Original terminal requests through this requester facade and explicit
+automation contexts keep their original bearer, kind, epoch and automation ceiling
+through Home's existing Account/Session owners or Machine carrier, rather than
+borrowing a local daemon's Account connection. The configured interactive CLI
+terminal-present-user policy remains unchanged outside that facade.
+
 CLI Stop delegates acknowledgement expiry to the relay's existing finite
 forwarding deadline rather than imposing the generic machine-RPC timer. Fork
 cleanup uses the same Stop contract. Local `/stop-session` requests follow the
@@ -2148,7 +2797,30 @@ requires UI, daemon and server to move together; no Machine alias for
 
 ## Runtime-backed Stack and daemon artifacts
 
-The CLI daemon is one component of the named-stack runtime format; it is not a second runtime owner. Source validation and source development use the checkout's workspace outputs; those workspace package outputs are distinct from managed runtime artifacts. A managed runtime build publishes daemon code and, when its inputs require it, an immutable daemon-support artifact for the CLI runtime dependencies, tools, and sidecars. The daemon manifest owns that optional support reference.
+The CLI daemon is one component of the named-stack runtime format; it is not a
+second runtime owner. In current 0.3 development, source validation and default
+source QA resolve first-party source through `happier-source`. Native daemon
+construction uses the same CLI/plugin/Agent entry authority and one esbuild graph,
+with shared physical ESM chunks. Bun compiles a launcher that loads
+`package-dist/index.mjs` beside its executable, preserving the host/plugin shared
+module graph. It does not prepare a CLI dist snapshot or run
+pkgroll first. First-party JavaScript, JavaScript sidecars and plugin resources/UI
+package files belong to code. Target-native external dependencies, tools and Go
+payloads remain independently reusable daemon support, with publication metadata in
+`.project`; support does not own `scripts`. The daemon manifest owns that support
+reference.
+
+Public npm/SDK publication is separate: CommonJS/ESM exports, checked declarations
+and their package-build admission/locks remain required. Native emission is not a
+typecheck result. See [binary runtime](binary-runtime.md#internal-workspace-packages).
+
+The shared workspace build-mode owner also supplies compiler arguments to both
+the generic package emitter and cli-common's atomic compiler. Remaining
+`source-dev`/`qa-runtime` package consumers emit incrementally from captured inputs
+without semantic checking. Output records identify that capture, while later source
+edits demand the next build. Ordinary builds and public publication retain strict checking and
+last-green replacement rules. Native source bundles do not consume these dist
+outputs, and public typechecking remains separate.
 
 In current development source, explicit artifact builds record requested components' preparation and terminal
 outcomes through the producer's existing `runtimePublication` state writer. The launcher delegates artifact
@@ -2158,9 +2830,25 @@ goes to stderr; building an artifact alone does not certify a new selected or lo
 
 Managed server code follows the same boundary. Its generated Prisma/native runtime support is owned by the server component-artifact builder, while static web UI remains a separate selected runtime component. Stack launch supplies the selected UI path through `HAPPIER_SERVER_UI_DIR`; the server artifact does not decide which UI provider to use. Managed support references and snapshots are development/QA inputs only. Release/self-host packaging remains the existing per-target direct boundary that discovers and embeds each target's complete self-contained code/web/support payload; it does not consume or flatten a host-target managed snapshot.
 
-Runtime snapshots are manifests plus managed references to canonical producer artifact payloads. A consumer selects the producer's current valid snapshot and retains only its own mutable state, process lifecycle, and selection pointer; it does not build or copy a payload. Snapshot validation checks component support references, and retention protects support artifacts transitively while a retained snapshot or external consumer selection needs them. Selecting a newer snapshot is non-disruptive: `selectedSnapshotId` can differ from `loadedSnapshotId` until an explicit restart, which is the proof boundary for newly loaded server or daemon bytes.
+Explicit built web artifacts and source QA share the source Plugin UI preparation
+owner. The SDK compiler and existing inventory generator produce private inputs;
+Metro consumes that inventory for the ordinary Expo browser/asset export. The web
+artifact owner retains project-local export staging and atomic final publication,
+without workspace dist or declaration preparation. Ordinary Expo and public npm
+preparation retain their separate package-output inputs.
+Metro reads explicit authored workspace exports, preferring nested `browser` or
+`react-native` source targets before the portable `happier-source` target. It
+preserves platform implementations without inferring source paths from dist.
 
-Generated bundled-plugin projections remain a source-tree publication concern. The projection publisher reads final serialized plugin artifacts and facts, prevalidates the complete small UI/Protocol projection set, stages changed leaves, and commits them through the existing mounted-tree transaction. Known-invalid input is rejected before replacement; a caught commit failure restores the touched tree to last green, and the next canonical preflight repairs an interrupted partial replacement. This is an observable-failure/next-preflight contract, not a generation pointer, journal, or power-loss atomicity guarantee across package-owned source trees.
+Runtime snapshots are manifests plus managed references to canonical producer artifact payloads. A consumer selects a valid target-compatible published snapshot and retains only its own mutable state, process lifecycle, and selection pointer; it does not build or copy a payload. Snapshot validation checks component support references, and retention protects support artifacts transitively while a retained snapshot or external consumer selection needs them. Selecting a newer snapshot is non-disruptive: `selectedSnapshotId` can differ from `loadedSnapshotId` until an explicit restart, which is the proof boundary for newly loaded server or daemon bytes.
+
+Generated bundled-plugin projections remain a source-tree publication concern. The projection publisher derives semantic artifacts and facts from authored plugin source, prevalidates the complete small UI/Protocol projection set, stages changed leaves, and commits them through the existing mounted-tree transaction. Known-invalid input is rejected before replacement; a caught commit failure restores the touched tree to last green, and the next canonical preflight repairs an interrupted partial replacement. This is an observable-failure/next-preflight contract, not a generation pointer, journal, or power-loss atomicity guarantee across package-owned source trees.
+
+Ordinary projection writes/checks consume authored source through the canonical
+generator. Source validation uses `--mode check --scope projections`, without a
+generator completion cache, private compiler scheduler or prepared Agent-facts
+child. Public/npm preparation explicitly requests `--package-artifacts`; its
+installed runtime bytes and strict declarations retain the package-build owner.
 
 The finite-task graph uses Turbo only as the outer dependency scheduler and read-only validation cache beneath `hstack-exec`. It is pinned through the current repository package manager; the later pnpm migration translates that ordinary development dependency rather than owning or delaying the task graph. Concurrency is set to 50% of the selected machine's logical processors, so a large development machine can use its capacity without imposing the same fixed process count on smaller CI or remote executors. Compiler-heavy inner schedulers remain separately bounded by their own memory profile.
 
@@ -2174,15 +2862,23 @@ The shared TypeScript dist builder excludes test-only roots, including `.test-d.
 
 Generated-contract validation and mutable compiler-input preparation are separate finite facts. For example, the Plugin SDK Action-map and external SDK Action-wrapper checks are cacheable exact-input tasks, while synchronizing the physical declaration graph consumed by the Plugin SDK remains non-cacheable. This prevents an expensive semantic generator check from being repeated merely because declaration bytes must be refreshed through their canonical owner.
 
-Incrementality is deliberately owned at the layer that can validate it. Canonical package builds retain compiler worktrees, build-info state, currentness fingerprints, and last-green `dist` outputs behind the workspace build owner. UI and Plugin UI source checks use their TypeScript build-info files; the remaining cold source/API programs use Turbo's exact-result cache rather than a long-lived compiler daemon. Plugin projection persists canonical serialized per-Plugin artifacts and reruns only affected Plugin checks before the aggregate comparison. A cache miss may therefore still construct a large TypeScript graph, but an unchanged candidate does not need to repeat it in the next local or CI invocation.
+Incrementality is deliberately owned at the layer that can validate it. Canonical package builds retain compiler worktrees, build-info state, currentness fingerprints, and last-green `dist` outputs behind the workspace build owner. UI and Plugin UI source checks use their TypeScript build-info files; the remaining cold source/API programs use Turbo's exact-result cache rather than a long-lived compiler daemon. Targeted Plugin projection checks and the aggregate comparison are separate source validations; exact-result caching remains with the outer task owner. A cache miss may therefore still construct a large TypeScript graph, but an unchanged candidate does not need to repeat it in the next local or CI invocation.
 
 First-party plugin packages are discovered through the workspace glob and canonical bundled-plugin membership owner rather than an enumerated Turbo list. The canonical first-party template supplies the finite build/projection scripts, so a newly scaffolded package joins the same graph after the normal membership projection. First-party plugin build and projection remain separate tasks: the build always passes through the package owner, the read-only targeted projection check may be cached, and one non-cacheable aggregate check consumes the serialized artifacts. The workspace-derived Plugin test/typecheck runner uses a bounded two-package queue and still attempts every discovered package before reporting failures. The public `happier plugins dev` command does not depend on Turbo: it registers the trusted source with the daemon and renders daemon-owned status. The daemon owns author-source watching, candidate preparation, reload, and diagnostics in standalone plugin repositories.
 
-Live CLI dependency preparation also isolates Plugin build failures without serializing every healthy Plugin behind them: shared non-Plugin prerequisites build first, then up to two independent Plugin packages build concurrently through the same canonical workspace owner. Artifact publication keeps its fail-closed all-included-Plugins contract and delegates the complete Plugin set to that owner's own dependency-aware scheduler.
+Public CLI package preparation also isolates Plugin build failures without serializing every healthy Plugin behind them: shared non-Plugin prerequisites build first, then up to two independent Plugin packages build concurrently through the same canonical workspace owner. Artifact publication keeps its fail-closed all-included-Plugins contract and delegates the complete Plugin set to that owner's own dependency-aware scheduler.
 
 Broad unit, integration, database, and runtime suites are not automatically parallelized by the finite graph. Many launch their own Vitest workers or share databases, ports, Stack processes, simulators, or Docker resources. They stay with their existing owner until a focused pilot proves isolation and measures end-to-end benefit; adding another outer fan-out on top of their internal concurrency would otherwise trade a visible serial command for less predictable process and memory contention.
 
-The source stack may start from a valid last-green runtime while changed source outputs refresh in the background. Expo also requires its target-owned bundled Plugin UI inventory to exist before adopting last-green workspace outputs. A fresh Expo host awaits canonical UI preparation before Metro starts; a preparation failure surfaces at startup. These ignored runtime artifacts are generated on each host, rather than synchronized from the primary checkout. For the checkout-derived repository producer, `dev.mjs` schedules successful server/daemon reloads through the canonical runtime publisher, with one publication in flight plus one trailing identity recomputation; a full restart reconciles web, server, and daemon identities. Publication failure keeps the current snapshot selected and source services unchanged, and status is written through existing runtime state without restarting consumers. The detached Stack owner in `apps/stack/scripts/stack/run_script_with_stack_env.mjs` owns services and logs; the TUI attaches, displays the same state, and sends explicit controls. An unexpected TUI exit detaches from a healthy owner, while explicit quit/restart/stop retains the command's lifecycle semantics.
+Default source QA uses a retained source bundle for the selected source/tool
+fingerprint and does not request native artifact publication. An explicit restart
+prepares current source; running code remains unchanged between restarts. Source
+development reloads remain with their service owners rather than advancing a
+managed runtime publication flight or selecting another stack's snapshot.
+The detached Stack owner in `apps/stack/scripts/stack/run_script_with_stack_env.mjs`
+owns services and logs; the TUI attaches, displays the same state, and sends explicit
+controls. An unexpected TUI exit detaches from a healthy owner, while explicit
+quit/restart/stop retains the command's lifecycle semantics.
 
 For development services placed on a remote target, the target supervisor owns the worker and its independent SSH tunnel. Worker recovery retains a healthy tunnel and rechecks its lifetime at dispatch, replacing a tunnel that exited during backoff or retirement. Remote Expo readiness reports a degraded service at the existing readiness deadline, including with an attended TUI, and continues readiness recovery through the supervisor. Standalone attended Metro waits retain their cancellation-controlled checkpoints. An Expo heap failure is handled separately by the existing Expo process restart policy; it does not select a different host or start a local duplicate.
 
@@ -2191,6 +2887,8 @@ Remote dependency bootstrap installs tools without general workspace lifecycle s
 In current 0.3 development, a dependency writer stops verified managed Metro consumers before changing their shared tree. Final Metro launch and existing PID-state publication acquire the same install lock; the existing Expo supervisor restarts only after complete dependency admission is available. The UI verifier prevents unchanged warm preparation from stopping a healthy Metro. A legacy running supervisor without this guarded restart capability causes dependency mutation to fail closed with a restart-required error; changing source does not retrofit an already-loaded supervisor. No new PID registry or suspended-process custody is introduced. Last-green launch requires a previously admitted coherent installed tree, not equality with newer source inputs: a successful no-install repair retains the old admission inputs, while the normal installer still sees those newer inputs as stale. Failed preparation never admits a replacement against a partial tree.
 
 Remote validation bootstrap has the target's explicit package-manager cache context even when it does not inherit the running Stack environment. Both dispatchers provide `cache=<targetHome>/cache`; consumer discovery uses that target home through the same `dev_targets/stack_paths.mjs` owner as managed worker state, including its `stack-state` directory. It must not search only the remote account's default local Stack home. Planned dependency stops preserve the existing crash-restart budget, while a crash before successful PID publication remains an ordinary startup failure; user shutdown remains authoritative.
+
+In current source development, the remote Stack supervisor retires the prior target-owned Stack before dependency bootstrap. Its retirement probe includes live recorded Expo processes even when their runner's runtime state has disappeared; the target's canonical Stack stop still verifies process identity and ownership before signaling them. Source and controlled supervisors both invoke target-owned Stack stop before closing their worker transports. If bootstrap still finds a live Metro without a verified dependency-safe restart owner, the supervisor reports a failed target with a one-time recovery instruction and does not retry that ownership refusal. Stop the owning Stack on that target, verify its recorded Expo has exited, then start again; source changes alone cannot retrofit a live legacy supervisor.
 
 In 0.3 web development, `apps/ui/metro.config.js` rewrites development bundle, source-map and HMR entry requests to `lazy=false`. Dynamic imports are included in the initial graph and still resolve asynchronously; `inlineRequires` defers module evaluation. This prevents Metro from retaining overlapping transitive graphs for each large optional presentation entry. Native development and production lazy bundling retain Expo's existing behavior. Web Babel uses Expo's existing `import.meta` transform so optional dependencies remain valid in Metro's script bundles; the Metro cache-version bump invalidates older transforms on restart. App and vendor source maps remain intact. A running Metro must be restarted to load this configuration change.
 
