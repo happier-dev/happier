@@ -149,6 +149,50 @@ describe('managed composer badges', () => {
     expect(choices).toEqual(['stop']);
   });
 
+  it('after a failed Set up offers Retry setup, Continue without setup and Delete, and no archive choice (D53)', async () => {
+    const { buildManagedProgressStatusBadge } =
+      await import('./managedComposerBadges');
+    const onRetrySetup = vi.fn();
+    const onContinueWithoutSetup = vi.fn();
+    const badge = buildManagedProgressStatusBadge({
+      machineName: 'mac-vm-2',
+      mark: null,
+      recipe: 'Mac desktop',
+      stages: [
+        ...stages.map((stage) => ({ ...stage, status: 'done' as const })),
+        { id: 'setup', label: 'Set up', status: 'failed' as const },
+      ],
+      failed: true,
+      label: 'Set up · Failed',
+      message: 'Your message waits here.',
+      archiveChoice: { value: 'keep', onChange: () => undefined },
+      onRetrySetup,
+      onContinueWithoutSetup,
+      onDeleteMachine: vi.fn(),
+    });
+    const screen = await renderScreen(
+      <>
+        {badge.renderPopover?.({
+          open: true,
+          anchorRef: React.createRef<unknown>(),
+          onRequestClose: () => undefined,
+        })}
+      </>,
+    );
+    expect(screen.findByTestId('managed-machine-progress-delete')).not.toBeNull();
+    expect(screen.findByTestId('managed-machine-progress-retry')).toBeNull();
+    expect(
+      screen.findAll((node) => node.props?.testIDPrefix === 'managed-machine-progress-archive'),
+    ).toHaveLength(0);
+    await act(async () => {
+      for (const testID of ['managed-machine-progress-retry-setup', 'managed-machine-progress-skip-setup']) {
+        screen.findAll((node) => node.props?.testID === testID && typeof node.props.onPress === 'function')[0]!.props.onPress();
+      }
+    });
+    expect(onRetrySetup).toHaveBeenCalledTimes(1);
+    expect(onContinueWithoutSetup).toHaveBeenCalledTimes(1);
+  });
+
   it('says whose machine a requester session runs on and how the sign-in lands', async () => {
     const { buildRequesterDisclosureStatusBadge } =
       await import('./managedComposerBadges');

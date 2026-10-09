@@ -143,19 +143,6 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
             : t('managedRetention.pageDescription')
         }
       />
-      <ItemGroup>
-        <SettingRow
-          testID="settings.machineDefaults.creationEnabled"
-          setting={MACHINES_DEFAULTS_SETTINGS.settings.creationEnabled}
-          rightElement={
-            <Switch
-              testID="settings.machineDefaults.creationEnabled.switch"
-              value={creationEnabled}
-              onValueChange={setCreationEnabled}
-            />
-          }
-        />
-      </ItemGroup>
       <ItemGroup
         title={t('managedRetention.noWorkTitle')}
         description={
@@ -176,6 +163,20 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
             />
           ),
         )}
+      </ItemGroup>
+      {/* A rare, consequential switch: after the policies people tune, as the lab's last section. */}
+      <ItemGroup title={t('managedMachines.creation.sectionTitle')}>
+        <SettingRow
+          testID="settings.machineDefaults.creationEnabled"
+          setting={MACHINES_DEFAULTS_SETTINGS.settings.creationEnabled}
+          rightElement={
+            <Switch
+              testID="settings.machineDefaults.creationEnabled.switch"
+              value={creationEnabled}
+              onValueChange={setCreationEnabled}
+            />
+          }
+        />
       </ItemGroup>
     </ItemList>
   );

@@ -51,6 +51,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { MachineAgentsSection } from '@/components/machines/agents/MachineAgentsSection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
 import { ManagedEnrolledMachineSections } from '@/components/settings/machines/managed/ManagedMachineSections';
+import { showMachineEnvironmentApplySheet } from '@/components/settings/machines/managed/MachineEnvironmentApplySheet';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
 import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
 import { MachineProjectTerminalsSection } from '@/components/machines/MachineProjectTerminalsSection';
@@ -840,8 +841,15 @@ export default function MachineDetailScreen() {
             loading: isRenamingMachine,
             onSelect: handleRenameMachine,
         };
+        // D53: apply a preset's tools and setup script to this machine; the Action itself asks first.
+        const environmentApply: PageHeaderMenuAction[] = machineIsOnline && machineServerId ? [{
+            id: 'environment-apply',
+            testID: 'machine-detail-menu-environment-apply',
+            title: t('machinePresets.environment.apply'),
+            onSelect: () => showMachineEnvironmentApplySheet({ serverId: machineServerId, machineId: machine.id, machineName }),
+        }] : [];
         if (machine.replacedByMachineId) {
-            return [rename, {
+            return [rename, ...environmentApply, {
                 id: 'undo-replacement',
                 testID: 'machine-replacement-repair-undo',
                 title: t('machine.replacementRepair.undo'),
@@ -850,7 +858,7 @@ export default function MachineDetailScreen() {
             }];
         }
         if (replacementCandidates.length > 0) {
-            return [rename, {
+            return [rename, ...environmentApply, {
                 id: 'replace',
                 testID: 'machine-replacement-repair-open',
                 title: t('machine.replacementRepair.replaceWithMachine'),
@@ -858,8 +866,11 @@ export default function MachineDetailScreen() {
                 onSelect: handleOpenReplacementPicker,
             }];
         }
-        return [rename];
+        return [rename, ...environmentApply];
     }, [
+        machineIsOnline,
+        machineName,
+        machineServerId,
         handleClearReplacement,
         handleOpenReplacementPicker,
         handleRenameMachine,

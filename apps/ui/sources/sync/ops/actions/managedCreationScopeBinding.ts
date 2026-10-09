@@ -5,7 +5,7 @@ import { ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerListResultV1Schema,
-    WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+    WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
@@ -23,6 +23,49 @@ export type ManagedCreationScopeBindingResult = Readonly<{ kind: 'kept' }>
     | Readonly<{ kind: 'bound'; binding: ManagedCreationScopeBinding }>
     | Readonly<{ kind: 'unavailable'; availability: ManagedMachineArchiveChoiceAvailability }>
     | Readonly<{ kind: 'incomplete'; code: string; artifactId?: string }>;
+
+/**
+ * The one recognizer of a managed creation-scope rule inside FIN's trigger sets: an inline Stop/Delete
+ * of this exact managed row, with its single enabled session-archived or run-terminal trigger. The
+ * binder below writes through it and the Machine page reads through it, so both agree on what counts.
+ */
+function matchManagedCreationScopeTrigger(set: WorkflowTriggerSetV1, machine: Readonly<{ homeId: string; id: string }>) {
+    const managed = set.target && readManagedMachineTriggerAction(set.target);
+    if (!managed || managed.input.homeId !== machine.homeId || managed.input.managedId !== machine.id
+        || set.triggers.length !== 1) return null;
+    const trigger = set.triggers[0]!;
+    if (!trigger.enabled) return null;
+    const source: ManagedCreationScopeSource | null = trigger.kind === 'sessionLifecycle' && trigger.events.includes('sessionArchived')
+        ? { kind: 'session', sessionId: trigger.sourceSessionId }
+        : trigger.kind === 'runLifecycle' && trigger.condition === 'terminal' ? { kind: 'run', source: trigger.source } : null;
+    return source ? { managed, trigger, source } : null;
+}
+
+/** What a created machine's page shows about its scope rule; FIN's trigger stays the only editor. */
+export type ManagedCreationScopeRule = Readonly<{
+    binding: ManagedCreationScopeBinding;
+    effect: 'stop' | 'delete';
+    afterMs?: number;
+    /** The source ended and the rule's run is waiting for work on the machine to finish. */
+    waiting: boolean;
+}>;
+
+/** Reads the creation-scope rule FIN holds for this managed row, if the owner chose Stop or Delete. */
+export function readManagedCreationScopeRule(sets: readonly WorkflowTriggerSetV1[],
+    machine: Readonly<{ homeId: string; id: string }>): ManagedCreationScopeRule | null {
+    for (const set of sets) {
+        if (!set.enabled) continue;
+        const match = matchManagedCreationScopeTrigger(set, machine);
+        if (!match) continue;
+        const status = 'status' in match.trigger ? match.trigger.status : null;
+        const afterMs = 'afterMs' in match.managed.input ? match.managed.input.afterMs : undefined;
+        return { binding: { automationId: set.automationId, triggerId: match.trigger.id, source: match.source },
+            effect: match.managed.actionId === 'machines.managed.delete' ? 'delete' : 'stop',
+            ...(afterMs === undefined ? {} : { afterMs }),
+            waiting: status?.state === 'triggered' || status?.state === 'running' };
+    }
+    return null;
+}
 
 /** After real creation acceptance, FIN alone stores and executes the selected scope rule. */
 export async function bindNewManagedMachineCreationScope(input: Readonly<{
@@ -104,13 +147,9 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         const project = { machineId: machine.controller.machineId, directory: '~' };
         const common = { project, target: { kind: 'inline' as const, definition }, executionTarget: { kind: 'detached_run' as const } };
         for (const set of sets) {
-            const managed = set.target && readManagedMachineTriggerAction(set.target);
-            if (!managed || managed.input.homeId !== machine.homeId || managed.input.managedId !== machine.id
-                || set.triggers.length !== 1) continue;
-            const existing = set.triggers.find(trigger => trigger.enabled && (input.source.kind === 'session'
-                ? trigger.kind === 'sessionLifecycle' && trigger.sourceSessionId === input.source.sessionId && trigger.events.includes('sessionArchived')
-                : trigger.kind === 'runLifecycle' && trigger.condition === 'terminal' && sameStrictJsonValue(trigger.source, input.source.source)));
-            if (!existing) continue;
+            const match = matchManagedCreationScopeTrigger(set, machine);
+            if (!match || !sameStrictJsonValue(match.source, input.source)) continue;
+            const existing = match.trigger;
             if (sameStrictJsonValue(set.target, common.target) && set.project?.machineId === machine.controller.machineId && set.enabled) {
                 return { kind: 'bound', binding: { automationId: set.automationId, triggerId: existing.id, source: input.source } };
             }

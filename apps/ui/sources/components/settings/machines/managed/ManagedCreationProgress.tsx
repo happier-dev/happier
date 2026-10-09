@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -11,20 +12,34 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from './ManagedMachineStateRow';
-import { canRetryManagedInstallation, currentManagedCreationOperation, managedCreationState } from './managedCreationPresentation';
+import { canRetryManagedInstallation, currentManagedCreationOperation, managedCreationSetup, managedCreationState } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
-    operation?: ActionOperationProjection | null }>) {
+    operation?: ActionOperationProjection | null;
+    /** D53: a failed Set up recovers on this same machine, or is skipped; never re-acquired. */
+    setupRecovery?: Readonly<{ retry?: () => void; skip?: () => void }> }>) {
     const { theme } = useUnistyles();
     const { machine } = props;
     const state = managedCreationState(machine);
     const awaitingConnection = !machine.enrolledMachineId || state.kind !== 'resourceReady';
     const operation = currentManagedCreationOperation(machine, props.operation);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
+    const setup = managedCreationSetup(machine);
     return <>
+        {setup?.state === 'failed' ? <ItemGroup>
+            <Item title={t('managedMachines.creation.setupFailed', { name: machine.launch.name })} titleLines={0}
+                mode="info" showChevron={false}
+                testID="managed-machine.setup" accessoryLayout="adaptive"
+                rightElement={props.setupRecovery?.retry || props.setupRecovery?.skip ? <View style={setupActions}>
+                    {props.setupRecovery.skip ? <RoundButton title={t('managedMachines.creation.skipSetup')} display="inverted" size="small"
+                        testID="managed-machine.setup-skip" onPress={props.setupRecovery.skip} /> : null}
+                    {props.setupRecovery.retry ? <RoundButton title={t('managedMachines.creation.retrySetup')} display="secondary" size="small"
+                        testID="managed-machine.setup-retry" onPress={props.setupRecovery.retry} /> : null}
+                </View> : undefined} />
+        </ItemGroup> : null}
         {operation && status ? <ItemGroup>
             <Item title={machine.launch.name} subtitle={describeActionOperationStatusLabel(status.label)}
                 mode="info" showChevron={false} testID="managed-machine.installation"
@@ -53,3 +68,5 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         </ItemGroup> : null}
     </>;
 }
+
+const setupActions: ViewStyle = { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' };

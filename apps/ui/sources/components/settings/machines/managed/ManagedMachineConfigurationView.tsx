@@ -39,7 +39,8 @@ import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins
 import { createMachinePresetCollectionClient } from './machinePresetCollectionClient';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedMachineStateRow } from './ManagedMachineStateRow';
-import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { MachineEnvironmentSection } from './MachineEnvironmentSection';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice,
@@ -48,7 +49,7 @@ import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, sele
 import { describeRetention, retentionCategoryTitle } from './managedRetentionPresentation';
 import { formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup } from './ManagedChoiceSections';
-import { formatByteSize } from '@/utils/files/formatByteSize';
+import { formatByteCapacity } from '@/utils/files/formatByteSize';
 import { managedConfiguratorDimensionChoices, managedConfiguratorDimensionSelection, selectManagedConfiguratorDimension } from './managedConfiguratorModel';
 import { createManagedMachineSelectionDraft, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -449,8 +450,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     disabled={!catalogController || !catalogProvisioner || busy} onPress={() => { if (prerequisite.repairAction) void repair(prerequisite.repairAction); }} />;
             })}
         </ItemGroup> : null}
-        {draft ? <ManagedConfiguratorNativeChoices draft={draft} localized={localized} compact={compact} disabled={!catalogProvisioner || !catalogController || busy || !!preset && !props.presetOnly}
+        {draft ? <ManagedConfiguratorNativeChoices draft={draft} localized={localized} compact={compact} computer={controllerName} disabled={!catalogProvisioner || !catalogController || busy || !!preset && !props.presetOnly}
             onChange={(dimension, id) => setDraft(current => current ? selectManagedConfiguratorDimension(current, dimension, id) : current)} /> : null}
+        {/* Setup belongs to a preset revision; a one-off Create never runs it, so only the preset editor offers it. */}
+        {draft && props.presetOnly ? <MachineEnvironmentSection testID="managed-config.environment" environment={draft.environment}
+            editable={!!catalogProvisioner && !!catalogController && !busy} scope={activeBinding?.scope ?? null}
+            onChange={environment => setDraft(current => current ? { ...current, environment } : current)} /> : null}
         {draft ? <ItemGroup title={t('machinePresets.audience')}>
             <Item title={t('machinePresets.ownerPersonal')} selected={!teamId} disabled={!!preset || busy} onPress={() => setTeamId('')} />
             {teams.rows.map(row => <Item key={row.team.id} title={row.team.name} selected={row.team.id === teamId}
@@ -472,6 +477,8 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
     draft: ManagedConfiguratorDraft;
     localized: ReturnType<typeof useManagedProvisionerPresentation>['localized'];
     compact: boolean; disabled: boolean;
+    /** The computer a local VM shares, named in its size section. */
+    computer: string;
     onChange: (dimension: 'size' | 'image' | 'location', id: string) => void;
 }>) {
     const { draft } = props;
@@ -484,9 +491,11 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
         const hourly = choice.prices?.find(price => price.unit === 'hour');
         const monthly = choice.prices?.find(price => price.unit === 'month');
         return [{ id: size.id, name: props.localized(pluginId, size.title), cpu: size.cpuCores === undefined ? '' : String(size.cpuCores),
-            memory: size.memoryBytes === undefined ? '' : formatByteSize(size.memoryBytes), disk: size.diskBytes === undefined ? '' : formatByteSize(size.diskBytes),
+            memory: size.memoryBytes === undefined ? '' : formatByteCapacity(size.memoryBytes), disk: size.diskBytes === undefined ? '' : formatByteCapacity(size.diskBytes),
             spec: props.localized(pluginId, size.title), ...(hourly ? { hourly: formatProviderAmount(hourly) } : {}),
-            ...(monthly ? { monthly: formatProviderAmount(monthly) } : {}), unavailableReason: unavailable(available) }];
+            ...(monthly ? { monthly: formatProviderAmount(monthly) } : {}),
+            headroom: draft.provisioner.descriptor.billing.location === 'local' ? describeLocalHeadroom(size, draft.check?.localResources) : undefined,
+            unavailableReason: unavailable(available) }];
     });
     const images = managedConfiguratorDimensionChoices(draft, 'image').flatMap(({ choice, available }) => {
         const image = choice.nativeFacts?.image;
@@ -496,12 +505,27 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
         const location = choice.nativeFacts?.location;
         return location ? [{ id: location.id, city: props.localized(pluginId, location.title), country: '', unavailableReason: unavailable(available) }] : [];
     });
+    const firstPrice = managedConfiguratorDimensionChoices(draft, 'size').flatMap(({ choice }) => choice.prices ?? [])[0];
+    const billing = draft.provisioner.descriptor.billing;
+    // The section says where the prices come from and when they bill, or, locally, whose share it is.
+    const sizeDescription = billing.location === 'local' ? t('managedMachines.config.localSizeDescription', { computer: props.computer })
+        : [firstPrice ? t('managedMachines.config.pricesChecked', { provider: firstPrice.source, time: formatAsOfTime(firstPrice.observedAt) }) : null,
+            billing.stoppedBilling === 'billed' ? t('managedMachines.config.billedWhileExists')
+                : billing.stoppedBilling === 'not-billed' ? t('managedMachines.config.billedWhileRunning') : null]
+            .filter((part): part is string => part !== null).join(' ') || undefined;
+    const sizeSection = sizes.length ? <ItemGroup title={t('managedMachines.config.size')} description={sizeDescription}><ManagedSizeTable sizes={sizes} value={selected.size ?? null}
+        headroomTitle={billing.location === 'local' ? t('managedMachines.config.headroom', { computer: props.computer }) : undefined}
+        onChange={id => props.onChange('size', id)} compact={props.compact} testID="managed-config.sizes" /></ItemGroup> : null;
+    const imageSection = images.length ? <ItemGroup title={t('managedMachines.config.image')} description={t('managedMachines.config.imageDescription')}>
+        <ManagedImageTiles images={images} value={selected.image ?? null} onChange={id => props.onChange('image', id)} testID="managed-config.images" /></ItemGroup> : null;
+    // A local VM is chosen by what it runs (macOS or a Linux desktop) before its share of this computer;
+    // a cloud machine by its size first (lab m-config L vs A).
+    const local = draft.provisioner.descriptor.billing.location === 'local';
     return <>
-        {sizes.length ? <ItemGroup title={t('managedMachines.config.size')}><ManagedSizeTable sizes={sizes} value={selected.size ?? null}
-            onChange={id => props.onChange('size', id)} compact={props.compact} testID="managed-config.sizes" /></ItemGroup> : null}
-        {images.length ? <ItemGroup title={t('managedMachines.config.image')}><ManagedImageTiles images={images} value={selected.image ?? null}
-            onChange={id => props.onChange('image', id)} testID="managed-config.images" /></ItemGroup> : null}
+        {local ? imageSection : sizeSection}
+        {local ? sizeSection : imageSection}
         {locations.length ? <ManagedLocationGroup locations={locations} value={selected.location ?? null} title={t('managedMachines.config.location')}
+            description={t('managedMachines.config.locationDescription')}
             onChange={id => props.onChange('location', id)} testID="managed-config.locations" /> : null}
     </>;
 }

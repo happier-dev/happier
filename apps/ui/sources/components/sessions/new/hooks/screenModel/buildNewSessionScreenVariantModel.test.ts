@@ -7,6 +7,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { t } from '@/text';
 
 installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 // Positioning belongs to the DOM boundary; keep badge and popover content real.
@@ -50,6 +51,25 @@ function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: Ne
 }
 
 describe('buildNewSessionScreenVariantModel', () => {
+    it('projects Set up after Join from the durable stage instead of showing allocation waiting', async () => {
+        const draft: NewSessionManagedMachineDraftModel = {
+            selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },
+            select: vi.fn(), retryInstallation: vi.fn(),
+            progress: { kind: 'setup_pending', managedId: 'paid', machineId: 'guest', state: 'pending',
+                environmentSetup: { environment: { setupScript: 'echo setup' }, state: 'pending' } },
+        };
+        const badge = buildVariant(false, draft).statusBadges?.find(item => item.key === 'managed-machine-progress');
+        expect(badge?.label).toBe(t('managedMachines.creation.setup'));
+        expect(badge?.tone).toBe('neutral');
+        const screen = await renderScreen(React.createElement(React.Fragment, null, badge?.renderPopover?.({
+            open: true, anchorRef: React.createRef(), onRequestClose: () => {},
+        })));
+        const checklist = screen.findAll(node => node.props?.testIDPrefix === 'managed-machine-progress-step')[0];
+        expect(checklist?.props.steps.map((step: { stepId: string; status: string }) => [step.stepId, step.status])).toEqual([
+            ['create', 'done'], ['install', 'done'], ['join', 'done'], ['setup', 'pending'],
+        ]);
+        await screen.unmount();
+    });
     it('shows only observed stages and binds cancellation and archive choice to local draft actions', async () => {
         const canceled = vi.fn();
         const changed = vi.fn();

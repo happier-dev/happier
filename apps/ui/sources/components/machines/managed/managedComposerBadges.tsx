@@ -58,6 +58,8 @@ export type ManagedProgressModel = Readonly<{
   }>;
   onCancel?: () => void;
   onRetryInstall?: () => void;
+  onRetrySetup?: () => void;
+  onContinueWithoutSetup?: () => void;
   onDeleteMachine?: () => void;
 }>;
 
@@ -177,6 +179,15 @@ const ManagedProgressPopoverContent = React.memo(
                   onPress={model.onDeleteMachine}
                 />
               ) : null}
+              {model.onContinueWithoutSetup ? (
+                <RoundButton
+                  testID="managed-machine-progress-skip-setup"
+                  size="small"
+                  display="inverted"
+                  title={t('managedMachines.creation.skipSetup')}
+                  onPress={model.onContinueWithoutSetup}
+                />
+              ) : null}
               {model.onRetryInstall ? (
                 <RoundButton
                   testID="managed-machine-progress-retry"
@@ -184,6 +195,15 @@ const ManagedProgressPopoverContent = React.memo(
                   display="secondary"
                   title={t('managedMachines.creation.retryInstall')}
                   onPress={model.onRetryInstall}
+                />
+              ) : null}
+              {model.onRetrySetup ? (
+                <RoundButton
+                  testID="managed-machine-progress-retry-setup"
+                  size="small"
+                  display="secondary"
+                  title={t('managedMachines.creation.retrySetup')}
+                  onPress={model.onRetrySetup}
                 />
               ) : null}
             </>
@@ -333,6 +353,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     gap: 8,
   },

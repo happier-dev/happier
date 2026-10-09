@@ -18,6 +18,7 @@ import {
   type ManagedReceiptModel,
 } from './MachineConfigurationReceipt';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
+import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
 
 /** What the phone's sticky bar says about the draft: its price (or "No bill") and the choices in one line. */
 export type ManagedConfiguratorSummary = Readonly<{
@@ -46,7 +47,7 @@ export const ManagedMachineConfigurator = React.memo(
       testID: string;
     }>,
   ) {
-    const channel = useReceiptChannel(props.receipt);
+    const channel = useLiveValueChannel(props.receipt);
     if (!props.compact) {
     return (
       <ManagedReceiptPageLayout
@@ -123,49 +124,15 @@ function SummaryBar(
   );
 }
 
-type ReceiptChannel = Readonly<{
-  get: () => ManagedReceiptModel;
-  subscribe: (listener: () => void) => () => void;
-}>;
-
-/** The open sheet follows the live draft: the page publishes each new receipt to it. */
-function useReceiptChannel(receipt: ManagedReceiptModel): ReceiptChannel {
-  const [state] = React.useState(() => ({
-    current: receipt,
-    listeners: new Set<() => void>(),
-  }));
-  React.useEffect(() => {
-    if (state.current === receipt) return;
-    state.current = receipt;
-    for (const listener of state.listeners) listener();
-  }, [receipt, state]);
-  return React.useMemo(
-    () => ({
-      get: () => state.current,
-      subscribe: (listener: () => void) => {
-        state.listeners.add(listener);
-        return () => {
-          state.listeners.delete(listener);
-        };
-      },
-    }),
-    [state],
-  );
-}
-
-function showReceiptSheet(channel: ReceiptChannel, testID: string) {
+function showReceiptSheet(channel: LiveValueChannel<ManagedReceiptModel>, testID: string) {
   Modal.show({ component: ReceiptSheet, props: { channel, testID } });
 }
 
 function ReceiptSheet(
-  props: Readonly<{ channel: ReceiptChannel; testID: string }> &
+  props: Readonly<{ channel: LiveValueChannel<ManagedReceiptModel>; testID: string }> &
     CustomModalInjectedProps,
 ) {
-  const model = React.useSyncExternalStore(
-    props.channel.subscribe,
-    props.channel.get,
-    props.channel.get,
-  );
+  const model = useLiveValue(props.channel);
   const { setChrome } = props;
   React.useEffect(() => {
     setChrome?.({

@@ -59,8 +59,9 @@ describe('one managed configuration receipt projection', () => {
             nativeFacts: { size: { id: 'small', title: 'Small', cpuCores: 2 }, image: { id: 'linux', title: 'Linux' }, location: { id: 'west', title: 'West' },
                 duration: { id: 'long', title: '2 hours', afterMs: 7_200_000 } } },
             localized: (_pluginId, value) => typeof value === 'string' ? value : value.fallback });
-        expect(receipt.facts.filter(fact => ['size', 'image', 'location', 'duration'].includes(fact.id)).map(fact => fact.value)).toEqual(['Small', 'Linux', 'West', '2 hours']);
-        expect(receipt.spec).toBe('Small · Linux · West · 2 hours');
+        // A cloud receipt names the place before the image; the size and its dimensions are the spec line.
+        expect(receipt.facts.filter(fact => ['size', 'image', 'location', 'duration'].includes(fact.id)).map(fact => fact.value)).toEqual(['West', 'Linux', '2 hours']);
+        expect(receipt.spec).toBe(`Small · ${t('managedMachines.receipt.cores', { count: 2 })}`);
     });
     it('keeps captured launch identity and exact price provenance independent from later live choices', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, reviewedFacts, providerTitle: 'Compute', controllerName: 'Captured controller' });
@@ -77,7 +78,7 @@ describe('one managed configuration receipt projection', () => {
             .toEqual({ kind: 'unpriced', provider: 'Compute' });
         expect(buildManagedConfigurationReceipt({ launch, providerTitle: 'Local VM', controllerName: 'Build Mac',
             declaredBilling: { location: 'local', stoppedBilling: 'not-billed' } }).cost)
-            .toEqual({ kind: 'local', computer: 'Build Mac', meters: [] });
+            .toEqual({ kind: 'local', computer: 'Build Mac', meters: [], note: t('managedMachines.receipt.headroomUnknown', { computer: 'Build Mac' }) });
     });
     it('shares captured Home, preset revision and optional inherited selection without inventing a concrete policy', () => {
         const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', homeName: 'Build Home',
@@ -87,5 +88,41 @@ describe('one managed configuration receipt projection', () => {
         expect(receipt.facts.find(fact => fact.id === 'retention')?.value).toBe('Defaults');
         expect(receipt.facts.find(fact => fact.id === 'wake')?.value).toBe('wake on');
         expect(receipt.keep).toBeUndefined();
+    });
+    const localFacts = { ...reviewedFacts, prices: [], billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
+        nativeFacts: { size: { id: 'medium', title: 'Medium', cpuCores: 6, memoryBytes: 16 * 2 ** 30, diskBytes: 128 * 2 ** 30 },
+            image: { id: 'tahoe', title: 'macOS Tahoe' } } };
+    it('meters a local size against what its computer reported free, and says what it leaves (RV-C F13)', () => {
+        const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lume', controllerName: 'MacBook Pro', reviewedFacts: { ...localFacts,
+            localResources: { observedAt: 5, availableCpuCores: 12, availableMemoryBytes: 36 * 2 ** 30 } } });
+        expect(receipt.spec).toBe(`Medium · ${t('managedMachines.receipt.cores', { count: 6 })} · 16 GB · 128 GB`);
+        // A local VM names what it runs before where it is.
+        expect(receipt.facts[0]).toMatchObject({ id: 'image', value: 'macOS Tahoe' });
+        expect(receipt.cost).toEqual({ kind: 'local', computer: 'MacBook Pro', meters: [
+            { id: 'cpu', label: t('managedMachines.config.columns.cpu'), fraction: 0.5,
+                value: t('managedMachines.receipt.coresOfFree', { count: 6, free: '12' }) },
+            { id: 'memory', label: t('managedMachines.config.columns.memory'), fraction: 16 / 36,
+                value: t('managedMachines.receipt.amountOfFree', { amount: '16 GB', free: '36 GB' }) },
+        ], note: t('managedMachines.receipt.leavesBoth', { cores: t('managedMachines.receipt.cores', { count: 6 }), memory: '20 GB', computer: 'MacBook Pro' }) });
+    });
+    it('never draws an invented share: unmeasured headroom is unknown and an oversized choice says it does not fit', () => {
+        const unmeasured = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lume', controllerName: 'MacBook Pro', reviewedFacts: localFacts });
+        expect(unmeasured.cost).toEqual({ kind: 'local', computer: 'MacBook Pro', meters: [],
+            note: t('managedMachines.receipt.headroomUnknown', { computer: 'MacBook Pro' }) });
+        const oversized = buildManagedConfigurationReceipt({ launch, providerTitle: 'Lume', controllerName: 'MacBook Pro', reviewedFacts: { ...localFacts,
+            localResources: { observedAt: 5, availableCpuCores: 4 } } });
+        expect(oversized.cost).toMatchObject({ kind: 'local', meters: [expect.objectContaining({ id: 'cpu', fraction: 1 })],
+            note: t('managedMachines.receipt.exceedsFree', { computer: 'MacBook Pro' }) });
+    });
+    it('describes a created machine by what it was made from, without a creation-time policy beside its live one', () => {
+        const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', created: true, reviewedFacts: { ...reviewedFacts,
+            billing: { location: 'local', stoppedBilling: 'not-billed' }, prices: [],
+            localResources: { observedAt: 5, availableCpuCores: 12 }, retentionCapabilities: { supportedIntents: ['stop'], nativeExpiry: { kind: 'unused', afterMs: 60_000 } },
+            preset: { id: 'recipe', revision: 3, name: 'Build box' } } });
+        expect(receipt.caption).toBe(t('machinePresets.fromRevision', { name: 'Build box', revision: 3 }));
+        expect(receipt.facts.map(fact => fact.id)).not.toEqual(expect.arrayContaining(['preset']));
+        expect(receipt.facts.map(fact => fact.id).filter(id => ['retention', 'native-expiry', 'wake', 'preset'].includes(id))).toEqual([]);
+        // Creation-time headroom no longer describes the host.
+        expect(receipt.cost).toEqual({ kind: 'local', computer: t('common.unknown'), meters: [] });
     });
 });

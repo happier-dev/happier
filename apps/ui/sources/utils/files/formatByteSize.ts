@@ -9,3 +9,8 @@ export function formatByteSize(bytes: number): string {
     return `${gb.toFixed(gb >= 100 ? 0 : 1)} GB`;
 }
 
+
+/** A size of a thing (a machine's memory or disk), not a transfer in progress: "8 GB", not "8.0 GB". */
+export function formatByteCapacity(bytes: number): string {
+    return formatByteSize(bytes).replace(/\.0 /, ' ');
+}

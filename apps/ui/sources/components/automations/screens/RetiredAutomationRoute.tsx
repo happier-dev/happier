@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Redirect, useLocalSearchParams, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
 import { AutomationApiError } from '@/sync/api/automations/apiAutomations';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -32,11 +33,8 @@ function ResolveAutomation({ id }: Readonly<{ id: string }>): React.ReactElement
             if (!current()) return;
             setDestination(automation === null
                 ? { pathname: '/workflows', params: { automationUnavailable: '1' } }
-                : automation.scopeSessionId
-                    ? { pathname: '/session/[id]/triggers', params: { id: automation.scopeSessionId, serverId: lifetime.scope.serverId, trigger: id } }
-                    : automation.workflowDefinitionId
-                        ? { pathname: '/workflows/[id]', params: { id: automation.workflowDefinitionId, intent: 'schedule' } }
-                        : { pathname: '/workflows', params: { trigger: id } });
+                : resolveTriggerEditorHref({ automationId: id, serverId: lifetime.scope.serverId,
+                    scopeSessionId: automation.scopeSessionId, workflowDefinitionId: automation.workflowDefinitionId }));
         }).catch((error: unknown) => {
             if (!current()) return;
             if (error instanceof AutomationApiError && error.status === 404) {

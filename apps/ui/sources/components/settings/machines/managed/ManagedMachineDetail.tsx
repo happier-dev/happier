@@ -12,12 +12,8 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { t } from '@/text';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { ManagedMachineSections } from './ManagedMachineSections';
-import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
-import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useManagedMachineInventory } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 const execute = createFrontDoorActionExecute();
 type ManagedMachineDetailProps = Readonly<{ managedId: string; serverId: string;
@@ -47,14 +43,6 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     const accountState = inventory.accountScopes.get(serverId);
     const [actionError, setActionError] = React.useState<string | null>(null);
     const machine = entry?.machines[0];
-    const receiptController = machine?.reviewedFacts?.controller ?? machine?.controller;
-    const controller = useServerScopedMachine(serverId, receiptController?.machineId ?? '');
-    const controllerName = controller && controller.installationId === receiptController?.installationId
-        ? getMachineDisplayName(controller) ?? t('common.unknown') : t('common.unknown');
-    const credentialTargets = React.useMemo(() => machine ? managedCredentialReceiptTargets(machine.launch) : [], [machine?.launch]);
-    const credentialPresentation = useQualifiedConnectedAccountTargetPresentations({
-        binding: inventory.bindings.get(serverId) ?? null, targets: credentialTargets,
-    });
     const profile = getServerProfileById(serverId);
     const homeName = resolveHomeDisplayLabel(profile, serverId);
     const forbidden = entry?.status === 'denied' || actionError === 'permission_denied'
@@ -64,9 +52,6 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
         params: { id: enrolledMachineId, serverId: props.serverId } }} />;
 
     const mark = <Icon name="desktop" color={theme.colors.text.secondary} />;
-    const receipt = machine ? buildManagedConfigurationReceipt({ launch: machine.launch, reviewedFacts: machine.reviewedFacts,
-        providerTitle: t('common.unknown'), caption: t('managedMachines.detail.recipeDescription'), mark,
-        homeName, preset: machine.preset, controllerName, credentialPresentations: credentialPresentation.presentationsByKey }) : null;
 
     const showMachine = Boolean(machine && !forbidden);
     const loading = inventory.loading && !machine;
@@ -78,7 +63,8 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
             description: t('managedMachines.detail.creationDescription'), meta: [{ key: 'home', text: homeName }],
             actions: <RoundButton size="small" display="secondary" title={t('common.retry')}
                 onPress={() => { setActionError(null); inventory.refresh(); }} testID="managed-machine.refresh" /> }}
-        receipt={showMachine ? receipt : null}>
+        /* The sections own the receipt beside them, with Stop and Delete at its foot. */
+        receipt={null}>
         <ManagedMachineReadApprovalNotice serverId={serverId} entry={entry} />
         {!showMachine ? <SurfaceStateCard testID="managed-machine.read-state" kind={loading ? 'loading' : forbidden ? 'denied' : 'unavailable'}
             title={loading ? t('common.loading') : reason} diagnosticCode={entry?.errorCode}
@@ -88,8 +74,7 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
                 busy={entry.status === 'loading'} action={{ label: t('common.retry'), onPress: inventory.refresh }} /> : null}
             <ManagedMachineSections machine={machine!} serverId={serverId} executeAction={executeAction}
                 binding={inventory.bindings.get(serverId)} current={entry?.status === 'ready'}
-                onChanged={inventory.refresh} onDenied={setActionError} includeReceipt={false}
-                credentialPresentations={credentialPresentation.presentationsByKey} />
+                onChanged={inventory.refresh} onDenied={setActionError} />
             {actionError ? <SurfaceStateCard kind="error" size="line" title={t('managedMachines.detail.loadFailed')}
                 diagnosticCode={actionError} testID="managed-machine.action-error" /> : null}
         </>}

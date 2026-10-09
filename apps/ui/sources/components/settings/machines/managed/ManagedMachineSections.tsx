@@ -12,6 +12,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { Item } from '@/components/ui/lists/Item';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -28,21 +29,28 @@ import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLin
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
-import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
+import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
+import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
+import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSection';
+import { ManagedMachineKeepControl, type ManagedMachineKeepControlProps } from './ManagedMachineKeepControl';
+import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedMachineRecipeSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
-import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets, managedSizeDimensions } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { describeRetention, formatRetentionDuration } from './managedRetentionPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { canRetryManagedInstallation, describeManagedCreation } from './managedCreationPresentation';
+import { canRetryManagedInstallation, describeManagedCreation, managedCreationSetup } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { readManagedMachinePolicyParent, type ManagedMachinePolicyParent } from './managedMachinePolicyParent';
 import { useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { currentManagedMoveController, readManagedMachineMoveCandidates, type ManagedMachineMoveCandidate } from './managedMachineMoveCandidates';
-import type { QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { Modal } from '@/modal';
+import type { CustomModalInjectedProps } from '@/modal/types';
 
 const execute = createFrontDoorActionExecute();
 type Execute = ReturnType<typeof createFrontDoorActionExecute>;
@@ -54,23 +62,26 @@ type SectionProps = Readonly<{
     executeAction: Execute;
     onChanged: () => void;
     onDenied: (code: string) => void;
-    includeReceipt?: boolean;
-    /** Reuse the enclosing page's presentation for this same launch and captured binding. */
-    credentialPresentations?: Readonly<Record<string, QualifiedConnectedAccountTargetPresentation>>;
 }>;
 
-/** One mounted detail consumer for pre-enrollment and ordinary enrolled Machine pages. */
+/**
+ * One mounted detail consumer for pre-enrollment and ordinary enrolled Machine pages (lab `m-detail`):
+ * what blocks use, the creation scope rule, the live Keep it, the controller and the recipe on the
+ * left, the immutable receipt beside them with Stop and Delete at its foot. A phone reads the same
+ * sections with Keep it as a summary row, then the receipt.
+ */
 export function ManagedMachineSections(props: SectionProps) {
     const { machine } = props;
     const { theme } = useUnistyles();
     const router = useRouter();
+    const layout = useHappierCollectionLayout();
+    const compact = useDeviceType() === 'phone' || layout?.mode === 'stacked';
     const controller = useServerScopedMachine(props.serverId, machine.controller.machineId);
     const controllerMachines = useMachineListForServer(props.serverId);
     const controllerMachinesRef = React.useRef(controllerMachines);
     controllerMachinesRef.current = controllerMachines;
     const controllerName = getMachineDisplayName(controller) ?? t('common.unknown');
-    const credentialTargets = React.useMemo(() => props.credentialPresentations || props.includeReceipt === false
-        ? [] : managedCredentialReceiptTargets(machine.launch), [props.credentialPresentations, props.includeReceipt, machine.launch]);
+    const credentialTargets = React.useMemo(() => managedCredentialReceiptTargets(machine.launch), [machine.launch]);
     const credentialPresentation = useQualifiedConnectedAccountTargetPresentations({
         binding: props.binding ?? null, targets: credentialTargets,
     });
@@ -314,43 +325,74 @@ export function ManagedMachineSections(props: SectionProps) {
             }
         }
     };
-    const receipt = buildManagedConfigurationReceipt({ launch: machine.launch, environment: machine.environmentSetup?.environment,
-        reviewedFacts: machine.reviewedFacts, providerTitle: t('common.unknown'), mark,
-        homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset,
-        caption: t('managedMachines.detail.recipeDescription'), controllerName: getMachineDisplayName(controllerMachines?.find(candidate =>
+    const observedPower = machine.observation?.power;
+    const resourceGone = machine.observation?.availability === 'absent' || machine.observation?.storage === 'lost';
+    // Stop and Delete sit at the receipt's foot, where its cost and recipe state the consequence.
+    const receiptActions: NonNullable<ManagedReceiptModel['secondary']> = bound && machine.creationState === 'active' ? [
+        // An observed power state leaves only the operations that change it (lab: "Stop server" while it runs).
+        ...powerIntents.filter(intent => !(intent === 'stop' ? observedPower === 'stopped' : intent === 'suspend'
+            ? observedPower === 'suspended' : observedPower === 'running')).map(intent => {
+            return { label: t(`managedMachines.actions.${intent}`), testID: `managed-machine.${intent}`, tone: 'bordered' as const,
+                ...(intent === 'stop' ? { icon: <Icon name="stop" size={14} color={theme.colors.text.primary} /> } : {}),
+                disabled: !canMutate || resourceGone, loading: pending === 'machines.managed.power.set',
+                onPress: () => fireAndForget(run('machines.managed.power.set', { ...target, when: 'now', expectedRevision: machine.intentRevision,
+                    intent }), { tag: 'ManagedMachineSections.power' }) };
+        }),
+        ...(supportedIntents.includes('delete') ? [{ label: t('managedMachines.actions.delete'), testID: 'managed-machine.delete',
+            tone: 'text' as const, disabled: !canMutate,
+            loading: pending === 'machines.managed.references.get' || pending === 'machines.managed.delete', onPress: reviewDependencies }] : []),
+    ] : [];
+    const receipt: ManagedReceiptModel = { ...buildManagedConfigurationReceipt({ launch: machine.launch,
+        environment: machine.environmentSetup?.environment, reviewedFacts: machine.reviewedFacts, providerTitle: t('common.unknown'), mark,
+        homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset, created: true,
+        controllerName: getMachineDisplayName(controllerMachines?.find(candidate =>
             candidate.id === (machine.reviewedFacts?.controller ?? machine.controller).machineId
             && candidate.installationId === (machine.reviewedFacts?.controller ?? machine.controller).installationId)) ?? t('common.unknown'),
-        credentialPresentations: props.credentialPresentations ?? credentialPresentation.presentationsByKey });
+        credentialPresentations: credentialPresentation.presentationsByKey }),
+        ...(receiptActions.length ? { secondary: receiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
-    const nativeRecipeRows = receipt.facts.filter(fact => ['size', 'image', 'location', 'duration'].includes(fact.id))
-        .map(fact => ({ id: fact.id, title: fact.label, subtitle: fact.value, leading: mark }));
-    const recipeRows = nativeRecipeRows.length ? nativeRecipeRows
-        : [{ id: 'launch', title: machine.launch.name, subtitle: t('common.unknown'), leading: mark }];
+    const recipeRows = managedRecipeRows(machine, theme.colors.text.secondary);
     const nativeExpiry = policyParent?.capabilities.nativeExpiry;
     const nativeExpiryDescription = nativeExpiry && policyParent ? t('managedRetention.nativeExpiry', {
         provider: policyParent.providerTitle, time: nativeExpiry.kind === 'deadline' ? formatAsOfTime(nativeExpiry.at)
             : formatRetentionDuration(nativeExpiry.afterMs),
     }) : undefined;
-    return <>
+    const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
+        finiteOnly: policyParent?.capabilities.finiteOnly,
+        nativeExpiry: nativeExpiryDescription,
+        effects: supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
+        canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
+        consequence: describeRetention, disabled: !canMutate, onChange: changePolicy,
+        onReset: () => fireAndForget(resetPolicy(), { tag: 'ManagedMachineSections.resetPolicy' }) };
+    const keepChannel = useLiveValueChannel(keep);
+    const setup = managedCreationSetup(machine);
+    const setupRecovery = canMutate && setup && machine.enrolledMachineId ? {
+        ...(setup.recoveryActions.includes('retrySetup') && machine.preset ? { retry: () => fireAndForget(run('machines.environment.apply', {
+            homeId: machine.homeId, machineId: machine.enrolledMachineId!, presetId: machine.preset!.id, presetRevision: machine.preset!.revision,
+        }), { tag: 'ManagedMachineSections.retrySetup' }) } : {}),
+        ...(setup.recoveryActions.includes('continueWithoutSetup') ? { skip: () => fireAndForget(run('machines.managed.setup.skip',
+            { ...target, expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.skipSetup' }) } : {}),
+    } : undefined;
+    // Changed here means it differs from the default it would reset to; otherwise say what the rule governs.
+    const policyDescription = policyParent && !sameStrictJsonValue(policyParent.policy,
+        { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage })
+        ? t('managedRetention.changedFor', { name: machine.launch.name }) : t('managedRetention.policyDescription');
+    return <ManagedReceiptColumns receipt={receipt} compact={compact} testID="managed-machine.detail">
         {approval.approvalId ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
             title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(
                 `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
-        <ManagedCreationProgress machine={machine} operation={operation} handlers={{ checkNow: inspect,
+        <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} handlers={{ checkNow: inspect,
             ...(canRemove ? { remove: reviewRemoval } : {}),
             ...(canMutate && currentControllerAvailable && canRetryManagedInstallation(machine, operation) ? {
                 reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
                     expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
-        <ManagedMachinePolicySection testID="managed-machine.policy" description={t('managedRetention.wakeHelp')}
-            keep={{ policy, inherited: false, defaultPolicy: policyParent?.policy,
-                finiteOnly: policyParent?.capabilities.finiteOnly,
-                nativeExpiry: nativeExpiryDescription,
-                effects: supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
-                canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
-                consequence: describeRetention, disabled: !canMutate, onChange: changePolicy,
-                onReset: () => fireAndForget(resetPolicy(), { tag: 'ManagedMachineSections.resetPolicy' }) }} />
+        <ManagedCreationScopeRuleSection machine={machine} serverId={props.serverId} />
+        <ManagedMachinePolicySection testID="managed-machine.policy" description={policyDescription} keep={keep}
+            compactSummary={compact ? { summary: describeRetention(policy.retention),
+                onPress: () => showManagedKeepSheet(keepChannel, 'managed-machine.policy-sheet') } : undefined} />
         {requiredController ? <ManagedMachineControllerSection testID="managed-machine.controller"
             description={t('managedMachines.controller.required', { controller: controllerName })}
             controller={{ name: controllerName, icon: mark, online: controllerPresence!.online,
@@ -358,7 +400,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     : canMove ? { kind: 'movable', onPress: () => fireAndForget(reviewMove(), { tag: 'ManagedMachineSections.moveReview' }) }
                         : { kind: 'unavailable' } }} />
             : <ItemGroup title={t('managedMachines.config.managedFrom')}><Item title={controllerName}
-                subtitle={JSON.stringify(machine.controller)} mode="info" showChevron={false} testID="managed-machine.controller-unavailable" /></ItemGroup>}
+                subtitle={t('managedMachines.controller.required', { controller: controllerName })} mode="info" showChevron={false} testID="managed-machine.controller-unavailable" /></ItemGroup>}
         {moveReview?.key === deleteReviewKey && canMutate ? <ManagedControllerMoveList testID="managed-machine.move-candidates"
             candidates={moveReview.candidates.map(candidate => {
                 const row = controllerMachines?.find(value => value.id === candidate.id);
@@ -371,29 +413,10 @@ export function ManagedMachineSections(props: SectionProps) {
                         : 'managedController.unavailableAccount', { account: credentialNames })
                         : presence?.label ?? t('common.unknown'), online: presence?.online ?? false, current, reachable };
             })} onMove={moveController} /> : null}
-        <ManagedMachineRecipeSection testID="managed-machine.recipe" rows={recipeRows} />
-        {props.includeReceipt === false ? null : <MachineConfigurationReceipt model={receipt} testID="managed-machine.detail.receipt" />}
+        {/* A phone reads the receipt right after; the same recipe rows above it would repeat it. */}
+        {compact ? null : <ManagedMachineRecipeSection testID="managed-machine.recipe" rows={recipeRows} />}
         {machine.observation ? <SurfaceFreshnessLine testID="managed-machine.observation" asOf={machine.observation.observedAt}
             action={{ label: t('managedMachines.inspect.checkNow'), onPress: inspect }} /> : null}
-        {/* Allocation alone carries no installation-failure evidence and does not supply Retry Install. */}
-        {bound && machine.creationState === 'active' && (powerIntents.length > 0 || supportedIntents.includes('delete')) ? <ItemGroup>
-            {powerIntents.map(intent => {
-                const title = t(`managedMachines.actions.${intent}`);
-                const observedPower = machine.observation?.power;
-                const settled = intent === 'stop' ? observedPower === 'stopped' : intent === 'suspend'
-                    ? observedPower === 'suspended' : observedPower === 'running';
-                return <Item key={intent} title={title} mode="info" showChevron={false}
-                    rightElement={<RoundButton title={title} display="secondary" size="small"
-                        testID={`managed-machine.${intent}`} disabled={!canMutate || settled
-                            || machine.observation?.availability === 'absent' || machine.observation?.storage === 'lost'}
-                        loading={pending === 'machines.managed.power.set'} onPress={() => fireAndForget(run('machines.managed.power.set',
-                            { ...target, when: 'now', expectedRevision: machine.intentRevision, intent }), { tag: 'ManagedMachineSections.power' })} />} />;
-            })}
-            {supportedIntents.includes('delete') ? <Item title={t('managedMachines.actions.delete')} mode="info" showChevron={false}
-                rightElement={<RoundButton title={t('managedMachines.actions.delete')} display="destructive" size="small"
-                    testID="managed-machine.delete" disabled={!canMutate} loading={pending === 'machines.managed.references.get'
-                        || pending === 'machines.managed.delete'} onPress={reviewDependencies} />} /> : null}
-        </ItemGroup> : null}
         {reviewedDependencies ? <ItemGroup title={t('managedMachines.dependencies.title')}
             description={t('managedMachines.dependencies.help')}>
             {reviewedDependencies.references.map(reference => <Item key={`${reference.kind}:${reference.id}`}
@@ -447,7 +470,7 @@ export function ManagedMachineSections(props: SectionProps) {
             ? t('managedRetention.conflict') : error === 'managed_binding_move_incomplete'
                 ? t('managedController.moveIncomplete') : t('managedMachines.detail.loadFailed')} diagnosticCode={error}
             testID="managed-machine.control-error" /> : null}
-    </>;
+    </ManagedReceiptColumns>;
 }
 
 /** The enrolled association is derived from the same admitted managed inventory, never a Machine-side copy. */
@@ -471,4 +494,45 @@ export function ManagedEnrolledMachineSections(props: Readonly<{ enrolledMachine
             binding={inventory.bindings.get(serverId)} current={entry?.status === 'ready'} executeAction={executeAction}
             onChanged={inventory.refresh} onDenied={() => setDenial(entryRef.current ?? null)} />
     </>;
+}
+
+type ManagedKeepProps = Omit<ManagedMachineKeepControlProps, 'presentation' | 'testID' | 'showLabel'>;
+
+function showManagedKeepSheet(channel: LiveValueChannel<ManagedKeepProps>, testID: string) {
+    Modal.show({ component: ManagedKeepSheet, props: { channel, testID } });
+}
+
+/** The phone's When unused choices: the same Keep it control, following the live policy while open. */
+function ManagedKeepSheet(props: Readonly<{ channel: LiveValueChannel<ManagedKeepProps>; testID: string }> & CustomModalInjectedProps) {
+    const keep = useLiveValue(props.channel);
+    const { setChrome } = props;
+    React.useEffect(() => {
+        setChrome?.({ kind: 'card', header: 'none', title: t('managedRetention.keepIt'), phonePresentation: 'sheet' });
+    }, [setChrome]);
+    return <ItemGroup title={t('managedRetention.whenUnused')} description={t('managedRetention.policyDescription')}>
+        <SectionContentRow>
+            <ManagedMachineKeepControl {...keep} presentation="choices" testID={`${props.testID}.keep`} />
+        </SectionContentRow>
+    </ItemGroup>;
+}
+
+/** What it was made with, from the reviewed native facts: each value first, its details beneath. */
+function managedRecipeRows(machine: ManagedMachineV1, iconColor: string) {
+    const native = machine.reviewedFacts?.nativeFacts;
+    const title = (value: string | Readonly<{ fallback: string }>) => typeof value === 'string' ? value : value.fallback;
+    const rows: { id: string; title: string; subtitle: string; leading: React.ReactNode }[] = [];
+    if (native?.size) {
+        const dimensions = managedSizeDimensions(native.size);
+        rows.push({ id: 'size', title: title(native.size.title),
+            subtitle: dimensions.length ? dimensions.join(' · ') : t('managedMachines.config.size'),
+            leading: <Icon name="cpu" size={20} color={iconColor} /> });
+    }
+    if (native?.image) rows.push({ id: 'image', title: title(native.image.title), subtitle: t('managedMachines.config.image'),
+        leading: <Icon name="image" size={20} color={iconColor} /> });
+    if (native?.location) rows.push({ id: 'location', title: title(native.location.title), subtitle: t('managedMachines.config.location'),
+        leading: <Icon name="map-pin" size={20} color={iconColor} /> });
+    if (native?.duration) rows.push({ id: 'duration', title: title(native.duration.title), subtitle: t('managedRetention.ends'),
+        leading: <Icon name="hourglass" size={20} color={iconColor} /> });
+    return rows.length ? rows : [{ id: 'launch', title: machine.launch.name, subtitle: t('common.unknown'),
+        leading: <Icon name="desktop" size={20} color={iconColor} /> }];
 }

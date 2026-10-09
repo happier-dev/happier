@@ -15,6 +15,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
+import { describeMachineEnvironment } from './MachineEnvironmentSection';
 
 import {
   ManagedMachineKeepControl,
@@ -104,7 +105,7 @@ export const MachineConfigurationReceipt = React.memo(
             </View>
           </View>
         </SectionContentRow>
-        {model.facts.map((fact) => (
+        {[...model.facts, ...describeMachineEnvironment(model.environment)].map((fact) => (
           <Item
             key={fact.id}
             testID={`${props.testID}:fact:${fact.id}`}

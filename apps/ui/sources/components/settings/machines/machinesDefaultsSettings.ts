@@ -32,15 +32,6 @@ export const MACHINES_DEFAULTS_SETTINGS = defineSettingsPage({
     pageId: 'machines',
     subpage: { id: 'defaults', route: SETTINGS_ROUTES.machineDefaults, titleKey: 'settingsMachines.defaultsTitle' },
     sections: {
-        creation: {
-            settings: {
-                creationEnabled: {
-                    titleKey: 'managedMachines.creation.allow',
-                    descriptionKey: 'managedMachines.creation.allowHelp',
-                    storage: { scope: 'account', access: 'read_write', key: 'managedMachineCreationEnabled' },
-                },
-            },
-        },
         categories: {
             titleKey: 'managedRetention.noWorkTitle', descriptionKey: 'managedRetention.noWorkDescription',
             settings: {
@@ -48,6 +39,16 @@ export const MACHINES_DEFAULTS_SETTINGS = defineSettingsPage({
                 runningOnly: { titleKey: 'settingsMachines.runningOnly', storage: categoryBinding('running-only') },
                 stoppedBilled: { titleKey: 'settingsMachines.stoppedBilled', storage: categoryBinding('stopped-billed') },
                 unknown: { titleKey: 'settingsMachines.billingUnknown', storage: categoryBinding('unknown') },
+            },
+        },
+        creation: {
+            titleKey: 'managedMachines.creation.sectionTitle',
+            settings: {
+                creationEnabled: {
+                    titleKey: 'managedMachines.creation.allow',
+                    descriptionKey: 'managedMachines.creation.allowHelp',
+                    storage: { scope: 'account', access: 'read_write', key: 'managedMachineCreationEnabled' },
+                },
             },
         },
     },

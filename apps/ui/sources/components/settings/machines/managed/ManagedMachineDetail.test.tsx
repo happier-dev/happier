@@ -15,6 +15,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ManagedMachineDetail } from './ManagedMachineDetail';
+import { t } from '@/text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedEnrolledMachineSections } from './ManagedMachineSections';
@@ -1024,13 +1025,20 @@ describe('managed Machine detail', () => {
         const receipt = screen.tree.findByType(MachineConfigurationReceipt);
         expect(receipt.props.model).toMatchObject({ name: 'Original recipe', cost: { kind: 'price', prices: machine.reviewedFacts!.prices } });
         expect(receipt.props.model.facts).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'controller', value: 'Original controller computer' }), expect.objectContaining({ id: 'retention' }),
+            expect.objectContaining({ id: 'controller', value: 'Original controller computer' }),
         ]));
+        // The live Keep it sits beside the receipt; a creation-time policy row there would contradict it.
+        expect(receipt.props.model.facts.map((fact: { id: string }) => fact.id)).not.toContain('retention');
         expect(receipt.props.model.keep).toBeUndefined();
+        // The size and its labelled native dimensions are the receipt's spec line (RV-C F13).
+        expect(receipt.props.model.spec).toBe(`Four-core guest · ${t('managedMachines.receipt.cores', { count: 4 })}`);
+        // Stop and Delete sit at the receipt's foot, beside the cost they change.
+        expect(receipt.props.model.secondary?.map((action: { testID?: string }) => action.testID))
+            .toEqual(['managed-machine.start', 'managed-machine.stop', 'managed-machine.delete']);
         expect(screen.tree.findByType(ManagedMachineRecipeSection).props.rows).toEqual([
-            expect.objectContaining({ id: 'size', subtitle: 'Four-core guest' }),
-            expect.objectContaining({ id: 'image', subtitle: 'Original Linux image' }),
-            expect.objectContaining({ id: 'location', subtitle: 'Original region' }),
+            expect.objectContaining({ id: 'size', title: 'Four-core guest', subtitle: t('managedMachines.receipt.cores', { count: 4 }) }),
+            expect.objectContaining({ id: 'image', title: 'Original Linux image' }),
+            expect.objectContaining({ id: 'location', title: 'Original region' }),
         ]);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy').length).toBeGreaterThan(0);
         const controller = createMachineFixture({ id: machine.controller.machineId,
@@ -1067,6 +1075,26 @@ describe('managed Machine detail', () => {
             cleanup: { disposition: 'pending', reason: 'previous_cleanup' }, desired: 'delete', desiredWhen: 'now', intentRevision: 2,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }} />);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost')).toHaveLength(0);
+    });
+    it('offers Retry setup and Continue without setup on a failed Set up of this same joined machine (D53)', async () => {
+        const machine: ManagedMachineV1 = { id: 'setup-failed', homeId: 'home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-machine',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native' } },
+            preset: { id: 'preset', revision: 2 }, environmentSetup: { environment: { setupScript: 'npm ci' }, state: 'failed', errorCode: 'setup_failed' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const retry = vi.fn();
+        const skip = vi.fn();
+        const screen = await renderScreen(<ManagedCreationProgress machine={machine} setupRecovery={{ retry, skip }} />);
+        for (const testID of ['managed-machine.setup-retry', 'managed-machine.setup-skip']) {
+            await act(async () => screen.tree.findAll(node => node.props?.testID === testID && typeof node.props.onPress === 'function')[0]!.props.onPress());
+        }
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(skip).toHaveBeenCalledTimes(1);
+        const succeeded = await renderScreen(<ManagedCreationProgress machine={{ ...machine,
+            environmentSetup: { environment: { setupScript: 'npm ci' }, state: 'succeeded' } }} setupRecovery={{ retry, skip }} />);
+        expect(succeeded.tree.findAll(node => node.props?.testID === 'managed-machine.setup')).toHaveLength(0);
     });
     it('does not present an enrolled healthy Machine as still awaiting its Happier connection', async () => {
         const machine: ManagedMachineV1 = { id: 'enrolled-healthy', homeId: 'home', custodianAccountId: 'owner',
