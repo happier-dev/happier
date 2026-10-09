@@ -1,5 +1,10 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
+import { View } from 'react-native';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { Popover } from '@/components/ui/popover';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
+
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectWorkerActionOutputV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
@@ -20,6 +25,7 @@ import { useActiveActionOperations } from '@/sync/domains/actionOperations/useAc
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { useProjectAccountRows } from '@/sync/store/hooks';
+import { readMachineFreshCopies } from '@/sync/store/domains/projectAccountRows';
 import {
   executeProjectWorkerActionV1,
   ProjectWorkerActionError,
@@ -111,37 +117,23 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-/** Copy relationships with one endpoint on this Machine and its source checkout on another. */
+/** Present only canonical worker targets from the current Account/Home row observation. */
 function useFreshCopies(
   serverId: string,
   machineId: string,
-): readonly FreshCopy[] {
+): readonly FreshCopy[] | null {
   const rows = useProjectAccountRows();
   return React.useMemo(() => {
-    if (!rows || rows.scope.serverId !== serverId) return [];
-    const refs = new Map(
-      rows.workspaceRefs.map((ref) => [ref.id, ref] as const),
-    );
-    return rows.relationships.flatMap((relationship): FreshCopy[] => {
-      const alpha = refs.get(relationship.alphaWorkspaceRefId);
-      const beta = refs.get(relationship.betaWorkspaceRefId);
-      if (!alpha || !beta) return [];
-      const [copy, source] =
-        beta.machineId === machineId && alpha.machineId !== machineId
-          ? [beta, alpha]
-          : alpha.machineId === machineId && beta.machineId !== machineId
-            ? [alpha, beta]
-            : [null, null];
-      if (!copy || !source) return [];
-      return [
-        {
-          relationship,
-          sourceRefId: source.id,
-          name: source.label ?? basename(source.rootPath),
-          sourceMachineId: source.machineId,
-        },
-      ];
+    if (!rows) return null;
+    const copies = readMachineFreshCopies({ projectAccountRows: rows }, {
+      scope: { accountId: rows.scope.accountId, serverId }, machineId,
     });
+    return copies?.map(({ relationship, source }) => ({
+      relationship,
+      sourceRefId: source.id,
+      name: source.label ?? basename(source.rootPath),
+      sourceMachineId: source.machineId,
+    })) ?? null;
   }, [machineId, rows, serverId]);
 }
 
@@ -231,6 +223,9 @@ export function MachineProjectWorkSection(
     [active, props.machineId, props.serverId],
   );
   const [capacityError, setCapacityError] = React.useState<string | null>(null);
+  const compact = useViewportClass() === 'compact';
+  const capacityAnchor = React.useRef<View>(null);
+  const [capacityOpen, setCapacityOpen] = React.useState(false);
   const copies = useFreshCopies(props.serverId, props.machineId);
   const machines = useAllMachines();
   const [retired, setRetired] = React.useState<ReadonlySet<string>>(new Set());
@@ -238,9 +233,9 @@ export function MachineProjectWorkSection(
     relationshipId: string;
     text: string;
   }> | null>(null);
-  const visibleCopies = copies.filter(
+  const visibleCopies = copies?.filter(
     (copy) => !retired.has(copy.relationship.relationshipId),
-  );
+  ) ?? null;
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   const disabled = !value || policy.busy;
@@ -303,6 +298,22 @@ export function MachineProjectWorkSection(
                 : 'warning'
             }
             title={notice}
+            // The intended policy that did not save stays until retried against the current value or discarded.
+            {...(policy.draft && policy.notice !== 'saving' && policy.notice !== 'approval'
+              ? {
+                  description: t('projectWorkers.draftKept'),
+                  action: {
+                    label: t('projectWorkers.draftRetry'),
+                    testID: `${testID}.draft.retry`,
+                    onPress: () => { if (policy.draft) void policy.save(policy.draft); },
+                  },
+                  secondaryAction: {
+                    label: t('projectWorkers.draftDiscard'),
+                    testID: `${testID}.draft.discard`,
+                    onPress: policy.discardDraft,
+                  },
+                }
+              : {})}
           />
         ) : null}
         {state.kind === 'refused' || state.kind === 'error' ? (
@@ -346,6 +357,65 @@ export function MachineProjectWorkSection(
                 />
               }
             />
+            {compact ? (
+              // Phone (lab MACHINEp): the row shows its value and opens the same field in a sheet.
+              <View ref={capacityAnchor} collapsable={false}>
+                <Item
+                  testID={`${testID}.capacity.row`}
+                  title={t('projectWorkers.capacity')}
+                  detail={value?.runAtMost == null ? t('projectWorkers.noLimit') : String(value.runAtMost)}
+                  disabled={disabled}
+                  onPress={() => setCapacityOpen(true)}
+                />
+                <Popover
+                  open={capacityOpen}
+                  anchorRef={capacityAnchor}
+                  phonePresentation="sheet"
+                  accessibilityLabel={t('projectWorkers.capacity')}
+                  onRequestClose={() => setCapacityOpen(false)}
+                >
+                  {({ maxHeight }) => (
+                    <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme">
+            <FieldValueItem
+                                    testID={`${testID}.capacity`}
+                                    fieldTestID={`${testID}.capacity.field`}
+                                    title={t('projectWorkers.capacity')}
+                                    subtitle={t('projectWorkers.capacityDetail')}
+                                    kind="integer"
+                                    allowEmpty
+                                    error={capacityError}
+                                    onDraftChange={() => setCapacityError(null)}
+                                    placeholder={t('projectWorkers.noLimit')}
+                                    disabled={disabled}
+                                    value={
+                                      value?.runAtMost === null || value?.runAtMost === undefined
+                                        ? ''
+                                        : String(value.runAtMost)
+                                    }
+                                    onCommit={(draft) => {
+                                      if (!value) return;
+                                      const trimmed = draft.trim();
+                                      if (trimmed === '') {
+                                        if (value.runAtMost !== null)
+                                          void policy.save({ ...value, runAtMost: null });
+                                        return '';
+                                      }
+                                      const count = Number(trimmed);
+                                      if (!Number.isSafeInteger(count) || count < 1) {
+                                        // The typed draft stays so it can be corrected; nothing is written.
+                                        setCapacityError(t('projectWorkers.capacityInvalid'));
+                                        return;
+                                      }
+                                      if (count !== value.runAtMost)
+                                        void policy.save({ ...value, runAtMost: count });
+                                      return String(count);
+                                    }}
+                                  />
+                    </FloatingOverlay>
+                  )}
+                </Popover>
+              </View>
+            ) : (
             <FieldValueItem
               testID={`${testID}.capacity`}
               fieldTestID={`${testID}.capacity.field`}
@@ -381,6 +451,7 @@ export function MachineProjectWorkSection(
                 return String(count);
               }}
             />
+            )}
           </>
         )}
       </ItemGroup>
@@ -418,7 +489,7 @@ export function MachineProjectWorkSection(
           />
         }
       >
-        {visibleCopies.length === 0 ? (
+        {visibleCopies === null ? null : visibleCopies.length === 0 ? (
           <Item
             testID={`${testID}.copies.empty`}
             title={t('projectWorkers.freshCopiesEmpty')}

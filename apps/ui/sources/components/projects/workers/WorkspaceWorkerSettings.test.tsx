@@ -194,6 +194,11 @@ describe('Workspace worker settings through the preference Actions', () => {
       value: { ...base, allowAdHoc: true, unavailable: 'fail' },
     });
     expect(home.writes).toEqual([]);
+    // The intended edit is kept with a way to retry it against the current value, or to drop it.
+    expect(screen.findByTestId('workers.draft.retry')).toBeTruthy();
+    await screen.pressByTestIdAsync('workers.draft.discard');
+    await vi.waitFor(() => expect(screen.findByTestId('workers.notice')).toBeNull());
+    expect(home.writes).toEqual([]);
   });
 
   it('offers primary-only scripts no worker choice and resets a script to Default without touching others', async () => {

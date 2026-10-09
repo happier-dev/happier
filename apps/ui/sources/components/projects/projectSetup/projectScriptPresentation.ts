@@ -225,9 +225,12 @@ export function presentProjectRun(
     ) {
       return live('attention', 'quiet', t('projects.scripts.run.offline'));
     }
-    if (phase === 'queued') return live('queued', 'quiet', snapshot.progress?.label ?? t('projects.scripts.run.accepted'));
-    if (phase === 'preparing' || phase === 'copying' || phase === 'setup')
-      return live('queued', 'quiet', snapshot.progress?.label ?? t('projects.scripts.run.accepted'));
+    // Queue and preparation come from the target's own phase facts (plan 31 §2), never inferred.
+    if (phase === 'queued')
+      return live('queued', 'quiet', [t('projectWorkers.queuedOn', { machine }),
+        queueAhead && queueAhead > 0 ? t('projectWorkers.ahead', { count: queueAhead }) : null].filter(Boolean).join(' · '));
+    if (phase === 'copying') return live('queued', 'quiet', t('projectWorkers.copying', { machine }));
+    if (phase === 'preparing' || phase === 'setup') return live('queued', 'quiet', t('projectWorkers.preparing', { machine }));
     return snapshot.state === 'accepted'
       ? live('queued', 'quiet', t('projects.scripts.run.accepted'))
       : live(

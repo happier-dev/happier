@@ -335,20 +335,30 @@ export function WorkspaceWorkerSettings(
       {notice ? (
         <AttentionBanner
           testID={`${testID}.notice`}
-          tone={
-            preference.notice === 'saving' || preference.notice === 'approval'
-              ? 'neutral'
-              : 'warning'
-          }
+          tone={preference.notice === 'saving' || preference.notice === 'approval' ? 'neutral' : 'warning'}
           title={notice}
-          {...(preference.notice === 'unknown' || preference.notice === 'failed'
+          // An intended edit that did not save stays until it is retried against the current value or discarded.
+          {...(preference.draft && preference.notice !== 'saving' && preference.notice !== 'approval'
             ? {
+                description: t('projectWorkers.draftKept'),
                 action: {
-                  label: t('common.retry'),
-                  onPress: preference.refresh,
+                  label: t('projectWorkers.draftRetry'),
+                  testID: `${testID}.draft.retry`,
+                  onPress: () => {
+                    const draft = preference.draft;
+                    if (draft?.kind === 'set') void preference.save(draft.value);
+                    else if (draft?.kind === 'reset') void preference.reset();
+                  },
+                },
+                secondaryAction: {
+                  label: t('projectWorkers.draftDiscard'),
+                  testID: `${testID}.draft.discard`,
+                  onPress: preference.discardDraft,
                 },
               }
-            : {})}
+            : preference.notice === 'unknown' || preference.notice === 'failed'
+              ? { action: { label: t('common.retry'), onPress: preference.refresh } }
+              : {})}
         />
       ) : null}
       <ItemGroup title={t('projectWorkers.defaultSection')}>

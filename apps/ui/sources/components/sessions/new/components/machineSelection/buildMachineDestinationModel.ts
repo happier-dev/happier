@@ -15,6 +15,7 @@ import { resolveMachinePickerPresence } from '../resolveMachinePickerPresence';
 import { t } from '@/text';
 import { describeMachineLockedReason } from '@/utils/sessions/machineDisplayNames';
 import { formatByteSize } from '@/utils/files/formatByteSize';
+import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import type { ManagedMachineDestinationProjection } from './managedMachineSelection';
 
 /** Current admitted projection facts, supplied on demand; never inferred from CPU or Session count. */
@@ -72,15 +73,20 @@ export function describeMachineDestinationWorkerFacts(
     const worker = eligibility.worker;
     if (!worker) return undefined;
     if (worker.eligible) {
-        if (worker.load.kind === 'unknown') return t('projectWorkers.loadUnknown');
+        // Freshness is the controller's last clean copy to this checkout; missing means unknown, so nothing is said.
+        const freshness = typeof worker.lastCleanSyncAtMs === 'number'
+            ? t('projectWorkers.freshCopySynced', { time: formatRelativeTimeShort(worker.lastCleanSyncAtMs, Date.now()) })
+            : null;
+        if (worker.load.kind === 'unknown') return [t('projectWorkers.loadUnknown'), freshness].filter(Boolean).join(' · ');
         const { running, queued, runAtMost } = worker.load;
-        if (running === 0 && queued === 0) return t('projectWorkers.free');
+        if (running === 0 && queued === 0) return [t('projectWorkers.free'), freshness].filter(Boolean).join(' · ');
         // Only a finite run waits for "Run at most"; a service start holds no finite slot (31/32).
         const full = purpose === 'finite' && runAtMost !== null && running >= runAtMost;
         return [
             t('projectWorkers.runningCount', { count: running }),
             queued > 0 ? t('projectWorkers.queuedCount', { count: queued }) : null,
             full ? t('projectWorkers.waitsThere') : null,
+            freshness,
         ].filter(Boolean).join(' · ');
     }
     switch (worker.explanation) {

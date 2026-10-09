@@ -187,6 +187,12 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
     [accountId, binding, key, lifetime, observation, refresh],
   );
 
+  // Dropping an unsaved intent is local only: nothing was written, so nothing is undone.
+  const discardDraft = React.useCallback(() => {
+    setDraft(null);
+    setNotice((current) => (current?.key === keyRef.current ? null : current));
+  }, []);
+
   const state: ObservedWorkerSettingState<TReady> =
     observation?.key === key ? observation.state : { kind: 'loading' };
   const currentNotice = notice?.key === key ? notice.notice : null;
@@ -205,5 +211,6 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
       (currentNotice === 'approval' && approval.approvalPending),
     refresh,
     mutate,
+    discardDraft,
   };
 }

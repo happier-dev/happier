@@ -819,8 +819,9 @@ describe('useMachineSelectionListModel', () => {
         const fixture = createFixture();
         const machineId = 'machine-without-readable-metadata';
         const unidentifiedMachine = createMachine(machineId);
-        // A Machine whose decrypted metadata is unavailable is locked: sync projects it with no metadata.
+        // Sync explicitly marks an unreadable Machine locked; null metadata alone can still be hydrating.
         unidentifiedMachine.metadata = null;
+        unidentifiedMachine.availability = { kind: 'locked', reason: 'decryption_failed' };
         const rendered = await renderHook(() => useMachineSelectionListModel({
             ...buildParams({
                 ...fixture,
@@ -859,6 +860,7 @@ describe('useMachineSelectionListModel', () => {
         const poolOption = firstStaticOption(rendered.getCurrent());
         // A member whose details cannot be read is a locked machine, never a raw or short id.
         expect(poolOption.subtitle).toContain('machine.lockedMachine');
+        expect(poolOption.accessibilityLabel).toContain('machine.lockedMachine');
         expect(poolOption.subtitle).not.toContain(machineId.slice(0, 8));
         await rendered.unmount();
     });

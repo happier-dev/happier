@@ -32,6 +32,22 @@ describe('finite Script row facts', () => {
         expect(uncertain.text).toContain('projects.scripts.run.unknown');
     });
 
+    it('says where a queued run waits and how many are ahead, and names the preparation step', () => {
+        const command = { kind: 'projectCommand', purpose: 'script', serverId: 'target-home', machineId: 'target-machine', workspaceRefId: 'target-workspace', cwd: '/target' } as const;
+        const queued = presentProjectRun(run({ state: 'accepted', domainRef: command, progress: { kind: 'phase', phase: 'queued', queueAhead: 2, label: 'Queued' } }), 'Builder', 'idle');
+        expect(queued.text).toContain('projectWorkers.queuedOn');
+        expect(queued.text).toContain('projectWorkers.ahead');
+        const first = presentProjectRun(run({ state: 'accepted', domainRef: command, progress: { kind: 'phase', phase: 'queued', queueAhead: 0, label: 'Queued' } }), 'Builder', 'idle');
+        expect(first.text).toContain('projectWorkers.queuedOn');
+        expect(first.text).not.toContain('projectWorkers.ahead');
+        expect(presentProjectRun(run({ domainRef: command, progress: { kind: 'phase', phase: 'copying', label: 'copying' } }), 'Builder', 'idle').text)
+            .toContain('projectWorkers.copying');
+        for (const phase of ['preparing', 'setup'] as const) {
+            expect(presentProjectRun(run({ domainRef: command, progress: { kind: 'phase', phase, label: phase } }), 'Builder', 'idle').text)
+                .toContain('projectWorkers.preparing');
+        }
+    });
+
     it('uses the canonical native invocation preview without guessing the package manager or changing source identity', () => {
         const source = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } as const;
         const invocation = { tool: 'yarn', args: ['test'], cwd: '/repo' };

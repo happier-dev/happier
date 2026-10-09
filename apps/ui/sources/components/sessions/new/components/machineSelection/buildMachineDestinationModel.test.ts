@@ -12,6 +12,7 @@ import {
 } from './buildMachineDestinationModel';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
+import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 
 function machine(id: string, overrides: Partial<Machine> = {}): Machine & { serverId: string; serverName: string } {
     return {
@@ -403,6 +404,19 @@ describe('describeMachineDestinationWorkerFacts', () => {
             const detail = describeMachineDestinationWorkerFacts(eligibility, undefined, 'service-start');
             expect(detail).toBe([t('projectWorkers.runningCount', { count: 2 }), t('projectWorkers.queuedCount', { count: 1 })].join(' · '));
         }
+    });
+
+    it('adds the last clean copy to an eligible worker only when that fact is known', () => {
+        const idle = { kind: 'known' as const, running: 0, queued: 0, accepting: true, runAtMost: null };
+        const fresh = describeMachineDestinationWorkerFacts(resolveMachineDestinationPurposeEligibility('finite', {
+            ownership: 'owned', worker: { ...eligibleWorker('fresh', idle), lastCleanSyncAtMs: Date.now() - 5 * 60_000 },
+        }));
+        expect(fresh).toContain(t('projectWorkers.free'));
+        expect(fresh).toContain(t('projectWorkers.freshCopySynced', { time: formatRelativeTimeShort(Date.now() - 5 * 60_000, Date.now()) }));
+        const unknown = describeMachineDestinationWorkerFacts(resolveMachineDestinationPurposeEligibility('finite', {
+            ownership: 'owned', worker: { ...eligibleWorker('unknown-sync', idle), lastCleanSyncAtMs: null },
+        }));
+        expect(unknown).toBe(t('projectWorkers.free'));
     });
 
     it('names the exact refusal, including the declared memory need, and leaves non-worker purposes alone', () => {
