@@ -19,6 +19,168 @@ function countRows(dbPath: string, table: string): number {
 }
 
 describe('deepIndexDb', () => {
+  it('persists facts, archive and instruction text under current qualified document revisions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const ref = { serverId: 'home-one', artifactId: 'same-id' };
+      const revision = { headerVersion: 2, bodyVersion: 7 };
+      const topicLocation = { type: 'topic' as const, title: 'Engineering / "部署"' };
+      let db = openDeepIndexDb({ dbPath });
+      db.replaceDocumentIndexData({ ref, revision, entries: [
+        { factId: 'active', location: 'facts', text: 'Searchable current fact' },
+        { factId: 'expired', location: 'facts', text: 'Searchable expired факт' },
+        { factId: 'forgotten', location: 'archive', text: 'Searchable archived fact' },
+        { factId: 'topic-only', location: topicLocation, text: 'Searchable topic-only deployment detail' },
+      ] });
+      db.replaceDocumentIndexData({
+        ref: { serverId: 'home-two', artifactId: 'same-id' }, revision,
+        entries: [{ location: 'document', text: 'Searchable instruction text' }],
+      });
+      db.close();
+      db = openDeepIndexDb({ dbPath });
+
+      const hits = db.searchDocuments({ query: 'searchable', eligibleDocuments: [{ ref, revision }], maxResults: 10 });
+      expect(hits).toHaveLength(4);
+      expect(hits.map((hit) => hit.factId).sort()).toEqual(['active', 'expired', 'forgotten', 'topic-only']);
+      expect(hits.every((hit) => hit.ref.serverId === 'home-one' && hit.revision.bodyVersion === 7)).toBe(true);
+      expect(hits.find((hit) => hit.factId === 'forgotten')?.location).toBe('archive');
+      expect(hits.find((hit) => hit.factId === 'topic-only')?.location).toEqual(topicLocation);
+      expect(db.searchDocuments({ query: 'факт', eligibleDocuments: [{ ref, revision }], maxResults: 10 }))
+        .toEqual([expect.objectContaining({ factId: 'expired' })]);
+      expect(db.searchDocuments({
+        query: 'instruction', eligibleDocuments: [{ ref: { serverId: 'home-two', artifactId: 'same-id' }, revision }], maxResults: 10,
+      })).toEqual([expect.objectContaining({ location: 'document', text: 'Searchable instruction text' })]);
+      expect(db.search({ query: 'searchable', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(db.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 2, deepDocumentEntryCount: 5 });
+      db.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('opens the legacy location table without losing documents, terms or Session data', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-topics-upgrade-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const ref = { serverId: 'home', artifactId: 'retained' };
+      const revision = { headerVersion: 1, bodyVersion: 1 };
+      let db = openDeepIndexDb({ dbPath });
+      db.insertChunk({ sessionId: 'retained-session', seqFrom: 1, seqTo: 2, createdAtFromMs: 1, createdAtToMs: 2, text: 'Retained transcript' });
+      db.upsertEmbedding({ sessionId: 'retained-session', seqFrom: 1, seqTo: 2, provider: 'test', modelId: 'test', embedding: new Float32Array([1]), updatedAtMs: 2 });
+      db.replaceDocumentIndexData({ ref, revision, entries: [{ factId: 'retained-fact', location: 'facts', text: 'Retained searchable fact' }] });
+      db.close();
+
+      const legacyDb = openSqliteDatabaseSync(dbPath);
+      try {
+        // D4's incumbent persisted location declaration, before named topics.
+        legacyDb.exec(`
+          PRAGMA foreign_keys=OFF;
+          BEGIN IMMEDIATE;
+          CREATE TABLE legacy_document_entries (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            documentId INTEGER NOT NULL,
+            factId TEXT,
+            location TEXT NOT NULL CHECK (location IN ('facts', 'archive', 'document')),
+            text TEXT NOT NULL,
+            FOREIGN KEY (documentId) REFERENCES indexed_documents(documentId) ON DELETE CASCADE
+          );
+          INSERT INTO legacy_document_entries SELECT * FROM document_entries;
+          DROP TABLE document_entries;
+          ALTER TABLE legacy_document_entries RENAME TO document_entries;
+          CREATE INDEX document_entries_by_document ON document_entries(documentId);
+          COMMIT;
+          PRAGMA foreign_keys=ON;
+        `);
+      } finally {
+        legacyDb.close();
+      }
+
+      db = openDeepIndexDb({ dbPath });
+      expect(db.searchDocuments({ query: 'retained', eligibleDocuments: [{ ref, revision }], maxResults: 10 }))
+        .toEqual([expect.objectContaining({ factId: 'retained-fact', location: 'facts' })]);
+      expect(db.search({ query: 'retained', scope: { type: 'global' }, maxResults: 10 }))
+        .toEqual([expect.objectContaining({ sessionId: 'retained-session' })]);
+      expect(db.loadEmbeddings({ provider: 'test', modelId: 'test', keys: [{ sessionId: 'retained-session', seqFrom: 1, seqTo: 2 }] }).get('retained-session:1-2'))
+        .toEqual(new Float32Array([1]));
+      const topicRef = { ...ref, artifactId: 'topic' };
+      const location = { type: 'topic' as const, title: 'Deployment' };
+      db.replaceDocumentIndexData({ ref: topicRef, revision, entries: [{ factId: 'topic-fact', location, text: 'Retained topic detail' }] });
+      db.close();
+      db = openDeepIndexDb({ dbPath });
+      expect(db.searchDocuments({ query: 'topic', eligibleDocuments: [{ ref: topicRef, revision }], maxResults: 10 }))
+        .toEqual([expect.objectContaining({ factId: 'topic-fact', location })]);
+      expect(db.pruneDocumentIndexData({ eligibleDocuments: [{ ref: topicRef, revision }] })).toBe(1);
+      expect(countRows(dbPath, 'document_terms')).toBe(3);
+      db.close();
+      const inspectedDb = openSqliteDatabaseSync(dbPath);
+      try {
+        expect(inspectedDb.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      } finally {
+        inspectedDb.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('filters revoked, detached and stale revisions before limiting document results and prunes derived text', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-eligibility-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const db = openDeepIndexDb({ dbPath });
+      const revision = { headerVersion: 1, bodyVersion: 1 };
+      const ref = { serverId: 'home', artifactId: 'current' };
+      for (const artifactId of ['revoked', 'detached', 'current']) {
+        db.replaceDocumentIndexData({ ref: { ...ref, artifactId }, revision, entries: [{ location: 'document', text: 'shared candidate' }] });
+      }
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [{ ref, revision }], maxResults: 1 }))
+        .toEqual([expect.objectContaining({ ref })]);
+      const manyEligibleDocuments = Array.from({ length: 8_200 }, (_, index) => ({
+        ref: { serverId: 'home', artifactId: `other-${index}` }, revision,
+      }));
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [...manyEligibleDocuments, { ref, revision }, { ref, revision }], maxResults: 1 }))
+        .toEqual([expect.objectContaining({ ref, rank: -1, score: 1 })]);
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [], maxResults: 10 })).toEqual([]);
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [{ ref, revision: { ...revision, headerVersion: 2 } }], maxResults: 10 })).toEqual([]);
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [{ ref, revision: { ...revision, bodyVersion: 2 } }], maxResults: 10 })).toEqual([]);
+      db.replaceDocumentIndexData({ ref, revision: { ...revision, bodyVersion: 2 }, entries: [{ factId: 'new', location: 'facts', text: 'replacement content' }] });
+      expect(db.searchDocuments({ query: 'shared', eligibleDocuments: [{ ref, revision }], maxResults: 10 })).toEqual([]);
+      expect(db.pruneDocumentIndexData({ eligibleDocuments: [{ ref, revision: { ...revision, bodyVersion: 2 } }] })).toBe(2);
+      expect(countRows(dbPath, 'document_terms')).toBe(2);
+      expect(db.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 1, deepDocumentEntryCount: 1 });
+      expect(db.pruneDocumentIndexData({ eligibleDocuments: [] })).toBe(1);
+      expect(countRows(dbPath, 'document_terms')).toBe(0);
+      expect(countRows(dbPath, 'document_entries')).toBe(0);
+      db.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('clears searchable text and counts when the current document revision becomes empty', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-documents-empty-'));
+    try {
+      const dbPath = join(dir, 'deep.sqlite');
+      const db = openDeepIndexDb({ dbPath });
+      const ref = { serverId: 'home', artifactId: 'cleared' };
+      const revision = { headerVersion: 1, bodyVersion: 1 };
+      db.replaceDocumentIndexData({ ref, revision, entries: [{ factId: 'old', location: 'facts', text: 'obsolete searchable text' }] });
+      expect(db.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 1, deepDocumentEntryCount: 1 });
+
+      const emptyRevision = { ...revision, bodyVersion: 2 };
+      db.replaceDocumentIndexData({ ref, revision: emptyRevision, entries: [] });
+      expect(db.searchDocuments({ query: 'obsolete', eligibleDocuments: [{ ref, revision }], maxResults: 10 })).toEqual([]);
+      expect(db.searchDocuments({ query: 'obsolete', eligibleDocuments: [{ ref, revision: emptyRevision }], maxResults: 10 })).toEqual([]);
+      expect(db.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 0, deepDocumentEntryCount: 0 });
+      expect(countRows(dbPath, 'document_terms')).toBe(0);
+      expect(db.pruneDocumentIndexData({ eligibleDocuments: [{ ref, revision: emptyRevision }] })).toBe(0);
+      db.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('lists every Session identity retained by deep chunks or embeddings', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-deep-index-retained-'));
     try {

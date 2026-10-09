@@ -37,6 +37,8 @@ describe('enforceMemoryDiskBudgets', () => {
         createdAtToMs: 2,
         text: 'termtwo',
       });
+      const document = { ref: { serverId: 'home', artifactId: 'attached' }, revision: { headerVersion: 1, bodyVersion: 1 } };
+      deep.replaceDocumentIndexData({ ...document, entries: [{ location: 'document', text: 'documentterm' }] });
 
       expect(tier1.search({ query: 'termone', scope: { type: 'global' }, maxResults: 10 }).length).toBe(1);
       expect(deep.search({ query: 'termtwo', scope: { type: 'global' }, maxResults: 10 }).length).toBe(1);
@@ -51,6 +53,8 @@ describe('enforceMemoryDiskBudgets', () => {
 
       expect(tier1.search({ query: 'termone', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
       expect(deep.search({ query: 'termtwo', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(deep.searchDocuments({ query: 'documentterm', eligibleDocuments: [document], maxResults: 10 })).toEqual([]);
+      expect(deep.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 0, deepDocumentEntryCount: 0 });
 
       deep.close();
       tier1.close();
@@ -76,6 +80,8 @@ describe('enforceMemoryDiskBudgets', () => {
         createdAtToMs: 2,
         text: 'retained deep memory',
       });
+      const document = { ref: { serverId: 'home', artifactId: 'retained' }, revision: { headerVersion: 1, bodyVersion: 1 } };
+      deep.replaceDocumentIndexData({ ...document, entries: [{ factId: 'retained', location: 'archive', text: 'retaineddocument' }] });
       deep.close();
 
       await enforceMemoryDiskBudgets({
@@ -89,6 +95,8 @@ describe('enforceMemoryDiskBudgets', () => {
       const reopened = openDeepIndexDb({ dbPath: deepPath });
       reopened.init();
       expect(reopened.search({ query: 'retained', scope: { type: 'global' }, maxResults: 10 })).toEqual([]);
+      expect(reopened.searchDocuments({ query: 'retaineddocument', eligibleDocuments: [document], maxResults: 10 })).toEqual([]);
+      expect(reopened.getDeepIndexStats()).toMatchObject({ searchableDocumentCount: 0, deepDocumentEntryCount: 0 });
       reopened.close();
       tier1.close();
     } finally {

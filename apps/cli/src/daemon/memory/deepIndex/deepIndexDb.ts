@@ -5,6 +5,23 @@ import {
   type SqliteDatabaseSync,
 } from '../../persistence/sqliteSync';
 import { tokenizeMemoryText } from '../tokenizeMemoryText';
+import type { AccountArtifactRevision } from '../../../api/artifacts/accountArtifactStore';
+import { MemoryDocumentSearchHitV1Schema, type MemoryDocumentSearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
+
+export type DeepIndexDocumentRef = Readonly<{ serverId: string; artifactId: string }>;
+export type DeepIndexDocumentIdentity = Readonly<{
+  ref: DeepIndexDocumentRef;
+  revision: AccountArtifactRevision;
+}>;
+export type DeepIndexDocumentEntry = Readonly<{
+  factId?: string;
+  location: MemoryDocumentSearchHitV1['location'];
+  text: string;
+}>;
+export type DeepIndexDocumentSearchHit = DeepIndexDocumentIdentity & DeepIndexDocumentEntry & Readonly<{
+  rank: number;
+  score: number;
+}>;
 
 export type DeepIndexSearchScope =
   | Readonly<{ type: 'global' }>
@@ -26,6 +43,8 @@ export type DeepIndexStats = Readonly<{
   deepEmbeddingCount: number;
   searchableSessionCount: number;
   latestIndexedMessageAtMs: number | null;
+  searchableDocumentCount: number;
+  deepDocumentEntryCount: number;
 }>;
 
 export type DeepIndexDbHandle = Readonly<{
@@ -65,6 +84,15 @@ export type DeepIndexDbHandle = Readonly<{
     text: string;
   }>>;
   getDeepIndexStats: () => DeepIndexStats;
+  replaceDocumentIndexData: (args: DeepIndexDocumentIdentity & Readonly<{ entries: readonly DeepIndexDocumentEntry[] }>) => void;
+  /** The caller supplies current readable attachments, never cached access facts. */
+  searchDocuments: (args: Readonly<{
+    query: string;
+    eligibleDocuments: readonly DeepIndexDocumentIdentity[];
+    maxResults: number;
+  }>) => DeepIndexDocumentSearchHit[];
+  /** Requires the complete global attachment inventory, not one Session's scope. */
+  pruneDocumentIndexData: (args: Readonly<{ eligibleDocuments: readonly DeepIndexDocumentIdentity[] }>) => number;
   /** Every Session id for which this deep index retains a chunk or embedding. */
   listIndexedSessionIds: () => readonly string[];
   hasSessionArtifactsOutsidePolicy: (args: Readonly<{ sessionId: string; policyKey: string }>) => boolean;
@@ -80,6 +108,7 @@ export type DeepIndexDbHandle = Readonly<{
     eligibleSessionIds?: readonly string[];
     maxResults: number;
   }>) => DeepIndexSearchHit[];
+  /** Evicts chunks, then whole derived documents, within the one deep-index budget. */
   deleteOldestChunks: (args: Readonly<{ limit: number }>) => number;
   /**
    * Removes every deep derived row for one Session: chunks (with their
@@ -106,6 +135,29 @@ function nullableInt(value: unknown): number | null {
 function intOrZero(value: unknown): number {
   return nullableInt(value) ?? 0;
 }
+
+function documentIdentityKey(document: DeepIndexDocumentIdentity): string {
+  return JSON.stringify([document.ref.serverId, document.ref.artifactId, document.revision.headerVersion, document.revision.bodyVersion]);
+}
+
+function serializeDocumentLocation(location: DeepIndexDocumentEntry['location']): string {
+  const parsed = MemoryDocumentSearchHitV1Schema.shape.location.parse(location);
+  return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+}
+
+function deserializeDocumentLocation(location: string): DeepIndexDocumentEntry['location'] {
+  const legacy = MemoryDocumentSearchHitV1Schema.shape.location.safeParse(location);
+  if (legacy.success) return legacy.data;
+  return MemoryDocumentSearchHitV1Schema.shape.location.parse(JSON.parse(location));
+}
+
+type IndexedDocumentRow = Readonly<{
+  documentId: number;
+  serverId: string;
+  artifactId: string;
+  headerVersion: number;
+  bodyVersion: number;
+}>;
 
 /** v2 rebuilt Unicode terms; v3 adds canonical memory-policy provenance. */
 const DEEP_INDEX_SCHEMA_VERSION = 3;
@@ -168,6 +220,76 @@ function ensureSchemaTables(db: SqliteDatabaseSync): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS chunk_embeddings_provider_model_idx ON chunk_embeddings(provider, modelId);
   `);
+
+  // Additive projections leave the existing Session schema/version readable.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS indexed_documents (
+      documentId INTEGER PRIMARY KEY AUTOINCREMENT,
+      serverId TEXT NOT NULL,
+      artifactId TEXT NOT NULL,
+      headerVersion INTEGER NOT NULL,
+      bodyVersion INTEGER NOT NULL,
+      UNIQUE (serverId, artifactId)
+    );
+    CREATE TABLE IF NOT EXISTS document_entries (
+      entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+      documentId INTEGER NOT NULL,
+      factId TEXT,
+      location TEXT NOT NULL,
+      text TEXT NOT NULL,
+      FOREIGN KEY (documentId) REFERENCES indexed_documents(documentId) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS document_entries_by_document ON document_entries(documentId);
+    CREATE TABLE IF NOT EXISTS document_terms (
+      term TEXT NOT NULL,
+      entryId INTEGER NOT NULL,
+      PRIMARY KEY (term, entryId),
+      FOREIGN KEY (entryId) REFERENCES document_entries(entryId) ON DELETE CASCADE
+    );
+  `);
+}
+
+/** Relax the development projection's old enum CHECK while preserving entry ids and term references. */
+function migrateDocumentLocationStorage(db: SqliteDatabaseSync): void {
+  // SQLite's untyped row boundary; only the projected field is inspected below.
+  const readSchema = () => db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'document_entries';`).get() as Readonly<{ sql?: unknown }> | undefined;
+  const hasLegacyCheck = () => {
+    const sql = readSchema()?.sql;
+    return typeof sql === 'string' && /CHECK\s*\(\s*location\s+IN\s*\(/i.test(sql);
+  };
+  if (!hasLegacyCheck()) return;
+  // SQLite table replacement requires foreign keys off outside the transaction;
+  // document_terms keeps referencing the final document_entries name and ids.
+  db.exec('PRAGMA foreign_keys=OFF;');
+  try {
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      // Another opener may have completed the same upgrade while we waited.
+      if (hasLegacyCheck()) {
+        db.exec(`
+          CREATE TABLE document_entries_topics (
+            entryId INTEGER PRIMARY KEY AUTOINCREMENT,
+            documentId INTEGER NOT NULL,
+            factId TEXT,
+            location TEXT NOT NULL,
+            text TEXT NOT NULL,
+            FOREIGN KEY (documentId) REFERENCES indexed_documents(documentId) ON DELETE CASCADE
+          );
+          INSERT INTO document_entries_topics (entryId, documentId, factId, location, text)
+            SELECT entryId, documentId, factId, location, text FROM document_entries;
+          DROP TABLE document_entries;
+          ALTER TABLE document_entries_topics RENAME TO document_entries;
+          CREATE INDEX document_entries_by_document ON document_entries(documentId);
+        `);
+      }
+      db.exec('COMMIT;');
+    } catch (error) {
+      db.exec('ROLLBACK;');
+      throw error;
+    }
+  } finally {
+    db.exec('PRAGMA foreign_keys=ON;');
+  }
 }
 
 /** Embeddings have no foreign key to their chunk, so orphans are swept here. */
@@ -234,6 +356,7 @@ function ensureSchema(db: SqliteDatabaseSync): void {
   }
 
   ensureSchemaTables(db);
+  migrateDocumentLocationStorage(db);
   if (userVersion > 0 && userVersion < 3) {
     const columns = db.prepare(`PRAGMA table_info(message_chunks)`).all() as Array<{ name?: unknown }>;
     if (!columns.some((column) => column.name === 'policyKey')) {
@@ -344,6 +467,21 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
       AND (policyKey <> ? OR seqFrom < ? OR createdAtFromMs < ?);
   `);
   const hasMismatchedPolicyStmt = db.prepare(`SELECT 1 FROM message_chunks WHERE sessionId = ? AND policyKey <> ? LIMIT 1;`);
+  const deleteDocumentStmt = db.prepare(`DELETE FROM indexed_documents WHERE serverId = ? AND artifactId = ?;`);
+  const deleteDocumentByIdStmt = db.prepare(`DELETE FROM indexed_documents WHERE documentId = ?;`);
+  const insertDocumentStmt = db.prepare(`
+    INSERT INTO indexed_documents (serverId, artifactId, headerVersion, bodyVersion) VALUES (?, ?, ?, ?);
+  `);
+  const insertDocumentEntryStmt = db.prepare(`
+    INSERT INTO document_entries (documentId, factId, location, text) VALUES (?, ?, ?, ?);
+  `);
+  const insertDocumentTermStmt = db.prepare(`INSERT INTO document_terms (term, entryId) VALUES (?, ?);`);
+  const listIndexedDocumentsStmt = db.prepare(`SELECT documentId, serverId, artifactId, headerVersion, bodyVersion FROM indexed_documents;`);
+  const oldestDocumentsStmt = db.prepare(`SELECT documentId FROM indexed_documents ORDER BY documentId ASC LIMIT ?;`);
+  const documentIndexStatsStmt = db.prepare(`
+    SELECT (SELECT COUNT(DISTINCT documentId) FROM document_entries) AS searchableDocumentCount,
+      (SELECT COUNT(*) FROM document_entries) AS deepDocumentEntryCount;
+  `);
 
   const embeddingKey = (sessionId: string, seqFrom: number, seqTo: number): string => `${sessionId}:${seqFrom}-${seqTo}`;
 
@@ -363,6 +501,87 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
   return {
     init: () => {
       // Schema is ensured at open time.
+    },
+    replaceDocumentIndexData: ({ ref, revision, entries }) => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        deleteDocumentStmt.run(ref.serverId, ref.artifactId);
+        // Both native SQLite adapters return this insertion result shape.
+        const documentInsert = insertDocumentStmt.run(
+          ref.serverId, ref.artifactId, revision.headerVersion, revision.bodyVersion,
+        ) as Readonly<{ lastInsertRowid: number | bigint }>;
+        const documentId = Number(documentInsert.lastInsertRowid);
+        for (const entry of entries) {
+          const text = entry.text.trim();
+          if (!text) continue;
+          const entryInsert = insertDocumentEntryStmt.run(documentId, entry.factId ?? null, serializeDocumentLocation(entry.location), text) as Readonly<{ lastInsertRowid: number | bigint }>;
+          const entryId = Number(entryInsert.lastInsertRowid);
+          for (const term of tokenizeMemoryText(text)) insertDocumentTermStmt.run(term, entryId);
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    searchDocuments: ({ query, eligibleDocuments, maxResults }) => {
+      const terms = tokenizeMemoryText(normalizeQuery(query));
+      if (terms.length === 0 || eligibleDocuments.length === 0) return [];
+      const limit = Math.max(1, Math.min(100, Math.floor(maxResults)));
+      const documents = [...new Map(eligibleDocuments.map((document) => [documentIdentityKey(document), document])).values()];
+      const batchSize = resolveSqliteSupportedValueBatchSize({ fixedParameterCount: terms.length + 1, parametersPerValue: 4 });
+      type HitRow = IndexedDocumentRow & Readonly<{
+        entryId: number; factId: string | null; location: string; text: string; hitCount: number;
+      }>;
+      const rows: HitRow[] = [];
+      for (let offset = 0; offset < documents.length; offset += batchSize) {
+        const batch = documents.slice(offset, offset + batchSize);
+        const params: Array<string | number> = [];
+        for (const document of batch) params.push(document.ref.serverId, document.ref.artifactId, document.revision.headerVersion, document.revision.bodyVersion);
+        params.push(...terms, limit);
+        rows.push(...db.prepare(`
+          WITH eligible(serverId, artifactId, headerVersion, bodyVersion) AS (VALUES ${batch.map(() => '(?, ?, ?, ?)').join(',')})
+          SELECT d.documentId, d.serverId, d.artifactId, d.headerVersion, d.bodyVersion,
+            e.entryId, e.factId, e.location, e.text, COUNT(*) AS hitCount
+          FROM eligible a JOIN indexed_documents d
+            ON d.serverId = a.serverId AND d.artifactId = a.artifactId
+              AND d.headerVersion = a.headerVersion AND d.bodyVersion = a.bodyVersion
+          JOIN document_entries e ON e.documentId = d.documentId
+          JOIN document_terms t ON t.entryId = e.entryId
+          WHERE t.term IN (${terms.map(() => '?').join(',')})
+          GROUP BY e.entryId ORDER BY hitCount DESC, e.entryId ASC LIMIT ?;
+        `).all(...params) as HitRow[]);
+      }
+      rows.sort((left, right) => Number(right.hitCount) - Number(left.hitCount) || Number(left.entryId) - Number(right.entryId));
+      return rows.slice(0, limit).map((row) => ({
+        ref: { serverId: row.serverId, artifactId: row.artifactId },
+        revision: { headerVersion: Number(row.headerVersion), bodyVersion: Number(row.bodyVersion) },
+        ...(row.factId === null ? {} : { factId: row.factId }),
+        location: deserializeDocumentLocation(row.location),
+        text: row.text,
+        rank: -Number(row.hitCount),
+        score: Number(row.hitCount) / terms.length,
+      }));
+    },
+    pruneDocumentIndexData: ({ eligibleDocuments }) => {
+      const eligible = new Set(eligibleDocuments.map(documentIdentityKey));
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        let removed = 0;
+        for (const row of listIndexedDocumentsStmt.all() as IndexedDocumentRow[]) {
+          if (eligible.has(documentIdentityKey({
+            ref: { serverId: row.serverId, artifactId: row.artifactId },
+            revision: { headerVersion: Number(row.headerVersion), bodyVersion: Number(row.bodyVersion) },
+          }))) continue;
+          deleteDocumentByIdStmt.run(row.documentId);
+          removed += 1;
+        }
+        db.exec('COMMIT');
+        return removed;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     },
     insertChunk: (chunk) => {
       const sessionId = String(chunk.sessionId ?? '').trim();
@@ -463,13 +682,25 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
         .filter((row) => row.sessionId && Number.isFinite(row.seqFrom) && Number.isFinite(row.seqTo) && row.text.trim().length > 0);
     },
     getDeepIndexStats: () => {
-      const stats = deepIndexStatsStmt.get() as any;
-      const embeddingStats = deepEmbeddingStatsStmt.get() as any;
+      // Fixed SQL projections cross the untyped SQLite boundary; existing
+      // numeric readers normalize the individual unknown values.
+      const stats = deepIndexStatsStmt.get() as Readonly<{
+        deepChunkCount?: unknown;
+        searchableSessionCount?: unknown;
+        latestIndexedMessageAtMs?: unknown;
+      }> | undefined;
+      const embeddingStats = deepEmbeddingStatsStmt.get() as Readonly<{ deepEmbeddingCount?: unknown }> | undefined;
+      const documentStats = documentIndexStatsStmt.get() as Readonly<{
+        searchableDocumentCount?: unknown;
+        deepDocumentEntryCount?: unknown;
+      }> | undefined;
       return {
         deepChunkCount: intOrZero(stats?.deepChunkCount),
         deepEmbeddingCount: intOrZero(embeddingStats?.deepEmbeddingCount),
         searchableSessionCount: intOrZero(stats?.searchableSessionCount),
         latestIndexedMessageAtMs: nullableInt(stats?.latestIndexedMessageAtMs),
+        searchableDocumentCount: intOrZero(documentStats?.searchableDocumentCount),
+        deepDocumentEntryCount: intOrZero(documentStats?.deepDocumentEntryCount),
       };
     },
     hasSessionArtifactsOutsidePolicy: ({ sessionId, policyKey }) => Boolean(
@@ -584,7 +815,8 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
       const n = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 0;
       if (n <= 0) return 0;
       const doomed = (selectOldestChunkKeysStmt.all(n) as any[]).filter((row) => Number.isFinite(Number(row?.chunkId)));
-      if (doomed.length === 0) return 0;
+      const doomedDocuments = oldestDocumentsStmt.all(n - doomed.length) as Array<{ documentId: number }>;
+      if (doomed.length === 0 && doomedDocuments.length === 0) return 0;
 
       // Terms cascade from the chunk row, but embeddings are keyed by
       // (sessionId, seqFrom, seqTo) with no foreign key, so they are removed
@@ -601,12 +833,13 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
           );
           deleteChunkByIdStmt.run(Math.trunc(Number(row.chunkId)));
         }
+        for (const document of doomedDocuments) deleteDocumentByIdStmt.run(document.documentId);
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;
       }
-      return doomed.length;
+      return doomed.length + doomedDocuments.length;
     },
     deleteSessionIndexData: ({ sessionId }) => {
       const id = String(sessionId ?? '').trim();
