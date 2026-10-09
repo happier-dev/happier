@@ -39,9 +39,44 @@ import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCata
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 describe('createActionToolExecutorBridge', () => {
+  it('refuses generic and previously admitted direct calls when current Action availability changes', async () => {
+    // Session listing crosses the authenticated server boundary; admission and dispatch stay real.
+    const sessionList = vi.fn(async () => ({
+      queryVersion: 1 as const,
+      sessions: [], nextCursor: null, hasNext: false,
+      attentionNextCursor: null, attentionHasNext: false,
+    }));
+    const executor = createActionExecutor({
+      ...createCliActionDeps({ token: 'test-token', sessionId: 'lead', mode: 'plain', ctx: null }),
+      sessionList,
+      isActionApprovalRequired: () => false,
+    });
+    let enabled = true;
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent', executor, requiredDirectActionIds: ['session.list'],
+      isActionEnabled: (id) => id !== 'session.list' || enabled,
+    });
+    await expect(bridge.executeActionByToolName('session_list', {}, 'lead')).resolves.toEqual({ ok: true, result: expect.anything() });
+    sessionList.mockClear();
+    enabled = false;
+    for (const [toolName, args] of [
+      ['action_execute', { actionId: 'session.list', input: {} }],
+      ['session_list', {}],
+    ] as const) {
+      await expect(bridge.executeActionByToolName(toolName, args, 'lead')).resolves.toMatchObject({
+        ok: false, errorCode: 'action_disabled', details: { reason: 'disabled_by_policy' },
+      });
+    }
+    expect(sessionList).not.toHaveBeenCalled();
+    enabled = true;
+    await expect(bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'lead'))
+      .resolves.toMatchObject({ ok: true });
+  });
+
   it('defaults normal agent listing to the led subtree and retains an explicitly restricted corpus', async () => {
     // The list port is the authenticated server HTTP boundary; the bridge and executor stay real.
     const sessionList = vi.fn(async () => ({
+      queryVersion: 1 as const,
       sessions: [], nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false,
     }));
@@ -51,13 +86,17 @@ describe('createActionToolExecutorBridge', () => {
       isActionApprovalRequired: () => false,
     });
     const bridge = createActionToolExecutorBridge({ surface: 'agent', executor });
-    await expect(bridge.executeActionByToolName('session_list', {}, 'lead')).resolves.toMatchObject({ ok: true });
+    // Normal Agent listing is discoverable-only, so use its public generic Action entry point.
+    await expect(bridge.executeActionByToolName('action_execute', { actionId: 'session.list', input: {} }, 'lead'))
+      .resolves.toEqual({ ok: true, result: expect.anything() });
     expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({ underSessionId: 'lead' }) }));
     const restricted = createActionToolExecutorBridge({
       surface: 'agent', executor, resolveSessionListAccess: () => 'current_session',
     });
     sessionList.mockClear();
-    await expect(restricted.executeActionByToolName('session_list', { underSessionId: 'lead' }, 'lead'))
+    await expect(restricted.executeActionByToolName('action_execute', {
+      actionId: 'session.list', input: { underSessionId: 'lead' },
+    }, 'lead'))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(sessionList).not.toHaveBeenCalled();
   });

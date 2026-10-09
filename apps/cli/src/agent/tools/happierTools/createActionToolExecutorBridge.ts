@@ -5,7 +5,7 @@ import {
   type ResolvedActionOption,
   type ReviewCommentPrincipalHeaderV1,
 } from '@happier-dev/protocol';
-import { createActionToolNameToIdMap } from './actionToolCatalog';
+import { createActionToolNameToIdMap, resolveActionToolCatalogAvailability } from './actionToolCatalog';
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -323,6 +323,14 @@ export function createActionToolExecutorBridge(params: Readonly<{
     pluginToolCatalog: params.pluginToolCatalog,
     requiredDirectActionIds: params.requiredDirectActionIds,
   });
+  const resolveAvailability = (actionId: string) => resolveActionToolCatalogAvailability({
+    actionId,
+    surface,
+    isActionEnabled,
+    actionsSettings: readActionsSettings(),
+    registry: params.registry,
+    pluginToolCatalog: params.pluginToolCatalog,
+  });
 
   return {
     executeActionByToolName: async (toolName, toolArgs, defaultSessionId, options) => {
@@ -331,6 +339,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
         const actionId = argsRecord ? readTrimmedStringField(argsRecord, 'actionId') : '';
         if (!actionId) {
           return { ok: false, errorCode: 'invalid_action_input', error: 'Missing actionId' };
+        }
+        const availability = resolveAvailability(actionId);
+        if (!availability.available) {
+          return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled', details: availability };
         }
         const actionInput = bindContextualActionToolInput({
           actionId,
@@ -370,6 +382,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const actionId = actionToolNameToId.get(toolName);
       if (!actionId) {
         return { ok: false, errorCode: 'unknown_tool', error: `Unknown action-backed tool: ${toolName}` };
+      }
+      const availability = resolveAvailability(actionId);
+      if (!availability.available) {
+        return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled', details: availability };
       }
 
       const actionInput = bindContextualActionToolInput({
