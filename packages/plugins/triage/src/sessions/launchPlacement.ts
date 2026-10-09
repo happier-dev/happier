@@ -18,8 +18,8 @@ import type { ProjectKeyV1 } from '@happier-dev/plugin-sdk/sessions';
  * crawl standing in for a registry that already exists.
  *
  * **No index is built here.** `WorkspaceRefV1`
- * (`packages/protocol/src/workspaces/workspaceRefV1.ts`), persisted in Account
- * Settings as `workspaceRefsV1`, already holds `{ id, serverId, machineId,
+ * (`packages/protocol/src/workspaces/workspaceRefV1.ts`), persisted in private
+ * Account Project rows, already holds `{ id, serverId, machineId,
  * rootPath, label }` for every project the reader has opened, and the
  * `projectKey`-keyed working snapshot already holds that project's resolved
  * forge and its worktrees. This module reads what those two owners already say

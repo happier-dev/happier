@@ -44,6 +44,50 @@ function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath 
 }
 
 describe('createOnHappySessionWebhook', () => {
+  it('registers accepted canonical Sessions only after startup readiness, preserving their nested directory', async () => {
+    const accepted: string[] = [];
+    const metadata = createMetadata(process.pid, 'daemon', '/repo/packages/app');
+    const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
+    const sessions = new Map([[process.pid, tracked]]);
+    const report = createOnHappySessionWebhook({
+      pidToTrackedSession: sessions,
+      pidToAwaiter: new Map([[process.pid, () => {}]]),
+      readProcessIdentityByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+      readCredentialsFn: async () => null,
+      // The callback is the external persistence effect; admission stays real.
+      registerAcceptedWorkspace: async (acceptedMetadata) => { accepted.push(acceptedMetadata.path); },
+    });
+    await report(`PID-${process.pid}`, metadata);
+    expect(accepted).toEqual([]);
+    await expect(report('rejected-session', metadata, async () => { throw new Error('readiness refused'); }))
+      .rejects.toThrow('readiness refused');
+    expect(accepted).toEqual([]);
+
+    const foreground = createOnHappySessionWebhook({
+      pidToTrackedSession: new Map(), pidToAwaiter: new Map(),
+      readProcessIdentityByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+      registerAcceptedWorkspace: async (acceptedMetadata) => { accepted.push(acceptedMetadata.path); },
+    });
+    await foreground('wrong-stack', { ...metadata, startedBy: 'terminal', happyHomeDir: 'another-stack' });
+    await foreground('missing-pid', { ...metadata, startedBy: 'terminal', hostPid: undefined });
+    expect(accepted).toEqual([]);
+    await foreground('accepted-foreground', { ...metadata, startedBy: 'terminal' });
+    await vi.waitFor(() => expect(accepted).toEqual(['/repo/packages/app']));
+
+    const daemonTracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
+    const daemon = createOnHappySessionWebhook({
+      pidToTrackedSession: new Map([[process.pid, daemonTracked]]),
+      pidToAwaiter: new Map([[process.pid, () => {}]]),
+      readProcessIdentityByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+      readCredentialsFn: async () => null,
+      registerAcceptedWorkspace: async (acceptedMetadata) => { accepted.push(acceptedMetadata.path); },
+    });
+    await daemon('accepted-daemon', metadata, async () => { expect(accepted).toHaveLength(1); });
+    await vi.waitFor(() => expect(accepted).toEqual(['/repo/packages/app', '/repo/packages/app']));
+  });
   it.skipIf(process.platform === 'win32')('cannot revive a superseded wrapper marker when its real process census completes after strict promotion', async () => {
     const previousHome = configuration.happyHomeDir;
     const home = await mkdtemp(path.join(os.tmpdir(), 'happier-wrapper-marker-'));

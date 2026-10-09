@@ -255,6 +255,24 @@ function findProfilesByHomeServerIdentityId(
   });
 }
 
+/** Exact Home target admission, without treating profile names or URLs as authority. */
+export async function isServerProfileHomeIdentity(profileId: string, homeServerIdentityId: string): Promise<boolean> {
+  // Preserve the existing local-profile target contract for in-process callers.
+  if (profileId === homeServerIdentityId) return profileId.length > 0;
+  try {
+    const settings = await readSettings();
+    const servers = settings.servers ?? {};
+    const profile = coerceProfile(servers[profileId]);
+    return profile?.id === profileId
+      && profile.homeConnectionDescriptorAuthority === 'exact'
+      && profile.homeConnectionDescriptor?.homeServerIdentityId === homeServerIdentityId
+      && findProfilesByHomeServerIdentityId(servers, homeServerIdentityId).length === 1
+      && findProfileIdByIdentifier(servers, homeServerIdentityId) === profileId;
+  } catch {
+    return false;
+  }
+}
+
 function findProfileIdByComparableUrl(
   servers: Record<string, any>,
   serverUrlRaw: string,

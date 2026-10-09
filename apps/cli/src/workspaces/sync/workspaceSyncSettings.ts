@@ -1,8 +1,6 @@
 import { WorkspaceContentPolicyV1Schema, WorkspaceSyncRelationshipV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceContentPolicyV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 
-export const WORKSPACE_SYNC_SETTINGS_KEY = 'workspaceSyncRelationshipsV1' as const;
-
 function validationError(name: string, issues: readonly Readonly<{ path: readonly PropertyKey[]; message: string }>[]): Error {
   const details = issues.map((issue) => `${issue.path.join('.') || name}: ${issue.message}`).join('; ');
   return new Error(`Invalid workspace sync settings: ${details}`);

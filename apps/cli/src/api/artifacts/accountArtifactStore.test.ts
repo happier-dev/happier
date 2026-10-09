@@ -9,6 +9,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decod
   sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, createWorkflowDefinitionActions,
   workflowDefinitionArtifactSharingAdapterV1, readLaunchProfileArtifactV1,
   launchProfileArtifactSharingAdapterV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobWriteV1Schema, type ArtifactBlobReadResponseV1 } from '@happier-dev/protocol';
 import { decryptWithDataKeyResult, decryptWithDataKey, encryptWithDataKey } from '@/api/encryption';
 import { createCliArtifactActions } from '@/session/actions/artifactActions';
@@ -17,9 +18,10 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor } from './accountArtifactStore';
 import { readCarrierMutation } from './accountArtifactStore.testkit';
 import { buildHomeHubArtifactIdV1, createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
-import { createWidgetDefinitionArtifactPortV1, createWidgetSurfaceArtifactPortV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetDefinitionArtifactPortV1, createWidgetSurfaceArtifactPortV1, type WidgetDefinitionDraftV1 } from '@happier-dev/protocol/widgets';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol';
 
 const { mockDelete, mockGet, mockPost } = vi.hoisted(() => ({
   mockDelete: vi.fn(),
@@ -35,6 +37,131 @@ describe('createAccountArtifactStore', () => {
     mockDelete.mockReset();
     mockGet.mockReset();
     mockPost.mockReset();
+  });
+
+  it.each([401, 403, 503])('keeps HTTP %i distinct from definitive Artifact absence', async (status) => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status, data: { error: 'unavailable' } });
+    await expect(store.read('required-doc')).rejects.toMatchObject({ code: 'artifact_read_unavailable' });
+    mockGet.mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+    expect(await store.read('required-doc')).toBeNull();
+  });
+
+  it('projects current widget sharing and header-only revision from the actual Artifact access boundary', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    let access: 'owner' | 'view' | 'edit' = 'owner';
+    let grants: unknown[] = [];
+    const id = '11111111-1111-4111-8111-111111111111';
+    const row = () => ({ id, ownerAccountId: 'owner', access, publicAudience: 'none', encryptionMode: 'plain',
+      header: encodePlainArtifactStoredContent({ kind: 'widget-area-layout.v1', v: 1, title: 'Dashboard' }),
+      body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 2, bodyVersion: 3, seq: 3, createdAt: 1, updatedAt: 3 });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === '/v1/artifacts' ? [row()]
+      : url.endsWith('/access/grants') ? { artifactId: id, ownerAccountId: 'owner', access, grants } : row() }));
+    const transport = createAcknowledgedAccountArtifactTransport(store);
+    expect(await transport.read(id)).toMatchObject({ ownerAccountId: 'owner', access: 'owner', shared: false });
+    grants = [{ principal: { kind: 'account', accountId: 'viewer' }, accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1, display: { name: 'Viewer' } }];
+    expect(await transport.read(id)).toMatchObject({ access: 'owner', shared: true });
+    access = 'view';
+    expect(await transport.read(id)).toMatchObject({ access: 'view', shared: true });
+    expect(await store.list({ includeBody: false })).toMatchObject({ items: [{ artifactId: id, headerVersion: 2, bodyVersion: 3 }] });
+    const ordinaryActions = createCliArtifactActions({ store, resolvePublishCaller: async () => null });
+    const ordinaryPage = ArtifactActionOutputSchemasV1['artifact.list'].parse(await ordinaryActions({ actionId: 'artifact.list', input: {}, context: { surface: 'cli' } }));
+    expect(ordinaryPage.items[0]).toMatchObject({ artifactId: id, headerVersion: 2, access: 'view', publicAudience: 'none' });
+    expect(ordinaryPage.items[0]).not.toHaveProperty('bodyVersion');
+    expect(await store.list({ includeBody: false })).toMatchObject({ items: [{ artifactId: id, bodyVersion: 3 }] });
+  });
+
+  it.each(['owner', 'edit'] as const)('refuses generic shared WorkBoard private pins for an admitted %s and permits safe edits', async access => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'board' } } as const;
+    const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'private-definition' }, bindings: {} } as const;
+    const board = { ...createWorkBoardV1({ id: 'board', name: 'Board' }), widgets: [{ kind: 'widget' as const,
+      ref: { surface, instanceId: instance.id }, instance, size: 'medium' as const }] };
+    const header = buildWorkBoardArtifactHeaderV1(board);
+    let row = { id: board.id, ownerAccountId: 'owner', access, encryptionMode: 'plain', header: encodePlainArtifactStoredContent(header),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    const before = { ...row };
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/access/grants')
+      ? { artifactId: board.id, ownerAccountId: 'owner', access, grants: [{ principal: { kind: 'account', accountId: 'viewer' },
+        accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1, display: { name: 'Viewer' } }] } : row }));
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => {
+      const input = readCarrierMutation(wire);
+      row = { ...row, header: String(input.header), body: String(input.body), headerVersion: 2, bodyVersion: 2 };
+      return { status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } };
+    });
+    const pinned = { ...board, widgets: [{ ...board.widgets[0], instance: { ...instance, bindings: { cloud: { kind: 'value', value: {
+      nested: [{ service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'private' }],
+    } } } } }] };
+    for (const candidateHeader of [header, { kind: 'ordinary' }]) {
+      await expect(store.update({ artifactId: board.id, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+        header: candidateHeader, body: JSON.stringify(pinned) })).rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+      expect(row).toEqual(before);
+    }
+    const safe = { ...board, name: 'Safe rename' };
+    expect(await store.update({ artifactId: board.id, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      header: buildWorkBoardArtifactHeaderV1(safe), body: JSON.stringify(safe) })).toMatchObject({ ok: true, revision: { bodyVersion: 2 } });
+    expect(decodePlainArtifactStoredContent(row.body)).toEqual({ body: JSON.stringify(safe) });
+  });
+
+  it('keeps public-link-only WorkBoard writes and restores private-pin safe until expiry or revocation', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'board' } } as const;
+    const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'private-definition' }, bindings: {} } as const;
+    const board = { ...createWorkBoardV1({ id: 'board', name: 'Board' }), widgets: [{ kind: 'widget' as const,
+      ref: { surface, instanceId: instance.id }, instance, size: 'medium' as const }] };
+    const header = buildWorkBoardArtifactHeaderV1(board);
+    const pinned = { ...board, widgets: [{ ...board.widgets[0], instance: { ...instance, bindings: { cloud: { kind: 'value', value: {
+      nested: [{ service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'private' }],
+    } } } } }] };
+    let publication: { expiresAt: number | null } | null = { expiresAt: null };
+    let audienceUnavailable = false;
+    let row = { id: board.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', header: encodePlainArtifactStoredContent(header),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2 };
+    mockGet.mockImplementation(async (url: string) => new URL(url).pathname === '/v1/public-shares'
+      ? { status: 404, data: { error: 'not_found' } } : ({ status: 200, data: url.endsWith('/access/grants') ? { artifactId: board.id, ownerAccountId: 'owner', access: 'owner', grants: [] }
+      : url.endsWith('/revisions') ? { revisions: [{ bodyVersion: 1, body: encodePlainArtifactStoredContent({ body: JSON.stringify(pinned) }),
+        createdAt: 1, sizeBytes: 1 }], retentionCount: 3 } : { ...row, publicAudience: audienceUnavailable ? undefined
+          : publication && publication.expiresAt === null ? 'retained' : 'none' } }));
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => {
+      const input = readCarrierMutation(wire);
+      row = { ...row, header: String(input.header), body: typeof input.body === 'string' ? input.body : row.body,
+        headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
+      return { status: 200, data: { success: true, headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } };
+    });
+    const before = { ...row };
+    await expect(store.update({ artifactId: board.id, expectedRevision: { headerVersion: 2, bodyVersion: 2 }, header,
+      body: JSON.stringify(pinned) })).rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+    await expect(store.revisions.restore({ artifactId: board.id, expectedRevision: { headerVersion: 2, bodyVersion: 2 }, bodyVersion: 1 }))
+      .rejects.toMatchObject({ code: 'artifact_shared_content_forbidden' });
+    expect(row).toEqual(before);
+    expect(await store.read(board.id)).toMatchObject({ shared: true, publicAudience: 'retained' });
+    const actions = createCliArtifactActions({ store, resolvePublishCaller: async () => null });
+    expect(ArtifactActionOutputSchemasV1['artifact.get'].parse(await actions({ actionId: 'artifact.get', input: { artifactId: board.id }, context: { surface: 'cli' } })))
+      .toMatchObject({ artifact: { publicAudience: 'retained' } });
+    audienceUnavailable = true;
+    await expect(store.update({ artifactId: board.id, expectedRevision: { headerVersion: 2, bodyVersion: 2 }, header,
+      body: JSON.stringify(pinned) })).rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(store.revisions.restore({ artifactId: board.id, expectedRevision: { headerVersion: 2, bodyVersion: 2 }, bodyVersion: 1 }))
+      .rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(store.read(board.id)).rejects.toMatchObject({ code: 'content_unavailable' });
+    const ordinary = await actions({ actionId: 'artifact.get', input: { artifactId: board.id }, context: { surface: 'cli' } });
+    expect(ordinary).toMatchObject({ artifact: { body: JSON.stringify(board), access: 'owner', publicAudience: 'unknown' } });
+    expect(ordinary).not.toHaveProperty('artifact.shared');
+    expect(await store.update({ artifactId: board.id, expectedRevision: { headerVersion: 2, bodyVersion: 2 }, header,
+      body: JSON.stringify(board) })).toMatchObject({ ok: true });
+    audienceUnavailable = false;
+    publication = { expiresAt: 0 };
+    expect(await store.read(board.id)).toMatchObject({ shared: false });
+    publication = null;
+    expect(await store.read(board.id)).toMatchObject({ shared: false });
+    expect(await store.update({ artifactId: board.id, expectedRevision: { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion },
+      header, body: JSON.stringify(pinned) })).toMatchObject({ ok: true });
+    expect(await store.revisions.restore({ artifactId: board.id, expectedRevision: { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion }, bodyVersion: 1 }))
+      .toMatchObject({ ok: true });
+    expect(mockGet.mock.calls.some(([url]) => new URL(String(url)).pathname === '/v1/public-shares')).toBe(false);
   });
 
   it('lets the operation lifecycle govern slow Artifact HTTP responses and cancellation', async () => {
@@ -127,19 +254,22 @@ describe('createAccountArtifactStore', () => {
       const artifactId = path.split('/')[3]!;
       const row = rows.get(artifactId);
       if (!row) return { status: 404, data: { error: 'not_found' } };
+      if (path.endsWith('/access/grants')) return { status: 200, data: { artifactId, ownerAccountId: 'owner', access: 'owner', grants: [] } };
       return { status: 200, data: path.endsWith('/recipients') ? {
         artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
         dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
-      } : row };
+      } : { ...row, publicAudience: 'none' } };
     });
     const port = createWidgetDefinitionArtifactPortV1(store, { accountId: 'owner' });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'owner' }), widgetDefinitionArtifacts: port });
     const account = { serverId: 'home', accountId: 'owner' };
     const definition = { name: 'Private count', body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Private data' } } },
-      inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } };
+      sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+      inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false } } satisfies WidgetDefinitionDraftV1;
     const id = '11111111-1111-4111-8111-111111111111';
     const created = await executor.execute('widgets.definition.create', { account, artifactId: id, definition }, { surface: 'ui', serverId: 'home' });
+    if (!created.ok) throw new Error(JSON.stringify(created));
     expect(created).toMatchObject({ ok: true, result: { definition: { id, name: 'Private count' } } });
     // Transport contract runs the host's approved replay; policy itself is covered at its owner.
     const updated = await executor.execute('widgets.definition.update', { account, artifactId: id, patch: { name: 'Current count' } }, { surface: 'ui', serverId: 'home', bypassApprovals: true });
@@ -160,9 +290,9 @@ describe('createAccountArtifactStore', () => {
     const area = createWidgetSurfaceArtifactPortV1(createAcknowledgedAccountArtifactTransport(store), { surface, isCurrent: () => true });
     const instance = { v: 1 as const, id: 'private-copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
     await area.apply({ kind: 'add', instance });
-    await area.apply({ kind: 'width', instanceId: instance.id, width: 'full' });
+    await area.apply({ kind: 'size', instanceId: instance.id, size: 'full' });
     expect((await createWidgetSurfaceArtifactPortV1(createAcknowledgedAccountArtifactTransport(store), { surface, isCurrent: () => true }).read()).instances)
-      .toEqual([{ instance, width: 'full' }]);
+      .toEqual([{ instance, size: 'full' }]);
     if (mode === 'e2ee') expect(JSON.stringify(mockPost.mock.calls)).not.toContain('private-copy');
     const calls = mockPost.mock.calls.length;
     const wrongModeStore = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
@@ -1074,7 +1204,7 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       updatedAt: 1,
     } });
 
-    await expect(store.read('artifact-1')).resolves.toBeNull();
+    await expect(store.read('artifact-1')).rejects.toMatchObject({ code: 'artifact_read_invalid' });
   });
 
   it('passes cancellation through Artifact delete without inventing a revision precondition', async () => {

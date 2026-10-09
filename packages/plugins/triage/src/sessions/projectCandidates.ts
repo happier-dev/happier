@@ -12,7 +12,7 @@ import type {
  * Action that projects it.
  *
  * `projects.list` is an inventory read beside `machines.list` and
- * `paths.list_recent` — a projection of `workspaceRefsV1` in Account Settings
+ * `paths.list_recent` — a projection of private Account Project workspace rows
  * paired with each project's already-fetched SCM working snapshot. Triage adds
  * no registry, no cache, no watch and no index: it asks the host what it
  * already holds, at the moment a reader presses.

@@ -7,6 +7,7 @@ import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/proto
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 import { logger } from '@/ui/logger';
 import { readStoredCredentials } from '@/persistence';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 
 import {
   getAgentResumeConfig,
@@ -446,6 +447,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
   readCredentialsFn?: typeof readStoredCredentials;
   onTrackedSessionReady?: (tracked: TrackedSession) => Promise<void>;
   onTrackedSessionReported?: (tracked: TrackedSession) => Promise<void> | void;
+  /** Private checkout persistence follows accepted canonical startup facts only. */
+  registerAcceptedWorkspace?: (metadata: Metadata, sessionId: string) => Promise<void>;
   onPidPromoted?: (input: Readonly<{
     fromPid: number;
     toPid: number;
@@ -474,6 +477,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     readCredentialsFn = readStoredCredentials,
     onTrackedSessionReady,
     onTrackedSessionReported,
+    registerAcceptedWorkspace,
     onPidPromoted,
   } = params;
 
@@ -1049,7 +1053,17 @@ export function createOnHappySessionWebhook(params: Readonly<{
       void startOrdinaryMarkerPersistence();
     }
 
-    if (!trackedDaemonCanonicalSession || !startupReadinessGate) return;
+    const registerAcceptedCanonicalWorkspace = (): void => {
+      if (isPlaceholderSessionId || !registerAcceptedWorkspace) return;
+      // Workspace metadata cannot delay or overturn the accepted Session start.
+      void Promise.resolve().then(() => registerAcceptedWorkspace(normalizedMetadata, sessionId)).catch((error: unknown) => {
+        logger.debug('[DAEMON RUN] Accepted Session workspace registration failed', serializeAxiosErrorForLog(error));
+      });
+    };
+    if (!trackedDaemonCanonicalSession || !startupReadinessGate) {
+      registerAcceptedCanonicalWorkspace();
+      return;
+    }
     const reconcileTrackedDaemonCanonicalWebhook =
       async (): Promise<void> => {
     const completeSpawnAwaiter = async (): Promise<void> => {
@@ -1227,6 +1241,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
     startupReadinessGate.resolve(true);
     await completeSpawnAwaiter();
+    registerAcceptedCanonicalWorkspace();
     if (
       !requiresCanonicalMarkerAdoption
       && !ordinaryMarkerPersistence
