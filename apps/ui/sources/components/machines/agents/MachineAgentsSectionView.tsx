@@ -59,7 +59,7 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
             <ItemGroup
                 title={t('machineAgents.sectionTitle')}
                 description={t('machineAgents.sectionDescription')}
-                action={props.status === 'offline' ? undefined : (
+                action={props.status === 'offline' || (props.status === 'error' && props.agents.length === 0) ? undefined : (
                     <RoundButton
                         testID={`${props.testID}.checkAgain`}
                         size="small"
