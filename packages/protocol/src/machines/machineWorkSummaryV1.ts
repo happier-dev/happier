@@ -26,7 +26,10 @@ export const MachineWorkSummaryV1Schema = lazyDefinition(() => {
       // Older producers omit this advisory field; absence never means zero.
       finiteLoad: z.optional(WorkerLoadObservationV1Schema),
     }),
-    z.strictObject({ kind: z.literal('unavailable') }),
+    z.strictObject({
+      kind: z.literal('unavailable'),
+      finiteLoad: z.optional(WorkerLoadObservationV1Schema),
+    }),
   ]));
 });
 
