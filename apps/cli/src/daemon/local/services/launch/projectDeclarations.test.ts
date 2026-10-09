@@ -858,7 +858,7 @@ describe('accepted Project Service declaration starter', () => {
         const approvals: string[] = [];
         const execute: ReturnType<typeof createLocalServicesDaemonRuntimeActionExecutor> = createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate, ingress: h.ingress,
             routes: { launcherRoutes: h.routes, actionRoutes },
-            executeStartAction: (request, context) => executor.execute('localServices.launcher.start', request, context) });
+            prepareStartAction: (request, context) => executor.prepare('localServices.launcher.start', request, context) });
         const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({
             ...createCliActionDeps({ token: h.runtime.credentials.token, credentials: h.runtime.credentials,
                 serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
@@ -868,7 +868,10 @@ describe('accepted Project Service declaration starter', () => {
             // Artifact persistence and the human decision are genuine external boundaries.
             approvalsCreate: async ({ request }) => { approvals.push(request.actionId); return { artifactId: 'restart-start-review' }; },
             approvalsUpdate: async () => ({ ok: true }),
-            approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject' as const, request, decisionAuthority: 'present_user' as const }) });
+            approvalsWaitForDecision: async ({ request }) => {
+                expect(original.snapshot().state).toBe('running');
+                return { decision: 'reject' as const, request, decisionAuthority: 'present_user' as const };
+            } });
         const request = { requestId: 'restart-service', action: 'restart_managed' as const, force: false,
             expectedEffectDigest: review.reviewedEffectDigest,
             target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: original.instanceId,
@@ -884,12 +887,13 @@ describe('accepted Project Service declaration starter', () => {
         const result = await execute({ actionId: 'localServices.actions.restartManaged',
             input: { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) },
             context: { ...h.context, actionRequestId: request.requestId, surface } });
-        expect(original.snapshot().state).toBe('stopped');
         if (surface === 'agent') {
+            expect(original.snapshot().state).toBe('running');
             expect(result).toMatchObject({ status: 'denied', reasonCode: 'approval_rejected' });
             expect(approvals).toEqual(['localServices.launcher.start']);
-            expect(h.owner.listProjectServices()).toEqual([]);
+            expect(h.owner.listProjectServices()).toEqual([original]);
         } else {
+            expect(original.snapshot().state).toBe('stopped');
             expect(result).toMatchObject({ status: 'succeeded' });
             expect(approvals).toEqual([]);
             expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(original.instanceId);
@@ -962,7 +966,7 @@ describe('accepted Project Service declaration starter', () => {
                         serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
                     runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress,
                         routes: { launcherRoutes: h.routes, actionRoutes },
-                        executeStartAction: (request, context) => executor.execute('localServices.launcher.start', request, context) }) });
+                        prepareStartAction: (request, context) => executor.prepare('localServices.launcher.start', request, context) }) });
                 return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home', ...context }) };
             } });
         const request = { requestId: 'received-restart', action: 'restart_managed' as const, force: false,

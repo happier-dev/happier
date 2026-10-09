@@ -519,7 +519,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); await lease?.release(); }
     }
     const restartManagedService: RestartProjectManagedService = async (request, handle, execution) => {
-        if (!execution.executeStartAction) return { status: 'denied', reasonCode: 'managed_service_restart_admission_required' };
+        if (!execution.prepareStartAction) return { status: 'denied', reasonCode: 'managed_service_restart_admission_required' };
         const start: DaemonLocalServiceLauncherStartRequestV1 = {
             machineId: handle.workspace.machineId, targetId: handle.serviceId,
             workspace: { serverId: handle.workspace.serverId, machineId: handle.workspace.machineId,
@@ -533,11 +533,15 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (!selected.ok) return { status: 'denied', reasonCode: selected.reasonCode,
             ...(selected.reviewedEffect !== undefined ? { reviewedEffect: selected.reviewedEffect } : {}),
             ...(selected.reviewedEffectDigest ? { reviewedEffectDigest: selected.reviewedEffectDigest } : {}) };
-        const signals = [execution.ingress?.signal, execution.actionContext.signal].filter((signal): signal is AbortSignal => signal !== undefined);
-        const stopped = await stopProjectManagedService(handle, signals.length ? AbortSignal.any(signals) : undefined);
-        if (stopped.status !== 'succeeded') return stopped;
-        // Re-enter the full Action owner: its current permissions and independent Start approval remain binding.
-        const result = await execution.executeStartAction(start, execution.actionContext);
+        // Start's required-result Action preparation completes its independent approval before
+        // disruption. Its one-shot invocation still revalidates current admission when run.
+        const prepared = await execution.prepareStartAction(start, execution.actionContext);
+        if (prepared.kind === 'ready') {
+            const signals = [execution.ingress?.signal, execution.actionContext.signal].filter((signal): signal is AbortSignal => signal !== undefined);
+            const stopped = await stopProjectManagedService(handle, signals.length ? AbortSignal.any(signals) : undefined);
+            if (stopped.status !== 'succeeded') return stopped;
+        }
+        const result = prepared.kind === 'settled' ? prepared.result : await prepared.invocation.run();
         if (!result.ok) return { status: 'denied', reasonCode: result.errorCode };
         const parsed = DaemonLocalServiceLauncherStartResponseV1Schema.safeParse(result.result);
         if (!parsed.success) return { status: 'failed', reasonCode: 'managed_service_restart_result_unavailable' };
