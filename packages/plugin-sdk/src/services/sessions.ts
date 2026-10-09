@@ -72,8 +72,9 @@ export interface SessionSchema<T> {
 }
 
 export type ProjectKeyV1 =
-    | Readonly<{ id: string }>
-    | Readonly<{ serverId: string; machineId: string; rootPath: string }>;
+    | Readonly<{ id: string; serverId?: string }>
+    | Readonly<{ serverId: string; machineId: string; rootPath: string }>
+    | Readonly<{ serverId: string; projectKey: string }>;
 export const ProjectKeyV1Schema: SessionSchema<ProjectKeyV1> = protocolProjectKeyV1Schema;
 
 export type SessionSpawnNewInputV2 = PluginActionInputById['session.spawn_new'];

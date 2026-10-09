@@ -27,6 +27,9 @@ export function mergeAbortSignals(
   signals: readonly [AbortSignal, ...(AbortSignal | undefined)[]],
 ): RequiredMergedAbortSignals;
 export function mergeAbortSignals(
+  signals: readonly [...(AbortSignal | undefined)[], AbortSignal],
+): RequiredMergedAbortSignals;
+export function mergeAbortSignals(
   signals: ReadonlyArray<AbortSignal | undefined>,
 ): MergedAbortSignals;
 export function mergeAbortSignals(
