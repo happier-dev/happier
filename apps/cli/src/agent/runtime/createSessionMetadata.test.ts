@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+
 import { createSessionMetadata } from './createSessionMetadata';
 import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from './sessionConnectedServicesBindingsEnv';
 
@@ -7,6 +9,18 @@ const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
 describe('createSessionMetadata', () => {
+    it('publishes the creating process generation alongside its PID for safe startup association', () => {
+        const fingerprint = readProcessInstanceFingerprintSync(process.pid);
+        expect(fingerprint).not.toBeNull();
+        const { metadata } = createSessionMetadata({
+            flavor: 'claude', machineId: 'machine-1', startedBy: 'daemon',
+        });
+        expect(metadata).toMatchObject({
+            hostPid: process.pid,
+            hostProcessInstanceFingerprint: fingerprint,
+        });
+    });
+
     it('does not seed legacy messageQueueV1 metadata', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'claude',

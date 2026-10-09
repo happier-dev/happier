@@ -1403,6 +1403,20 @@ read that same lock, so a runner waiting to publish its first webhook prevents
 another activation from allocating a terminal host. Startup failure and normal
 runner exit release the scope's locks; process-exit cleanup uses the same owner.
 
+Before the child receives the created Session id, its server row can already trigger
+Pending activation. Development source closes that remaining pre-lock window in
+`resolveAcceptedExistingSessionStartup`: it reads the existing attach metadata only
+when fresh daemon children await a webhook, and uses the webhook owner's shared
+PID, wrapper and Windows-tab correlation. `createSessionMetadata` publishes the
+optional `hostProcessInstanceFingerprint` beside `hostPid`; the daemon verifies
+that runner generation, machine and home before learning the tracked Session id.
+It then rejoins accepted startup rather than launching another child. Learning
+identity does not complete the webhook waiter, promote markers or claim readiness.
+Process uncertainty and Stop still use the normal presence/resume fencing owner.
+A correlated pending child with legacy or unreadable generation evidence is
+explicitly fenced until startup completes; a positively different generation is
+not associated. This adds no new lock, timer or cross-process registry.
+
 In current development, `createOnChildExited` releases session-marker evidence only
 through the tracked exit lifecycle. An exit notification for an untracked PID does
 not authorize marker deletion. Failed terminal-exit staging retains tracking and

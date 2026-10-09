@@ -8,6 +8,7 @@
  */
 
 import os from 'node:os';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { resolve } from 'node:path';
 
 import {
@@ -195,6 +196,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         happyToolsDir: resolve(projectPath(), 'tools', 'unpacked'),
         startedFromDaemon: opts.startedBy === 'daemon',
         hostPid: process.pid,
+        hostProcessInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid) ?? undefined,
         sessionLogPath: logger.getLogPath(),
         startedBy: opts.startedBy || 'terminal',
         lifecycleState: 'running',
