@@ -393,6 +393,7 @@ function createPluginServices(
         exec: fixtureService(fixture, 'exec'),
         providers: fixtureService(fixture, 'providers'),
         managedServices: fixtureService(fixture, 'managedServices'),
+        machineProvisioners: fixtureService(fixture, 'machineProvisioners'),
         sessions: fixtureService(fixture, 'sessions'),
         resources: fixtureService(fixture, 'resources'),
         mcp: fixtureService(fixture, 'mcp'),

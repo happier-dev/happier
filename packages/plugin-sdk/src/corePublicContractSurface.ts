@@ -78,6 +78,7 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'exec'
     | 'providers'
     | 'managedServices'
+    | 'machineProvisioners'
     | 'sessions'
     | 'resources'
     | 'mcp'
