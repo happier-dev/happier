@@ -63,6 +63,10 @@ describe('public authoring Project Companion activity surface', () => {
       // The public controlled frame renders the author's own content and controls (70s3).
       await expect(fixture.getByText('Framed review preview')).resolves.toBeDefined();
       await expect(fixture.getByText('Review preview controls')).resolves.toBeDefined();
+      await expect(fixture.getByText('Author preview content')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Close author preview' }));
+      await expect(fixture.queryByText('Author preview content')).resolves.toBeUndefined();
+      await expect(fixture.getByText('Framed review preview')).resolves.toBeDefined();
     } finally { await fixture.dispose(); }
   });
   it('invokes the declared native picker through the real UI host settlement boundary and cancels without a value', async () => {

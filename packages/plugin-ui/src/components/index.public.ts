@@ -67,6 +67,7 @@ export * from './Text.js';
 export * from './TargetedSurface.js';
 export { WidgetSurface, type WidgetSurfaceProps } from './WidgetSurface.js';
 export { WidgetFrame, type WidgetFrameProps } from './WidgetFrame.js';
+export { FloatingFrame, type FloatingFrameProps } from './FloatingFrame.js';
 export { Tree, type TreeItem, type TreeProps } from './Tree.js';
 export { DragSource, DropTarget, type DragSourceProps, type DropTargetProps } from './EntityDragDrop.js';
 export { WidgetPresentationProvider, useWidgetPresentation, type WidgetPresentation } from './WidgetPresentation.js';

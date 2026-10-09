@@ -23,6 +23,7 @@ import {
   WidgetFrame,
 } from '@happier-dev/plugin-ui';
 import { useHappierUiAccessibility, useHappierUiLocalization } from '@happier-dev/plugin-ui/environment';
+import { FloatingFrame as AuthorFloatingFrame } from '@happier-dev/plugin-ui/components';
 import {
   FloatingFrame, HappierStack, HappierText, resolveFloatingFrameRect, resolveHappierTreeFocusKey,
   useHappierCollection, type FrameRect, type HappierTreeNode,
@@ -72,6 +73,7 @@ function matchesExternalReview(
  * provider; authors only read the factual environment from it.
  */
 function ExternalAuthoringAdvancedPanel() {
+  const [previewOpen, setPreviewOpen] = useState(true);
   const { direction, locale } = useHappierUiLocalization();
   const { textScale } = useHappierUiAccessibility();
   const treeFocus = resolveHappierTreeFocusKey(externalTreeNodes, null);
@@ -101,6 +103,19 @@ function ExternalAuthoringAdvancedPanel() {
       >
         <HappierText>Framed review preview</HappierText>
       </FloatingFrame>
+      <AuthorFloatingFrame
+        mode={previewOpen ? 'docked' : 'closed'}
+        rect={frame.rect}
+        availableRect={externalAvailableRect}
+        aspectRatio={16 / 10}
+        moveInput="surface"
+        onRectChange={() => undefined}
+        onModeChange={() => undefined}
+        controls={<Button title="Close author preview" onPress={() => setPreviewOpen(false)} />}
+        accessibilityLabel="Author controlled preview"
+      >
+        <Text>Author preview content</Text>
+      </AuthorFloatingFrame>
     </HappierStack>
   );
 }
