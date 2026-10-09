@@ -209,7 +209,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     const machines = useAllMachines();
     const sessions = useAllSessions();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const rawSettings = useSetting('externalSessionsSettingsV1');
     const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
@@ -257,7 +256,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             const projection = resolveAgentCatalogProjection(agentId, {
                 enabledAgentIds,
                 backendEnabledByTargetKey,
-                acpCatalogSettingsV1,
                 mergedProviderProjectionById:
                     daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
                 mergedBackendProjectionById:
@@ -269,7 +267,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             }];
         });
     }, [
-        acpCatalogSettingsV1,
         backendEnabledByTargetKey,
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,

@@ -101,16 +101,6 @@ function buildInstallablesPolicySummaryProperties(value: unknown): Record<string
     };
 }
 
-function buildAcpCatalogSummaryProperties(value: unknown): Record<string, number> {
-    const record = value && typeof value === 'object' && !Array.isArray(value)
-        ? value as { backends?: unknown }
-        : {};
-
-    return {
-        backendCount: Array.isArray(record.backends) ? record.backends.length : 0,
-    };
-}
-
 function buildPeerMediationPreferencesSummaryProperties(value: unknown): Record<string, number> {
     const record = value && typeof value === 'object' && !Array.isArray(value)
         ? value as { byMachineId?: unknown; flows?: unknown }
@@ -207,13 +197,5 @@ export const ACCOUNT_RUNTIME_SETTING_ANALYTICS = defineAccountSettingAnalytics({
         privacy: 'count_only',
         identityScope: 'person',
         serializeCurrentProperties: buildInstallablesPolicySummaryProperties,
-    },
-    acpCatalogSettingsV1: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrentProperties: buildAcpCatalogSummaryProperties,
     },
 });
