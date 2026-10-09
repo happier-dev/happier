@@ -126,7 +126,7 @@ import {
 } from './sessions/claudeEndpointStateEnv';
 import { HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY } from '@/backends/claude/endpointRecovery/claudeEndpointArtifacts';
 import { buildTerminalAttachmentMetadataFromHostHandle } from '@/agent/runtime/terminal/attachmentMetadata';
-import { adoptReportedHappySessionId, correlateTrackedSessionReport, createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
+import { adoptReportedHappySessionId, adoptReportedSessionRunnerIdentity, correlateTrackedSessionReport, createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { applyTrackedSessionTurnLifecycle } from './sessions/applyTrackedSessionTurnLifecycle';
 import { connectedServiceTurnLifecycleContinue } from './connectedServices/connectedServiceTurnLifecycleContract';
 import { resolveSessionRuntimeSnapshot } from './sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
@@ -2156,8 +2156,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             metadata: { startedBy: 'daemon', ...(terminal.success ? { terminal: terminal.data } : {}) },
           });
           if (!tracked || !isUnboundFreshChild(tracked)) return null;
-          const presence = await classifyTrackedSessionRunnerPresence({ tracked });
-          if (presence === 'absent' || !isUnboundFreshChild(tracked)) return null;
           // The row's PID can outlive its process. Verify the creating runner's generation,
           // not a wrapper's generation, before binding an otherwise unknown Session id.
           const expectedFingerprint = readNonEmptyMetadataString(metadata.hostProcessInstanceFingerprint);
@@ -2171,6 +2169,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             };
           }
           if (!processInstanceFingerprintMatches(expectedFingerprint, currentFingerprint)) return null;
+          adoptReportedSessionRunnerIdentity(tracked, pid, currentFingerprint);
+          const presence = await classifyTrackedSessionRunnerPresence({ tracked });
+          if (presence === 'absent' || !isUnboundFreshChild(tracked)) return null;
           // Identity is learned here; readiness, marker promotion and acceptance completion
           // still belong to the webhook. Unknown/stopped owners go through normal fencing.
           adoptReportedHappySessionId(tracked, sessionId);

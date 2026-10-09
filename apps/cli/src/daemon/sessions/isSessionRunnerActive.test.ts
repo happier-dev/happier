@@ -130,6 +130,25 @@ describe('probeSessionRunnerServiceability', () => {
 });
 
 describe('isSessionRunnerActive', () => {
+  it.each(['servable', 'stopped', 'reused'] as const)('checks a reported runner after its launcher exits: %s', async (state) => {
+    const tracked: TrackedSession = {
+      pid: 12345,
+      sessionRunnerPid: 23456,
+      happySessionId: 'sess_runner',
+      startedBy: 'daemon',
+      processInstanceFingerprint: 'linux-proc:same',
+    };
+    const active = await isSessionRunnerActive({
+      sessionId: 'sess_runner',
+      trackedSessions: [tracked],
+      readProcessRunState: async pid => pid === 12345 ? 'dead' : state === 'stopped' ? 'stopped' : 'servable',
+      getProcessCommandHash: async () => null,
+      getProcessInstanceFingerprint: () => state === 'reused' ? 'linux-proc:new' : 'linux-proc:same',
+      readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
+    });
+    expect(active).toBe(state === 'servable');
+  });
+
   it('returns false for empty session id', async () => {
     const res = await isSessionRunnerActive({ sessionId: '   ', trackedSessions: [] });
     expect(res).toBe(false);

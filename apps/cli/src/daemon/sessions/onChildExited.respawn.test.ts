@@ -17,6 +17,23 @@ describe('createOnChildExited', () => {
     hookSettingsMock.cleanupHookPluginDir.mockClear();
   });
 
+  it('does not promote a live PID belonging to a different runner generation', async () => {
+    const pid = 681004;
+    const tracked: TrackedSession = {
+      pid, startedBy: 'daemon', sessionRunnerPid: process.pid,
+      processInstanceFingerprint: 'linux-proc:unrelated-generation',
+    };
+    const pidToTrackedSession = new Map([[pid, tracked]]);
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn: async () => {}, // Filesystem boundary; exercise real exit staging.
+    });
+    await onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+    expect(pidToTrackedSession.has(process.pid)).toBe(false);
+    expect(pidToTrackedSession.has(pid)).toBe(false);
+  });
+
   it('does not register disconnected terminal recovery after an owned startup launch was cancelled before acknowledgement', async () => {
     const pid = 121;
     const tracked = {

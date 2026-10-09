@@ -1,5 +1,4 @@
 import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { ChildExit } from './onChildExited';
 import type { TrackedSession } from '../types';
 import { waitForSessionWebhook, type SessionWebhookCompletion } from '../spawn/waitForSessionWebhook';
@@ -21,33 +20,21 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
     try {
       process.kill(pid, 0);
     } catch {
-      // The canonical exit owner arbitrates a live wrapper promotion synchronously.
+      // The canonical exit owner arbitrates runner presence and wrapper promotion.
       // Do not fail the same waiter or stop its existing poll for a wrapper-only exit.
       let retirement: void | Promise<void>;
       try {
-        retirement = onChildExited(pid, { reason: 'process-exited', code: null, signal: null });
+        retirement = onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
       } catch (error) {
         retirement = Promise.reject(error);
       }
-      void Promise.resolve(retirement).catch((error) => {
+      // The exit owner settles startup through its custody finalizer. A poll
+      // observes PID absence only; it must not retire a retained dispatcher or
+      // independently fail the same waiter. Keep polling after promotion.
+      void Promise.resolve(retirement).then(() => {
+        if (completion.getCurrentPid() === pid && !pidToSpawnResultResolver.has(pid)) clearInterval(interval);
+      }, (error) => {
         logger.warn('[DAEMON RUN] Failed to complete visible-console exit cleanup; retaining tracked custody', { pid, error });
-      });
-      if (completion.getCurrentPid() !== pid) return;
-      clearInterval(interval);
-      const resolveSpawn = pidToSpawnResultResolver.get(pid);
-      if (resolveSpawn) {
-        pidToSpawnResultResolver.delete(pid);
-        const timeout = pidToSpawnWebhookTimeout.get(pid);
-        if (timeout) clearTimeout(timeout);
-        pidToSpawnWebhookTimeout.delete(pid);
-        pidToAwaiter.delete(pid);
-      }
-      // Startup failure is immediate; physical retirement has its own observable
-      // custody result and may itself depend on the startup finalizer settling.
-      resolveSpawn?.({
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-        errorMessage: `Child process exited before session webhook (pid=${pid})`,
       });
     }
   }, pollMs);

@@ -44,6 +44,16 @@ export function adoptReportedHappySessionId(tracked: TrackedSession, reportedSes
   return reportedSessionId;
 }
 
+/** Record the runner role without changing launcher custody or webhook readiness. */
+export function adoptReportedSessionRunnerIdentity(
+  tracked: TrackedSession,
+  reportedPid: number,
+  processInstanceFingerprint?: string,
+): void {
+  if (tracked.pid !== reportedPid) tracked.sessionRunnerPid = reportedPid;
+  if (processInstanceFingerprint) tracked.processInstanceFingerprint = processInstanceFingerprint;
+}
+
 function resolveParentPidLookupTimeoutMs(): number {
   const raw = String(process.env[PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY] ?? '').trim();
   if (!raw) return DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS;
@@ -231,7 +241,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
     }
     if (trackedForPid) {
-      if (trackedForPid.pid !== pid) trackedForPid.sessionRunnerPid = pid;
+      adoptReportedSessionRunnerIdentity(trackedForPid, pid);
       adoptReportedHappySessionId(trackedForPid, sessionId);
       trackedForPid.happySessionMetadataFromLocalWebhook = normalizedMetadata;
       if (trackedForPid.startedBy !== 'daemon' && trackedForPid.reattachedFromDiskMarker) {
@@ -305,7 +315,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
       if (trackedForPid && processInstanceFingerprint) {
-        trackedForPid.processInstanceFingerprint = processInstanceFingerprint;
+        adoptReportedSessionRunnerIdentity(trackedForPid, pid, processInstanceFingerprint);
       }
 
       const storedCredentials =

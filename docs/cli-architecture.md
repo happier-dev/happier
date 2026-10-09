@@ -1423,6 +1423,14 @@ Process uncertainty and Stop still use the normal presence/resume fencing owner.
 A correlated pending child with legacy or unreadable generation evidence is
 explicitly fenced until startup completes; a positively different generation is
 not associated. This adds no new lock, timer or cross-process registry.
+Verified runner identity also owns presence when a Windows Terminal dispatcher
+has already exited. Until that identity arrives, pending Windows startup has
+unknown runner presence; launcher disappearance cannot retire it. Heartbeat and
+visible-console polling delegate inferred process absence to `createOnChildExited`;
+the poller no longer independently fails the startup waiter. Explicit runner exit,
+cancellation and the existing startup timeout retain their finalization ownership.
+Wrapper promotion with a recorded generation uses that same presence classifier,
+so a reused runner PID cannot be promoted into session custody.
 
 In current development, `createOnChildExited` releases session-marker evidence only
 through the tracked exit lifecycle. An exit notification for an untracked PID does

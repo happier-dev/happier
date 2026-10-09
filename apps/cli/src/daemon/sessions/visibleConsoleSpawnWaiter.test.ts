@@ -6,6 +6,7 @@ import { logger } from '@/ui/logger';
 
 import { waitForVisibleConsoleSessionWebhook } from './visibleConsoleSpawnWaiter';
 import { createOnChildExited } from './onChildExited';
+import { buildWindowsHostedTerminalAttachment } from '../platform/windows/windowsHostedSessionRuntime';
 
 function installProcessKillMock(aliveRef: { alive: boolean }): void {
   vi.spyOn(process, 'kill').mockImplementation(
@@ -34,10 +35,60 @@ function createWaiterState(): {
   };
 }
 
+function armTestStartupCustody(
+  tracked: TrackedSession,
+  state: ReturnType<typeof createWaiterState>,
+  completion: Promise<SpawnSessionResult>,
+): void {
+  const pid = tracked.pid;
+  tracked.startupCustody = {
+    finalization: completion.then(() => {}),
+    observeExit: () => {
+      const timeout = state.pidToSpawnWebhookTimeout.get(pid);
+      if (timeout) clearTimeout(timeout);
+      state.pidToSpawnWebhookTimeout.delete(pid);
+      state.pidToAwaiter.delete(pid);
+      const resolve = state.pidToSpawnResultResolver.get(pid);
+      state.pidToSpawnResultResolver.delete(pid);
+      resolve?.({ type: 'error', errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK', errorMessage: 'runner startup failed' });
+    },
+  };
+}
+
 describe('waitForVisibleConsoleSessionWebhook', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('keeps unresolved Windows runner startup after its launcher disappears, until a terminal failure', async () => {
+    vi.useFakeTimers();
+    installProcessKillMock({ alive: false });
+    const pid = 681001;
+    const state = createWaiterState();
+    const tracked: TrackedSession = {
+      pid, startedBy: 'daemon',
+      hostedTerminal: buildWindowsHostedTerminalAttachment({ actualMode: 'windows_terminal', requestedMode: 'windows_terminal', pid, windowId: 'startup-window', title: 'startup-title' }),
+    };
+    const trackedSessions = new Map([[pid, tracked]]);
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession: trackedSessions,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn: async () => {}, // Filesystem boundary; real exit staging remains exercised.
+    });
+    const completion = waitForVisibleConsoleSessionWebhook({ ...state, pid, pollMs: 10, onChildExited });
+    armTestStartupCustody(tracked, state, completion);
+
+    await vi.advanceTimersByTimeAsync(20);
+    expect(state.pidToAwaiter.has(pid)).toBe(true);
+    expect(trackedSessions.get(pid)).toBe(tracked);
+    expect(tracked.reportMarkerCustody?.retiring).not.toBe(true);
+
+    await onChildExited(pid, { reason: 'process-error', code: 1, signal: null });
+    await expect(completion).resolves.toMatchObject({ type: 'error', errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' });
+    expect(trackedSessions.has(pid)).toBe(false);
+    expect(state.pidToAwaiter.has(pid)).toBe(false);
   });
 
   it('reports startup exit immediately and retains tracking when terminal cleanup fails', async () => {
@@ -64,6 +115,8 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
         getApiMachineForSessions: () => null,
       }),
     });
+
+    armTestStartupCustody(tracked, state, completion);
 
     await vi.advanceTimersByTimeAsync(10);
 
@@ -107,7 +160,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
@@ -141,7 +194,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
@@ -178,7 +231,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
@@ -213,7 +266,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     await vi.advanceTimersByTimeAsync(20);
 
     expect(onChildExited).toHaveBeenCalledWith(pid, {
-      reason: 'process-exited',
+      reason: 'process-missing',
       code: null,
       signal: null,
     });
