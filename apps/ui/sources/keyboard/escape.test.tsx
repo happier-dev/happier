@@ -6,7 +6,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from './escape';
+import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from './escape';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,6 +22,36 @@ function EscapeLayerProbe(props: Readonly<{ onEscape: (event: unknown) => boolea
 }
 
 describe('useEscapeLayer', () => {
+    it('orders nested layers inside their root, preserving a later unrelated modal above them', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const dismissed: string[] = [];
+        function Layer({ name, priority, children }: React.PropsWithChildren<{ name: string; priority: number }>) {
+            const layer = useEscapeLayer({ priority, allowEditableTarget: true, onEscape: () => { dismissed.push(name); } });
+            return <EscapeLayerProvider layer={layer}>{children}</EscapeLayerProvider>;
+        }
+        const press = () => container.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        try {
+            await act(async () => root.render(<Layer name="sheet" priority={ESCAPE_LAYER_PRIORITIES.modal}>
+                <Layer name="menu" priority={ESCAPE_LAYER_PRIORITIES.popover}><input /></Layer>
+            </Layer>));
+            press();
+            expect(dismissed).toEqual(['menu']);
+            await act(async () => root.render(<>
+                <Layer name="sheet" priority={ESCAPE_LAYER_PRIORITIES.modal}>
+                    <Layer name="menu" priority={ESCAPE_LAYER_PRIORITIES.popover}><input /></Layer>
+                </Layer>
+                <Layer name="new-dialog" priority={ESCAPE_LAYER_PRIORITIES.modal}><input /></Layer>
+            </>));
+            press();
+            expect(dismissed).toEqual(['menu', 'new-dialog']);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('handles Escape before older document-capture modal listeners observe it', async () => {
         const container = document.createElement('div');
         document.body.append(container);

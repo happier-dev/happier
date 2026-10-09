@@ -17,6 +17,7 @@ export const ESCAPE_LAYER_PRIORITIES = {
     pane: 100,
     overlay: 200,
     composerSuggestions: 300,
+    find: 300,
     popover: 400,
     commandPalette: 500,
     modal: 600,
@@ -32,7 +33,16 @@ type EscapeLayerEntry = Readonly<{
     priority: number;
     allowEditableTarget: boolean;
     onEscape: (event: unknown) => boolean | void;
+    scope?: EscapeLayerScope;
 }>;
+
+export type EscapeLayerScope = Readonly<{ parent: EscapeLayerScope | null }>;
+const EscapeLayerContext = React.createContext<EscapeLayerScope | null>(null);
+
+/** React ancestry survives portals; visual children dismiss before their enclosing layer. */
+export function EscapeLayerProvider(props: React.PropsWithChildren<{ layer: EscapeLayerScope }>) {
+    return React.createElement(EscapeLayerContext.Provider, { value: props.layer }, props.children);
+}
 
 type EscapeKeyBlockerEntry = Readonly<{
     id: number;
@@ -46,6 +56,7 @@ export type EscapeLayerOptions = Readonly<{
     focusReturnRef?: FocusReturnRef;
     focusFallbackRef?: FocusReturnRef;
     onEscape: (event: unknown) => boolean | void;
+    scope?: EscapeLayerScope;
 }>;
 
 let nextEscapeEntryId = 1;
@@ -67,7 +78,11 @@ export function isEscapeEventHandled(event: unknown): boolean {
 }
 
 function isEscapeKeyEvent(event: unknown): boolean {
-    return Boolean(event && typeof event === 'object' && (event as { key?: unknown }).key === 'Escape');
+    if (!event || typeof event !== 'object') return false;
+    const keyboardEvent = event as { key?: unknown; isComposing?: unknown; keyCode?: unknown };
+    return keyboardEvent.key === 'Escape'
+        && keyboardEvent.isComposing !== true
+        && keyboardEvent.keyCode !== 229;
 }
 
 function isEditableEscapeTarget(target: unknown): boolean {
@@ -124,6 +139,7 @@ export function registerEscapeLayer(options: EscapeLayerOptions): () => void {
         id,
         priority: options.priority,
         allowEditableTarget: options.allowEditableTarget === true,
+        scope: options.scope,
         onEscape: (event) => {
             const handled = options.onEscape(event);
             if (handled !== false && options.focusReturnRef) {
@@ -145,9 +161,27 @@ export function dispatchEscapeToLayerStack(event: unknown): boolean {
 
     const target = (event as { target?: unknown } | null | undefined)?.target;
     const editableTarget = isEditableEscapeTarget(target);
+    const byScope = new Map(escapeLayers.flatMap(layer => layer.scope ? [[layer.scope, layer] as const] : []));
+    const path = (layer: EscapeLayerEntry) => {
+        const ancestors = [layer];
+        for (let parent = layer.scope?.parent; parent; parent = parent.parent) {
+            const entry = byScope.get(parent);
+            if (entry) ancestors.unshift(entry);
+        }
+        return ancestors;
+    };
+    const paths = new Map(escapeLayers.map(layer => [layer, path(layer)]));
     const layers = [...escapeLayers].sort((a, b) => {
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        return b.id - a.id;
+        const left = paths.get(a)!;
+        const right = paths.get(b)!;
+        for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+            const first = left[index]!;
+            const second = right[index]!;
+            if (first === second) continue;
+            if (first.priority !== second.priority) return second.priority - first.priority;
+            return second.id - first.id;
+        }
+        return right.length - left.length;
     });
 
     for (const layer of layers) {
@@ -162,7 +196,9 @@ export function dispatchEscapeToLayerStack(event: unknown): boolean {
     return false;
 }
 
-export function useEscapeLayer(options: EscapeLayerOptions): void {
+export function useEscapeLayer(options: EscapeLayerOptions): EscapeLayerScope {
+    const parent = React.useContext(EscapeLayerContext);
+    const scope = React.useMemo(() => ({ parent }), [parent]);
     const optionsRef = React.useRef(options);
     optionsRef.current = options;
     const contextFallbackRef = useFocusReturnFallbackRef<FocusReturnTarget>();
@@ -171,6 +207,7 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
         if (options.enabled === false) return;
         const unregister = registerEscapeLayer({
             ...options,
+            scope,
             focusFallbackRef: options.focusFallbackRef ?? contextFallbackRef,
             onEscape: (event) => optionsRef.current.onEscape(event),
         });
@@ -200,7 +237,9 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
         options.focusReturnRef,
         options.priority,
         contextFallbackRef,
+        scope,
     ]);
+    return scope;
 }
 
 function isEscapeEventTarget(value: unknown): value is EventTarget {

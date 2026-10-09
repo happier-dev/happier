@@ -15,6 +15,23 @@ afterEach(() => {
 });
 
 describe('escape layer stack', () => {
+    it.each([{ isComposing: true }, { keyCode: 229 }])('leaves composition Escape to the input method (%j)', (composition) => {
+        const onEscape = vi.fn();
+        const unregister = registerEscapeLayer({
+            priority: ESCAPE_LAYER_PRIORITIES.modal,
+            allowEditableTarget: true,
+            onEscape,
+        });
+        const event = { key: 'Escape', ...composition, preventDefault: vi.fn() };
+        try {
+            expect(dispatchEscapeToLayerStack(event)).toBe(false);
+            expect(onEscape).not.toHaveBeenCalled();
+            expect(event.preventDefault).not.toHaveBeenCalled();
+        } finally {
+            unregister();
+        }
+    });
+
     it('dispatches Escape to the highest-priority layer and marks the event handled', () => {
         const low = vi.fn();
         const high = vi.fn();

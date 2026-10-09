@@ -59,6 +59,9 @@ installPopoverCommonModuleMocks({
     },
 });
 
+// Resolve the component graph during collection, outside behavior-test deadlines.
+await import('./Popover');
+
 function rect(x: number, y: number, width: number, height: number): DOMRect {
     return {
         x,
@@ -74,6 +77,124 @@ function rect(x: number, y: number, width: number, height: number): DOMRect {
 }
 
 describe('Popover web portal interaction readiness', () => {
+    it('does not re-arm cancelled opening focus when the focus adapter changes during a rerender', async () => {
+        const { Popover } = await import('./Popover');
+        const search = document.createElement('input');
+        const container = document.createElement('div');
+        document.body.append(search, container);
+        const root = createRoot(container);
+        const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+        const render = (ready: boolean, open = true) => <Popover open={open} anchorRef={{ current: search }}
+            initialFocusRef={{ current: null }} autoFocusOnOpen backdrop={false} portal={{ web: true }}>
+            {() => ready ? <button data-testid="rerender-late-option">Session</button> : <span>Loading</span>}
+        </Popover>;
+        try {
+            search.focus();
+            await act(async () => { root.render(render(false)); });
+            await act(async () => {
+                search.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+                search.value = 'Session summaryx';
+                search.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'x' }));
+                root.render(render(false));
+            });
+            await act(async () => { root.render(render(true)); });
+            expect(search.value).toBe('Session summaryx');
+            expect(document.activeElement).toBe(search);
+            // A genuine new opening still owns one fresh focus intent.
+            await act(async () => { root.render(render(false, false)); });
+            await act(async () => { root.render(render(false)); });
+            await act(async () => { root.render(render(true)); });
+            expect(document.activeElement).toBe(document.querySelector('[data-testid="rerender-late-option"]'));
+        } finally {
+            await act(async () => root.unmount());
+            measure.mockRestore();
+            container.remove(); search.remove();
+        }
+    });
+
+    it('cancels cold opening focus when the external search receives input immediately after commit', async () => {
+        const { Popover } = await import('./Popover');
+        const search = document.createElement('input');
+        const container = document.createElement('div');
+        document.body.append(search, container);
+        const root = createRoot(container);
+        const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+        function TypeAfterCommit() {
+            React.useLayoutEffect(() => {
+                expect(document.activeElement).toBe(search);
+                search.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+                search.value = 'Session summaryx';
+                search.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' }));
+            }, []);
+            return null;
+        }
+        const render = (ready: boolean) => <>
+            <Popover open anchorRef={{ current: search }} autoFocusOnOpen backdrop={false} portal={{ web: true }}>
+                {() => ready ? <button data-testid="commit-late-option">Session</button> : <span>Loading</span>}
+            </Popover>
+            <TypeAfterCommit />
+        </>;
+        try {
+            search.focus();
+            await act(async () => { root.render(render(false)); });
+            expect(document.querySelector('[data-testid="commit-late-option"]')).toBeNull();
+            await act(async () => { root.render(render(true)); });
+            expect(search.value).toBe('Session summaryx');
+            expect(document.activeElement).toBe(search);
+        } finally {
+            await act(async () => root.unmount());
+            measure.mockRestore();
+            container.remove(); search.remove();
+        }
+    });
+
+    it.each(['arrival', 'keyboard', 'pointer', 'input', 'focus', 'closed'] as const)(
+        'keeps asynchronous initial focus pending until content arrives, unless cancelled by %s', async (intent) => {
+            const { Popover } = await import('./Popover');
+            const portalTarget = document.createElement('div');
+            const search = document.createElement('input');
+            const other = document.createElement('button');
+            const container = document.createElement('div');
+            document.body.append(portalTarget, search, other, container);
+            const root = createRoot(container);
+            const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+            const optionRef = React.createRef<HTMLButtonElement>();
+            const render = (ready: boolean, open = true) => <ModalPortalTargetProvider target={portalTarget}>
+                <Popover open={open} anchorRef={{ current: search }} initialFocusRef={optionRef}
+                    autoFocusOnOpen placement="bottom" backdrop={false} portal={{ web: true, native: true }}>
+                    {() => ready ? <button ref={optionRef} data-testid="late-option">Option</button> : <span>Loading</span>}
+                </Popover>
+            </ModalPortalTargetProvider>;
+            try {
+                search.focus();
+                await act(async () => { root.render(render(false)); });
+                // Options can arrive after the former five-frame focus cutoff.
+                await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
+                expect(document.activeElement).toBe(search);
+                await act(async () => {
+                    if (intent === 'keyboard') search.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+                    if (intent === 'pointer') search.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+                    if (intent === 'input') search.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+                    if (intent === 'focus') other.focus();
+                    if (intent === 'closed') root.render(render(false, false));
+                });
+                await act(async () => { root.render(render(true, intent !== 'closed')); });
+                expect(document.activeElement).toBe(intent === 'arrival' ? optionRef.current : intent === 'focus' ? other : search);
+                if (intent === 'arrival') {
+                    // Once fulfilled, later option replacement must not reclaim focus.
+                    other.focus();
+                    await act(async () => { root.render(render(false)); });
+                    await act(async () => { root.render(render(true)); });
+                    expect(document.activeElement).toBe(other);
+                }
+            } finally {
+                await act(async () => root.unmount());
+                measure.mockRestore();
+                portalTarget.remove(); search.remove(); other.remove(); container.remove();
+            }
+        },
+    );
+
     it('contains option clicks inside the web portal so a parent route modal cannot dismiss', async () => {
         const { Popover } = await import('./Popover');
         const portalTarget = document.createElement('div');
@@ -123,6 +244,125 @@ describe('Popover web portal interaction readiness', () => {
             await act(async () => root.unmount());
             portalTarget.remove();
             anchor.remove();
+            container.remove();
+        }
+    });
+
+    it('keeps an open popover open while the person presses inside a popover opened from it (a row menu in a roster)', async () => {
+        const { Popover } = await import('./Popover');
+        const portalTarget = document.createElement('div');
+        const outerAnchor = document.createElement('button');
+        const container = document.createElement('div');
+        document.body.append(portalTarget, outerAnchor, container);
+        const root = createRoot(container);
+        const outerClose = vi.fn();
+        const innerClose = vi.fn();
+        const latestInnerClose = vi.fn();
+
+        function Nested({ onInnerClose }: { onInnerClose: () => void }) {
+            const outerAnchorRef = React.useRef(outerAnchor);
+            const innerAnchor = React.useRef<HTMLButtonElement>(null);
+            const [innerOpen, setInnerOpen] = React.useState(true);
+            return (
+                <ModalPortalTargetProvider target={portalTarget}>
+                    <Popover open anchorRef={outerAnchorRef} placement="right" backdrop={false}
+                        portal={{ web: true, native: true }} onRequestClose={outerClose}>
+                        {() => (
+                            <div>
+                                <button type="button" ref={innerAnchor} data-testid="row-more">More</button>
+                                <Popover open={innerOpen} anchorRef={innerAnchor} placement="bottom" backdrop={false}
+                                    portal={{ web: true, native: true }} onRequestClose={() => {
+                                        onInnerClose();
+                                        setInnerOpen(false);
+                                    }}>
+                                    {() => <button type="button" data-testid="menu-item">Pin to rail</button>}
+                                </Popover>
+                            </div>
+                        )}
+                    </Popover>
+                </ModalPortalTargetProvider>
+            );
+        }
+
+        try {
+            await act(async () => { root.render(<Nested onInnerClose={innerClose} />); });
+            await act(async () => { root.render(<Nested onInnerClose={latestInnerClose} />); });
+            const item = portalTarget.querySelector<HTMLElement>('[data-testid="menu-item"]');
+            expect(item).not.toBeNull();
+            await act(async () => {
+                item!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+            });
+            expect(outerClose).not.toHaveBeenCalled();
+            expect(innerClose).not.toHaveBeenCalled();
+            expect(latestInnerClose).not.toHaveBeenCalled();
+
+            // Outside input dismisses the active menu and is consumed before the underlying layer.
+            await act(async () => {
+                document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+            });
+            expect(innerClose).not.toHaveBeenCalled();
+            expect({ inner: latestInnerClose.mock.calls.length, outer: outerClose.mock.calls.length })
+                .toEqual({ inner: 1, outer: 0 });
+
+            // Closing the controlled child retires its outside listener, leaving the outer layer active.
+            await act(async () => {
+                document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+            });
+            expect(outerClose).toHaveBeenCalled();
+        } finally {
+            await act(async () => root.unmount());
+            portalTarget.remove();
+            outerAnchor.remove();
+            container.remove();
+        }
+    });
+
+    it('uses current anchor and outside-input policies without keeping a closed listener active', async () => {
+        const { Popover } = await import('./Popover');
+        const oldAnchor = document.createElement('button');
+        const currentAnchor = document.createElement('button');
+        const outside = document.createElement('button');
+        const container = document.createElement('div');
+        document.body.append(oldAnchor, currentAnchor, outside, container);
+        const root = createRoot(container);
+        const close = vi.fn();
+        const outsidePress = vi.fn();
+        outside.addEventListener('pointerdown', outsidePress);
+        const render = (updated: boolean, open = true) => <Popover
+            open={open}
+            anchorRef={{ current: updated ? currentAnchor : oldAnchor }}
+            backdrop={false}
+            portal={{ web: true }}
+            onRequestClose={close}
+            closeOnAnchorPress={updated}
+            consumeOutsidePointerDown={!updated}
+        >{() => <button>Option</button>}</Popover>;
+
+        try {
+            await act(async () => { root.render(render(false)); });
+            await act(async () => { root.render(render(true)); });
+            await act(async () => {
+                currentAnchor.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+            });
+            expect(close).toHaveBeenCalledTimes(1);
+            await act(async () => {
+                outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(outsidePress).toHaveBeenCalledTimes(1);
+            expect(close).toHaveBeenCalledTimes(2);
+            await act(async () => { root.render(render(true, false)); });
+            await act(async () => {
+                outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(outsidePress).toHaveBeenCalledTimes(2);
+            expect(close).toHaveBeenCalledTimes(2);
+        } finally {
+            await act(async () => root.unmount());
+            oldAnchor.remove();
+            currentAnchor.remove();
+            outside.remove();
             container.remove();
         }
     });

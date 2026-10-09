@@ -1,9 +1,9 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
-import { flattenTestStyle as flattenStyle, findPopoverContentView } from '@/dev/testkit/harness/popoverHarness';
+import { flattenTestStyle as flattenStyle, findPopoverContentView, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
@@ -16,6 +16,14 @@ installPopoverCommonModuleMocks({
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
         });
     },
+});
+
+let restorePopoverGlobals: (() => void) | undefined;
+beforeEach(() => {
+    restorePopoverGlobals = withPopoverWebGlobals();
+});
+afterEach(() => {
+    restorePopoverGlobals?.();
 });
 
 function readNumber(style: Record<string, unknown>, key: string): number {
@@ -65,7 +73,7 @@ async function renderCentredPopover(anchor: AnchorRect, content: Readonly<{ widt
         </PopoverPortalTargetContextProvider>,
     );
     await act(async () => {
-        await flushHookEffects({ cycles: 1, turns: 6 });
+        await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
     });
     const contentView = findPopoverContentView(screen, 'TooltipBubble');
     expect(contentView).toBeTruthy();
@@ -74,7 +82,7 @@ async function renderCentredPopover(anchor: AnchorRect, content: Readonly<{ widt
         contentView?.props?.onLayout?.({
             nativeEvent: { layout: { x: 0, y: 0, width: content.width + padding * 2, height: content.height + padding * 2 } },
         });
-        await flushHookEffects({ cycles: 1, turns: 6 });
+        await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
     });
     const style = flattenStyle(findPopoverContentView(screen, 'TooltipBubble')?.props?.style);
     const visualLeft = readNumber(style, 'left') + padding;

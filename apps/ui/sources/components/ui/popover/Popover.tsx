@@ -36,7 +36,7 @@ import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } fro
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { PopoverBackdrop } from './backdrop';
 import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
-import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
+import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 import {
     readDocumentFocusReturnTarget,
     restoreFocusToBestTarget,
@@ -44,6 +44,7 @@ import {
     type FocusReturnTarget,
 } from '@/keyboard/focusReturn';
 import { resolveHappierPopoverPlacement } from '@happier-dev/plugin-ui/presentation';
+import { resolvePopoverSideMaxHeight } from './resolvePopoverHeightStyle';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { BaseModal } from '@/modal/components/BaseModal';
@@ -196,6 +197,13 @@ type PopoverCommonProps = Readonly<{
     maxHeightCap?: number;
     maxWidthCap?: number;
     /**
+     * The room a side must offer before an `auto*` placement (or a flip) prefers it. Defaults to the
+     * cap on that axis. A menu whose height is bounded only by the window passes the room it usually
+     * needs, so it still opens below its trigger when that room exists. A start-aligned side popover
+     * (a submenu) likewise stays at its anchor row while the room below it holds this much.
+     */
+    placementMinSpace?: number;
+    /**
      * The narrowest a content-sized popover (`portal.sizeToContent`) may be. Defaults to
      * `CONTENT_SIZED_POPOVER_WIDTH.minPx`, the compact-picker floor; a tooltip passes `0`.
      */
@@ -248,6 +256,24 @@ type PopoverWithoutBackdrop = PopoverCommonProps & Readonly<{
     backdrop: false | (PopoverBackdropOptions & Readonly<{ enabled: false }>);
     onRequestClose?: () => void;
 }>;
+
+/** Open web popovers. One whose anchor sits inside another's content was opened from it (a row's menu in a roster). */
+type OpenWebPopoverEntry = Readonly<{ getContentElement: () => HTMLElement | null; getAnchorElement: () => HTMLElement | null }>;
+const OPEN_WEB_POPOVERS: OpenWebPopoverEntry[] = [];
+
+/**
+ * Whether a popover opened from inside `owner` (its anchor sits in owner's content) is still open. While it is, that
+ * nested popover owns dismissal: a press inside it is not outside `owner`, and a press outside both closes only it.
+ */
+function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
+    const content = owner.getContentElement();
+    if (!content) return false;
+    return OPEN_WEB_POPOVERS.some(entry => {
+        if (entry === owner) return false;
+        const anchor = entry.getAnchorElement();
+        return anchor !== null && content.contains(anchor);
+    });
+}
 
 export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const {
@@ -464,27 +490,41 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         focusWithoutScrolling(target);
         return true;
     }, [initialFocusRefProp]);
+    const openingFocus = React.useRef({ autoFocusOnOpen, focusInitialTarget, getContentDomElement });
+    openingFocus.current = { autoFocusOnOpen, focusInitialTarget, getContentDomElement };
 
-    React.useEffect(() => {
-        if (Platform.OS !== 'web' || !open || !autoFocusOnOpen || typeof document === 'undefined') {
+    // Arm cancellation in the opening commit, before the browser can deliver
+    // input to the still-focused field while the asynchronous content is empty.
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || !open || !openingFocus.current.autoFocusOnOpen || typeof document === 'undefined') {
             return;
         }
 
-        let cancelled = false;
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
-        let attemptsRemaining = 5;
+        let pending = true;
+        const stopPendingFocus = () => {
+            pending = false;
+            observer?.disconnect();
+            document.removeEventListener('keydown', stopPendingFocus, true);
+            document.removeEventListener('pointerdown', stopPendingFocus, true);
+            document.removeEventListener('input', stopPendingFocus, true);
+            document.removeEventListener('focusin', stopPendingFocus, true);
+        };
 
         const focusFirstInteractiveDescendant = () => {
-            if (cancelled) return;
+            if (!pending) return;
+
+            const content = openingFocus.current.getContentDomElement();
+            const activeElement = document.activeElement;
+            if (content && activeElement && content.contains(activeElement)) {
+                stopPendingFocus();
+                return;
+            }
 
             // Menus nominate their roving row through the adapter. Prefer it
             // over generic DOM discovery so controlled radio selection and
             // initial keyboard focus remain one fact.
-            if (focusInitialTarget()) return;
-
-            const content = getContentDomElement();
-            const activeElement = document.activeElement;
-            if (content && activeElement && content.contains(activeElement)) {
+            if (openingFocus.current.focusInitialTarget()) {
+                stopPendingFocus();
                 return;
             }
 
@@ -499,24 +539,30 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             )) ?? focusableCandidates[0] ?? null;
             if (target) {
                 focusWithoutScrolling(target);
-                return;
-            }
-
-            if (attemptsRemaining > 0) {
-                attemptsRemaining -= 1;
-                retryTimer = setTimeout(focusFirstInteractiveDescendant, 16);
+                stopPendingFocus();
             }
         };
 
+        // Content may mount after an asynchronous options read, or in a portal
+        // committed after this effect. Observe readiness until the opening focus
+        // intent is fulfilled; any subsequent user input/focus cancels it.
+        const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(focusFirstInteractiveDescendant);
+        observer?.observe(openingFocus.current.getContentDomElement() ?? document.documentElement, {
+            childList: true, subtree: true, attributes: true,
+            attributeFilter: ['disabled', 'aria-disabled', 'tabindex', 'aria-selected'],
+        });
+        document.addEventListener('keydown', stopPendingFocus, true);
+        document.addEventListener('pointerdown', stopPendingFocus, true);
+        document.addEventListener('input', stopPendingFocus, true);
+        document.addEventListener('focusin', stopPendingFocus, true);
         focusFirstInteractiveDescendant();
-        return () => {
-            cancelled = true;
-            if (retryTimer !== null) clearTimeout(retryTimer);
-        };
-    }, [autoFocusOnOpen, focusInitialTarget, getContentDomElement, open]);
+        return stopPendingFocus;
+        // Rendered options and focus adapters may change while this intent is
+        // pending or cancelled. Only another opening may arm it again.
+    }, [open]);
 
     React.useEffect(() => {
-        if (Platform.OS === 'web' || !open || !autoFocusOnOpen) {
+        if (Platform.OS === 'web' || !open || !openingFocus.current.autoFocusOnOpen) {
             return;
         }
 
@@ -526,14 +572,14 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         let cancelled = false;
         queueMicrotask(() => {
             if (cancelled) return;
-            if (!focusInitialTarget()) {
+            if (!openingFocus.current.focusInitialTarget()) {
                 contentContainerRef.current?.focus?.();
             }
         });
         return () => {
             cancelled = true;
         };
-    }, [autoFocusOnOpen, focusInitialTarget, open]);
+    }, [open]);
 
     const requestClose = React.useCallback((reason: PopoverCloseReason) => {
         onRequestClose?.();
@@ -933,9 +979,11 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
             const resolvedPlacement = resolveHappierPopoverPlacement({
                 placement,
-                preferredMinAvailable: placement === 'auto-horizontal' || placement === 'left' || placement === 'right'
-                    ? maxWidthCap
-                    : maxHeightCap,
+                preferredMinAvailable: props.placementMinSpace ?? (
+                    placement === 'auto-horizontal' || placement === 'left' || placement === 'right'
+                        ? maxWidthCap
+                        : maxHeightCap
+                ),
                 flip: props.flip !== false,
                 available: {
                     top: availableTop,
@@ -950,7 +998,14 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     ? availableBottom
                     : resolvedPlacement === 'top'
                         ? availableTop
-                        : effectiveBoundaryRect.height - gap * 2;
+                        : resolvePopoverSideMaxHeight({
+                            anchorY: anchorRect.y,
+                            anchorAlignVertical: anchorAlignVerticalOnPortal,
+                            boundaryY: effectiveBoundaryRect.y,
+                            boundaryHeight: effectiveBoundaryRect.height,
+                            gap,
+                            preferredMinHeight: Math.min(maxHeightCap, props.placementMinSpace ?? maxHeightCap),
+                        });
 
             const maxWidthAvailable =
                 resolvedPlacement === 'right'
@@ -1032,7 +1087,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         scheduleFrame(() => {
             void measureWithRetries(0);
         });
-    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, props.flip, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, props.flip, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -1594,7 +1649,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             : 'auto',
     );
 
-    useEscapeLayer({
+    const escapeLayer = useEscapeLayer({
         enabled: Platform.OS === 'web' && open && typeof onRequestClose === 'function',
         priority: ESCAPE_LAYER_PRIORITIES.popover,
         allowEditableTarget: true,
@@ -1611,11 +1666,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (typeof document === 'undefined') return;
 
         const shouldAttachPointerDownCapture = !(backdropEnabled && backdropBlocksOutsidePointerEvents);
+        const openEntry: OpenWebPopoverEntry = {
+            getContentElement: getContentDomElement,
+            getAnchorElement: () => getDomElementFromNode(anchorRef.current),
+        };
+        OPEN_WEB_POPOVERS.push(openEntry);
         const handlePointerDownCapture = (event: Event) => {
             const target = event.target as Node | null;
             if (!target) return;
             const contentEl = getContentDomElement();
             if (contentEl && contentEl.contains(target)) return;
+            // A popover opened from inside this one (a row's menu in a roster) handles this press itself.
+            if (hasOpenNestedWebPopover(openEntry)) return;
             const anchorEl = getDomElementFromNode(anchorRef.current);
             // If we cannot resolve the DOM elements (common with RN-web refs in portaled subtrees),
             // fail open: do not swallow the click. This avoids breaking in-popover interactions.
@@ -1645,6 +1707,8 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             document.addEventListener('pointerdown', handlePointerDownCapture, true);
         }
         return () => {
+            const index = OPEN_WEB_POPOVERS.indexOf(openEntry);
+            if (index >= 0) OPEN_WEB_POPOVERS.splice(index, 1);
             if (shouldAttachPointerDownCapture) {
                 document.removeEventListener('pointerdown', handlePointerDownCapture, true);
             }
@@ -1661,7 +1725,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     ]);
 
     const content = shouldRender ? (
-        <>
+        <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop
                 backdrop={backdropEnabled ? backdrop : false}
                 backdropBlocksOutsidePointerEvents={backdropBlocksOutsidePointerEvents}
@@ -1785,7 +1849,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     </OverlayMotionFrame>
                 )}
             </ViewWithWheel>
-        </>
+        </EscapeLayerProvider>
     ) : null;
 
     const contentWithRadixBranch = (() => {
