@@ -53,6 +53,7 @@ export const PROFILE_ACTION_SPECS_V1 = [
   profileSpec('launch_profiles.enabled.set', 'Set launch profile enablement', {}),
   profileSpec('launch_profiles.favorite.set', 'Set launch profile favorite', {}),
   profileSpec('launch_profiles.delete', 'Delete launch profile', { danger: true }),
+  profileSpec('launch_profiles.prompt_stack.update', 'Update launch profile context', {}),
   profileSpec('launch_profiles.secrets.select', 'Select launch profile secret', { danger: true }),
   profileSpec('launch_profiles.legacy.preview', 'Preview legacy profile conversion', { read: true, placement: 'machine' }),
   profileSpec('launch_profiles.legacy.convert', 'Convert legacy profile', { danger: true, placement: 'machine' }),

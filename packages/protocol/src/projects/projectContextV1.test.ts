@@ -8,6 +8,8 @@ const entry = (id: string, placement = 'system_append') => PromptStackEntryV1Sch
 
 describe('personal Project context semantic intents', () => {
   it('attaches one entry preserving retained placements, Hide, pin and unrelated fields; occupied ids conflict', () => {
+    expect(ProjectContextIntentV1Schema.safeParse({ kind: 'attach', entry: entry('new', 'skill_instructions') }).success).toBe(false);
+    expect(ProjectContextIntentV1Schema.safeParse({ kind: 'set_enabled', entryId: 'retained', enabled: false }).success).toBe(false);
     const row = { hidden: true, pinned: true, label: 'Keep', promptStack: [entry('retained', 'provider_asset')] };
     const intent = ProjectContextIntentV1Schema.parse({ kind: 'attach', entry: { id: 'new', ref: { kind: 'doc', artifactId: 'new' } } });
     const result = applyProjectContextIntentV1(row, intent);

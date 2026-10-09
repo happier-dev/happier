@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { PromptStackEntryV1Schema, type PromptStackEntryV1 } from '../prompts/library/promptStacksV1.js';
+import { PromptStackEntryV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1, type PromptStackMutationV1 } from '../prompts/library/promptStacksV1.js';
 import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, type ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
 import type { PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptArtifactRefV1Schema, type PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
@@ -113,48 +113,13 @@ export async function updatePersonalProjectContextV1(
   }
 }
 
-export type ProjectContextMutationV1<Row> =
-  | Readonly<{ ok: true; row: Row; changed: boolean }>
-  | Readonly<{ ok: false; errorCode: 'entry_conflict' | 'entry_not_found' | 'invalid_parameters' }>;
+export type ProjectContextMutationV1<Row> = PromptStackMutationV1<Row>;
 
 export function applyProjectContextIntentV1<Row extends Readonly<{ promptStack?: readonly PromptStackEntryV1[] }>>(
   row: Row,
   intent: ProjectContextIntentV1,
 ): ProjectContextMutationV1<Row> {
-  const entries = row.promptStack ?? [];
-  const entryId = intent.kind === 'attach' ? intent.entry.id : intent.entryId;
-  const index = entries.findIndex((entry) => entry.id === entryId);
-  let next: readonly PromptStackEntryV1[];
-  if (intent.kind === 'attach') {
-    if (index >= 0) {
-      const existing = entries[index]!;
-      const candidate = PromptStackEntryV1Schema.parse(intent.entry);
-      const same = JSON.stringify(PromptStackEntryV1Schema.parse(existing)) === JSON.stringify(candidate);
-      return same ? { ok: true, row, changed: false } : { ok: false, errorCode: 'entry_conflict' };
-    }
-    next = [...entries, PromptStackEntryV1Schema.parse(intent.entry)];
-  } else if (intent.kind === 'detach') {
-    if (index < 0) return { ok: true, row, changed: false };
-    next = entries.filter((entry) => entry.id !== entryId);
-  } else {
-    if (index < 0) return { ok: false, errorCode: 'entry_not_found' };
-    const selected = entries[index]!;
-    if (intent.kind === 'set_budget') {
-      if ((selected.maxChars ?? null) === intent.maxChars) return { ok: true, row, changed: false };
-      const { maxChars: _previous, ...withoutBudget } = selected;
-      const replacement = intent.maxChars === null ? withoutBudget : { ...withoutBudget, maxChars: intent.maxChars };
-      next = entries.map((entry, entryIndex) => entryIndex === index ? replacement : entry);
-    } else {
-      if (intent.siblingId === entryId) return { ok: false, errorCode: 'invalid_parameters' };
-      const remaining = entries.filter((entry) => entry.id !== entryId);
-      const siblingIndex = remaining.findIndex((entry) => entry.id === intent.siblingId);
-      if (siblingIndex < 0) return { ok: false, errorCode: 'entry_not_found' };
-      const position = siblingIndex + (intent.position === 'after' ? 1 : 0);
-      next = [...remaining.slice(0, position), selected, ...remaining.slice(position)];
-      if (next.every((entry, entryIndex) => entry === entries[entryIndex])) return { ok: true, row, changed: false };
-    }
-  }
-  return { ok: true, row: { ...row, promptStack: next }, changed: true };
+  return applyPromptStackIntentV1(row, intent);
 }
 
 /** One captured context target for both hosts; existing personal/Source Actions remain the writers. */

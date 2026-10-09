@@ -13,6 +13,7 @@ import { mapAiLaunchProfileToListItemV1 } from './listProjection.js';
 import { getBuiltInBackendProfile } from './builtInBackendProfiles.js';
 import { AccountSettingsPersistedObjectSchema } from '../account/settings/accountSettingsPersistedObject.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactActionsV1.js';
+import { applyPromptStackIntentV1, type PromptStackIntentV1 } from '../prompts/library/promptStacksV1.js';
 
 /** Preserve the incumbent favorite order and the empty machine-environment identity. */
 export function setProfileFavoriteIdsV1(ids: readonly string[], id: string, favorite: boolean): string[] {
@@ -62,7 +63,7 @@ export type ProfileOperationResult =
   | Readonly<{ status: 'updated'; id: string; revision: number }>
   | Readonly<{ status: 'conflict'; id: string; revision: number }>
   | Readonly<{ status: 'unavailable'; reason: string }>
-  | Readonly<{ status: 'invalid'; reason: 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'read-only' | 'legacy-creation-unsupported' | 'invalid-definition'; id?: string }>;
+  | Readonly<{ status: 'invalid'; reason: 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'read-only' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters'; id?: string }>;
 export type ProfileBuiltinEnabledInputV1 = Readonly<{ subject: Readonly<{ kind: 'builtin'; id: string }>; enabled: boolean; expectedSettingsVersion: number }>;
 export type ProfileBuiltinEnabledResultV1 = Readonly<{ status: 'preference-updated'; id: string; enabled: boolean; settingsVersion: number }>;
 export type ProfileRemovalResult = Exclude<ProfileOperationResult, Readonly<{ status: 'updated' }>>
@@ -415,8 +416,19 @@ export function createProfileOperations(ports: ProfileOperationsPorts) {
         | Readonly<{ privateOverrides: ProfileRecordV1['secretBindings']; secretBindings?: never }>)) =>
       update(input, record => ({ ...record, secretBindings: 'privateOverrides' in input
         ? { ...record.secretBindings, ...input.privateOverrides } : { ...input.secretBindings } })),
-    setPromptStack: (input: Readonly<{ id: string; promptStack: ProfileRecordV1['promptStack']; expectedRevision?: number | 'absent' }>) =>
-      update(input, record => ({ ...record, promptStack: [...input.promptStack] })),
+    updatePromptStack: async (input: Readonly<{ id: string; expectedRevision: number | 'absent'; intent: PromptStackIntentV1 }>): Promise<ProfileOperationResult> => {
+      try {
+        return await update(input, record => {
+          const applied = applyPromptStackIntentV1(record, input.intent);
+          if (!applied.ok) throw Object.assign(new Error(applied.errorCode), { code: applied.errorCode });
+          return applied.row;
+        });
+      } catch (error) {
+        const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+        if (code === 'entry_conflict' || code === 'entry_not_found' || code === 'invalid_parameters') return invalid(code, input.id);
+        throw error;
+      }
+    },
     selectSecret: (input: Readonly<{ id: string; expectedRevision: number | 'absent'; envName: string;
       selection: Readonly<{ kind: 'none' }> | Readonly<{ kind: 'resource'; resourceId: string; expectedResourceRevision: number }> }>) => {
       const savedSecretRevisions = input.selection.kind === 'resource'

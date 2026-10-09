@@ -19,6 +19,7 @@ import {
 } from '../rpc/providers.js';
 import { SHARED_SAVED_SECRET_REF_V1_PREFIX, formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { PROFILE_ACTION_IDS_V1, type ProfileActionIdV1 } from './profileActionIdsV1.js';
+import { PromptStackIntentV1Schema } from '../prompts/library/promptStacksV1.js';
 export { PROFILE_ACTION_IDS_V1, isProfileActionIdV1, type ProfileActionIdV1 } from './profileActionIdsV1.js';
 
 export const ProfileActionIdV1Schema = lazyZodSchema(() => z.enum(PROFILE_ACTION_IDS_V1));
@@ -36,6 +37,7 @@ const RefusalResult = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('unavailable'), reason: z.string().min(1) }).strict(),
   z.object({ status: z.literal('invalid'), reason: z.enum([
     'duplicate-id', 'duplicate-name', 'profile-not-found', 'read-only', 'legacy-creation-unsupported', 'invalid-definition',
+    'entry_conflict', 'entry_not_found', 'invalid_parameters',
   ]), id: ProfileRecordIdV1Schema.optional() }).strict(),
 ]));
 const MutationResult = lazyZodSchema(() => z.union([RowUpdatedResult, RefusalResult]));
@@ -131,6 +133,7 @@ export const PROFILE_ACTION_INPUT_SCHEMAS_V1 = {
   ])),
   'launch_profiles.favorite.set': FavoriteInput,
   'launch_profiles.delete': EditAddress,
+  'launch_profiles.prompt_stack.update': lazyZodSchema(() => CapturedRowAddress.extend({ intent: PromptStackIntentV1Schema }).strict()),
   'launch_profiles.secrets.select': lazyZodSchema(() => CapturedRowAddress.extend({
     envName: EnvVarRequirementSchema.shape.name,
     selection: z.discriminatedUnion('kind', [
@@ -156,6 +159,7 @@ export const PROFILE_ACTION_OUTPUT_SCHEMAS_V1 = {
   'launch_profiles.enabled.set': EnabledResult,
   'launch_profiles.favorite.set': FavoriteResult,
   'launch_profiles.delete': DeleteResult,
+  'launch_profiles.prompt_stack.update': MutationResult,
   'launch_profiles.secrets.select': MutationResult,
   'launch_profiles.legacy.preview': DaemonProviderProfileMigrationPreviewResponseV1Schema,
   'launch_profiles.legacy.convert': DaemonProviderProfileMigrationConfirmResponseV1Schema,
@@ -186,6 +190,7 @@ export function parseProfileActionRequestV1(actionId: ProfileActionIdV1, input: 
     case 'launch_profiles.enabled.set': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'launch_profiles.favorite.set': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'launch_profiles.delete': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
+    case 'launch_profiles.prompt_stack.update': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'launch_profiles.secrets.select': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'launch_profiles.legacy.preview': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'launch_profiles.legacy.convert': return { actionId, input: PROFILE_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
@@ -223,6 +228,7 @@ export function createProfileActionExecuteV1(ports: ProfileActionHostPortsV1) {
       case 'launch_profiles.duplicate': result = await (await resolveOperations()).duplicate(request.input); break;
       case 'launch_profiles.enabled.set': result = await (await resolveOperations()).setEnabled(request.input); break;
       case 'launch_profiles.delete': result = await (await resolveOperations()).remove(request.input); break;
+      case 'launch_profiles.prompt_stack.update': result = await (await resolveOperations()).updatePromptStack(request.input); break;
       case 'launch_profiles.select': result = ports.select ? await ports.select(request.input, context) : unsupported(); break;
       case 'launch_profiles.favorite.set': result = ports.favorite ? await ports.favorite(request.input, context) : unsupported(); break;
       case 'launch_profiles.edit': result = ports.edit ? await ports.edit(request.input, context) : unsupported(); break;

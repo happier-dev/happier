@@ -354,8 +354,9 @@ describe('Profile semantic operations', () => {
       readCatalog: () => ({ ...activeAuthority, status: 'ready', records: [{ record: row, revision: 4 }], diagnostics: [], referenceGuardRevision: 5 }),
       writeRecord: async input => { captured = input; return { status: 'updated', id: input.record.id, revision: 5 }; },
       deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 5 }) });
-    const stack = [{ ...row.promptStack[0], enabled: false, placement: 'skill_instructions' as const }];
-    expect(await owner.setPromptStack({ id: 'a', expectedRevision: 4, promptStack: stack }))
+    const stack = [{ ...row.promptStack[0], enabled: false }];
+    expect(await owner.updatePromptStack({ id: 'a', expectedRevision: 4,
+      intent: { kind: 'set_enabled', entryId: row.promptStack[0]!.id, enabled: false } }))
       .toEqual({ status: 'updated', id: 'a', revision: 5 });
     expect(captured).toMatchObject({ expectedRevision: 4, record: { definition: row.definition,
       enabled: row.enabled, secretBindings: row.secretBindings, promptStack: stack } });

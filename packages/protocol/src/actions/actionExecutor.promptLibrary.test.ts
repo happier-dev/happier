@@ -49,6 +49,74 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it('F8 edits the captured Account stack through semantic Actions without replacing neighboring entries', async () => {
+    const neighbor = { id: 'neighbor', ref: { kind: 'bundle' as const, artifactId: 'skill' }, enabled: true,
+      placement: 'skill_instructions' as const };
+    let record: PromptLibraryRecordV1 = { key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [neighbor] } };
+    let revision = 4;
+    let writes = 0;
+    const executor = createExecutor({ promptStacks: {
+      serverId: 'home', assertCurrent: () => {},
+      readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record, revision }], tombstones: [], diagnostics: [] } }),
+      writeRecord: async (input: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }) => {
+        if (input.expectedRevision !== revision) return { status: 'conflict' as const, revision };
+        record = input.record; writes++; revision++;
+        return { status: 'updated' as const, revision, cursor: revision };
+      },
+    } });
+    const context = { surface: 'cli' as const, serverId: 'home' };
+    const entry = { id: 'doc', ref: { kind: 'doc', artifactId: 'document' }, enabled: true, placement: 'system_append' };
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: 4,
+      intent: { kind: 'attach', entry } }, context)).toMatchObject({ ok: true, result: { status: 'updated', revision: 5 } });
+    for (const intent of [
+      { kind: 'set_enabled', entryId: 'doc', enabled: false },
+      { kind: 'set_budget', entryId: 'doc', maxChars: 120 },
+      { kind: 'set_budget', entryId: 'doc', maxChars: null },
+      { kind: 'reorder', entryId: 'doc', siblingId: 'neighbor', position: 'before' },
+    ]) expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: revision, intent }, context))
+      .toMatchObject({ ok: true, result: { status: 'updated' } });
+    expect(record.value).toMatchObject({ entries: [{ ...entry, enabled: false }, neighbor] });
+    expect(record.value).toMatchObject({ entries: [expect.not.objectContaining({ maxChars: expect.anything() }), neighbor] });
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: 4,
+      intent: { kind: 'detach', entryId: 'neighbor' } }, context)).toMatchObject({ ok: true, result: { status: 'conflict', revision } });
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: revision,
+      intent: { kind: 'detach', entryId: 'doc' } }, context)).toMatchObject({ ok: true, result: { status: 'updated' } });
+    expect(record.value).toMatchObject({ entries: [neighbor] });
+    expect(writes).toBe(6);
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: revision,
+      intent: { kind: 'detach', entryId: 'neighbor' } }, { ...context, serverId: 'foreign' }))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(writes).toBe(6);
+  });
+  it('F8 uses retained source only before activation and never reseeds an active deleted stack', async () => {
+    const retained = { id: 'retained', ref: { kind: 'doc' as const, artifactId: 'source-doc' }, enabled: true,
+      placement: 'composer_insert' as const };
+    let deleted = false;
+    let unavailable = false;
+    const writes: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }[] = [];
+    const executor = createExecutor({ promptStacks: {
+      serverId: 'home', assertCurrent: () => {},
+      readCatalog: async () => ({ catalog: unavailable ? { status: 'unavailable' as const, reason: 'encryption-material-unavailable' as const }
+        : { status: 'ready' as const, rows: [], tombstones: deleted ? [{ key: 'coding' as const, revision: 8 }] : [], diagnostics: [] },
+        rawSettings: { promptStacksV1: { v: 1, surfaces: { coding: [retained], voice: [], profilesById: {} } } }, sourceSettingsVersion: 7 }),
+      writeRecord: async input => { writes.push(input); return { status: 'updated' as const, revision: 9, cursor: 9 }; },
+    } });
+    const context = { surface: 'cli' as const, serverId: 'home' };
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: 'absent',
+      intent: { kind: 'set_enabled', entryId: retained.id, enabled: false } }, context))
+      .toMatchObject({ ok: true, result: { status: 'updated' } });
+    expect(writes[0]).toEqual({ record: { key: 'coding', value: { v: 1, scope: { kind: 'coding' },
+      entries: [{ ...retained, enabled: false }] } }, expectedRevision: 'absent', sourceSettingsVersion: 7 });
+    deleted = true;
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: 8,
+      intent: { kind: 'set_enabled', entryId: retained.id, enabled: true } }, context))
+      .toMatchObject({ ok: true, result: { status: 'invalid', reason: 'entry_not_found' } });
+    unavailable = true;
+    expect(await executor.execute('prompts.stack.update', { surface: 'coding', expectedRevision: 8,
+      intent: { kind: 'detach', entryId: retained.id } }, context))
+      .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'encryption-material-unavailable' } });
+    expect(writes).toHaveLength(1);
+  });
   it('reports a created Artifact receipt when its separate personal organization CAS conflicts', async () => {
     const artifacts = new Map<string, PromptLibraryStoredArtifact>();
     let writerUnavailable = false;
