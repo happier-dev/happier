@@ -146,6 +146,82 @@ describe('ActionExecutor prepared invocation', () => {
       .resolves.toMatchObject({ ok: false });
   });
 
+  it('admits registered Session setters for own and server-proved led targets', async () => {
+    const { caller, sessionList } = sessionReadHarness();
+    const writes: Array<Readonly<{ sessionId: string; fieldId: string; value: unknown }>> = [];
+    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false,
+      sessionStateFieldSet: async (request) => {
+        writes.push(request);
+        return { ok: true, version: 3 };
+      },
+    });
+    for (const sessionId of ['parent', 'child']) {
+      for (const [actionId, input, fieldId, value] of [
+        ['session.bot.set', { sessionId, bot: { kind: 'bot' } }, 'display.bot', { kind: 'bot' }],
+        ['session.instructions.set', { sessionId, serverId: 'home', expectedMetadataRevision: 2, ref: null },
+          'intent.context', { kind: 'detach', entryId: 'session.instructions' }],
+      ] as const) {
+        const prepared = await executor.prepare(actionId, input, caller('parent'));
+        expect(prepared.kind).toBe('ready');
+        if (prepared.kind !== 'ready') throw new Error(`Expected admitted registered setter: ${JSON.stringify(prepared.result)}`);
+        await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true, result: { ok: true, version: 3 } });
+        expect(writes.at(-1)).toMatchObject({ sessionId, fieldId, value });
+      }
+    }
+    expect(writes).toHaveLength(4);
+    await expect(executor.execute('session.bot.set', { sessionId: 'unrelated', bot: null }, caller('parent')))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(writes).toHaveLength(4);
+  });
+
+  it.each(['current_session', 'unavailable'] as const)('keeps registered Session setters within the host %s corpus', async (sessionListAccess) => {
+    const { caller, sessionList } = sessionReadHarness();
+    const writes: unknown[] = [];
+    const executor = createExecutor({ sessionList, isActionApprovalRequired: () => false,
+      sessionStateFieldSet: async (request) => { writes.push(request); return { ok: true }; },
+    });
+    await expect(executor.prepare('session.bot.set', { sessionId: 'child', bot: null }, { ...caller('parent'), sessionListAccess }))
+      .resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'unsupported_action' } });
+    expect(sessionList).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it('rechecks registered Session setter membership after preparation and awaited Home reads', async () => {
+    const { caller } = sessionReadHarness();
+    let attached = true;
+    const writes: unknown[] = [];
+    const context = caller('parent');
+    if (!context.agentStartContext) throw new Error('Missing host caller facts');
+    context.agentStartContext = { ...context.agentStartContext, ledSubtreeSessionIds: ['child'] };
+    const executor = createExecutor({ isActionApprovalRequired: () => false,
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: attached ? [{ id: 'child', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+      sessionStateFieldSet: async (request) => { writes.push(request); return { ok: true }; },
+    });
+    const prepared = await executor.prepare('session.bot.set', { sessionId: 'child', bot: null }, context);
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted registered setter');
+    attached = false;
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(writes).toEqual([]);
+
+    attached = true;
+    const abort = new AbortController();
+    const cancelled = createExecutor({ isActionApprovalRequired: () => false,
+      sessionList: async () => {
+        abort.abort();
+        return markSessionListQueryResultV1({ sessions: [{ id: 'child', active: false, presence: 'offline', updatedAt: 10 }],
+          nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+      },
+      sessionStateFieldSet: async (request) => { writes.push(request); return { ok: true }; },
+    });
+    await expect(cancelled.execute('session.bot.set', { sessionId: 'child', bot: null }, { ...context, signal: abort.signal }))
+      .resolves.toMatchObject({ ok: false });
+    expect(writes).toEqual([]);
+  });
+
   it('rechecks the same read admission after interception changes the target', async () => {
     const { sessionList, sessionActivityGet, caller } = sessionReadHarness();
     const executor = createExecutor({ sessionList, sessionActivityGet, isActionApprovalRequired: () => false,
@@ -170,6 +246,26 @@ describe('ActionExecutor prepared invocation', () => {
     if (prepared.kind !== 'ready') throw new Error('Expected admitted child read');
     attached = false;
     await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false });
+    expect(sessionActivityGet).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a captured led relation after the server revokes access', async () => {
+    const { caller, sessionActivityGet } = sessionReadHarness();
+    const context = caller('parent');
+    if (!context.agentStartContext) throw new Error('Missing host caller facts');
+    context.agentStartContext = { ...context.agentStartContext, ledSubtreeSessionIds: ['child'] };
+    let accessible = true;
+    const executor = createExecutor({ isActionApprovalRequired: () => false, sessionActivityGet,
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: accessible ? [{ id: 'child', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+    });
+    const prepared = await executor.prepare('session.activity.get', { sessionId: 'child', view: 'awareness' }, context);
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted child read');
+    accessible = false;
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(sessionActivityGet).not.toHaveBeenCalled();
   });
 
