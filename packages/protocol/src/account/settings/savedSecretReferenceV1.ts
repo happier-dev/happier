@@ -45,7 +45,8 @@ export function formatSavedSecretReferencePathSegmentV1(key: string): string {
 }
 
 export function appendSavedSecretReferencePathV1(path: string, key: string): string {
-  return path ? `${path}${formatSavedSecretReferencePathSegmentV1(key)}` : key;
+  const segment = formatSavedSecretReferencePathSegmentV1(key);
+  return path ? `${path}${segment}` : segment.startsWith('.') ? segment.slice(1) : segment;
 }
 
 /**

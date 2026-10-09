@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import * as references from './savedSecretReferenceV1.js';
 
 describe('SavedSecret raw reference carrier census', () => {
+  it('distinguishes an opaque root property from the nested carrier it resembles', () => {
+    expect(references.listSavedSecretReferenceCarrierPathsV1({
+      v: { channels: [{ signingSecretRef: 'happier:shared-secret:v1:known' }] },
+      'v.channels[0].signingSecretRef': 'happier:shared-secret:v1:hidden',
+    })).toEqual(['v.channels[0].signingSecretRef', '["v.channels[0].signingSecretRef"]']);
+  });
+
   it('does not merge an additive reference property into the canonical ValueRef carrier path', () => {
     expect(references.listSavedSecretReferenceCarrierPathsV1({ env: {
       TOKEN: { t: 'savedSecret', secretId: 'known-key', savedSecretId: 'other-key' },
