@@ -1,16 +1,20 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import {
+    isVoiceConversationSystemSessionMetadata,
+    VOICE_CONVERSATION_SYSTEM_SESSION_KEY,
+    VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
+    VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY,
+} from '@happier-dev/protocol/voice/sessionBinding';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
-export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';
-export const VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY = 'voice_conversation_retired';
-/**
- * Released stable/preview Voice sessions used this marker. Keep this reader
- * only while those releases remain inside the supported upgrade window; every
- * successful ensure rewrites the session to `voice_conversation`.
- */
-export const VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY = 'voice_carrier';
+export {
+    isVoiceConversationSystemSessionMetadata,
+    VOICE_CONVERSATION_SYSTEM_SESSION_KEY,
+    VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
+    VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY,
+} from '@happier-dev/protocol/voice/sessionBinding';
 
 export type VoiceConversationSystemSessionCandidate = Readonly<{
     session: any;
@@ -21,16 +25,6 @@ export type VoiceConversationSystemSessionCandidate = Readonly<{
     legacySystemKey: boolean;
     reusable: boolean;
 }>;
-
-export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boolean {
-    const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
-    const key = String(systemSession?.key ?? '').trim();
-    return systemSession?.hidden === true
-        && (
-            key === VOICE_CONVERSATION_SYSTEM_SESSION_KEY
-            || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
-        );
-}
 
 /**
  * Activity custody includes retired Voice sessions while they still carry
