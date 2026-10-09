@@ -38,6 +38,7 @@ import {
 
 import { decodeBase64, encodeBase64, encrypt } from '@/api/encryption';
 import { ApiMachineClient } from '@/api/apiMachine';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { materializeNextPendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
@@ -100,7 +101,9 @@ import {
     computePluginUiArtifactFileSetSha256DigestV1,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ACTION_API_SERVER_ORIGIN, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import {
     openExternalActionResponseV2,
     openExternalActionRequestV2,
@@ -158,6 +161,8 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { readStoredCredentials, updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { fixture as managedNativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '../externalActions/daemonExternalActionTargetResolver';
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -932,6 +937,7 @@ vi.mock('@/configuration', async (importOriginal) => {
 vi.mock('@/ui/logger', () => ({
     logger: {
         debug: vi.fn(),
+        debugLargeJson: vi.fn(),
         info: vi.fn(),
         infoFile: vi.fn(),
         warn: vi.fn(),
@@ -1413,7 +1419,8 @@ async function writeHostedWebStaticAssetsFixture(input: Readonly<{
 }
 
 describe('startDaemonSessionControlRuntime', () => {
-    async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false) {
+    async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false,
+        finiteRpc?: 'allow' | 'ask' | 'revoked' | 'changed-root' | 'revoked-after-ask') {
         if (!fetchAccountEncryptionCurrentnessActual.current) throw new Error('Account currentness HTTP owner unavailable');
         fetchAccountEncryptionCurrentnessMock.mockImplementation(fetchAccountEncryptionCurrentnessActual.current);
         const taskDir = await mkdtemp(join(tmpdir(), 'happier-private-managed-child-'));
@@ -1431,14 +1438,21 @@ describe('startDaemonSessionControlRuntime', () => {
         const serverUrl = 'https://private-child.example.test';
         const machineId = 'private-controller';
         const token = (account: string) => `header.${Buffer.from(JSON.stringify({ sub: account })).toString('base64url')}.signature`;
-        const bob = { token: token('bob'), encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(31) } };
+        const bob = { token: token('bob'), encryption: finiteRpc ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(31) } };
+        const requesterMode = finiteRpc ? 'plain' as const : 'e2ee' as const;
         const alice = { token: `header.${Buffer.from(JSON.stringify({ sub: 'alice', session: 'alice-controller-session' })).toString('base64url')}.signature`,
             encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(12) } };
         // The controller's incumbent owned operation-record scope uses its
         // real persisted local custody; Bob remains installed-box-only.
         await writeStoredCredentialsForServerId(configuration.activeServerId, alice);
         expect((await readStoredCredentials())?.token).toBe(alice.token);
-        const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(bob.encryption.secret) };
+        if (finiteRpc) {
+            const rawSettings = { actionsSettingsV1: { v: 1, actions: { 'machines.managed.power.set': { enabled: false } } } };
+            setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKeyForToken(alice.token), settingsVersion: 1,
+                source: 'network', loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+                settings: AccountSettingsSchema.parse(rawSettings), rawSettings });
+        }
+        const material = bob.encryption ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(bob.encryption.secret) } : null;
         const installation = await readOrCreateInstallationIdentity();
         await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
             [configuration.activeServerId]: { id: configuration.activeServerId, name: 'Private child Home', serverUrl, webappUrl: serverUrl,
@@ -1457,57 +1471,110 @@ describe('startDaemonSessionControlRuntime', () => {
             retention: selection.retention, wakeOnAcceptedMessage: finiteWake });
         let currentMachine = enrolled;
         const nativeEffects: string[] = [];
-        const native = managedNativeFixture({ privateNative: true, onNativeRole: role => { nativeEffects.push(role); } });
+        const native = managedNativeFixture({ privateNative: true, ...(finiteRpc ? { supportedIntents: ['start' as const],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' } } } : {}),
+            onNativeRole: role => { nativeEffects.push(role); } });
         // Installed plugin loading is the system boundary; startup, native Action and child crypto stay real.
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({ registry: native.runtimeRegistry,
             source: 'active', durableRevision: 1, release: async () => {} });
         let settingsVersion = 1;
         let settings = prepareAccountSettingsV2Content({ credentials: bob, raw: finiteWake ? {
-            actionsSettingsV1: { v: 1, actions: { 'machines.managed.power.set': { enabled: refreshRequesterPolicy } } },
+            actionsSettingsV1: { v: 1, actions: { 'machines.managed.power.set': { enabled: Boolean(finiteRpc) || refreshRequesterPolicy } },
+                ...(finiteRpc && finiteRpc !== 'ask' && finiteRpc !== 'revoked-after-ask'
+                    ? { approvalWaivedSurfaces: { 'machines.managed.power.set': ['cli'] } } : {}) },
         } : {
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'] } },
-        }, envelopeKind: 'encrypted' });
+        }, envelopeKind: finiteRpc ? 'plain' : 'encrypted' });
         const transportPaths: string[] = [];
         const requesterSettingsVersions: number[] = [];
+        const artifacts = new Map<string, Record<string, unknown>>();
+        const approvals: unknown[] = [];
+        let notifyApprovalCreated: (id: string) => void = () => {};
+        const approvalCreated = new Promise<string>(resolve => { notifyApprovalCreated = resolve; });
+        let requesterCurrent = true;
+        const machineSocket = createApiSessionSocketStub({
+            emit: (event, args, socket) => {
+                if (event === SOCKET_RPC_EVENTS.REGISTER) socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, args[0]);
+            },
+            emitWithAck: (event, payload) => {
+                if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { result: 'success', revision: 1 };
+                if (payload && typeof payload === 'object' && 'expectedVersion' in payload && typeof payload.expectedVersion === 'number') {
+                    return { result: 'success', version: payload.expectedVersion + 1,
+                        ...('daemonState' in payload ? { daemonState: payload.daemonState } : {}),
+                        ...('metadata' in payload ? { metadata: payload.metadata } : {}) };
+                }
+                return { result: 'success', version: 1 };
+            },
+        });
+        if (finiteRpc) {
+            // Socket.IO is the external transport; the installed approval supervisor stays real.
+            class ApprovalSocketBoundary extends EventEmitter {
+                connected = false;
+                io = Object.assign(new EventEmitter(), { timeout() {} });
+                connect() { this.connected = true; this.emit('connect'); return this; }
+                disconnect() { this.connected = false; this.emit('disconnect', 'io client disconnect'); return this; }
+                offAny() {}
+            }
+            socketIoBoundary.io.mockImplementation((_uri, options) => {
+                const auth: unknown = options?.auth;
+                if (auth && typeof auth === 'object' && 'clientType' in auth && auth.clientType === 'machine-scoped') {
+                    return machineSocket as never;
+                }
+                const socket = new ApprovalSocketBoundary();
+                return socket as never;
+            });
+            onTestFinished(() => { if (socketIoBoundary.actualIo) socketIoBoundary.io.mockImplementation(socketIoBoundary.actualIo); });
+        }
         const requestBoundary = vi.spyOn(axios, 'request').mockImplementation(async options => {
             const method = String(options.method).toUpperCase();
             const path = new URL(String(options.url)).pathname;
             transportPaths.push(`${method} ${path}`);
             if (method === 'POST' && path === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return { status: 200, data: { tokens: [] } };
             if (method === 'GET' && path === '/v1/account/security') return { status: 200, data: { v: 1,
-                encryptionMode: 'e2ee', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+                encryptionMode: requesterMode, terminalPresentUserPolicy: 'allowed', nativeEmail: null,
                 password: { status: 'not_enrolled', revision: null } } };
             throw new Error(`Unexpected private child Account transport ${method} ${path}`);
         });
         const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
             const path = new URL(String(url)).pathname;
             transportPaths.push(`GET ${path}`);
+            if (finiteRpc && path === '/v1/auth/ping') return { status: 200, data: {} };
             if (path === '/v1/account/profile') {
                 const bearer = config?.headers?.Authorization;
                 expect([`Bearer ${bob.token}`, `Bearer ${alice.token}`]).toContain(bearer);
                 return { status: 200, data: { id: bearer === `Bearer ${bob.token}` ? 'bob' : 'alice' } };
             }
-            if (path === '/v1/account/security') return { status: 200, data: { v: 1, encryptionMode: 'e2ee',
+            if (path === '/v1/account/security') return { status: 200, data: { v: 1, encryptionMode: requesterMode,
                 terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } } };
             if (path === '/v2/account/settings') {
                 expect(config?.headers?.Authorization).toBe(`Bearer ${bob.token}`);
                 requesterSettingsVersions.push(settingsVersion);
                 return { status: 200, data: { content: settings, version: settingsVersion } };
             }
-            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
-            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
-                signingKeyFingerprint: 'bob-signing', contentKeyFingerprint: computeContentPublicKeyFingerprint(
-                    tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey), updatedAt: 1 } };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: requesterMode, updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: requesterMode, version: 1,
+                signingKeyFingerprint: material ? 'bob-signing' : null, contentKeyFingerprint: material ? computeContentPublicKeyFingerprint(
+                    tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey) : null, updatedAt: 1 } };
+            if (path.startsWith('/v1/artifacts/')) {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${bob.token}`);
+                const artifact = artifacts.get(path.split('/').at(-1) ?? '');
+                return { status: artifact ? 200 : 404, data: artifact };
+            }
             throw new Error(`Unexpected private child GET ${path}`);
         });
         const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(
             FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } } })));
         let childInput: unknown;
         let childReached = false;
-        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, config) => {
             const path = new URL(String(url)).pathname;
             transportPaths.push(`POST ${path}`);
-            if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+            // Home's installation-signed policy endpoints authenticate the
+            // retained custodian, independently of Bob's private policy/Ask.
+            if (finiteRpc && path.startsWith('/v1/machines/managed/controller/')) {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${alice.token}`);
+            }
+            if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: requesterCurrent } };
             if (path.endsWith('/admit')) return { status: 200, data: { machine: enrolled, replayed: true } };
             if (path === '/v1/machines/managed/controller/prepare-policy') {
                 const request = ManagedPolicyAdmissionInputV1Schema.parse(body);
@@ -1523,7 +1590,42 @@ describe('startDaemonSessionControlRuntime', () => {
                 return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ machine: currentMachine, requestId: 'private-wake', replayed: false }) };
             }
             if (path === '/v1/machines/managed/controller/current') return { status: 200, data: { machine: currentMachine } };
+            if (finiteRpc && path === '/v1/machines/managed/controller/submit-intent') {
+                currentMachine = ManagedMachineV1Schema.parse({ ...currentMachine, submittedNativeEffect: {
+                    intentRevision: currentMachine.intentRevision, requestId: 'private-wake', intent: 'start', controller: currentMachine.controller,
+                } });
+                return { status: 200, data: { machine: currentMachine, submitted: true } };
+            }
+            if (finiteRpc && path === '/v1/machines/managed/controller/report-intent') {
+                if (body && typeof body === 'object' && 'observation' in body) {
+                    currentMachine = ManagedMachineV1Schema.parse({ ...currentMachine, observation: body.observation,
+                        submittedNativeEffect: undefined });
+                }
+                return { status: 200, data: { machine: currentMachine } };
+            }
+            if (finiteRpc && path === '/v1/artifacts' && body && typeof body === 'object'
+                && 'body' in body && typeof body.body === 'string' && 'id' in body) {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${bob.token}`);
+                const content = decodePlainArtifactStoredContent(body.body);
+                if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Invalid approval content');
+                approvals.push(JSON.parse(content.body));
+                artifacts.set(String(body.id), { ...body, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain',
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                notifyApprovalCreated(String(body.id));
+                return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+            }
+            if (finiteRpc && path.startsWith('/v1/artifacts/') && body && typeof body === 'object'
+                && 'expectedHeaderVersion' in body && 'expectedBodyVersion' in body) {
+                expect(config?.headers?.Authorization).toBe(`Bearer ${bob.token}`);
+                const artifactId = path.split('/').at(-1) ?? '';
+                const current = artifacts.get(artifactId);
+                if (!current) return { status: 404, data: {} };
+                const next = { ...current, ...body, headerVersion: Number(current.headerVersion) + 1, bodyVersion: Number(current.bodyVersion) + 1 };
+                artifacts.set(artifactId, next);
+                return { status: 200, data: { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion } };
+            }
             if (path === '/v1/actions/session.spawn_new') {
+                if (!material) throw new Error('Expected encrypted managed child');
                 childReached = true;
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 if (request.envelope.v !== 2) throw new Error('Expected actual E2EE managed child');
@@ -1547,8 +1649,10 @@ describe('startDaemonSessionControlRuntime', () => {
                 projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }) });
-        const apiMachine = finiteWake ? new ApiMachineClient(alice.token, { id: machineId, encryptionMode: 'e2ee',
-            encryptionKey: alice.encryption.secret, encryptionVariant: 'legacy', metadata: null, metadataVersion: 0,
+        // Bob's keyless Plain Account can Manage a Plain controller; an E2EE
+        // Machine would require an E2EE recipient under the sharing contract.
+        const apiMachine = finiteWake ? new ApiMachineClient(alice.token, { id: machineId, encryptionMode: finiteRpc ? 'plain' : 'e2ee',
+            encryptionKey: finiteRpc ? null : alice.encryption.secret, encryptionVariant: 'legacy', metadata: null, metadataVersion: 0,
             daemonState: null, daemonStateVersion: 0 }) : null;
         onTestFinished(async () => { await apiMachine?.shutdown(); });
         const runtime = await startDaemonSessionControlRuntime({ machineId, credentials: alice, api: {} as never,
@@ -1568,7 +1672,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 origin: { kind: 'finite-command' as const, actionRequestId: 'private-finite' }, reason: 'admitted-work' as const };
             const guest = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(44));
             const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'private-finite-root', binding: {
-                accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'e2ee',
+                accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: requesterMode,
                 serverIdentityId: homeId, machineId: 'private-guest', installationId: 'guest-installation', actionId: 'projects.prepare',
                 requestId: 'private-finite', target: { kind: 'machine', machineId: 'private-guest' }, requestEnvelopeDigest: 'a'.repeat(43),
             }, managedFiniteWake: { target: wakeTarget, installationPublicKey: installation.publicKey } });
@@ -1577,6 +1681,65 @@ describe('startDaemonSessionControlRuntime', () => {
             const controllerCarrier = sealExternalActionRequesterAccountContextV1({ authorization: guestCarrier, credentials: encodeStoredCredentials(bob),
                 purpose: { kind: 'managed_finite_wake', target: wakeTarget },
                 installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+            if (finiteRpc) {
+                apiMachine!.registerManagedFiniteWake({ readCurrent: async () => enrolled,
+                    executePolicy: runtime.managedMachinePolicyAdapter.executePolicy });
+                if (finiteRpc === 'revoked') requesterCurrent = false;
+                const actionOrigin = finiteRpc === 'changed-root' ? { ...controllerCarrier,
+                    binding: { ...controllerCarrier.binding, requestEnvelopeDigest: 'b'.repeat(43) } } : controllerCarrier;
+                const rpc = apiMachine!.getPeerMediationMachineRpcHandlerManager();
+                runWithServerHttpBaseUrl(serverUrl, () => apiMachine!.connect());
+                await vi.waitFor(() => expect(machineSocket.getHandler(SOCKET_RPC_EVENTS.REQUEST)).toBeDefined());
+                let rpcResult: unknown;
+                const execution = new Promise<unknown>(resolve => machineSocket.trigger(SOCKET_RPC_EVENTS.REQUEST,
+                    { method: `${machineId}:${MANAGED_FINITE_WAKE_RPC_METHOD}`, params: { target: wakeTarget, actionOrigin },
+                        authorization: ACTION_API_SERVER_ORIGIN }, resolve)).then(value => { rpcResult = value; return value; });
+                if (finiteRpc === 'ask' || finiteRpc === 'revoked-after-ask') {
+                    const first = await Promise.race([approvalCreated.then(artifactId => ({ kind: 'approval' as const, artifactId })),
+                        execution.then(result => ({ kind: 'settled' as const, result }))]);
+                    expect(first.kind, JSON.stringify({ first, transportPaths, nativeEffects })).toBe('approval');
+                    if (first.kind !== 'approval') throw new Error('Shared finite wake settled before requester Ask');
+                    const approval = ApprovalRequestV2Schema.parse(approvals[0]);
+                    expect(approval.executionOriginV1.accountId).toBe('bob');
+                    expect(approval.actionArgs).toMatchObject({ managedId: enrolled.id, intent: 'start' });
+                    expect(nativeEffects).toEqual([]);
+                    expect(currentMachine.intentRevision).toBe(1);
+                    await vi.waitFor(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(first.artifactId)).toBe(1));
+                    // A durable "approved" body alone cannot authorize a live blocking
+                    // continuation. Bob's real interactive ingress supplies that authority.
+                    if (finiteRpc === 'revoked-after-ask') requesterCurrent = false;
+                    const human = createCliActionExecutorHarness({ token: bob.token, credentials: bob, sessionId: '',
+                        serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl }, {
+                        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+                            credentials: bob, machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl }),
+                    });
+                    let decision: unknown;
+                    const answer = human.executor.execute('approval.request.decide',
+                        { artifactId: first.artifactId, decision: 'approve' },
+                        { surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId,
+                            actionRequestId: 'bob-wake-answer' }).then(value => { decision = value; });
+                    await vi.waitFor(() => expect(decision, JSON.stringify({ transportPaths,
+                        waiters: getSharedBlockingApprovalCoordinator().getLiveWaiterCount(first.artifactId),
+                        artifact: artifacts.get(first.artifactId) })).toBeDefined());
+                    await answer;
+                    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+                    await vi.waitFor(() => expect(rpcResult, JSON.stringify({ transportPaths, nativeEffects,
+                        approvals, waiters: getSharedBlockingApprovalCoordinator().getLiveWaiterCount(first.artifactId) })).toBeDefined());
+                }
+                const result = await execution;
+                if (finiteRpc === 'revoked' || finiteRpc === 'changed-root' || finiteRpc === 'revoked-after-ask') {
+                    expect(result).toMatchObject({ ok: false,
+                        ...(finiteRpc === 'revoked-after-ask' ? {} : { errorCode: 'requester_account_context_unavailable' }) });
+                    expect(nativeEffects).toEqual([]);
+                    expect(transportPaths).not.toContain('POST /v1/machines/managed/controller/admit-policy');
+                } else {
+                    expect(result, JSON.stringify({ result, transportPaths, nativeEffects })).toMatchObject({ ok: true });
+                    expect(nativeEffects.filter(role => role === 'power')).toHaveLength(1);
+                }
+                expect((await readStoredCredentials())?.token).toBe(alice.token);
+                expect(ActionOperationListV1ResponseSchema.parse(await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.list, {})).items).toEqual([]);
+                return;
+            }
             const prepare = runtime.externalActionIngressOwner?.prepareRequesterAccountContext;
             if (!prepare) throw new Error('Missing real installed requester factory');
             const admitted = await prepare({ authorization: controllerCarrier,
@@ -1630,6 +1793,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 actionOrigin: admitted.authorization })).toMatchObject({ ok: false, errorCode: 'requester_account_context_unavailable' });
             return;
         }
+        if (!material) throw new Error('Expected encrypted managed child');
         const target = { kind: 'machine' as const, machineId };
         const envelope = sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: 'bob',
             authentication: { kind: 'account', tokenEpoch: 1 }, actionId: 'machines.managed.acquire',
@@ -1662,6 +1826,9 @@ describe('startDaemonSessionControlRuntime', () => {
     });
     it('refreshes changed Bob policy inside actual admitted controller custody before the later native effect', async () => {
         await runPrivateManagedRequesterFixture(true, true);
+    });
+    it.each(['allow', 'ask', 'revoked', 'changed-root', 'revoked-after-ask'] as const)('runs shared finite wake RPC with requester custody (%s)', async scenario => {
+        await runPrivateManagedRequesterFixture(true, false, scenario);
     });
     async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown') {
         const acceptedWake = policy === 'wake-native-refused' || policy === 'wake-native-unknown';

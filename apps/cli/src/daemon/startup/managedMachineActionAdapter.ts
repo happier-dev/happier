@@ -30,6 +30,8 @@ import type { PrepareExternalActionRequesterAccountContext } from '../externalAc
 /** The incumbent daemon factory binds the current controller to its driver. */
 type ManagedMachineActionAdapterParams = Readonly<{
     credentials: StoredCredentials;
+    /** Installed native custody is separate from an admitted foreign requester's policy/Ask. */
+    controllerCredentials?: StoredCredentials;
     machineId: string;
     serverBaseUrl: string;
     serverId: string;
@@ -119,14 +121,15 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
         const lease = await params.acquireRuntimeRegistryLease();
         try {
             const { createManagedMachineAcquisitionDriver } = await import('@/machines/managed/acquire');
+            const controllerCredentials = params.controllerCredentials ?? params.credentials;
             return await execute(createManagedMachineAcquisitionDriver({
-                token: params.credentials.token, serverUrl: params.serverBaseUrl,
+                token: controllerCredentials.token, serverUrl: params.serverBaseUrl,
                 homeId: origin.serverIdentityId,
                 controller: { machineId: params.machineId, installationId: params.installationIdentity.installationId },
                 runtimeRegistry: lease.registry,
                 externalActionMachineRequestPrivateKey: params.installationIdentity.privateKey,
                 managedProviderOperationAuthority: params.managedProviderOperationAuthority,
-                credentials: params.credentials,
+                credentials: controllerCredentials,
                 homeTarget,
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
             }));
@@ -219,6 +222,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
                     let result = await executeSessionStart({ ...agentStart,
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
+                        managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, context, machine);
                     if (result.ok && params.observeSessionStartApproval) {
                         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);

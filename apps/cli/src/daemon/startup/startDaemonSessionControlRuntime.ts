@@ -64,8 +64,15 @@ import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessi
 import { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import {
   getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
   resolveActiveAccountSettingsSnapshotRevision,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
+import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import type { AgentRuntimeDaemonServiceRequestV1, AgentRuntimeDaemonServiceResponseV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { logger } from '@/ui/logger';
 import { createDaemonQualifiedRequestAuthCallbacks } from '../connectedServices/requestAuth/createDaemonQualifiedRequestAuthCallbacks';
 import { resolveRequesterSessionRuntimeDirectories } from '../sessionEncryption/createRequesterSessionRuntimeContext';
@@ -2319,6 +2326,7 @@ export async function startDaemonSessionControlRuntime(
      */
     externalActionAccountId?: string | null;
     openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
+    openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
     /** Profile identity paired with `serverBaseUrl` for this daemon lifecycle. */
     serverId: string;
     /** C52's single composed inventory; requester recovery must include sessionless native work. */
@@ -5019,7 +5027,7 @@ export async function startDaemonSessionControlRuntime(
                     sessionId, token: spawnParams.credentials.token, credentials: spawnParams.credentials,
                   });
                   if (!context.ok) throw new Error(context.reason);
-                  return context.attachPayload.metadata ?? null;
+                  return context.metadata;
                 },
               },
               waitForExitTimeoutMs:
@@ -14796,6 +14804,7 @@ export async function startDaemonSessionControlRuntime(
                 if (privatePurpose.kind === 'managed_finite_wake') {
                   const target = privatePurpose.target;
                   const native = createDaemonManagedMachineActionAdapter({ credentials: admitted.credentials,
+                    controllerCredentials: params.credentials,
                     machineId: params.machineId, serverBaseUrl: admitted.serverHttpBaseUrl, serverId: params.serverId,
                     resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
                     installationIdentity: installation,
@@ -15240,8 +15249,136 @@ export async function startDaemonSessionControlRuntime(
     Readonly<{
       sessionId: string;
       cleanup: () => Promise<void>;
+      readManagedBinding?: (proof: ManagedRunBindingProof) => Promise<ManagedRunBindingResult | null>;
     }>
   >();
+  type ManagedRunBindingOpen = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'provider_managed.binding.open' }>;
+  type ManagedRunBindingProof = Omit<ManagedRunBindingOpen, 'kind' | 'requestId'>;
+  type ManagedRunBindingResult = Extract<Extract<AgentRuntimeDaemonServiceResponseV1, { ok: true }>['result'], { kind: 'provider_managed.binding' }>;
+  const managedRunBindingProof = (operation: ManagedRunBindingProof): ManagedRunBindingProof => ({
+    executionRunId: operation.executionRunId, executionRunOccurrenceId: operation.executionRunOccurrenceId,
+    agentId: operation.agentId, modelId: operation.modelId, runtimeBindingBasis: operation.runtimeBindingBasis,
+    expectedAccountSettingsScopeKey: operation.expectedAccountSettingsScopeKey,
+  });
+  const resolveAttachedManagedAccount = async (sessionId: string, tracked: TrackedSession,
+    expectedScopeKey: string, signal: AbortSignal) => {
+    const requester = await resolveSessionAccountContext(sessionId);
+    const credentials = requester ? requester.bootstrap.credentials : params.credentials;
+    const rootAccountId = readPreviewAccountIdFromToken(params.credentials.token);
+    if (!rootAccountId || readPreviewAccountIdFromToken(credentials.token) !== rootAccountId
+      || resolveForegroundAccountSettingsScopeKey(credentials) !== expectedScopeKey
+      || requester && (requester.bootstrap.attribution.serverId !== params.serverId
+        || requester.bootstrap.attribution.machineId !== params.machineId
+        || normalizeServerHttpBaseUrl(requester.bootstrap.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverBaseUrl))) return null;
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    const readSnapshot = () => {
+      const snapshot = requester ? requester.readAccountSettingsSnapshot() : getActiveAccountSettingsSnapshot();
+      return snapshot?.scopeKey === expectedScopeKey ? snapshot : null;
+    };
+    const isCurrent = async () => {
+      if (signal.aborted || isRuntimePublicationQuiescing() || params.pidToTrackedSession.get(tracked.pid) !== tracked
+        || !requester && lifetimeToken !== getActiveAccountSettingsSnapshotLifetimeToken()) return false;
+      try {
+        await assertSessionAccountCurrent(sessionId, requester);
+        return !signal.aborted && !isRuntimePublicationQuiescing() && params.pidToTrackedSession.get(tracked.pid) === tracked
+          && (requester !== null || lifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()) && readSnapshot() !== null;
+      } catch { return false; }
+    };
+    const purposeResolver = requester ? requester.resolveManagedPurposeBindingIntent : params.resolveManagedPurposeBindingIntent;
+    if (!purposeResolver || !await isCurrent()) return null;
+    return { accountId: rootAccountId, credentials, isCurrent,
+      readAccountSettingsSnapshot: async () => await isCurrent() ? readSnapshot() : null,
+      resolveManagedPurposeBindingIntent: async (input: Parameters<typeof purposeResolver>[0]) => {
+        if (!await isCurrent()) throw createForegroundProviderError('provider_authorization_changed');
+        const binding = await withSessionAccountHome(requester, () => purposeResolver(input));
+        if (!await isCurrent()) throw createForegroundProviderError('provider_authorization_changed');
+        return binding;
+      },
+      withHome: <T>(read: () => Promise<T>) => runWithServerHttpBaseUrl(params.serverBaseUrl, read),
+    };
+  };
+  const openAttachedManagedRunBinding = async (input: Readonly<{ sessionId: string; tracked: TrackedSession;
+    proof: ManagedRunBindingProof; signal: AbortSignal }>): Promise<ManagedRunBindingResult | null> => {
+    const proof = managedRunBindingProof(input.proof);
+    const basis = proof.runtimeBindingBasis;
+    if (!params.openAccountConnectionManagedConsumerSource || basis.deployment.kind !== 'managedLocal'
+      || basis.deployment.managedRuntime.sharing !== 'connectionMachine'
+      || basis.runtimeCredentialTransport?.destination.kind !== 'httpHeader') return null;
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, shutdownCancellationDomains.daemonWorkSignal]);
+    const account = await resolveAttachedManagedAccount(input.sessionId, input.tracked, proof.expectedAccountSettingsScopeKey, signal);
+    if (!account) return null;
+    const isRunCurrent = async () => {
+      if (!await account.isCurrent()) return false;
+      try {
+        const current = await account.withHome(async () => {
+          const transport = await resolveSessionTransportContext({ credentials: account.credentials, idOrPrefix: input.sessionId, signal });
+          if (!transport.ok || transport.sessionId !== input.sessionId || !await account.isCurrent()) return null;
+          const rpc = { token: account.credentials.token, sessionId: transport.sessionId,
+            method: `${transport.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1}`,
+            request: SessionExecutionRunBrokerAuthorityRequestV1Schema.parse({ v: 1, executionRunId: proof.executionRunId,
+              expectedOccurrenceId: proof.executionRunOccurrenceId, expectedProviderConnectionModel: {
+                agentId: proof.agentId, agentTargetKey: basis.agentTargetKey, providerConnectionId: basis.connectionId, modelId: proof.modelId,
+              } }), signal };
+          return SessionExecutionRunBrokerAuthorityResponseV1Schema.parse(transport.mode === 'plain'
+            ? await callSessionRpc({ ...rpc, mode: 'plain' }) : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx }));
+        });
+        return current?.status === 'current' && current.executionRunId === proof.executionRunId
+          && current.occurrenceId === proof.executionRunOccurrenceId && current.parentSessionId === input.sessionId && await account.isCurrent();
+      } catch { return false; }
+    };
+    const resources = createProviderLaunchResourceScope();
+    try {
+      input.signal.throwIfAborted();
+      if (!await isRunCurrent()) return null;
+      const targetMachineId = basis.deployment.gatewayPlacement?.kind === 'machine'
+        ? basis.deployment.gatewayPlacement.machineId : params.machineId;
+      const application = { agentTargetKey: basis.agentTargetKey, implementationIdentity: basis.deployment.implementationIdentity,
+        endpointTemplateId: basis.endpoint.endpointTemplateId, protocol: basis.endpoint.protocol };
+      const opened = await params.openAccountConnectionManagedConsumerSource({ targetMachineId, accountId: account.accountId,
+        runtimeBindingBasis: basis, agentId: proof.agentId, modelId: proof.modelId,
+        request: { consumer: { kind: 'execution_run', executionRunId: proof.executionRunId }, executionRunOccurrenceId: proof.executionRunOccurrenceId,
+          consumerMachineId: params.machineId, application, source: { kind: 'account_connection', connectionId: basis.connectionId,
+            expectedConnectionSecurityFingerprint: basis.credentialAuthorization.connectionSecurityFingerprint,
+            expectedManagedRuntimeBindingFingerprint: createProviderManagedRuntimeBindingFingerprintV1({
+              implementationIdentity: basis.deployment.implementationIdentity, managedRuntime: basis.deployment.managedRuntime,
+              purposeBindings: basis.deployment.purposeBindings }) } },
+        expectedAccountSettingsScopeKey: proof.expectedAccountSettingsScopeKey, readAccountSettingsSnapshot: account.readAccountSettingsSnapshot,
+        resolveManagedPurposeBindingIntent: account.resolveManagedPurposeBindingIntent, signal, isCurrent: isRunCurrent });
+      if (!opened) return null;
+      resources.register(opened.retire);
+      const endpointUrl = opened.access.endpointUrl(application.endpointTemplateId);
+      if (!endpointUrl) { await resources.release(); return null; }
+      let cleanup: (() => Promise<void>) | null = null;
+      const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: basis.runtimeCredentialTransport,
+        request: async request => {
+          if (await opened.revalidate(request.signal)) return { ok: true, response: await opened.access.request(request) };
+          lifetime.abort();
+          void cleanup?.().catch(() => undefined); // The existing PID cleanup retains failed release custody.
+          return { ok: false, reasonCode: 'resource_forbidden' };
+        } });
+      resources.register(consumer.cleanup);
+      input.signal.throwIfAborted();
+      if (!await opened.revalidate(signal)) { await resources.release(); return null; }
+      const bindingId = randomUUID();
+      const result = { kind: 'provider_managed.binding' as const, bindingId, endpointUrl: consumer.endpointUrl,
+        headers: { [basis.runtimeCredentialTransport.destination.name]: consumer.renderedCredential } };
+      const release = resources.transfer();
+      cleanup = async () => { lifetime.abort(); await release?.(); };
+      const unregister = registerPidSpawnResourceCleanup({ pid: input.tracked.pid, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+        isCurrentPidOwner: () => params.pidToTrackedSession.get(input.tracked.pid) === input.tracked,
+        cleanup: async () => { await cleanup?.(); providerBrokerBindingReleaseById.delete(bindingId); } });
+      if (!unregister) { await cleanup(); return null; }
+      providerBrokerBindingReleaseById.set(bindingId, { sessionId: input.sessionId,
+        cleanup: async () => { await cleanup?.(); unregister(); },
+        readManagedBinding: async currentProof => {
+          if (!isDeepStrictEqual(currentProof, proof) || !consumer.isCurrent()) return null;
+          if (!await opened.revalidate(signal)) { await cleanup?.(); return null; }
+          return consumer.isCurrent() ? result : null;
+        } });
+      return result;
+    } catch (error) { lifetime.abort(); await resources.release(); throw error; }
+  };
   const sessionLiveWorkProducer = createSessionLiveWorkProducer({
     startup: spawnRequestCoalescer,
     readSessions: () => [...params.pidToTrackedSession.values()],
@@ -15521,6 +15658,51 @@ export async function startDaemonSessionControlRuntime(
                   },
                 };
           }
+          if (request.operation.kind === 'provider_managed.purpose.resolve'
+            || request.operation.kind === 'provider_managed.binding.open'
+            || request.operation.kind === 'provider_managed.binding.read'
+            || request.operation.kind === 'provider_managed.binding.close') {
+            const operation = request.operation;
+            const unavailable = () => ({ ok: false as const,
+              error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable' } });
+            const tracked = trackedSession;
+            if (!tracked || tracked.happySessionId !== sessionId
+              || params.pidToTrackedSession.get(tracked.pid) !== tracked) return unavailable();
+            try {
+              if (operation.kind === 'provider_managed.binding.close') {
+                const binding = providerBrokerBindingReleaseById.get(operation.bindingId);
+                if (!binding?.readManagedBinding || binding.sessionId !== sessionId) return unavailable();
+                await binding.cleanup();
+                providerBrokerBindingReleaseById.delete(operation.bindingId);
+                return { ok: true as const, result: { kind: 'provider_managed.binding.closed' as const, status: 'closed' as const } };
+              }
+              const signal = context.signal ?? shutdownCancellationDomains.daemonWorkSignal;
+              if (operation.kind === 'provider_managed.purpose.resolve') {
+                const account = await resolveAttachedManagedAccount(sessionId, tracked, operation.expectedAccountSettingsScopeKey, signal);
+                if (!account) return unavailable();
+                const binding = await account.resolveManagedPurposeBindingIntent({
+                  purpose: operation.purpose, target: operation.target, serviceRefs: operation.serviceRefs, signal,
+                });
+                if (!binding || !await account.isCurrent()) return unavailable();
+                return { ok: true as const, result: { kind: 'provider_managed.purpose' as const, binding } };
+              }
+              const proof = managedRunBindingProof(operation);
+              const existing = operation.kind === 'provider_managed.binding.read' && operation.bindingId
+                ? providerBrokerBindingReleaseById.get(operation.bindingId) : undefined;
+              // An existing handle is cleanup-only custody for this exact proof.
+              // A missing handle (daemon replacement) may re-admit only the
+              // original source/target and current accepted Run occurrence.
+              if (existing && (existing.sessionId !== sessionId || !existing.readManagedBinding)) return unavailable();
+              const result = existing
+                ? await existing.readManagedBinding?.(proof)
+                : await openAttachedManagedRunBinding({ sessionId, tracked, proof, signal });
+              return result ? { ok: true as const, result } : unavailable();
+            } catch (error) {
+              const providerError = ProviderErrorV1Schema.safeParse(error);
+              return providerError.success ? { ok: false as const,
+                error: { code: providerError.data.code, message: providerError.data.code } } : unavailable();
+            }
+          }
           if (request.operation.kind === 'provider_broker.binding.open') {
             const tracked = trackedSession;
             const operation = request.operation;
@@ -15684,7 +15866,7 @@ export async function startDaemonSessionControlRuntime(
             const binding = providerBrokerBindingReleaseById.get(
               request.operation.bindingId,
             );
-            if (!binding || binding.sessionId !== sessionId) {
+            if (!binding || binding.sessionId !== sessionId || binding.readManagedBinding) {
               return {
                 ok: false as const,
                 error: {
