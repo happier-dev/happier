@@ -25,11 +25,21 @@ export type AcpCatalogTransferV2Result = Readonly<{ status: 'ready'; record: Acp
   | Readonly<{ status: 'not-required' }>
   | Readonly<{ status: 'unavailable'; reason: 'invalid-stored-content' | 'unsupported-source-version' | 'saved-secret-unavailable' | 'transport-contribution-unavailable' }>;
 
-/** Read-only projection. Only complete ready results may transfer authority; mappings come from the Secret owner. */
-export function prepareAcpCatalogTransferV2(input: Readonly<{
-  rawSettings: unknown; sourceSettingsVersion: number; savedSecretRefs?: ReadonlyMap<string, string>;
-  kiroStderrRules?: PluginAgentAcpStderrRulesV2;
-}>): AcpCatalogTransferV2Result {
+export type AcpCatalogTransferSourceDefinitionV2 = z.infer<typeof predecessorDefinition>;
+type AcpCatalogTransferSourceInventoryV2 = Readonly<{
+  sourceSettingsVersion: number;
+  definitions: readonly AcpCatalogTransferSourceDefinitionV2[];
+  references: readonly Readonly<{ path: string; secretId: string }>[];
+}>;
+export type AcpCatalogTransferSourceV2Result = (AcpCatalogTransferSourceInventoryV2 & Readonly<{ status: 'ready' }>)
+  | (AcpCatalogTransferSourceInventoryV2 & Readonly<{ status: 'partial'; reason: 'incomplete-inventory'; diagnostics: readonly AcpCatalogDiagnosticV1[] }>)
+  | Readonly<{ status: 'not-required' }>
+  | Readonly<{ status: 'unavailable'; reason: 'invalid-stored-content' | 'unsupported-source-version' | 'saved-secret-unavailable' }>;
+
+/** Original source inventory for the Secret owner, not executable catalog authority or a promotion. */
+export function readAcpCatalogTransferSourceV2(input: Readonly<{
+  rawSettings: unknown; sourceSettingsVersion: number;
+}>): AcpCatalogTransferSourceV2Result {
   if (!input.rawSettings || typeof input.rawSettings !== 'object' || Array.isArray(input.rawSettings)) {
     return { status: 'unavailable', reason: 'invalid-stored-content' };
   }
@@ -68,8 +78,31 @@ export function prepareAcpCatalogTransferV2(input: Readonly<{
     }
     return !unclassifiedPaths.some(reference => reference === path || reference.startsWith(`${path}.`) || reference.startsWith(`${path}[`));
   });
+  const references: { path: string; secretId: string }[] = [];
+  for (const { index, definition } of safeDefinitions) {
+    for (const reference of listAcpCatalogSavedSecretRefsV1({ v: 1, definitions: [definition] })) {
+      try {
+        if (parseSavedSecretRefV1(reference.secretId).kind === 'personal') {
+          references.push({ ...reference, path: reference.path.replace(/^definitions\[0\]/u, `backends[${index}]`) });
+        }
+      } catch { return { status: 'unavailable', reason: 'saved-secret-unavailable' }; }
+    }
+  }
+  const inventoryResult = { sourceSettingsVersion: input.sourceSettingsVersion,
+    definitions: safeDefinitions.map(({ definition }) => definition), references };
+  return diagnostics.length > 0 ? { status: 'partial', reason: 'incomplete-inventory', ...inventoryResult, diagnostics }
+    : { status: 'ready', ...inventoryResult };
+}
+
+/** Read-only projection. Only complete ready results may transfer authority; mappings come from the Secret owner. */
+export function prepareAcpCatalogTransferV2(input: Readonly<{
+  rawSettings: unknown; sourceSettingsVersion: number; savedSecretRefs?: ReadonlyMap<string, string>;
+  kiroStderrRules?: PluginAgentAcpStderrRulesV2;
+}>): AcpCatalogTransferV2Result {
+  const source = readAcpCatalogTransferSourceV2(input);
+  if (source.status !== 'ready' && source.status !== 'partial') return source;
   const transferred: AcpBackendDefinitionV1[] = [];
-  for (const { definition } of safeDefinitions) {
+  for (const definition of source.definitions) {
     const { transportProfile, auth, ...current } = definition;
     const env: AcpBackendDefinitionV1['env'] = {};
     for (const [name, value] of Object.entries(definition.env)) {
@@ -104,7 +137,7 @@ export function prepareAcpCatalogTransferV2(input: Readonly<{
   }
   const record = AcpCatalogRecordV1Schema.safeParse({ v: 1, definitions: transferred });
   if (!record.success) return { status: 'unavailable', reason: 'invalid-stored-content' };
-  return diagnostics.length > 0 ? { status: 'partial', reason: 'incomplete-inventory', record: record.data,
-    sourceSettingsVersion: input.sourceSettingsVersion, diagnostics }
+  return source.status === 'partial' ? { status: 'partial', reason: 'incomplete-inventory', record: record.data,
+    sourceSettingsVersion: source.sourceSettingsVersion, diagnostics: source.diagnostics }
     : { status: 'ready', sourceSettingsVersion: input.sourceSettingsVersion, record: record.data };
 }

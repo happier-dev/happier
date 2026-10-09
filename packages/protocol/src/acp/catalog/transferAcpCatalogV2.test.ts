@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { formatSharedSavedSecretRefV1 } from '../../account/settings/savedSecretReferenceV1.js';
-import { prepareAcpCatalogTransferV2 } from './transferAcpCatalogV2.js';
+import { prepareAcpCatalogTransferV2, readAcpCatalogTransferSourceV2 } from './transferAcpCatalogV2.js';
 
 // Observed 0.2 schema/producer basis: 37a6541578749067b49d4579be8c752c9591b8c8,
 // packages/protocol/src/acpCatalog/settingsV1.ts:37–80.
@@ -110,5 +110,50 @@ describe('prepareAcpCatalogTransferV2', () => {
       expect(prepareAcpCatalogTransferV2({ rawSettings: { acpCatalogSettingsV1: source }, sourceSettingsVersion: 3 }))
         .toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
     }
+  });
+});
+
+describe('readAcpCatalogTransferSourceV2', () => {
+  it('opens complete original source and personal slots without mapping or runtime activation', () => {
+    const rawSettings = predecessorSource();
+    const sharedRef = formatSharedSavedSecretRefV1('already-shared');
+    const source = { ...rawSettings, acpCatalogSettingsV1: { ...rawSettings.acpCatalogSettingsV1, backends: [
+      ...rawSettings.acpCatalogSettingsV1.backends,
+      { ...rawSettings.acpCatalogSettingsV1.backends[1], id: 'shared', name: 'shared', env: {
+        TOKEN: { t: 'savedSecret', secretId: sharedRef },
+      } },
+    ] } };
+    const before = structuredClone(source);
+    const opened = readAcpCatalogTransferSourceV2({ rawSettings: source, sourceSettingsVersion: 17 });
+
+    expect(opened).toMatchObject({ status: 'ready', sourceSettingsVersion: 17,
+      references: [{ path: 'backends[0].env.TOKEN', secretId: 'old-token' }] });
+    if (opened.status !== 'ready') return;
+    expect(opened.definitions.map(definition => definition.id)).toEqual(['configured-kiro', 'generic', 'shared']);
+    expect(opened.definitions[0]).toMatchObject(rawSettings.acpCatalogSettingsV1.backends[0]!);
+    expect(opened.definitions[0]).not.toHaveProperty('runtime');
+    expect(opened.definitions[0]).not.toHaveProperty('compatibility');
+    expect(opened.definitions[2]?.env.TOKEN).toEqual({ t: 'savedSecret', secretId: sharedRef });
+    expect(source).toEqual(before);
+  });
+
+  it('retains safe original siblings for repair but refuses incomplete or malformed source authority', () => {
+    const valid = predecessorSource();
+    const opened = readAcpCatalogTransferSourceV2({ sourceSettingsVersion: 17, rawSettings: { acpCatalogSettingsV1: {
+      ...valid.acpCatalogSettingsV1, backends: [{ id: 'broken' }, ...valid.acpCatalogSettingsV1.backends],
+      extension: { secretRef: 'hidden' },
+    } } });
+    expect(opened).toMatchObject({ status: 'partial', reason: 'incomplete-inventory', sourceSettingsVersion: 17,
+      definitions: [expect.objectContaining({ id: 'configured-kiro', transportProfile: 'kiro' }), expect.objectContaining({ id: 'generic' })],
+      references: [{ path: 'backends[1].env.TOKEN', secretId: 'old-token' }],
+      diagnostics: [{ path: 'backends[0]', reason: 'invalid_definition' }, { path: 'extension.secretRef', reason: 'unclassified_reference' }],
+    });
+    const malformed = predecessorSource();
+    malformed.acpCatalogSettingsV1.backends[0]!.env!.TOKEN!.secretId = 'happier:shared-secret:v1:';
+    expect(readAcpCatalogTransferSourceV2({ rawSettings: malformed, sourceSettingsVersion: 17 }))
+      .toEqual({ status: 'unavailable', reason: 'saved-secret-unavailable' });
+    expect(readAcpCatalogTransferSourceV2({ rawSettings: {}, sourceSettingsVersion: 17 })).toEqual({ status: 'not-required' });
+    expect(readAcpCatalogTransferSourceV2({ rawSettings: { acpCatalogSettingsV1: {} }, sourceSettingsVersion: 17 }))
+      .toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
   });
 });
