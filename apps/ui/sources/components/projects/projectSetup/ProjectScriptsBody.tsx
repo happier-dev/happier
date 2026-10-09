@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPageHeader, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectExecutionChoiceV1, WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import { resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import { resolveProjectMemoryDemandV1, type ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import type {
   ProjectDefinitionDetectionV1,
@@ -36,6 +38,8 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 
+import { ProjectCommandOutputHost, useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
+import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
 import { ProjectManifestEditor } from './ProjectManifestEditor';
 import { WorkspaceWorkerSettings, useWorkspaceWorkerPreference } from '@/components/projects/workers/WorkspaceWorkerSettings';
 import { useWorkerDestinationLabel } from '@/components/projects/workers/useWorkerDestinationLabel';
@@ -57,6 +61,7 @@ import { ProjectScriptRow } from './ProjectScriptRow';
 import { ProjectSetupReview } from './ProjectSetupReview';
 import { ProjectSetupAuthoredLine } from './ProjectSetupReturn';
 import { WorkspaceAdHocCommandsItem } from '@/components/projects/workers/WorkspaceAdHocCommandsItem';
+import { ProjectAgentGuidanceDisclosure } from '@/components/projects/workers/ProjectAgentGuidanceDisclosure';
 import {
   projectDefinitionInspectionKey,
   useProjectDefinitionInspection,
@@ -71,6 +76,8 @@ export type ProjectScriptsBodyProps = Readonly<{
   presentation?: 'page' | 'widget';
   /** Services found here are reviewed on the Services page, never appended to the finite list. */
   onOpenServices?: () => void;
+  /** The host's pane scope whose bottom terminal shows script output; absent where the host has none. */
+  outputScopeId?: string | null;
   testID?: string;
 }>;
 
@@ -90,6 +97,7 @@ export function ProjectScriptsBody({
   workspace: workspaceInput,
   presentation = 'page',
   onOpenServices,
+  outputScopeId,
   testID = 'project-scripts',
 }: ProjectScriptsBodyProps): React.ReactElement {
   const workspace = useStableWorkspace(workspaceInput);
@@ -182,16 +190,20 @@ export function ProjectScriptsBody({
   ) : null;
   if (!page)
     return (
-      <View testID={testID} style={styles.body}>
-        {approval}
-        {content}
-      </View>
+      <ProjectCommandOutputHost scopeId={outputScopeId}>
+        <View testID={testID} style={styles.body}>
+          {approval}
+          {content}
+        </View>
+      </ProjectCommandOutputHost>
     );
   return (
-    <ItemList testID={testID}>
-      {approval}
-      {content}
-    </ItemList>
+    <ProjectCommandOutputHost scopeId={outputScopeId}>
+      <ItemList testID={testID}>
+        {approval}
+        {content}
+      </ItemList>
+    </ProjectCommandOutputHost>
   );
 }
 
@@ -318,10 +330,6 @@ function DeclaredScripts(
   // The page also shows the one setting agents have (Scripts › Agents), so it always reads it.
   const workers = useWorkspaceWorkerPreference(props.workspace, { enabled: hasPortable || props.page });
   const preference = workers.state.kind === 'ready' ? workers.state.value.preference : null;
-  const defaultChoice = React.useMemo<ProjectExecutionChoiceV1 | null>(
-    () => !preference ? null : preference.enabled ? { kind: 'workers', destination: preference.destination } : { kind: 'primary' },
-    [preference],
-  );
   const hasSetup =
     (props.manifest.workspace?.setup?.length ?? 0) > 0 ||
     (props.manifest.environment !== undefined &&
@@ -404,7 +412,8 @@ function DeclaredScripts(
             invocation={findProjectInvocation(props.inspection, declaration.source)}
             controller={props.controller}
             compact={!props.page}
-            defaultChoice={defaultChoice}
+            preference={preference}
+            memoryDemand={resolveProjectMemoryDemandV1(declaration.memoryDemand, props.manifest.workspace?.memoryDemand)}
             onOpenWorkerSettings={props.onOpenWorkers ?? undefined}
             idleText={
               setupReady
@@ -432,6 +441,13 @@ function DeclaredScripts(
           preference={preference}
           disabled={workers.state.kind !== 'ready' || workers.busy}
           onSave={(next) => { void workers.save(next); }}
+        />
+        <ProjectAgentGuidanceDisclosure
+          testID={`${props.testID}.agents.guide`}
+          workspace={props.workspace}
+          // Regenerated when the project file or this checkout's worker preferences change.
+          factsKey={JSON.stringify([props.inspection.definition.basis,
+            workers.state.kind === 'ready' ? workers.state.value.revision : workers.state.kind])}
         />
       </ItemGroup>
     ) : null}
@@ -486,13 +502,20 @@ function DeclaredScriptRow(
     compact: boolean;
     idleText: string;
     showDivider: boolean;
-    defaultChoice: ProjectExecutionChoiceV1 | null;
+    preference: WorkspaceWorkerPreferenceV1 | null;
+    memoryDemand?: ProjectMemoryDemandV1;
     onOpenWorkerSettings?: () => void;
   }>,
 ) {
   const rowKey = projectScriptRowKey(props.workspace, props.name);
   const operation = useProjectScriptRun(props.workspace, { kind: 'named', name: props.name }, props.controller.accountId);
   const source = describeProjectCommandSource(props.declaration.source, props.invocation);
+  const resolvedChoice = resolveProjectExecutionChoiceV1({
+    execution: props.declaration.execution,
+    scriptName: props.name,
+    sourceMachineId: props.workspace.machineId,
+    preference: props.preference ? { status: 'ready', value: props.preference } : { status: 'unavailable' },
+  });
   const failure =
     props.controller.failure?.key === rowKey
       ? props.controller.failure.code
@@ -511,7 +534,11 @@ function DeclaredScriptRow(
       failureCode={failure}
       compact={props.compact}
       showDivider={props.showDivider}
-      defaultChoice={props.defaultChoice}
+      defaultChoice={resolvedChoice.status === 'resolved' ? resolvedChoice.choice : null}
+      memoryDemand={props.memoryDemand}
+      choiceRequired={props.controller.choiceRequired?.key === rowKey}
+      onChooseForRun={(choice) => { void props.controller.chooseForRun(choice); }}
+      onDismissChoice={props.controller.dismissChoice}
       onOpenWorkerSettings={props.onOpenWorkerSettings}
       workerRefusal={props.controller.failure?.key === rowKey ? props.controller.failure.workerRefusal ?? null : null}
       onRun={(choice) => {
@@ -521,7 +548,10 @@ function DeclaredScriptRow(
   );
 }
 
-/** The Setup row: its last preparation, Run setup / Run again, and the review it opens into (D18). */
+/**
+ * The Setup row: its last preparation, Run setup / Run again (Stop while it runs), the review it opens
+ * into (D18) and, after a run, that run's output. Compact hosts open the same review in place.
+ */
 function SetupRow(
   props: Readonly<{
     testID: string;
@@ -538,6 +568,8 @@ function SetupRow(
   const { theme } = useUnistyles();
   const steps = props.manifest.workspace?.setup?.length ?? 0;
   const consent = props.controller.consent;
+  const stop = props.controller.setupStop;
+  const output = useProjectCommandOutputOpener();
   const presentation = presentProjectRun(
     props.operation,
     props.machineName,
@@ -546,17 +578,56 @@ function SetupRow(
   const reviewing =
     consent !== null || Boolean(props.operation?.snapshot.setupReview);
   const failed = props.operation?.snapshot.state === 'failed';
+  const stopping = stop.pending || stop.stopRequested;
   const stepCount = t('projects.scripts.setup.steps', { count: steps });
   const subtitle = reviewing
     ? t('projects.scripts.setup.pending')
-    : failed
-      ? t('projects.scripts.setup.failed')
-      : props.operation?.snapshot.state === 'succeeded'
-        ? `${t('projects.scripts.setup.readySince', { time: formatAsOfTime(props.operation.snapshot.settledAt ?? props.operation.snapshot.createdAt) })} · ${stepCount}`
-        : presentation.text;
+    : stopping
+      ? t('projects.scripts.run.stopping')
+      : failed
+        ? t('projects.scripts.setup.failed')
+        : props.operation?.snapshot.state === 'succeeded'
+          ? `${t('projects.scripts.setup.readySince', { time: formatAsOfTime(props.operation.snapshot.settledAt ?? props.operation.snapshot.createdAt) })} · ${stepCount}`
+          : presentation.text;
   const pending = props.controller.pendingKey === 'setup';
+  const attachment = props.operation?.snapshot.domainRef?.kind === 'projectCommand' ? props.operation.snapshot.domainRef : null;
+  const openOutput = () => {
+    if (props.operation)
+      void output.open(props.operation, { title: `${t('projects.scripts.setup.title')} · ${props.machineName}` });
+  };
   // The review opens from the row or from a preparation that needs consent; it never runs anything.
   const [open, setOpen] = React.useState(false);
+  const expanded = props.compact
+    ? props.controller.setupReviewOpen
+    : props.controller.setupReviewOpen || reviewing || open;
+  // Run and Stop share one slot: a live setup can be stopped from its own row (lab `s-scripts` PAGE).
+  const control = presentation.live ? (
+    <RoundButton
+      size="small"
+      display="secondary"
+      testID={`${props.testID}.stop`}
+      loading={stop.pending}
+      disabled={stopping || props.operation?.snapshot.cancellation !== 'supported'}
+      title={stopping ? t('projects.scripts.run.stopping') : t('projects.scripts.setup.stop')}
+      onPress={stop.requestStop}
+    />
+  ) : (
+    <RoundButton
+      size="small"
+      display="secondary"
+      testID={`${props.testID}.run`}
+      loading={pending}
+      disabled={pending}
+      title={
+        props.operation
+          ? t('projects.scripts.setup.runAgain')
+          : t('projects.scripts.setup.run')
+      }
+      onPress={() => {
+        void props.controller.prepare();
+      }}
+    />
+  );
   const header = (headerProps?: Readonly<Record<string, unknown>>) => (
     <Item
       {...headerProps}
@@ -574,72 +645,92 @@ function SetupRow(
       }
       title={t('projects.scripts.setup.title')}
       subtitle={subtitle}
-      subtitleStyle={failed ? { color: theme.colors.status.error } : undefined}
+      subtitleStyle={failed && !stopping ? { color: theme.colors.status.error } : undefined}
       subtitleLines={1}
       showChevron={false}
       rightElementOutsidePressable
       accessoryLayout="inline"
       rightElement={
         reviewing ? (
-          <Icon name="caret-down" size={14} color={theme.colors.text.tertiary} />
+          <Icon name={expanded ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />
         ) : (
           <View style={styles.setupTail}>
-          {props.compact ? null : <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />}
-          <RoundButton
-            size="small"
-            display="secondary"
-            testID={`${props.testID}.run`}
-            loading={pending}
-            disabled={pending || presentation.live}
-            title={
-              props.operation
-                ? t('projects.scripts.setup.runAgain')
-                : t('projects.scripts.setup.run')
-            }
-            onPress={() => {
-              void props.controller.prepare();
-            }}
-          />
+            {props.compact ? null : <Icon name={expanded ? 'caret-down' : 'caret-right'} size={14} color={theme.colors.text.tertiary} />}
+            {control}
           </View>
         )
       }
     />
   );
-  if (props.compact) return header();
+  // After a run the row opens into that run's output; a pending review (or no run yet) opens the review.
+  const showsOutput = !reviewing && Boolean(props.operation) && !props.compact;
   return (
-    <ExpandableItem
-      testID={`${props.testID}.disclosure`}
-      expanded={reviewing || open}
-      onExpandedChange={(next) => {
-        setOpen(next);
-        if (!next) props.controller.dismissConsent();
-      }}
-      header={({ headerProps }) =>
-        header(headerProps as Readonly<Record<string, unknown>>)
-      }
-    >
-      <ProjectSetupReview
-        testID={`${props.testID}.review`}
-        manifest={props.manifest}
-        machineName={props.machineName}
-        sharedRunAs={props.sharedRunAs}
-        pending={pending}
-        reviewedEffect={consent?.reviewedEffect ?? props.operation?.snapshot.setupReview?.reviewedEffect}
-        initialScope={consent?.consentScope ?? props.operation?.snapshot.setupReview?.consentScope}
-        onRun={(scope) => {
-          void props.controller.prepare(
-            consent?.reviewedEffectDigest ??
-              props.operation?.snapshot.setupReview?.reviewedEffectDigest,
-            scope,
-          );
+    <>
+      <ExpandableItem
+        testID={`${props.testID}.disclosure`}
+        expanded={expanded}
+        onExpandedChange={(next) => {
+          setOpen(next);
+          if (next && props.compact) props.controller.openSetupReview();
+          if (!next) props.controller.dismissConsent();
         }}
-        onNotNow={() => {
-          setOpen(false);
-          props.controller.dismissConsent();
-        }}
-        onViewFile={() => props.onViewFile?.()}
-      />
-    </ExpandableItem>
+        header={({ headerProps }) =>
+          header(headerProps as Readonly<Record<string, unknown>>)
+        }
+      >
+        {showsOutput && props.operation ? (
+          <View style={[styles.setupOutput, { borderColor: theme.colors.border.subtle }]}>
+            {attachment?.terminalId ? (
+              <ProjectCommandOutputPane
+                operation={props.operation}
+                title={t('projects.scripts.setup.title')}
+                {...(output.opensInTerminal ? { onOpenInTerminal: openOutput } : { onOpenDetail: openOutput })}
+              />
+            ) : (
+              <SurfaceStateCard
+                size="line"
+                kind="empty"
+                title={t('projects.scripts.output.empty')}
+                testID={`${props.testID}.noOutput`}
+              />
+            )}
+          </View>
+        ) : (
+          <ProjectSetupReview
+            testID={`${props.testID}.review`}
+            manifest={props.manifest}
+            machineName={props.machineName}
+            sharedRunAs={props.sharedRunAs}
+            pending={pending}
+            reviewedEffect={consent?.reviewedEffect ?? props.operation?.snapshot.setupReview?.reviewedEffect}
+            initialScope={consent?.consentScope ?? props.operation?.snapshot.setupReview?.consentScope}
+            onRun={(scope) => {
+              void props.controller.prepare(
+                consent?.reviewedEffectDigest ??
+                  props.operation?.snapshot.setupReview?.reviewedEffectDigest,
+                scope,
+              );
+            }}
+            onNotNow={() => {
+              setOpen(false);
+              props.controller.dismissConsent();
+            }}
+            onViewFile={() => props.onViewFile?.()}
+          />
+        )}
+      </ExpandableItem>
+      {failed && !reviewing && props.operation ? (
+        // Setup failure keeps its output one press away (lab `s-scripts` STATES 6).
+        <View style={styles.setupBanner}>
+          <AttentionBanner
+            testID={`${props.testID}.failed`}
+            tone="danger"
+            title={t('projects.scripts.setup.failed')}
+            action={{ label: t('projects.scripts.setup.openOutput'), testID: `${props.testID}.openOutput`, onPress: openOutput }}
+          />
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -1135,6 +1226,14 @@ function useSetupOpening(
 const styles = StyleSheet.create((theme) => ({
   body: { gap: 12 },
   setupTail: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  setupOutput: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  setupBanner: { marginHorizontal: 16, marginBottom: 12 },
   inlineTitle: { ...Typography.default(), ...happierPageTextMetrics('rowTitle') },
   inlineMeta: { ...Typography.default(), ...happierPageTextMetrics('rowDescription') },
   strong: { ...Typography.default('semiBold') },

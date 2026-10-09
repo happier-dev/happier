@@ -15,3 +15,9 @@ export const ProjectMemoryDemandV1Schema = z.strictObject({
   ]),
 });
 export type ProjectMemoryDemandV1 = z.infer<typeof ProjectMemoryDemandV1Schema>;
+
+/** Effective reviewed demand: none is unknown, and a smaller declaration cannot lower another. */
+export function resolveProjectMemoryDemandV1(...demands: readonly (ProjectMemoryDemandV1 | undefined)[]): ProjectMemoryDemandV1 | undefined {
+  return demands.reduce<ProjectMemoryDemandV1 | undefined>((largest, demand) =>
+    demand && (!largest || demand.bytes > largest.bytes) ? demand : largest, undefined);
+}

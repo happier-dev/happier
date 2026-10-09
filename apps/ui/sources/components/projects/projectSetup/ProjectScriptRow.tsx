@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import type { ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -16,7 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
-import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
 import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
 import { WorkerDestinationPicker } from '@/components/projects/workers/WorkerDestinationPicker';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -52,6 +53,11 @@ export type ProjectScriptRowProps = Readonly<{
   showDivider?: boolean;
   /** Where this checkout sends portable runs by default (its worker preference), for the Run on check. */
   defaultChoice?: ProjectExecutionChoiceV1 | null;
+  memoryDemand?: ProjectMemoryDemandV1;
+  /** The current Run needs an exact target; choosing resumes that intent, not a later Run. */
+  choiceRequired?: boolean;
+  onChooseForRun?: (choice: ProjectExecutionChoiceV1) => void;
+  onDismissChoice?: () => void;
   /** Opens this checkout's Workers settings (Run on › Worker settings…). */
   onOpenWorkerSettings?: () => void;
   /** The typed "no worker can accept" refusal of this row's last Run request, when that is why it did not start. */
@@ -104,14 +110,9 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   );
   // The checkout's own Machine: "This checkout" in the target menu is the Source, never a past target.
   const source = useServerScopedMachine(props.workspace.serverId, props.workspace.machineId);
-  const presentation = presentProjectRun(
-    props.operation,
-    // The actual target, never the operation's custody Machine.
-    (target ? getMachineDisplayName(target) : null) ??
-      attachment?.machineId ??
-      null,
-    props.idleText,
-  );
+  // The actual target, never the operation's custody Machine.
+  const targetName = (target ? getMachineDisplayName(target) : null) ?? attachment?.machineId ?? null;
+  const presentation = presentProjectRun(props.operation, targetName, props.idleText);
   const stop = useActionOperationStopControl(props.operation);
   const [expanded, setExpanded] = React.useState(false);
   // A failed operation carries the same strict refusal as an immediate Run failure: one parser.
@@ -134,14 +135,35 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
         ? `${presentation.text} · ${t('projects.scripts.byAgent')}`
         : presentation.text;
   const tone = props.failureCode ? 'danger' : presentation.tone;
+  // Output opens as the host's bottom terminal tab named after the script and its actual Machine
+  // (plan 21 §8); hosts without one (phone, widgets) open the operation detail.
+  const output = useProjectCommandOutputOpener();
+  const openOutput = output.open;
+  const outputTitle = targetName ? `${props.name} · ${targetName}` : props.name;
   const openDetail = () => {
-    if (props.operation)
-      openActionOperationDetail({
-        serverId: props.operation.serverId,
-        operationId: props.operation.snapshot.operationId,
-      });
+    if (props.operation) void openOutput(props.operation, { title: outputTitle });
   };
-  // Desktop page rows open into their output; phone and the compact rail open the operation detail.
+  // A Run started here also opens its tab once that new run has a terminal (lab `s-scripts` RAIL).
+  // `previous` is the operation the row showed when Run was pressed; no clock comparison.
+  const runRequest = React.useRef<Readonly<{ previous: string | null }> | null>(null);
+  const terminalId = attachment?.terminalId ?? null;
+  React.useEffect(() => {
+    const operation = props.operation;
+    const request = runRequest.current;
+    if (!operation || !terminalId || !request || operation.snapshot.operationId === request.previous) return;
+    runRequest.current = null;
+    void openOutput(operation, { title: outputTitle, fallbackToDetail: false });
+  }, [openOutput, outputTitle, props.operation, terminalId]);
+  // A refused Run has no new operation to open.
+  React.useEffect(() => {
+    if (props.failureCode || props.workerRefusal) runRequest.current = null;
+  }, [props.failureCode, props.workerRefusal]);
+  const run = (choice?: ProjectExecutionChoiceV1) => {
+    if (output.opensInTerminal) runRequest.current = { previous: props.operation?.snapshot.operationId ?? null };
+    props.onRun(choice);
+  };
+  // Desktop page rows open into their output; phone and compact rows open it directly (the host's
+  // bottom terminal tab where it has one, otherwise the operation detail).
   const discloses = !phone && !props.compact;
   const opens = discloses || Boolean(props.operation);
 
@@ -163,7 +185,8 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
       subtitle={
         <View>
           <RowStatus
-            command={props.compact ? null : props.command}
+            // Phone rows omit command text but keep their source badge (plan 30 phone composition).
+            command={props.compact || phone ? null : props.command}
             text={statusText}
             tone={tone}
             testID={`${props.testID}.status`}
@@ -200,6 +223,10 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
             testID={`${props.testID}.run`}
             workspace={props.workspace}
             defaultChoice={props.defaultChoice ?? null}
+            memoryDemand={props.memoryDemand}
+            choiceRequired={props.choiceRequired}
+            onChooseForRun={props.onChooseForRun}
+            onDismissChoice={props.onDismissChoice}
             onOpenWorkerSettings={props.onOpenWorkerSettings}
             name={props.name}
             presentation={presentation}
@@ -213,7 +240,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
               presentation.live &&
               props.operation?.snapshot.cancellation === 'supported'
             }
-            onRun={props.onRun}
+            onRun={run}
             onStop={stop.requestStop}
           />
         </View>
@@ -231,7 +258,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
       testID={`${props.testID}.noWorker`}
       refusal={workerRefusal}
       pending={props.pending}
-      onRun={props.onRun}
+      onRun={run}
       onDismiss={() => setRefusalDismissed(true)}
     />
   ) : null;
@@ -255,7 +282,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
           <ProjectCommandOutputPane
             operation={props.operation}
             title={props.name}
-            onOpenDetail={openDetail}
+            {...(output.opensInTerminal ? { onOpenInTerminal: openDetail } : { onOpenDetail: openDetail })}
           />
         ) : expanded ? (
           <SurfaceStateCard
@@ -419,6 +446,10 @@ function RunControl(
     testID: string;
     workspace: WorkspaceAddressV1;
     defaultChoice: ProjectExecutionChoiceV1 | null;
+    memoryDemand?: ProjectMemoryDemandV1;
+    choiceRequired?: boolean;
+    onChooseForRun?: (choice: ProjectExecutionChoiceV1) => void;
+    onDismissChoice?: () => void;
     onOpenWorkerSettings?: () => void;
     name: string;
     presentation: ProjectRunPresentation;
@@ -435,12 +466,17 @@ function RunControl(
   const [open, setOpen] = React.useState(false);
   // An invocation-only choice: it changes this Run's input, never the saved preference.
   const [choice, setChoice] = React.useState<ProjectExecutionChoiceV1 | null>(null);
+  const pickerOpen = open || props.choiceRequired === true;
+  const selected: ProjectExecutionChoiceV1 = choice ?? props.defaultChoice ?? { kind: 'primary' };
+  const poolSelection = selected.kind === 'workers' && selected.destination.kind === 'pool'
+    ? selected.destination.selection : 'automatic';
   const stopping = props.presentation.live;
   const address = React.useMemo(
     () => ({ serverId: props.workspace.serverId, refId: props.workspace.workspaceId }),
     [props.workspace.serverId, props.workspace.workspaceId],
   );
   const openWorkerSettings = props.onOpenWorkerSettings;
+  const dismissChoice = props.onDismissChoice;
   const trailingSections = React.useMemo(
     () => openWorkerSettings
       ? [{
@@ -452,11 +488,11 @@ function RunControl(
             label: t('projectWorkers.workerSettings'),
             subtitle: t('projectWorkers.workerSettingsDetail'),
             icon: <Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />,
-            onSelect: () => { setOpen(false); openWorkerSettings(); },
+            onSelect: () => { setOpen(false); dismissChoice?.(); openWorkerSettings(); },
           }],
         }]
       : [],
-    [openWorkerSettings, props.testID, theme.colors.text.secondary],
+    [dismissChoice, openWorkerSettings, props.testID, theme.colors.text.secondary],
   );
   const primary = React.useMemo(
     () => ({ title: props.machineName, subtitle: `${t('projectWorkers.primary')} · ${t('projectWorkers.noCopyNeeded')}` }),
@@ -497,25 +533,34 @@ function RunControl(
               name: props.name,
             })}
             hasPopup="menu"
-            expanded={open}
+            expanded={pickerOpen}
             disabled={stopping || props.pending}
-            onPress={() => setOpen((current) => !current)}
+            onPress={() => {
+              if (pickerOpen) { setOpen(false); dismissChoice?.(); }
+              else setOpen(true);
+            }}
           />
           <WorkerDestinationPicker
             testID={`${props.testID}.target.list`}
-            open={open}
-            onRequestClose={() => setOpen(false)}
+            open={pickerOpen}
+            onRequestClose={() => { setOpen(false); props.onDismissChoice?.(); }}
             anchorRef={anchorRef}
             title={t('projectWorkers.runOn', { name: props.name })}
             purpose="finite"
             workspace={address}
             sourceMachineId={props.workspace.machineId}
             subjectName={props.name}
+            memoryDemand={props.memoryDemand}
             primary={primary}
-            poolSelection="automatic"
-            presentPoolAsAutomatic
-            selected={choice ?? props.defaultChoice ?? { kind: 'primary' }}
-            onChoose={(next) => { setChoice(next); setOpen(false); }}
+            poolSelection={poolSelection}
+            exactTargetOnly={props.choiceRequired}
+            presentPoolAsAutomatic={poolSelection === 'automatic' && !props.choiceRequired}
+            selected={selected}
+            onChoose={(next) => {
+              setOpen(false);
+              if (props.choiceRequired) props.onChooseForRun?.(next);
+              else setChoice(next);
+            }}
             trailingSections={trailingSections}
             footer={(
               <View style={styles.footnote}>

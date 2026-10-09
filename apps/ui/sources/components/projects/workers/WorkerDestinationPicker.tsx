@@ -49,6 +49,8 @@ export type WorkerDestinationPickerProps = Readonly<{
   primary?: WorkerDestinationPrimaryRow | null;
   /** How a chosen pool picks its member: the run's own choice is automatic; a saved default may ask. */
   poolSelection: 'automatic' | 'ask';
+  /** A Run already awaiting human selection may only submit an exact Machine or primary checkout. */
+  exactTargetOnly?: boolean;
   /** Present a lone pool as the automatic choice ("Choose automatically · Build pool"). */
   presentPoolAsAutomatic?: boolean;
   /** Service anatomy (32s1, lab PICK): untitled rows, each pool named "Any worker" that picks when the service starts. */
@@ -178,7 +180,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
       .flatMap((section) => (section.kind === 'static' ? section.options : []))
       .filter((option) => option.id.startsWith('pool:'));
     const lonePool =
-      props.presentPoolAsAutomatic && poolOptions.length === 1
+      !props.exactTargetOnly && props.presentPoolAsAutomatic && poolOptions.length === 1
         ? poolOptions[0]!
         : null;
     const leading: SelectionListOption[] = [
@@ -221,7 +223,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
           ]
         : []),
     ];
-    const poolSections = lonePool
+    const poolSections = props.exactTargetOnly || lonePool
       ? []
       : sections.filter(isPoolSection).map(
           (section) =>
@@ -286,6 +288,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
   }, [
     list.rootStep,
     props.presentPoolAsAutomatic,
+    props.exactTargetOnly,
     props.servicePresentation,
     props.primary,
     props.testID,
