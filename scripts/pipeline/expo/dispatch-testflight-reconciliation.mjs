@@ -32,6 +32,7 @@ const { values } = parseArgs({
     environment: { type: 'string' },
     profile: { type: 'string' },
     'build-json': { type: 'string' },
+    'release-id': { type: 'string', default: '' },
     'dry-run': { type: 'boolean', default: false },
   },
   allowPositionals: false,
@@ -53,7 +54,7 @@ const profile = formatMobileReleaseProfile(normalizedProfile);
 const buildJsonPath = String(values['build-json'] ?? '').trim();
 if (!buildJsonPath) fail('--build-json is required');
 
-if (!resolveTestflightDistributionConfig({ environment, env: process.env }).enabled) {
+if (environment !== 'production' && !resolveTestflightDistributionConfig({ environment, env: process.env }).enabled) {
   process.stdout.write('[pipeline] TestFlight reconciliation not dispatched because no external groups are configured.\n');
   process.exit(0);
 }
@@ -75,27 +76,34 @@ const fields = [
   'environment', environmentArg,
   'platform', 'ios',
   'profile', profile,
-  'action', 'retry_testflight_distribution',
+  'action', environment === 'production' ? 'retry_store_publication' : 'retry_testflight_distribution',
   'publish_apk_release', 'false',
   'retry_testflight_eas_build_id', request.easBuildId,
   'retry_testflight_build_number', request.buildNumber,
   'retry_testflight_app_version', request.appVersion,
 ];
-const args = ['workflow', 'run', 'build-ui-mobile-local.yml', '--repo', repository, '--ref', workflowRef];
-for (let index = 0; index < fields.length; index += 2) {
-  const value = fields[index + 1];
-  if (!value) continue;
-  args.push('-f', `${fields[index]}=${value}`);
+if (environment === 'production') {
+  const releaseId = String(values['release-id'] ?? '').trim();
+  if (!releaseId) fail('--release-id is required for production App Store reconciliation');
+  fields.push('release_notes_id', releaseId);
+}
+function dispatch(action) {
+  const args = ['workflow', 'run', 'build-ui-mobile-local.yml', '--repo', repository, '--ref', workflowRef];
+  for (let index = 0; index < fields.length; index += 2) {
+    const value = fields[index] === 'action' ? action : fields[index + 1];
+    if (value) args.push('-f', `${fields[index]}=${value}`);
+  }
+  if (values['dry-run'] === true) process.stdout.write(`[pipeline] exec: gh ${printable(args)}\n`);
+  else {
+    execFileSync('gh', args, { env: process.env, encoding: 'utf8', stdio: 'inherit', timeout: 120_000 });
+    process.stdout.write(`[pipeline] dispatched ${action} for source=${sourceSha} environment=${environmentArg}; public availability remains unverified.\n`);
+  }
 }
 
-if (values['dry-run'] === true) {
-  process.stdout.write(`[pipeline] exec: gh ${printable(args)}\n`);
-} else {
-  execFileSync('gh', args, {
-    env: process.env,
-    encoding: 'utf8',
-    stdio: 'inherit',
-    timeout: 120_000,
-  });
-  process.stdout.write(`[pipeline] dispatched TestFlight reconciliation for source=${sourceSha} environment=${environmentArg}\n`);
+dispatch(environment === 'production' ? 'retry_store_publication' : 'retry_testflight_distribution');
+if (environment === 'production' && resolveTestflightDistributionConfig({ environment, env: process.env }).enabled) {
+  try { dispatch('retry_testflight_distribution'); } catch {
+    // Optional beta distribution cannot withdraw a successfully requested production publication.
+    process.stderr.write('[pipeline] testflight_dispatch_failed: App Store publication was requested; retry optional TestFlight distribution separately.\n');
+  }
 }

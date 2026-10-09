@@ -109,7 +109,7 @@ test('build-ui-mobile-local resubmits a preserved Android store artifact from tr
 
   const download = retry.steps?.find((step) => step.name === 'Download preserved Android build artifact');
   assert.equal(download?.with?.['run-id'], '${{ inputs.retry_store_run_id }}');
-  assert.equal(download?.with?.name, 'ui-mobile-${{ inputs.environment }}-android');
+  assert.equal(download?.with?.name, "ui-mobile-${{ inputs.environment }}-android-${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}");
   assert.equal(download?.with?.path, 'retry-artifact');
 
   const submit = retry.steps?.find((step) => step.name === 'Verify candidate identity and resubmit exact AAB');

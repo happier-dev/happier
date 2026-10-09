@@ -28,7 +28,7 @@ test('native-build forwards --wait/--no-wait in interactive (non --non-interacti
   );
 });
 
-test('ui-mobile-release native_submit (cloud) disables waiting for EAS build completion', () => {
+test('ui-mobile-release supports asynchronous cloud native submissions outside production Android', () => {
   const src = readRepoFile('scripts/pipeline/run.mjs');
   assert.match(src, /native_submit[\s\S]+--wait/, 'expected ui-mobile-release native_submit to pass --wait to native-build');
 });

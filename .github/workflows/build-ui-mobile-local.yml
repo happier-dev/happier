@@ -55,6 +55,7 @@ on:
           - build_and_submit
           - retry_android_store_submit
           - retry_testflight_distribution
+          - retry_store_publication
           - ota
       publish_apk_release:
         description: "Deploy (Android APK only) — Publish APK to GitHub Releases (auto publishes only when an APK is produced)"
@@ -92,6 +93,11 @@ on:
         type: string
       retry_store_source_sha:
         description: "Android submit retry — Exact source SHA bound to the preserved AAB"
+        required: false
+        default: ""
+        type: string
+      retry_store_version_code:
+        description: "Store-only retry — Exact already uploaded Android version code"
         required: false
         default: ""
         type: string
@@ -154,6 +160,10 @@ on:
         required: false
         default: ""
         type: string
+      retry_store_version_code:
+        required: false
+        default: ""
+        type: string
       release_message:
         required: false
         default: ""
@@ -166,6 +176,8 @@ on:
       EXPO_TOKEN:
         required: false
       APPLE_API_PRIVATE_KEY:
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
         required: false
       MINISIGN_SECRET_KEY:
         required: false
@@ -252,6 +264,7 @@ jobs:
              [ "$PUBLISH_APK_RELEASE" = true ] && \
              [ "$RELEASE_ACTION" != ota ] && \
              [ "$RELEASE_ACTION" != retry_testflight_distribution ] && \
+             [ "$RELEASE_ACTION" != retry_store_publication ] && \
              [ "$RELEASE_ACTION" != retry_android_store_submit ] && \
              { [ "$RELEASE_PLATFORM" = all ] || [ "$RELEASE_PLATFORM" = android ]; }; then
             resolve=true
@@ -305,7 +318,7 @@ jobs:
   validate_expo_token:
     timeout-minutes: 240
     name: Validate EXPO_TOKEN
-    if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && (inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
@@ -321,7 +334,7 @@ jobs:
   validate_apple_api_private_key:
     timeout-minutes: 240
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution') && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
+    if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution' || (inputs.action == 'retry_store_publication' && inputs.platform == 'ios')) && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
@@ -337,7 +350,7 @@ jobs:
   build_android:
     timeout-minutes: 240
     name: Build (android)
-    if: ${{ inputs.retry_version == '' && needs.resolve_existing_apk.outputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.retry_version == '' && needs.resolve_existing_apk.outputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token, resolve_existing_apk]
     runs-on: ubuntu-latest
     permissions:
@@ -352,12 +365,22 @@ jobs:
       APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
+
+      - name: Checkout trusted mobile publication control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .mobile-control
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -396,9 +419,21 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
+        env:
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
+          store_args=()
+          if [ "${{ inputs.environment }}" = production ] && [ "${{ inputs.action }}" = build_and_submit ]; then
+            node .mobile-control/scripts/pipeline/release/release-notes/project-release-notes.mjs \
+              --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" \
+              --component-version "ui=$(node -p "require('./apps/ui/package.json').version")" \
+              --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" --out "$RUNNER_TEMP/store-release-notes.json"
+            store_args=(--release-notes-json "$RUNNER_TEMP/store-release-notes.json" --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" --app-version "$(node -p "require('./apps/ui/package.json').version")")
+          fi
+          node .mobile-control/scripts/pipeline/run.mjs ui-mobile-release \
             --environment "${{ inputs.environment }}" \
             --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
             --platform "${EAS_PLATFORM}" \
@@ -407,6 +442,8 @@ jobs:
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
+            --release-message "$RELEASE_MESSAGE" \
+            "${store_args[@]}" \
             --secrets-source env
 
       - name: Persist Android candidate identity for recovery
@@ -516,7 +553,7 @@ jobs:
   build_ios:
     timeout-minutes: 240
     name: Build (ios)
-    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && inputs.action != 'retry_store_publication' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-26
     permissions:
@@ -591,8 +628,17 @@ jobs:
         env:
           RELEASE_MESSAGE: ${{ inputs.release_message }}
           HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
+          store_args=()
+          if [ "${{ inputs.environment }}" = production ] && [ "${{ inputs.action }}" = build_and_submit ]; then
+            node .testflight-control/scripts/pipeline/release/release-notes/project-release-notes.mjs \
+              --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" \
+              --component-version "ui=$(node -p "require('./apps/ui/package.json').version")" \
+              --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" --out "$RUNNER_TEMP/store-release-notes.json"
+            store_args=(--release-notes-json "$RUNNER_TEMP/store-release-notes.json" --release-id "$RELEASE_NOTES_ID" --source-sha "$(git rev-parse HEAD)" --app-version "$(node -p "require('./apps/ui/package.json').version")")
+          fi
           node .testflight-control/scripts/pipeline/run.mjs ui-mobile-release \
             --environment "${{ inputs.environment }}" \
             --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
@@ -604,6 +650,7 @@ jobs:
             --publish-apk-release false \
             --testflight-distribution-mode deferred \
             --release-message "$RELEASE_MESSAGE" \
+            "${store_args[@]}" \
             --secrets-source env
 
       - name: Dispatch exact TestFlight reconciliation
@@ -612,6 +659,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
           node .testflight-control/scripts/pipeline/expo/dispatch-testflight-reconciliation.mjs \
@@ -620,6 +668,7 @@ jobs:
             --source-sha "$(git rev-parse HEAD)" \
             --environment "$RELEASE_ENVIRONMENT" \
             --profile "$RELEASE_PROFILE" \
+            --release-id "$RELEASE_NOTES_ID" \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json"
 
       - name: Upload mobile build artifact
@@ -651,6 +700,16 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
+
+      - name: Checkout production submit candidate for bound notes
+        if: ${{ inputs.environment == 'production' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.retry_store_source_sha }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Bind origin run and source identity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -674,10 +733,12 @@ jobs:
       - name: Verify candidate identity and resubmit exact AAB
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           EAS_CLI_VERSION: 18.0.1
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
           RETRY_STORE_SOURCE_SHA: ${{ inputs.retry_store_source_sha }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
           mapfile -t aabs < <(find retry-artifact -type f -name '*.aab' -print)
@@ -703,13 +764,97 @@ jobs:
             --environment "$RELEASE_ENVIRONMENT" \
             --profile "$RELEASE_PROFILE" \
             --out-dir "$submit_workspace"
+          store_args=()
+          if [ "$RELEASE_ENVIRONMENT" = production ]; then
+            test "$(git -C candidate rev-parse HEAD)" = "$RETRY_STORE_SOURCE_SHA"
+            app_version="$(node -p "require('./candidate/apps/ui/package.json').version")"
+            node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+              --release-id "$RELEASE_NOTES_ID" --source-sha "$RETRY_STORE_SOURCE_SHA" \
+              --component-version "ui=$app_version" --changelog "$GITHUB_WORKSPACE/candidate/apps/ui/CHANGELOG.md" \
+              --out "$RUNNER_TEMP/store-release-notes.json"
+            store_args=(--release-notes-json "$RUNNER_TEMP/store-release-notes.json" --source-sha "$RETRY_STORE_SOURCE_SHA" --release-id "$RELEASE_NOTES_ID" --app-version "$app_version")
+          fi
           node scripts/pipeline/expo/submit.mjs \
             --environment "$RELEASE_ENVIRONMENT" \
             --platform android \
             --profile "$RELEASE_PROFILE" \
             --project-dir "$submit_workspace" \
             --path "$aab" \
-            --wait true
+            --wait true \
+            "${store_args[@]}"
+
+  retry_store_publication:
+    name: Resume production store publication (existing binary)
+    if: ${{ inputs.action == 'retry_store_publication' }}
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact publication candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Publish exact uploaded store binary with bound release notes
+        env:
+          SOURCE_SHA: ${{ inputs.source_ref }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+          STORE_PLATFORM: ${{ inputs.platform }}
+          EAS_BUILD_ID: ${{ inputs.retry_testflight_eas_build_id }}
+          BUILD_NUMBER: ${{ inputs.retry_testflight_build_number }}
+          APP_VERSION: ${{ inputs.retry_testflight_app_version }}
+          VERSION_CODE: ${{ inputs.retry_store_version_code }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS: ${{ vars.APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "source_ref must be an exact source SHA for store-only retry." >&2; exit 1; }
+          [ "$RELEASE_ENVIRONMENT" = production ] && [ "$RELEASE_PROFILE" = production ]
+          case "$STORE_PLATFORM" in ios|android) ;; *) echo "Store-only retry requires one platform." >&2; exit 1 ;; esac
+          test "$(git -C candidate rev-parse HEAD)" = "$SOURCE_SHA"
+          candidate_version="$(node -p "require('./candidate/apps/ui/package.json').version")"
+          if [ -n "$APP_VERSION" ]; then test "$APP_VERSION" = "$candidate_version"; fi
+          node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+            --release-id "$RELEASE_NOTES_ID" --source-sha "$SOURCE_SHA" --component-version "ui=$candidate_version" \
+            --changelog "$GITHUB_WORKSPACE/candidate/apps/ui/CHANGELOG.md" --out "$RUNNER_TEMP/store-release-notes.json"
+          cd candidate
+          node "$GITHUB_WORKSPACE/scripts/pipeline/expo/store-publish.mjs" \
+            --environment production --profile production --platform "$STORE_PLATFORM" \
+            --release-notes-json "$RUNNER_TEMP/store-release-notes.json" --source-sha "$SOURCE_SHA" \
+            --release-id "$RELEASE_NOTES_ID" --app-version "$candidate_version" \
+            --eas-build-id "$EAS_BUILD_ID" --build-number "$BUILD_NUMBER" --android-version-code "$VERSION_CODE" \
+            --out-json "$RUNNER_TEMP/store-publication-status.json"
+
+      - name: Record observed store publication status
+        if: ${{ always() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/store-publication-status.json" ]; then
+            printf 'Store publication observation (upload or review submission is not public availability):\n' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/store-publication-status.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   retry_testflight_distribution:
     name: Resume TestFlight distribution (existing build)
