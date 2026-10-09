@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Credentials } from '@/persistence';
-import { applyReviewedLegacyProfileMigrationConflictV1 } from '@happier-dev/protocol/providers/migrations/conflictsV1';
+import type { StoredCredentials } from '@/persistence';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import type { AccountSettings, LegacyProfileMigrationConflictResolutionV1, LegacyProfileReviewedMappingV1 } from '@happier-dev/protocol';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readAuthoringMemoryLastUsedProfile } from '@/settings/profiles/readAuthoringMemoryLastUsedProfile';
 import {
@@ -19,13 +17,23 @@ import {
   readLegacyProfileMigrationContributionMap,
 } from './coordinator';
 import { buildLegacyProfileMigrationContext } from './buildContext';
-import { authorizeLegacyProfileMigrationContext } from './authorizeContext';
+import { authorizeReviewedLegacyProfileMigrationContext } from './authorizeContext';
 import {
   confirmLegacyProfileMigration as confirmLegacyProfileMigrationOnce,
   migrateProviderSettings,
   previewLegacyProfileMigration as previewLegacyProfileMigrationOnce,
   ProviderSettingsMigrationError,
+  prepareLegacyProfileMigrationSource as prepareLegacyProfileMigrationSourceOnce,
 } from '../settings/migration';
+
+export function prepareLegacyProfileMigrationSource(input: Readonly<{
+  credentials: StoredCredentials;
+  expectedSettingsVersion: number;
+  signal?: AbortSignal;
+}>) {
+  return prepareLegacyProfileMigrationSourceOnce({ ...input,
+    acquireRegistryLease: acquireAuthoritativePluginRuntimeRegistryLease });
+}
 
 const coordinator = createLegacyProfileMigrationCoordinator({
   acquireRegistryLease: acquireAuthoritativePluginRuntimeRegistryLease,
@@ -34,7 +42,7 @@ const coordinator = createLegacyProfileMigrationCoordinator({
 });
 
 export function triggerLegacyProfileMigration(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   providersEnabled: boolean;
   machineId: string;
 }>) {
@@ -48,7 +56,7 @@ export function triggerLegacyProfileMigration(input: Readonly<{
 }
 
 export function confirmLegacyProfileMigration(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sourceProfileId: string;
   expectedSourceFingerprint: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
@@ -60,7 +68,7 @@ export function confirmLegacyProfileMigration(input: Readonly<{
 }
 
 export function previewLegacyProfileMigration(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   sourceProfileId: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
 }>) {
@@ -70,7 +78,7 @@ export function previewLegacyProfileMigration(input: Readonly<{
 }
 
 export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
-  credentials: Credentials;
+  credentials: StoredCredentials;
   machineId: string;
   resolution: LegacyProfileMigrationConflictResolutionV1;
   migratedAt: number;
@@ -95,13 +103,11 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
     return await migrateProviderSettings({
       credentials: input.credentials,
       acquireRegistryLease: async () => ({ registry: lease.registry, release: async () => undefined }),
-      deriveContext: async (latestRawSettings, registry) => {
-        const providersByContributionKey = readLegacyProfileMigrationContributionMap(registry) as ReadonlyMap<
-          string,
-          ResolvedProviderContribution
-        >;
+      deriveContext: async (latestRawSettings, _registry, providerSettings) => {
+        const providersByContributionKey = lease.registry.contributes.providersByContributionKey;
         const baseContext = buildLegacyProfileMigrationContext({
           rawSettings: latestRawSettings,
+          providerSettings,
           authoringMemory: { lastUsedProfile: await awaitWithinProviderOperation(
             readAuthoringMemoryLastUsedProfile(input.credentials, lifetime.signal), lifetime,
           ) },
@@ -110,31 +116,17 @@ export async function confirmLegacyProfileMigrationConflict(input: Readonly<{
           migratedAt: input.migratedAt,
           processEnv: process.env,
         });
-        const authoritativeContext = await authorizeLegacyProfileMigrationContext({
+        const resolved = await authorizeReviewedLegacyProfileMigrationContext({
           rawSettings: latestRawSettings,
+          providerSettings,
           context: baseContext,
           providersByContributionKey,
           machineId: input.machineId,
           lifetime,
+          resolution: input.resolution,
         });
-        const resolved = applyReviewedLegacyProfileMigrationConflictV1(
-          latestRawSettings,
-          baseContext,
-          authoritativeContext,
-          input.resolution,
-        );
         if (!resolved.ok) throw new ProviderSettingsMigrationError(resolved.reason);
-        const reauthorized = await authorizeLegacyProfileMigrationContext({
-          rawSettings: latestRawSettings,
-          context: resolved.context,
-          providersByContributionKey,
-          machineId: input.machineId,
-          lifetime,
-        });
-        return {
-          ...reauthorized,
-          pendingConflicts: resolved.context.pendingConflicts,
-        };
+        return resolved.context;
       },
     });
   } finally {

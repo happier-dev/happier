@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema, ProviderSettingsV1Schema, type ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 
 import { buildLegacyProfileMigrationContext } from './buildContext';
@@ -51,9 +51,10 @@ const resolvedContribution = {
   definition: contribution,
 } as unknown as ResolvedProviderContribution;
 
-function baseContext(rawSettings: Readonly<Record<string, unknown>>) {
+function baseContext(rawSettings: Readonly<Record<string, unknown>>, providerSettings: ProviderSettingsV1 = DEFAULT_PROVIDER_SETTINGS_V1) {
   return buildLegacyProfileMigrationContext({
     rawSettings,
+    providerSettings,
     authoringMemory: { lastUsedProfile: null },
     providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
     allocatedConnectionIdsBySourceProfileId: { deepseek: 'pc_deepseek' },
@@ -69,6 +70,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
     const resolveAddresses = vi.fn(async () => ['8.8.8.8']);
     const context = await authorizeLegacyProfileMigrationContext({
       rawSettings,
+      providerSettings: DEFAULT_PROVIDER_SETTINGS_V1,
       context: baseContext(rawSettings),
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
@@ -98,6 +100,7 @@ describe('authorizeLegacyProfileMigrationContext', () => {
     const rawSettings = { favoriteProfiles: ['deepseek'] };
     const context = await authorizeLegacyProfileMigrationContext({
       rawSettings,
+      providerSettings: DEFAULT_PROVIDER_SETTINGS_V1,
       context: baseContext(rawSettings),
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
@@ -109,28 +112,29 @@ describe('authorizeLegacyProfileMigrationContext', () => {
   });
 
   it('retains an edited default winner as a pending conflict without binding or granting its endpoint', async () => {
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        v: 1,
+        id: 'pc_existing',
+        source: { kind: 'contribution', contributionKey },
+        role: 'default',
+        displayName: 'DeepSeek',
+        displayNameMode: 'automatic',
+        endpointOverrides: [{ endpointTemplateId: 'anthropic', baseUrl: 'https://edited.example/v1' }],
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    });
     const rawSettings = {
       favoriteProfiles: ['deepseek'],
       secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'saved_secret_old' } },
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{
-          v: 1,
-          id: 'pc_existing',
-          source: { kind: 'contribution', contributionKey },
-          role: 'default',
-          displayName: 'DeepSeek',
-          displayNameMode: 'automatic',
-          endpointOverrides: [{ endpointTemplateId: 'anthropic', baseUrl: 'https://edited.example/v1' }],
-          revision: 1,
-          createdAt: 1,
-          updatedAt: 2,
-        }],
-      },
     };
     const context = await authorizeLegacyProfileMigrationContext({
       rawSettings,
-      context: baseContext(rawSettings),
+      providerSettings,
+      context: baseContext(rawSettings, providerSettings),
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],
@@ -150,23 +154,24 @@ describe('authorizeLegacyProfileMigrationContext', () => {
   });
 
   it('persists a redacted typed conflict when a default winner has a different credential binding', async () => {
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        v: 1, id: 'pc_existing',
+        source: { kind: 'contribution', contributionKey },
+        role: 'default', displayName: 'DeepSeek', displayNameMode: 'automatic',
+        revision: 0, createdAt: 1, updatedAt: 1,
+      }],
+      secretBindingsByConnectionId: { pc_existing: { account: { apiKey: 'saved_secret_existing' } } },
+    });
     const rawSettings = {
       favoriteProfiles: ['deepseek'],
       secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'saved_secret_legacy' } },
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{
-          v: 1, id: 'pc_existing',
-          source: { kind: 'contribution', contributionKey },
-          role: 'default', displayName: 'DeepSeek', displayNameMode: 'automatic',
-          revision: 0, createdAt: 1, updatedAt: 1,
-        }],
-        secretBindingsByConnectionId: { pc_existing: { account: { apiKey: 'saved_secret_existing' } } },
-      },
     };
     const context = await authorizeLegacyProfileMigrationContext({
       rawSettings,
-      context: baseContext(rawSettings),
+      providerSettings,
+      context: baseContext(rawSettings, providerSettings),
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],
@@ -187,26 +192,27 @@ describe('authorizeLegacyProfileMigrationContext', () => {
   });
 
   it('safely reuses a semantically identical pre-existing default connection', async () => {
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        v: 1,
+        id: 'pc_existing',
+        source: { kind: 'contribution', contributionKey },
+        role: 'default',
+        displayName: 'Renamed by user',
+        displayNameMode: 'custom',
+        revision: 2,
+        createdAt: 1,
+        updatedAt: 3,
+      }],
+    });
     const rawSettings = {
       favoriteProfiles: ['deepseek'],
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{
-          v: 1,
-          id: 'pc_existing',
-          source: { kind: 'contribution', contributionKey },
-          role: 'default',
-          displayName: 'Renamed by user',
-          displayNameMode: 'custom',
-          revision: 2,
-          createdAt: 1,
-          updatedAt: 3,
-        }],
-      },
     };
     const context = await authorizeLegacyProfileMigrationContext({
       rawSettings,
-      context: baseContext(rawSettings),
+      providerSettings,
+      context: baseContext(rawSettings, providerSettings),
       providersByContributionKey: new Map([[contributionKey, resolvedContribution]]),
       machineId: 'machine_a',
       resolveAddresses: async () => ['8.8.8.8'],

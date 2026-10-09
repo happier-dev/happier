@@ -1,9 +1,15 @@
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
 import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
-import { classifyLegacyProfileMigrationConflictsV1, createLegacyProfileMigrationPendingConflictV1 } from '@happier-dev/protocol/providers/migrations/conflictsV1';
+import {
+  applyReviewedLegacyProfileMigrationConflictV1,
+  classifyLegacyProfileMigrationConflictsV1,
+  type LegacyProfileMigrationConnectionSecurityComparisonV1,
+  type LegacyProfileMigrationConflictResolutionV1,
+  type ResolveLegacyProfileMigrationConflictResultV1,
+} from '@happier-dev/protocol/providers/migrations/conflictsV1';
 import { migrateProviderAccountSettingsV1 } from '@happier-dev/protocol/providers/migrations/accountSettingsV1';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
-import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1 } from '@happier-dev/protocol';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderOperationLifetime } from '@/providers/operationLifetime';
 
@@ -12,54 +18,111 @@ import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 
 type ConnectionCandidate = Extract<ProviderAccountSettingsMigrationCandidateV1, { kind: 'connection' }>;
 
-/**
- * Re-derives migration authorization from the exact CAS-attempt settings and
- * accepted registry generation. This function resolves DNS only; it never
- * resolves a SavedSecret or performs an HTTP request.
- */
-export async function authorizeLegacyProfileMigrationContext(input: Readonly<{
+type LegacyProfileMigrationAuthorizationInput = Readonly<{
   rawSettings: Readonly<Record<string, unknown>>;
+  providerSettings: ProviderSettingsV1;
   context: ProviderAccountSettingsMigrationContextV1;
   providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution>;
   machineId: string;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   lifetime: ProviderOperationLifetime;
-}>): Promise<ProviderAccountSettingsMigrationContextV1> {
-  const classifiedContext = classifyLegacyProfileMigrationConflictsV1(input.rawSettings, input.context);
-  const preview = migrateProviderAccountSettingsV1(input.rawSettings, classifiedContext);
+}>;
+
+/**
+ * Re-derives migration authorization from the exact CAS-attempt settings and
+ * accepted registry generation. This function resolves DNS only; it never
+ * resolves a SavedSecret or performs an HTTP request.
+ */
+export async function authorizeLegacyProfileMigrationContext(
+  input: LegacyProfileMigrationAuthorizationInput,
+): Promise<ProviderAccountSettingsMigrationContextV1> {
+  const securityComparisons = new Map<string, LegacyProfileMigrationConnectionSecurityComparisonV1>();
+  for (const candidate of input.context.candidates) {
+    if (candidate.kind !== 'connection' || candidate.connection.role !== 'default'
+      || candidate.connection.source.kind !== 'contribution') continue;
+    const contributionKey = candidate.connection.source.contributionKey;
+    const winner = input.providerSettings.connections.find(connection => connection.role === 'default'
+      && connection.source.kind === 'contribution'
+      && areProviderContributionKeysEqualV1(connection.source.contributionKey, contributionKey));
+    if (!winner) continue;
+    const [expectedRecord, winnerRecord] = await Promise.all([
+      resolveLegacyProfileMigrationConnectionRecord(input, {
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connections: [candidate.connection],
+      }, candidate.connection.id),
+      resolveLegacyProfileMigrationConnectionRecord(input, input.providerSettings, winner.id),
+    ]);
+    securityComparisons.set(candidate.sourceProfileId, {
+      winnerConnectionId: winner.id,
+      expectedConnectionSecurityFingerprint: expectedRecord?.connectionSecurityFingerprint ?? null,
+      expectedEndpointSetFingerprint: expectedRecord?.endpointSetFingerprint ?? null,
+      winnerConnectionSecurityFingerprint: winnerRecord?.connectionSecurityFingerprint ?? null,
+      winnerEndpointSetFingerprint: winnerRecord?.endpointSetFingerprint ?? null,
+    });
+  }
+  return authorizeClassifiedLegacyProfileMigrationContext(
+    input,
+    classifyLegacyProfileMigrationConflictsV1(input.providerSettings, input.context, securityComparisons),
+  );
+}
+
+/** Exact current review admits intent, not an Account grant or a DNS decision. */
+export async function authorizeReviewedLegacyProfileMigrationContext(
+  input: LegacyProfileMigrationAuthorizationInput & Readonly<{
+    resolution: LegacyProfileMigrationConflictResolutionV1;
+  }>,
+): Promise<ResolveLegacyProfileMigrationConflictResultV1> {
+  const authoritativeContext = await authorizeLegacyProfileMigrationContext(input);
+  const resolved = applyReviewedLegacyProfileMigrationConflictV1(
+    input.providerSettings,
+    input.context,
+    authoritativeContext,
+    input.resolution,
+  );
+  if (!resolved.ok) return resolved;
+  return {
+    ok: true,
+    context: await authorizeClassifiedLegacyProfileMigrationContext(input, resolved.context),
+  };
+}
+
+async function resolveLegacyProfileMigrationConnectionRecord(
+  input: LegacyProfileMigrationAuthorizationInput,
+  settings: ProviderSettingsV1,
+  connectionId: string,
+) {
+  const registry = { providersByContributionKey: input.providersByContributionKey };
+  const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+    connectionId,
+    machineId: input.machineId,
+    providerSettings: settings,
+    registry,
+    ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+    lifetime: input.lifetime,
+  });
+  const resolution = resolveProviderConnectionForMachine({
+    connectionId,
+    machineId: input.machineId,
+    providerSettings: settings,
+    registry,
+    dnsEvidenceByEndpointUrl,
+  });
+  return resolution.status === 'resolved' ? resolution.record : null;
+}
+
+async function authorizeClassifiedLegacyProfileMigrationContext(
+  input: LegacyProfileMigrationAuthorizationInput,
+  classifiedContext: ProviderAccountSettingsMigrationContextV1,
+): Promise<ProviderAccountSettingsMigrationContextV1> {
+  const preview = migrateProviderAccountSettingsV1(input.providerSettings, classifiedContext);
   if (!preview.ok) return classifiedContext;
 
-  const persistedProviderSettings = readProviderSettingsFromAccountSettingsV1(input.rawSettings).settings;
-  const providerSettings = readProviderSettingsFromAccountSettingsV1(preview.settings).settings;
-  const registry = { providersByContributionKey: input.providersByContributionKey };
+  const providerSettings = preview.providerSettings;
   const outcomeBySourceProfileId = new Map(
     preview.outcomes
       .filter((outcome) => outcome.kind === 'connection')
       .map((outcome) => [outcome.sourceProfileId, outcome] as const),
   );
-
-  const resolveRecord = async (
-    accountSettings: Readonly<Record<string, unknown>>,
-    settings: typeof providerSettings,
-    connectionId: string,
-  ) => {
-    const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-      connectionId,
-      machineId: input.machineId,
-      providerSettings: settings,
-      registry,
-      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-      lifetime: input.lifetime,
-    });
-    const resolution = resolveProviderConnectionForMachine({
-      connectionId,
-      machineId: input.machineId,
-      accountSettings,
-      registry,
-      dnsEvidenceByEndpointUrl,
-    });
-    return resolution.status === 'resolved' ? resolution.record : null;
-  };
 
   const candidates: ProviderAccountSettingsMigrationCandidateV1[] = [];
   const pendingConflictsBySource = new Map(
@@ -83,53 +146,7 @@ export async function authorizeLegacyProfileMigrationContext(input: Readonly<{
       continue;
     }
 
-    if (winningConnection.id !== candidate.connection.id) {
-      const persistedWinner = persistedProviderSettings.connections.find(
-        (connection) => connection.id === winningConnection.id,
-      );
-      const expectedSettings = {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [candidate.connection],
-      };
-      const expectedAccountSettings = { providerSettingsV1: expectedSettings };
-      const [expectedRecord, winnerRecord] = await Promise.all([
-        resolveRecord(expectedAccountSettings, expectedSettings, candidate.connection.id),
-        persistedWinner
-          ? resolveRecord(input.rawSettings, persistedProviderSettings, persistedWinner.id)
-          : Promise.resolve(null),
-      ]);
-      if (!expectedRecord || !winnerRecord
-        || expectedRecord.connectionSecurityFingerprint !== winnerRecord.connectionSecurityFingerprint
-        || expectedRecord.endpointSetFingerprint !== winnerRecord.endpointSetFingerprint) {
-        // A pre-existing edited default is not an authorization-preserving
-        // substitute for the historical profile. Keep the profile and its
-        // SavedSecret untouched for explicit guided review.
-        const nextConflict = createLegacyProfileMigrationPendingConflictV1({
-          candidate,
-          kinds: ['edited_default_connection'],
-          existingConnectionId: winningConnection.id,
-          detectedAt: classifiedContext.migratedAt,
-          comparisonFacts: {
-            expectedConnectionSecurityFingerprint: expectedRecord?.connectionSecurityFingerprint ?? null,
-            expectedEndpointSetFingerprint: expectedRecord?.endpointSetFingerprint ?? null,
-            winnerConnectionSecurityFingerprint: winnerRecord?.connectionSecurityFingerprint ?? null,
-            winnerEndpointSetFingerprint: winnerRecord?.endpointSetFingerprint ?? null,
-          },
-        });
-        const persistedConflict = persistedProviderSettings.migration?.pendingConflicts.find(
-          (entry) => entry.sourceProfileId === candidate.sourceProfileId,
-        );
-        pendingConflictsBySource.set(
-          candidate.sourceProfileId,
-          persistedConflict?.candidateFingerprint === nextConflict.candidateFingerprint
-            ? persistedConflict
-            : nextConflict,
-        );
-        continue;
-      }
-    }
-
-    const record = await resolveRecord(preview.settings, providerSettings, winningConnection.id);
+    const record = await resolveLegacyProfileMigrationConnectionRecord(input, providerSettings, winningConnection.id);
     if (!record
       || record.deployment.kind !== 'external'
       || record.scope !== 'account'

@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createProviderFingerprintV1 } from '../fingerprints.js';
+import type { ProviderConnectionSecurityFingerprintV1 } from '../fingerprints.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import {
   areProviderContributionKeysEqualV1,
@@ -22,6 +23,14 @@ import type {
 } from './accountSettingsV1.js';
 
 type ConnectionCandidate = Extract<ProviderAccountSettingsMigrationCandidateV1, { kind: 'connection' }>;
+
+export type LegacyProfileMigrationConnectionSecurityComparisonV1 = Readonly<{
+  winnerConnectionId: string | null;
+  expectedConnectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1 | null;
+  expectedEndpointSetFingerprint: string | null;
+  winnerConnectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1 | null;
+  winnerEndpointSetFingerprint: string | null;
+}>;
 
 const LegacyProfileConflictFingerprintV1Schema = lazyZodSchema(() => z.string()
   .startsWith('legacy-profile-migration-conflict:v1:')
@@ -207,6 +216,7 @@ export function createLegacyProfileMigrationPendingConflictV1(input: Readonly<{
 export function classifyLegacyProfileMigrationConflictsV1(
   settings: ProviderSettingsV1,
   context: ProviderAccountSettingsMigrationContextV1,
+  securityComparisonsBySourceProfileId?: ReadonlyMap<string, LegacyProfileMigrationConnectionSecurityComparisonV1>,
 ): ProviderAccountSettingsMigrationContextV1 {
   const connectionCandidates = context.candidates.filter(
     (candidate): candidate is ConnectionCandidate => candidate.kind === 'connection' && contributionKey(candidate) !== null,
@@ -225,7 +235,6 @@ export function classifyLegacyProfileMigrationConflictsV1(
     comparisonFact: unknown,
     modelChoices: readonly ProviderSettingsMigrationModelChoiceV1[] = [],
   ) => {
-    if (kinds.length === 0 && !persistedBySource.has(candidate.sourceProfileId)) return;
     const set = kindsBySource.get(candidate.sourceProfileId) ?? new Set();
     kinds.forEach((kind) => set.add(kind));
     kindsBySource.set(candidate.sourceProfileId, set);
@@ -264,6 +273,22 @@ export function classifyLegacyProfileMigrationConflictsV1(
     if (!winner) continue;
     const persisted = persistedWinnerConflict({ candidate, winnerId: winner.id, settings });
     add(candidate, persisted.kinds, winner.id, persisted.facts, persisted.modelChoices);
+  }
+
+  for (const candidate of connectionCandidates) {
+    const comparison = securityComparisonsBySourceProfileId?.get(candidate.sourceProfileId);
+    if (!comparison) continue;
+    const editedWinner = comparison.winnerConnectionId !== null
+      && (comparison.expectedConnectionSecurityFingerprint === null
+        || comparison.expectedEndpointSetFingerprint === null
+        || comparison.winnerConnectionSecurityFingerprint === null
+        || comparison.winnerEndpointSetFingerprint === null
+        || comparison.expectedConnectionSecurityFingerprint !== comparison.winnerConnectionSecurityFingerprint
+        || comparison.expectedEndpointSetFingerprint !== comparison.winnerEndpointSetFingerprint);
+    add(candidate, editedWinner ? ['edited_default_connection'] : [], comparison.winnerConnectionId, {
+      kind: 'connection_security',
+      ...comparison,
+    });
   }
 
   const pendingBySource = new Map(persistedBySource);
