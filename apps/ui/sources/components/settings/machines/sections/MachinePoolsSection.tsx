@@ -104,12 +104,14 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
             const statusRows = <>
                 {featurePending ? <Item
                     testID={`settings.machinePools.featureLoading.${group.serverId}`}
+                    pressableStyle={rail ? collectionListStyles.row : undefined}
                     title={t('common.loading')}
                     density={rail ? 'compact' : undefined}
                     mode="info"
                 /> : null}
                 {featureError ? <Item
                     testID={`settings.machinePools.featureFailed.${group.serverId}`}
+                    pressableStyle={rail ? collectionListStyles.row : undefined}
                     title={t('machinePools.refreshFailed')}
                     density={rail ? 'compact' : undefined}
                     mode="info"
@@ -124,12 +126,14 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 /> : null}
                 {homeOffline ? <Item
                     testID={`settings.machinePools.unavailable.${group.serverId}`}
+                    pressableStyle={rail ? collectionListStyles.row : undefined}
                     title={t('machinePools.homeOffline')}
                     density={rail ? 'compact' : undefined}
                     mode="info"
                 /> : null}
                 {refreshFailed ? <Item
                     testID={`settings.machinePools.refreshFailed.${group.serverId}`}
+                    pressableStyle={rail ? collectionListStyles.row : undefined}
                     title={t('machinePools.refreshFailed')}
                     density={rail ? 'compact' : undefined}
                     mode="info"
@@ -183,7 +187,7 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 />;
             });
             const loadingRow = rows.length === 0 && featureEnabled && projection.status === 'loading'
-                ? <Item title={t('common.loading')} density={rail ? 'compact' : undefined} mode="info" />
+                ? <Item title={t('common.loading')} density={rail ? 'compact' : undefined} pressableStyle={rail ? collectionListStyles.row : undefined} mode="info" />
                 : null;
             if (rail) {
                 // Adding goes through the rail's "+": a Home with nothing to list shows no heading.
