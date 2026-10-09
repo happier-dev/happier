@@ -14,6 +14,7 @@ import { RoleArtifactV1Schema } from '@happier-dev/protocol/prompts/roles/roleAr
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';
+import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionRoutes';
 import { profileRoute } from '@/components/settings/profiles/profileCollectionRoutes';
 import { roleRoute } from '@/components/settings/roles/roleCollectionRoutes';
@@ -27,12 +28,12 @@ import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflow
  */
 
 /** The browser's kinds. Documents are untyped and published text; the rest open in their own owner. */
-export type ArtifactBrowserKind = 'document' | 'prompt' | 'board' | 'workflow' | 'role' | 'launchProfile';
+export type ArtifactBrowserKind = 'document' | 'prompt' | 'memory' | 'board' | 'workflow' | 'role' | 'launchProfile';
 
-export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document', 'prompt', 'board', 'workflow', 'role', 'launchProfile'];
+export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document', 'prompt', 'memory', 'board', 'workflow', 'role', 'launchProfile'];
 
 const USE_TARGET_TO_BROWSER_KIND = {
-    open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', board: 'board',
+    open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', memory: 'memory', board: 'board',
     workflow: 'workflow', role: 'role', launch_profile: 'launchProfile',
 } as const satisfies Readonly<Record<ReturnType<typeof getArtifactUseTargetV1>['kind'], ArtifactBrowserKind>>;
 
@@ -56,6 +57,7 @@ export function resolveArtifactOpenRoute(artifact: Pick<DecryptedArtifact, 'id' 
     switch (target.kind) {
         case 'prompt_doc': return promptCollectionItemHref('doc', artifact.id);
         case 'prompt_bundle': return promptCollectionItemHref('bundle', artifact.id);
+        case 'memory': return memoryDocumentHref({ artifactId: artifact.id });
         // The Boards owner names its own route.
         case 'board': return readBoardArtifactRoute(artifact) ?? artifactViewRoute(artifact.id);
         case 'workflow': return createWorkflowDefinitionRoute(artifact.id);
@@ -246,13 +248,24 @@ export function projectArtifactBrowserTree<T extends ArtifactBrowserArtifact>(ar
         // Retained malformed topology remains visible; display never repairs persisted data.
         parentById.set(folder.id, parent && (seen.has(parent) || !folders.has(parent)) ? null : folder.parentId ?? null);
     }
-    const filtered = filter.kind !== 'all' || filter.query.trim().length > 0;
+    const searching = filter.query.trim().length > 0;
     const included = new Set<string>();
-    if (!filtered) for (const id of folders.keys()) included.add(id);
-    for (const row of rows) {
-        let id = row.folderId;
+    const include = (folderId: string | null) => {
+        let id = folderId;
         while (id && folders.has(id) && !included.has(id)) { included.add(id); id = parentById.get(id) ?? null; }
+    };
+    if (!searching && filter.kind === 'all') for (const id of folders.keys()) included.add(id);
+    else if (!searching) {
+        // A kind narrows what is listed, not where it can be filed: a folder holding nothing stays a place to file into
+        // (a folder just made under a kind would otherwise vanish); one holding only other kinds is left out.
+        const occupied = new Set<string>();
+        for (const row of projectArtifactBrowserRows(artifacts, { ...filter, kind: 'all' }, organization)) {
+            let id = row.folderId;
+            while (id && folders.has(id) && !occupied.has(id)) { occupied.add(id); id = parentById.get(id) ?? null; }
+        }
+        for (const id of folders.keys()) if (!occupied.has(id)) include(id);
     }
+    for (const row of rows) include(row.folderId);
     const children = new Map<string | null, PromptFolderEntryV1[]>();
     for (const folder of folders.values()) {
         if (!included.has(folder.id)) continue;

@@ -42,7 +42,7 @@ function documentUseHelp(artifactId: string, kind: DocumentShareKind): string {
 function documentViewLabel(artifactId: string, kind: DocumentShareKind): string {
     if (kind === 'widget-area-layout.v1') return t('shareSheet.documents.levels.canRead');
     const browserKind = classifyArtifactBrowserKind({ id: artifactId, header: kind === null ? null : { title: null, kind } });
-    return browserKind === 'document' || browserKind === 'board'
+    return browserKind === 'document' || browserKind === 'memory' || browserKind === 'board'
         ? t('shareSheet.documents.levels.canRead')
         : t('shareSheet.documents.levels.canUse');
 }

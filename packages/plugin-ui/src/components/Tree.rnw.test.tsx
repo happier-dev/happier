@@ -42,7 +42,10 @@ const items: readonly TreeItem[] = [
   },
 ];
 
-function mount(treeItems: readonly TreeItem[] = items) {
+function mount(
+  treeItems: readonly TreeItem[] = items,
+  wrapRow?: React.ComponentProps<typeof Tree>['wrapRow'],
+) {
   const context = createSurfaceContext();
   const hostApi = createHostApiStub(context);
   const expanded: Array<[string, boolean]> = [];
@@ -61,6 +64,7 @@ function mount(treeItems: readonly TreeItem[] = items) {
         expandLabel={(item) => `Expand ${item.title}`}
         collapseLabel={(item) => `Collapse ${item.title}`}
         testID="files"
+        wrapRow={wrapRow}
       />
     </PluginUiProvider>,
   );
@@ -72,6 +76,25 @@ function mount(treeItems: readonly TreeItem[] = items) {
 }
 
 describe('Tree', () => {
+  it('draws each row once inside the host an author surrounds it with, keeping the tree item semantics', async () => {
+    const { view, row, activated } = mount(items, (item, element) => (
+      <div data-host={item.key}>{element}</div>
+    ));
+    const hosts = [...view.container.querySelectorAll<HTMLElement>('[data-host]')];
+    expect(hosts.map((host) => host.dataset.host)).toEqual(
+      items.map((item) => item.key),
+    );
+    expect(hosts[1]?.contains(row('docs/guide'))).toBe(true);
+    expect(view.container.querySelectorAll('[role="treeitem"]')).toHaveLength(
+      items.length,
+    );
+    await act(async () => {
+      row('docs/guide').click();
+    });
+    expect(activated).toEqual(['docs/guide']);
+    view.unmount();
+  });
+
   it('keeps a disabled branch from disclosing through its nested control', async () => {
     const { view, row, expanded, activated } = mount(
       items.map((item) => ({ ...item, disabled: true })),

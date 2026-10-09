@@ -1,222 +1,163 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import type { PromptFoldersV1 } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { storage } from '@/sync/domains/state/storage';
+import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
+import { resetPromptLibraryCatalogEngineForTests } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { installPromptLibrarySettingsCommonModuleMocks } from '../promptLibrarySettingsTestHelpers';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const promptModalMock = vi.hoisted(() => vi.fn<() => Promise<string | null>>(async () => null));
-const confirmModalMock = vi.hoisted(() => vi.fn(async () => true));
-const updatePromptDocMock = vi.hoisted(() => vi.fn(async () => undefined));
-const updateSkillPromptBundleMock = vi.hoisted(() => vi.fn(async () => undefined));
-const setPromptFoldersMock = vi.hoisted(() => vi.fn());
-
+const confirm = vi.hoisted(() => vi.fn(async () => true));
+const prompt = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
+const alert = vi.hoisted(() => vi.fn());
 installPromptLibrarySettingsCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            Platform: {
-                OS: 'web',
-                select: ({ web, default: defaultValue }: { web?: unknown; default?: unknown }) =>
-                    web ?? defaultValue,
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    accent: { blue: '#00f', indigo: '#60f' },
-                },
-            },
-        });
-    },
+    // Platform presentation is replaced; catalog/store/Actions remain real.
+    storage: importOriginal => importOriginal(),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                prompt: promptModalMock,
-                confirm: confirmModalMock,
-            },
-        }).module;
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useArtifacts: () => artifactsState.value,
-            useSettingMutable: (key: string) => {
-                if (key === 'promptFoldersV1') {
-                    return [{
-                        v: 1,
-                        folders: [{ id: 'folder-1', name: 'Ops', parentId: null }],
-                    }, setPromptFoldersMock];
-                }
-                return [null, vi.fn()];
-            },
-            storage: {
-                getState: () => ({
-                    updateArtifact: vi.fn(),
-                }),
-            },
-        });
+        return createModalModuleMock({ spies: { confirm, prompt, alert } }).module;
     },
 });
-
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+// The menu's popover is platform presentation; its items and selection stay the tree's own.
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('@/components/ui/layout/layout', () => ({
-  layout: { maxWidth: 960 },
-  useLayoutMaxWidth: () => 960,
-  useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
-}));
+let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
+let homeCount = 0;
+afterEach(() => {
+    resetPromptLibraryCatalogEngineForTests();
+    resetPromptLibraryCatalogSnapshotsForTests();
+    fixture?.dispose(); fixture = undefined;
+    // Clear, not restore: restoring would strip the Modal boundary's delegation to these case spies.
+    vi.clearAllMocks();
+});
 
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-  ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
+async function setup() {
+    const value: PromptFoldersV1 = { v: 1, folders: [{ id: 'parent', name: 'Ops', parentId: null },
+        { id: 'child', name: 'Reviews', parentId: 'parent' }],
+        artifactHeadersById: { received: { folderId: 'parent', tags: ['personal'] } } };
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'folders', value }], revision: 4 });
+    const folderWrites: { statusCode: number; body: unknown }[] = [];
+    // A Home per case: a catalog read still settling from the previous case cannot publish into this one.
+    fixture = await createPlainArtifactHomeFixture(`https://folder-screen-${++homeCount}.test`, { handleRequest: async (path, init) => {
+        const response = await catalog.handle(path, init);
+        if (response && path === '/v1/account/entity-rows/prompt-library/folders' && init?.method === 'POST') {
+            folderWrites.push({ statusCode: response.status, body: await response.clone().json() });
+        }
+        return response;
+    } });
+    await fixture.boundary.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'legacy',
+        header: encodePlainArtifactStoredContent({ kind: 'prompt_doc.v2', title: 'Legacy', folderId: 'parent', tags: ['legacy'] }),
+        body: encodePlainArtifactStoredContent({ body: '{' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }) });
+    // The listed Artifacts are the synced store's; the Home holds the same `legacy` row for the Actions.
+    storage.setState({ isDataReady: true, artifacts: { legacy: { id: 'legacy', title: 'Legacy',
+        header: { title: 'Legacy', kind: 'prompt_doc.v2', folderId: 'parent', tags: ['legacy'] }, access: 'owner',
+        ownerAccountId: 'artifact-account', isDecrypted: true, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 },
+        received: { id: 'received', title: 'Received',
+        header: { title: 'Received', kind: 'workflow-definition.v1', folderId: 'foreign' }, access: 'view',
+        isDecrypted: true, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } } });
+    return { read: () => { const record = catalog.read('folders'); if (record.key !== 'folders') throw new Error('Wrong catalog'); return record.value; },
+        fixture, mutations: catalog.requests, folderWrites };
+}
 
-vi.mock('@/platform/randomUUID', () => ({
-  randomUUID: () => 'folder-2',
-}));
+type Screen = Awaited<ReturnType<typeof renderScreen>>;
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    fetchArtifactWithBody: vi.fn(async () => null),
-  },
-}));
+/** The row's ⋯ through the shared menu contract: open it, then read the items it offers. */
+async function openRowMenu(screen: Screen, key: string) {
+    const find = () => {
+        const menu = screen.findAll(node => node.props.testID === `promptFolders:menu:${key}` && typeof node.props.onSelect === 'function').at(0);
+        if (!menu) throw new Error(`No menu for ${key}`);
+        return menu;
+    };
+    await act(async () => { find().props.onOpenChange(true); });
+    const items: readonly DropdownMenuItem[] = find().props.items;
+    return { items, select: async (id: string) => { await act(async () => { find().props.onSelect(id); }); } };
+}
 
-vi.mock('@/sync/ops/promptLibrary/promptDocs', () => ({
-  updatePromptDoc: updatePromptDocMock,
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({
-  updateSkillPromptBundle: updateSkillPromptBundleMock,
-  readSkillMarkdownFromPromptBundleBody: () => '# Skill',
-}));
-
-const artifactsState = vi.hoisted(() => ({
-  value: [
-    {
-      id: 'doc-1',
-      title: 'Doc One',
-      header: { kind: 'prompt_doc.v2', title: 'Doc One', folderId: 'folder-1', tags: ['alpha'] },
-      body: JSON.stringify({
-        v: 1,
-        markdown: '# Prompt',
-        createdAtMs: 1,
-        updatedAtMs: 2,
-      }),
-    },
-  ],
-}));
-
-const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
-
-describe('PromptFoldersScreen', () => {
-  beforeEach(() => {
-    promptModalMock.mockReset();
-    confirmModalMock.mockReset();
-    updatePromptDocMock.mockClear();
-    updateSkillPromptBundleMock.mockClear();
-    setPromptFoldersMock.mockClear();
-    artifactsState.value = [
-      {
-        id: 'doc-1',
-        title: 'Doc One',
-        header: { kind: 'prompt_doc.v2', title: 'Doc One', folderId: 'folder-1', tags: ['alpha'] },
-        body: JSON.stringify({
-          v: 1,
-          markdown: '# Prompt',
-          createdAtMs: 1,
-          updatedAtMs: 2,
-        }),
-      },
-    ];
-  });
-
-  it('adds a folder from its inline draft only when saved', async () => {
-    const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
-
-    const screen = await renderScreen(<PromptFoldersScreen />);
-
-    await screen.pressByTestIdAsync('promptFolders.add');
-
-    expect(setPromptFoldersMock).not.toHaveBeenCalled();
-    const input = screen.findByTestId('promptFolders.draft.name');
-    expect(input).toBeTruthy();
-    await act(async () => { input?.props.onChangeText('Release'); });
-    await screen.pressByTestIdAsync('promptFolders.draft.save');
-
-    expect(setPromptFoldersMock).toHaveBeenCalledWith({
-      v: 1,
-      folders: [
-        { id: 'folder-1', name: 'Ops', parentId: null },
-        { id: 'folder-2', name: 'Release', parentId: null },
-      ],
-    });
-    expect(promptModalMock).not.toHaveBeenCalled();
-  });
-
-  it('removes folder assignments from linked docs before deleting the folder', async () => {
-    const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
-
-    const screen = await renderScreen(<PromptFoldersScreen />);
-
-    const rowActions = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions', { title: 'Ops' });
-    expect(rowActions).toBeDefined();
-    const deleteAction = rowActions?.props.actions.find((action: any) => action.id === 'delete');
-    expect(deleteAction).toBeDefined();
-
-    await act(async () => {
-      await deleteAction?.onPress();
+describe('Prompt folders: the Artifacts folder tree filtered to prompts, through real catalog and Action owners', () => {
+    it('lists prompts under their personal folders and leaves other kinds to Artifacts', async () => {
+        await setup();
+        const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+        const screen = await renderScreen(<PromptFoldersScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:folder:parent')).toBeTruthy());
+        await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:artifact:legacy')).toBeTruthy());
+        expect(screen.findByTestId('promptFolders:row:folder:child')).toBeTruthy();
+        expect(screen.findByTestId('promptFolders:row:artifact:received')).toBeNull();
     });
 
-    expect(updatePromptDocMock).toHaveBeenCalledWith({
-      artifactId: 'doc-1',
-      title: 'Doc One',
-      markdown: '# Prompt',
-      folderId: null,
-      tags: ['alpha'],
-    });
-    expect(setPromptFoldersMock).toHaveBeenCalledWith({
-      v: 1,
-      folders: [],
-    });
-  });
-
-  it('skips malformed artifact bodies when deleting a folder', async () => {
-    artifactsState.value = [
-      {
-        id: 'doc-1',
-        title: 'Broken Doc',
-        header: { kind: 'prompt_doc.v2', title: 'Broken Doc', folderId: 'folder-1', tags: ['alpha'] },
-        body: '{',
-      },
-    ];
-
-    const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
-
-    const screen = await renderScreen(<PromptFoldersScreen />);
-
-    const rowActions = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions', { title: 'Ops' });
-    expect(rowActions).toBeDefined();
-    const deleteAction = rowActions?.props.actions.find((action: any) => action.id === 'delete');
-    expect(deleteAction).toBeDefined();
-
-    await act(async () => {
-      await deleteAction?.onPress();
+    it('names a new folder once, at the current catalog revision, without rewriting settings', async () => {
+        const state = await setup();
+        const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+        const screen = await renderScreen(<PromptFoldersScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:folder:parent')).toBeTruthy());
+        prompt.mockClear();
+        alert.mockClear();
+        prompt.mockResolvedValueOnce('  Release   notes  ');
+        await screen.pressByTestIdAsync('promptFolders.add');
+        expect(prompt).toHaveBeenCalledTimes(1);
+        // The write and the catalog reread both cross the real Home HTTP boundary.
+        await vi.waitFor(() => expect({
+            alerts: alert.mock.calls,
+            mutations: state.mutations,
+            responses: state.folderWrites,
+            folder: state.read().folders.find(folder => folder.name === 'Release notes'),
+        }).toMatchObject({
+            alerts: [],
+            mutations: [{ key: 'folders', expectedRevision: 4 }],
+            responses: [{ statusCode: 200, body: { status: 'updated', revision: 5 } }],
+            folder: { name: 'Release notes', parentId: null },
+        }), { timeout: 10_000 });
+        await vi.waitFor(() => expect(screen.findByTestId(`promptFolders:row:folder:${state.read().folders.find(folder => folder.name === 'Release notes')?.id}`)).toBeTruthy(), { timeout: 10_000 });
+        prompt.mockResolvedValueOnce('release NOTES');
+        await screen.pressByTestIdAsync('promptFolders.add');
+        expect(prompt).toHaveBeenCalledTimes(2);
+        expect(state.read().folders).toHaveLength(3);
+        expect(state.read().artifactHeadersById?.received).toEqual({ folderId: 'parent', tags: ['personal'] });
+        expect(state.fixture.requests.some(request => request.path === '/v2/account/settings' && request.method !== 'GET')).toBe(false);
     });
 
-    expect(updatePromptDocMock).not.toHaveBeenCalled();
-    expect(updateSkillPromptBundleMock).not.toHaveBeenCalled();
-    expect(setPromptFoldersMock).toHaveBeenCalledWith({
-      v: 1,
-      folders: [],
+    it('moves a prompt through Move to folder…, checks its current place and refuses a folder into itself', async () => {
+        const state = await setup();
+        const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+        const screen = await renderScreen(<PromptFoldersScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:artifact:legacy')).toBeTruthy());
+        const before = state.fixture.boundary.read('legacy');
+
+        const folderMenu = await openRowMenu(screen, 'folder:parent');
+        const folderPlaces = folderMenu.items.find(item => item.id === 'move')?.submenu?.items ?? [];
+        expect(folderPlaces.find(place => place.title === 'Reviews')).toMatchObject({ disabled: true });
+        expect(folderPlaces.find(place => place.checked)).toBeTruthy();
+
+        const menu = await openRowMenu(screen, 'artifact:legacy');
+        const places = menu.items.find(item => item.id === 'move')?.submenu?.items ?? [];
+        expect(places.find(place => place.title === 'Ops')).toMatchObject({ checked: true, disabled: true });
+        const reviews = places.find(place => place.title === 'Reviews');
+        expect(reviews).toMatchObject({ disabled: false });
+        await menu.select(reviews?.id ?? '');
+        await vi.waitFor(() => expect(state.read().artifactHeadersById?.legacy).toMatchObject({ folderId: 'child' }));
+        expect(state.fixture.boundary.read('legacy')).toEqual(before);
     });
-  });
+
+    it('deletes personal placement, reparents children and leaves even malformed Artifact bodies untouched', async () => {
+        const state = await setup();
+        const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+        const before = state.fixture.boundary.read('legacy');
+        const screen = await renderScreen(<PromptFoldersScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:folder:parent')).toBeTruthy());
+        const menu = await openRowMenu(screen, 'folder:parent');
+        await menu.select('delete');
+        await vi.waitFor(() => expect(state.read().folders.find(folder => folder.id === 'parent')).toBeUndefined());
+        expect(state.read().folders.find(folder => folder.id === 'child')?.parentId).toBeNull();
+        expect(state.read().artifactHeadersById?.received).toEqual({ folderId: null, tags: ['personal'] });
+        expect(state.read().artifactHeadersById?.legacy).toEqual({ folderId: null, tags: ['legacy'] });
+        expect(state.fixture.boundary.read('legacy')).toEqual(before);
+        expect(state.fixture.requests.some(request => request.path.startsWith('/v1/artifacts/') && request.method === 'POST')).toBe(false);
+    });
 });

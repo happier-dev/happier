@@ -7,6 +7,7 @@ import type { ArtifactBrowserKind } from './artifactBrowserModel';
 export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactBrowserKind, IconName>> = {
     document: 'file-text',
     prompt: 'books',
+    memory: 'bookmark',
     board: 'squares-four',
     workflow: 'tree-structure',
     role: 'users',
@@ -18,6 +19,7 @@ export function artifactKindLabel(kind: ArtifactBrowserKind): string {
     switch (kind) {
         case 'document': return t('artifacts.browser.kindOne.document');
         case 'prompt': return t('artifacts.browser.kindOne.prompt');
+        case 'memory': return t('artifacts.browser.kindOne.memory');
         case 'board': return t('artifacts.browser.kindOne.board');
         case 'workflow': return t('artifacts.browser.kindOne.workflow');
         case 'role': return t('artifacts.browser.kindOne.role');
@@ -31,6 +33,7 @@ export function artifactKindFilterLabel(kind: ArtifactBrowserKind | 'all'): stri
         case 'all': return t('artifacts.browser.kinds.all');
         case 'document': return t('artifacts.browser.kinds.document');
         case 'prompt': return t('artifacts.browser.kinds.prompt');
+        case 'memory': return t('artifacts.browser.kinds.memory');
         case 'board': return t('artifacts.browser.kinds.board');
         case 'workflow': return t('artifacts.browser.kinds.workflow');
         case 'role': return t('artifacts.browser.kinds.role');
@@ -43,6 +46,7 @@ export function artifactKindOpenLabel(kind: ArtifactBrowserKind): string {
     switch (kind) {
         case 'document': return t('artifacts.browser.open.document');
         case 'prompt': return t('artifacts.browser.open.prompt');
+        case 'memory': return t('artifacts.browser.open.memory');
         case 'board': return t('artifacts.browser.open.board');
         case 'workflow': return t('artifacts.browser.open.workflow');
         case 'role': return t('artifacts.browser.open.role');

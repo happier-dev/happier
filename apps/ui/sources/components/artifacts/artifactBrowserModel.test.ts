@@ -52,7 +52,11 @@ describe('artifactBrowserModel', () => {
             ['artifact:p', 'folder:child', 'leaf'], ['artifact:w', 'folder:child', 'leaf'], ['artifact:orphan', null, 'leaf'],
         ]);
         const filtered = projectArtifactBrowserTree(artifacts, { query: '', kind: 'prompt', sort: 'title_asc' }, { folders });
-        expect(filtered.map(node => node.key)).toEqual(['folder:root', 'folder:child', 'artifact:p']);
+        expect(filtered.map(node => node.key)).toEqual(['folder:empty', 'folder:root', 'folder:child', 'artifact:p']);
+        const onlyOtherKinds = projectArtifactBrowserTree(artifacts, { query: '', kind: 'board', sort: 'title_asc' }, { folders });
+        expect(onlyOtherKinds.map(node => node.key)).toEqual(['folder:empty']);
+        const searched = projectArtifactBrowserTree(artifacts, { query: 'review', kind: 'prompt', sort: 'title_asc' }, { folders });
+        expect(searched.map(node => node.key)).toEqual(['folder:root', 'folder:child', 'artifact:p']);
         const collapsed = projectArtifactBrowserTree(artifacts, { query: '', kind: 'all', sort: 'title_asc' },
             { folders, collapsedFolderIds: new Set(['root']) });
         expect(collapsed.map(node => node.key)).toEqual(['folder:empty', 'folder:root', 'artifact:orphan']);
@@ -170,16 +174,18 @@ describe('artifactBrowserModel', () => {
         const board = artifact('b1', { kind: 'work-board.v1', title: 'Q4 launch' });
         const workflow = artifact('w1', { kind: 'workflow-definition.v1', title: 'Morning triage' });
         const profile = artifact('lp1', { kind: 'launch-profile.v1', title: 'Fast', profileId: 'profile-7' });
+        const memory = artifact('m1', { kind: 'memory_doc.v1', title: 'Bot memory' });
         const approval = artifact('ap1', { kind: 'approval_request.v1', title: 'Approve deploy' });
         const draft = artifact('d1', { title: 'Draft' }, { draft: true });
 
-        expect([note, prompt, board, workflow, profile, approval, draft].map(classifyArtifactBrowserKind))
-            .toEqual(['document', 'prompt', 'board', 'workflow', 'launchProfile', null, null]);
+        expect([note, prompt, board, workflow, profile, memory, approval, draft].map(classifyArtifactBrowserKind))
+            .toEqual(['document', 'prompt', 'board', 'workflow', 'launchProfile', 'memory', null, null]);
         expect(resolveArtifactOpenRoute(note)).toBe('/artifacts/n1');
         expect(resolveArtifactOpenRoute(prompt)).toBe('/settings/prompts/docs/p1');
         expect(resolveArtifactOpenRoute(board)).toBe('/boards/b1');
         expect(resolveArtifactOpenRoute(workflow)).toBe('/workflows/w1');
         expect(resolveArtifactOpenRoute(profile)).toBe('/settings/profiles/profile-7');
+        expect(resolveArtifactOpenRoute(memory)).toBe('/settings/prompts/memory/m1');
         // A kind this host does not know is still an ordinary document, opened in the Artifacts view.
         expect(resolveArtifactOpenRoute(artifact('x1', { kind: 'published.v1', title: 'Report' }))).toBe('/artifacts/x1');
     });

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useState,
   type ReactElement,
@@ -45,6 +46,11 @@ export type TreeProps = Readonly<{
   onFocusedKeyChange?: (key: string) => void;
   /** An author's own controls at a row's trailing edge (a ⋯ menu). */
   renderTrailing?: (item: TreeItem) => ReactNode;
+  /**
+   * The row inside the author's own host (a drag source, a drop outline, a measured box). The tree still draws the
+   * row and owns its keyboard and semantics; the host only surrounds it. It must render `row` exactly once.
+   */
+  wrapRow?: (item: TreeItem, row: ReactElement) => ReactNode;
   /** `table`: the list-row rhythm, for a tree drawn with a column beside its names. */
   presentation?: 'tree' | 'table';
   accessibilityLabel: string;
@@ -86,45 +92,52 @@ export function Tree(props: TreeProps): ReactElement {
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
     >
-      {props.items.map((item) => (
-        <HappierTreeRow
-          key={item.key}
-          node={item}
-          title={item.title}
-          mark={item.mark}
-          meta={item.meta}
-          trailing={props.renderTrailing?.(item)}
-          selected={props.selectedKey === item.key}
-          tabStop={interaction.activeKey === item.key}
-          presentation={props.presentation}
-          touch={touch}
-          theme={theme}
-          reducedMotion={reducedMotion}
-          onActivate={() => props.onActivate(item.key)}
-          onFocus={() => onFocus(item.key)}
-          onKeyDown={(keyboardKey, event) =>
-            interaction.onKeyDown(item.key, keyboardKey, event)
-          }
-          controlRef={(target) => interaction.bindFocusTarget(item.key, target)}
-          disclosure={
-            item.kind === 'branch'
-              ? {
-                  onPress: () =>
-                    props.onExpandedChange(item.key, !item.expanded),
-                  accessibilityLabel: item.expanded
-                    ? props.collapseLabel(item)
-                    : props.expandLabel(item),
-                  ...(props.testID === undefined
-                    ? {}
-                    : { testID: `${props.testID}:disclosure:${item.key}` }),
-                }
-              : undefined
-          }
-          {...(props.testID === undefined
-            ? {}
-            : { testID: `${props.testID}:row:${item.key}` })}
-        />
-      ))}
+      {props.items.map((item) => {
+        const row = (
+          <HappierTreeRow
+            key={item.key}
+            node={item}
+            title={item.title}
+            mark={item.mark}
+            meta={item.meta}
+            trailing={props.renderTrailing?.(item)}
+            selected={props.selectedKey === item.key}
+            tabStop={interaction.activeKey === item.key}
+            presentation={props.presentation}
+            touch={touch}
+            theme={theme}
+            reducedMotion={reducedMotion}
+            onActivate={() => props.onActivate(item.key)}
+            onFocus={() => onFocus(item.key)}
+            onKeyDown={(keyboardKey, event) =>
+              interaction.onKeyDown(item.key, keyboardKey, event)
+            }
+            controlRef={(target) => interaction.bindFocusTarget(item.key, target)}
+            disclosure={
+              item.kind === 'branch'
+                ? {
+                    onPress: () =>
+                      props.onExpandedChange(item.key, !item.expanded),
+                    accessibilityLabel: item.expanded
+                      ? props.collapseLabel(item)
+                      : props.expandLabel(item),
+                    ...(props.testID === undefined
+                      ? {}
+                      : { testID: `${props.testID}:disclosure:${item.key}` }),
+                  }
+                : undefined
+            }
+            {...(props.testID === undefined
+              ? {}
+              : { testID: `${props.testID}:row:${item.key}` })}
+          />
+        );
+        return props.wrapRow ? (
+          <Fragment key={item.key}>{props.wrapRow(item, row)}</Fragment>
+        ) : (
+          row
+        );
+      })}
     </View>
   );
 }
