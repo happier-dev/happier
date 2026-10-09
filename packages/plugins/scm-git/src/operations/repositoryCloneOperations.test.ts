@@ -21,6 +21,23 @@ import {
 } from './repositoryCloneOperations.test-support.js';
 
 describe('git repository clone operation', () => {
+    it('refuses an unregistered provider or an unrecognized deployment before creating a checkout', async () => {
+        const parent = createWorkspace();
+        const description = makeCloneTargetDescription('/tmp/unused.git');
+        const repositoryClone = getRepositoryCloneOperation({ registry: makeProviderRegistry(description) });
+        for (const [provider, errorCode] of [
+            [{ ...description.repository.provider, id: 'missing/provider' }, SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE],
+            [{ ...description.repository.provider, baseUrl: 'https://attacker.example' }, SCM_OPERATION_ERROR_CODES.INVALID_REQUEST],
+        ] as const) {
+            const response = await cloneWithRealGitRuntime(repositoryClone, {
+                context: makeContext(parent),
+                request: { ...makeRequest(parent, '/tmp/unused.git'), provider },
+            });
+            expect(response).toMatchObject({ success: false, errorCode });
+            expect(existsSync(join(parent, 'happier'))).toBe(false);
+        }
+    });
+
     it('uses the current host runtime services for clone target discovery', async () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();
@@ -35,17 +52,14 @@ describe('git repository clone operation', () => {
         }
 
         const repositoryClone = getRepositoryCloneOperation({
-            registry: {
-                getProvider: () => description.repository.provider,
-                getRepositoryClone: () => ({
+            registry: makeProviderRegistry(description, {
                     describeCloneTargets: async ({ runtimeServices }: {
                         runtimeServices?: ScmHostingProviderRuntimeServices;
                     }) => {
                         observedServiceLabels.push(runtimeServices ? serviceLabels.get(runtimeServices) ?? 'unknown' : 'missing');
                         return description;
                     },
-                }),
-            },
+            }),
             runCommand: async (request) => {
                 const destinationArg = request.args[3];
                 if (typeof destinationArg !== 'string') {
@@ -89,9 +103,7 @@ describe('git repository clone operation', () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();
         const repositoryClone = getRepositoryCloneOperation({
-            registry: {
-                getRepositoryClone: () => undefined,
-            },
+            registry: makeProviderRegistry(makeCloneTargetDescription(remotePath), null),
         });
 
         const response = await cloneWithRealGitRuntime(repositoryClone, {
@@ -133,11 +145,11 @@ describe('git repository clone operation', () => {
         expect(existsSync(join(destination, '.git'))).toBe(false);
     });
 
-    it('uses the registered provider descriptor and sanitized repository selector for clone target discovery', async () => {
+    it('uses the routed provider deployment and sanitized repository selector for clone target discovery', async () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();
         const canonicalProvider = {
-            id: 'scm.github',
+            id: 'happier.scm.forge.github/github',
             kind: 'github',
             displayName: 'GitHub',
             baseUrl: 'https://github.com',
@@ -149,10 +161,10 @@ describe('git repository clone operation', () => {
             hasSshUrl: boolean;
         }>> = [];
         const clonedUrls: string[] = [];
+        const description = makeCloneTargetDescription(remotePath);
         const repositoryClone = getRepositoryCloneOperation({
-            registry: {
-                getProvider: () => canonicalProvider,
-                getRepositoryClone: () => ({
+            registry: makeProviderRegistry({ ...description,
+                repository: { ...description.repository, provider: canonicalProvider } }, {
                     describeCloneTargets: async ({ provider, repository }) => {
                         observed.push({
                             providerBaseUrl: provider.baseUrl,
@@ -178,8 +190,7 @@ describe('git repository clone operation', () => {
                             ],
                         };
                     },
-                }),
-            },
+            }),
             runCommand: async (request) => {
                 clonedUrls.push(request.args[2] ?? '');
                 const destinationArg = request.args[3];
@@ -199,7 +210,6 @@ describe('git repository clone operation', () => {
                 ...makeRequest(parent, remotePath),
                 provider: {
                     ...canonicalProvider,
-                    baseUrl: 'https://attacker.example',
                 },
                 repository: {
                     nameWithOwner: 'happier-dev/happier',
@@ -340,7 +350,7 @@ describe('git repository clone operation', () => {
                     ...description.repository,
                     provider: {
                         ...description.repository.provider,
-                        urlSafety: { allowedSchemes: ['ssh:'] },
+                        urlSafety: { allowedSchemes: ['https:', 'ssh:'] },
                     },
                 },
                 targets: [

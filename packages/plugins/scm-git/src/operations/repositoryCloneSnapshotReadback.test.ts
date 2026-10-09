@@ -288,15 +288,12 @@ describe('git repository clone snapshot readback', () => {
         const outside = createWorkspace();
         let cloneAttempts = 0;
         const repositoryClone = getRepositoryCloneOperation({
-            registry: {
-                getProvider: () => makeCloneTargetDescription(remotePath).repository.provider,
-                getRepositoryClone: () => ({
-                    describeCloneTargets: async () => {
-                        symlinkSync(outside, destination, 'dir');
-                        return makeCloneTargetDescription(remotePath);
-                    },
-                }),
-            },
+            registry: makeProviderRegistry(makeCloneTargetDescription(remotePath), {
+                describeCloneTargets: async () => {
+                    symlinkSync(outside, destination, 'dir');
+                    return makeCloneTargetDescription(remotePath);
+                },
+            }),
             runCommand: async () => {
                 cloneAttempts += 1;
                 return { success: true, stdout: '', stderr: '', exitCode: 0 };

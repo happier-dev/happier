@@ -9,6 +9,8 @@ const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 
 // Git owner tests consume the current SDK/Protocol sources, not a stale bundled copy.
 export default defineConfig({
+    // Compose the real host registry in plugin contract tests rather than a descriptor mock.
+    resolve: { alias: { '@': resolve(packageRoot, '../../../apps/cli/src') } },
     plugins: [createWorkspacePackageSourcesPlugin([
         { packageName: '@happier-dev/cli-common', packageSourceRoot: resolve(packageRoot, '../../cli-common/src') },
         { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(packageRoot, '../../plugin-sdk/src') },

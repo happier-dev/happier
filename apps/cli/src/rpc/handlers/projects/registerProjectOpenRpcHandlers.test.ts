@@ -32,7 +32,9 @@ import { promisify } from 'node:util';
 import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
 import { createGithubRepositoryProvisioningAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback';
 import { createGithubRepositoryRestAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter';
-import { createScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
+import { createHostScmHostingProviderRegistry } from '@/scm/hostingProviders/runtimeServices';
+import { githubHostingProviderAdapter } from '../../../../../../packages/plugins/scm-github/src/adapter';
+import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../../../../packages/plugins/scm-github/src/manifest';
 import { createRegisteredScmBackendRegistry } from '@/scm/pluginBackends/registeredScmBackendRegistry';
 import { GIT_PLUGIN, GIT_SCM_BACKEND_CONTRIBUTION } from '../../../../../../packages/plugins/scm-git/src/manifest';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -129,9 +131,17 @@ describe('Project Open RPC', () => {
         html_url: 'https://github.com/octocat/Hello-World', clone_url: 'https://github.com/octocat/Hello-World.git',
         visibility: 'public', default_branch: 'master' }), text: async () => '' };
     });
-    const hosting = createScmHostingProviderRegistry({ providers: [{ ...provider, id: 'github', pluginId: 'happier.scm.forge.github', capabilities: ['clone'] }],
-      runtimeRegistrations: [{ pluginId: 'happier.scm.forge.github', occurrenceId: 'github-test', registration: { id: 'github',
-        adapter: { repositoryClone: createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({ fetcher }) }) } } }] });
+    const hostingDefinition = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
+    if (!hostingDefinition) throw new Error('GitHub did not declare its hosting provider');
+    // Use the real host producer: getProvider returns a static declaration,
+    // while detectRemote supplies the admitted deployment and URL safety.
+    const hosting = createHostScmHostingProviderRegistry({
+      contributes: { scmHostingProviders: [{ id: provider.id, pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        provenance: 'first_party', source: { kind: 'bundled' }, definition: hostingDefinition }] },
+      scmHostingProvidersById: new Map([[provider.id, { pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: 'github-test',
+        registration: { id: 'github', adapter: { routing: githubHostingProviderAdapter,
+          repositoryClone: createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({ fetcher }) }) } } }]]),
+    });
     const scopeRegistration = createPluginRegistrationScope({ pluginId: 'happier.scm.backend.git',
       target: { realm: 'daemon' }, rights: [{ family: 'scmBackends', localId: 'git', target: { realm: 'daemon' } }] });
     await GIT_PLUGIN.activate(scopeRegistration.api);

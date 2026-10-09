@@ -44,10 +44,7 @@ type CloneProviderUrlSafety = CloneProviderRef['urlSafety'];
 
 type CloneProviderDescriptor = ScmHostingProviderRuntimeDescriptor & Readonly<{ kind: CloneProviderRef['kind'] }>;
 
-type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryClone'> & Readonly<{
-    getProvider?: (id: string) => unknown;
-    providers?: readonly unknown[];
-}>;
+type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryClone' | 'getProvider' | 'detectRemote'>;
 
 type GitRepositoryCloneOperationDeps = Readonly<{
     registry?: HostingRepositoryRegistry;
@@ -127,16 +124,19 @@ function cloneProviderRef(provider: CloneProviderDescriptor): CloneProviderRef {
     };
 }
 
-function resolveRegisteredProvider(input: Readonly<{
-    registry: HostingRepositoryRegistry | null;
-    requestedProvider: ScmRepositoryCloneInput['provider'];
+function resolveCloneProvider(input: Readonly<{
+    registry: HostingRepositoryRegistry;
+    request: ScmRepositoryCloneInput;
 }>): CloneProviderRef | null {
-    const registeredCandidate = input.registry?.getProvider?.(input.requestedProvider.id)
-        ?? input.registry?.providers?.find((provider) => (
-            provider && typeof provider === 'object' && 'id' in provider && provider.id === input.requestedProvider.id
-        ))
-        ?? null;
-    const registered = readScmHostingProviderRuntimeDescriptor(registeredCandidate);
+    // A registered provider is a declaration, not a deployment. Resolve the captured
+    // base and repository through the same routing owner used for existing remotes.
+    const detected = input.registry.detectRemote({
+        remoteName: null,
+        remoteUrl: `${input.request.provider.baseUrl.replace(/\/+$/, '')}/${input.request.repository.nameWithOwner}`,
+    });
+    if (detected.kind !== 'resolved' || detected.providerId !== input.request.provider.id
+        || detected.provider.nameWithOwner !== input.request.repository.nameWithOwner) return null;
+    const registered = readScmHostingProviderRuntimeDescriptor(detected.provider);
     if (!registered) return null;
     const kind = ScmHostingProviderKindSchema.safeParse(registered.kind);
     if (!kind.success) return null;
@@ -264,16 +264,12 @@ async function describeCloneTargets(input: Readonly<{
     const registry = await readRegistry(input.deps);
     const adapter: HostingProviderRepositoryCloneCapability | undefined =
         registry?.getRepositoryClone(input.request.provider.id);
-    const registeredProvider = resolveRegisteredProvider({
-        registry,
-        requestedProvider: input.request.provider,
-    });
-    if (!registeredProvider) {
+    if (!registry?.getProvider(input.request.provider.id)) {
         return {
             ok: false,
             response: errorResponse(
-                `The selected hosting provider "${input.request.provider.displayName}" is not registered.`,
-                SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                `The selected hosting provider "${input.request.provider.displayName}" (${input.request.provider.id}) is not registered.`,
+                SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
                 { remediation: { kind: 'unsupported_provider' } },
             ),
         };
@@ -284,6 +280,17 @@ async function describeCloneTargets(input: Readonly<{
             response: errorResponse(
                 `The selected hosting provider "${input.request.provider.displayName}" does not support repository clone target discovery.`,
                 SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                { remediation: { kind: 'unsupported_provider' } },
+            ),
+        };
+    }
+    const registeredProvider = resolveCloneProvider({ registry, request: input.request });
+    if (!registeredProvider) {
+        return {
+            ok: false,
+            response: errorResponse(
+                `The selected hosting provider "${input.request.provider.displayName}" does not recognize this repository deployment.`,
+                SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
                 { remediation: { kind: 'unsupported_provider' } },
             ),
         };

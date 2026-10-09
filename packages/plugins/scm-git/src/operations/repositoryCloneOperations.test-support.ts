@@ -11,6 +11,10 @@ import {
   type ScmRepositoryCloneTargetDescription,
 } from '@happier-dev/plugin-sdk/scm';
 import { expect } from 'vitest';
+import { createScmHostingProviderRegistry } from '../../../../../apps/cli/src/scm/hostingProviders/registry';
+import { githubHostingProviderAdapter, GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../scm-github/src/adapter.js';
+import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../scm-github/src/manifest.js';
+import type { HostingProviderRepositoryCloneCapability } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackendContext } from '../types.js';
@@ -146,7 +150,7 @@ export function createBareRemoteRepository(): string {
 export function makeRequest(parent: string, remotePath: string, destinationDirectoryName = 'happier'): ScmRepositoryCloneInput {
     return {
         provider: {
-            id: 'github:github.com',
+            id: GITHUB_SCM_HOSTING_PROVIDER_ID,
             kind: 'github',
             displayName: 'GitHub',
             baseUrl: 'https://github.com',
@@ -167,13 +171,21 @@ export function makeRequest(parent: string, remotePath: string, destinationDirec
     };
 }
 
-export function makeProviderRegistry(description: ScmRepositoryCloneTargetDescription) {
-    return {
-        getProvider: () => description.repository.provider,
-        getRepositoryClone: () => ({
-            describeCloneTargets: async () => description,
-        }),
-    };
+export function makeProviderRegistry(
+    description: ScmRepositoryCloneTargetDescription,
+    repositoryClone: HostingProviderRepositoryCloneCapability | null = { describeCloneTargets: async () => description },
+) {
+    const declaration = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
+    if (!declaration) throw new Error('GitHub did not declare its hosting provider');
+    const { title: _title, ...definition } = declaration;
+    return createScmHostingProviderRegistry({
+        providers: [{ ...definition, pluginId: GITHUB_PLUGIN_MANIFEST.id, displayName: 'GitHub',
+            urlSafety: { allowedSchemes: description.repository.provider.urlSafety?.allowedSchemes ?? ['https:'],
+                allowedBaseUrls: ['https://github.com'], allowedOrigins: ['https://github.com'] } }],
+        runtimeRegistrations: [{ pluginId: 'happier.scm.forge.github', occurrenceId: 'clone-test',
+            registration: { id: 'github', adapter: { routing: githubHostingProviderAdapter,
+                ...(repositoryClone ? { repositoryClone } : {}) } } }],
+    });
 }
 
 export function makeCloneTargetDescription(remotePath: string): ScmRepositoryCloneTargetDescription {
@@ -181,7 +193,7 @@ export function makeCloneTargetDescription(remotePath: string): ScmRepositoryClo
         auth: { state: 'authenticated', profileKind: 'provider_cli' },
         repository: {
             provider: {
-                id: 'github:github.com',
+                id: GITHUB_SCM_HOSTING_PROVIDER_ID,
                 kind: 'github',
                 displayName: 'GitHub',
                 baseUrl: 'https://github.com',
