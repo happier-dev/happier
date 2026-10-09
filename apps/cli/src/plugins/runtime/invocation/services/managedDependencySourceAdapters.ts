@@ -11,6 +11,8 @@ import type { InstallableDependencyDescriptor } from '@happier-dev/protocol/inst
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/pypiWheelAsset';
 import { getPinnedArchiveRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/pinnedArchive';
 import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary';
+import { parseInstalledVersionFromOutput } from '@/packagedRuntime/installables/installedVersion';
+import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import type {
     ManagedDependencySourceModelDependency,
     ManagedDependencySourceModelEntry,
@@ -194,6 +196,7 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
         );
     }
     const executableNames = Object.freeze([...input.source.declaration.executableNames]);
+    const versionArguments = input.source.declaration.versionArguments;
     const defaultEnv = input.env ?? process.env;
     const resolve = async (env: NodeJS.ProcessEnv = defaultEnv): Promise<string | null> => {
         for (const executableName of executableNames) {
@@ -205,6 +208,20 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
     return Object.freeze({
         key: input.dependency.identity.localId,
         capabilityId: `dep.${input.dependency.identity.localId}`,
+        async detectCapabilityStatus(params = {}) {
+            const env = params.env ?? defaultEnv;
+            const command = await resolve(env);
+            if (!command || versionArguments === undefined) return { version: null };
+            // Reuse the canonical process probe and its budget. Only explicitly
+            // declared native arguments run, using the same environment as PATH
+            // selection; failed probes never qualify a version from their output.
+            const result = await runCliCommandBestEffort({
+                resolvedPath: command, args: [...versionArguments], processEnv: env,
+            });
+            return { version: result.ok ? parseInstalledVersionFromOutput(
+                input.dependency.definition.executable ?? executableNames[0]!, result.stdout,
+            ) : null };
+        },
         async detectLaunchResolution(params = {}) {
             const command = await resolve(params.env ?? defaultEnv);
             return command

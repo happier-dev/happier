@@ -800,7 +800,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                     continue;
                 }
                 const capabilityStatus = adapter.detectCapabilityStatus
-                    ? await adapter.detectCapabilityStatus({ includeLatestVersion: true, onlyIfInstalled: true })
+                    ? await adapter.detectCapabilityStatus({ env: params.env, includeLatestVersion: true, onlyIfInstalled: true })
                     : null;
                 const version = readVersion(capabilityStatus, 'version', 'installedVersion') ?? UNKNOWN_VERSION;
                 const availableVersion = readVersion(capabilityStatus, 'availableVersion', 'latestVersion');

@@ -1,10 +1,45 @@
-import { describe, expect, it } from 'vitest';
+import { basename, dirname } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables';
 
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
 
 import { createProductionManagedDependencySourceAdapter } from './managedDependencySourceAdapters';
 import { createV2ManagedDependencySourceModel } from './managedDependencySourceModel';
+import { createStablePluginManagedDependenciesHost } from './managedDependencies';
+
+const processBoundary = vi.hoisted(() => ({ execFile: vi.fn() }));
+// The operating-system process is the boundary; parsing, source resolution,
+// dependency status and executable qualification remain real.
+vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@happier-dev/cli-common/process')>(),
+    execFileWithDeadline: processBoundary.execFile,
+}));
+
+const systemEnvironment = { PATH: dirname(process.execPath), PATHEXT: '.EXE;.CMD;.BAT', C55_SELECTED: 'selected' };
+function systemHost(versionArguments?: string[]) {
+    const sourceModel = createV2ManagedDependencySourceModel({
+        platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
+        architecture: process.arch,
+        contributions: [{
+            ...antigravityContribution(),
+            definition: { id: 'system-tool', title: 'System tool', executable: basename(process.execPath),
+                sources: [{ kind: 'system', executableNames: [basename(process.execPath)],
+                    ...(versionArguments === undefined ? {} : { versionArguments }) }],
+            },
+        }],
+    });
+    return createStablePluginManagedDependenciesHost({
+        installablesRegistry: resolveInstallablesRegistry({}), sourceModel,
+        getSettings: () => ({}), env: systemEnvironment,
+        resolveAdapter: async () => { throw new Error('Legacy adapter must not be used'); },
+        resolveSourceAdapter: async (input) => createProductionManagedDependencySourceAdapter({ ...input,
+            env: { PATH: '' },
+        }),
+        removeManagedInstall: async () => {}, removeManagedSource: async () => {},
+    }).bind('happier.agent.antigravity');
+}
 
 function antigravityContribution(
     sourceKind: 'bundled' | 'package' = 'bundled',
@@ -123,6 +158,21 @@ const PINNED_IDENTITY = Object.freeze({
 });
 
 describe('createProductionManagedDependencySourceAdapter', () => {
+    it('publishes the qualified system version from declared native version arguments', async () => {
+        processBoundary.execFile.mockReset().mockResolvedValue({ stdout: 'Version: v0.46.0\nCommit: 991967\n', stderr: '' });
+        expect(await systemHost(['version']).status('system-tool')).toMatchObject({ state: 'ready', version: '0.46.0' });
+        expect(processBoundary.execFile).toHaveBeenCalledWith(process.execPath, ['version'], expect.objectContaining({ env: systemEnvironment }));
+    });
+
+    it('keeps system versions unknown when the declared probe fails or is absent', async () => {
+        processBoundary.execFile.mockReset().mockRejectedValue(Object.assign(new Error('Native probe failed'),
+            { exitCode: 1, stdout: 'Version: v0.46.0\n', stderr: '' }));
+        expect(await systemHost(['version']).status('system-tool')).toMatchObject({ state: 'ready', version: 'unknown' });
+        processBoundary.execFile.mockClear();
+        expect(await systemHost().status('system-tool')).toMatchObject({ state: 'ready', version: 'unknown' });
+        expect(processBoundary.execFile).not.toHaveBeenCalled();
+    });
+
     it('refuses a managed PyPI source without its canonical source-acquisition installable', async () => {
         const { sourceInstallable: _sourceInstallable, ...input } = sourceFrom(
             antigravityContribution(),

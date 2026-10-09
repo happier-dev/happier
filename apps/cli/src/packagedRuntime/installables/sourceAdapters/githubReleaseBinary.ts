@@ -23,6 +23,7 @@ import { createGhRuntimeInstallableAdapter } from '../ghRuntimeInstallable';
 import { createCodexAcpRuntimeInstallableAdapter } from './codexAcpRuntimeInstallable';
 import type { RuntimeInstallableAdapter, RuntimeInstallableInstallErrorCode, RuntimeInstallableInstallOptions, RuntimeInstallableInstallResult } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import { parseInstalledVersionFromOutput } from '../installedVersion';
 import { writeRuntimeInstallableLastCheckAtMs } from '../updateState';
 
 type GitHubReleaseAsset = Readonly<{
@@ -99,21 +100,13 @@ async function resolveManagedBinPath(descriptor: InstallableDependencyDescriptor
   }
 }
 
-function parseVersionFromOutput(command: string, stdout: string): string | null {
-  const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const commandMatch = new RegExp(`\\b${escaped}\\s+version\\s+([0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)`, 'i').exec(stdout);
-  if (commandMatch?.[1]) return commandMatch[1];
-  const genericMatch = /\bversion\s+([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)/i.exec(stdout);
-  return genericMatch?.[1] ?? null;
-}
-
 async function readInstalledVersion(descriptor: InstallableDependencyDescriptor, binPath: string): Promise<string | null> {
   const result = await runCliCommandBestEffort({
     resolvedPath: binPath,
     args: ['--version'],
     timeoutMs: 2_000,
   });
-  return result.ok ? parseVersionFromOutput(primaryCommand(descriptor), result.stdout) : null;
+  return result.ok ? parseInstalledVersionFromOutput(primaryCommand(descriptor), result.stdout) : null;
 }
 
 function releaseAssetPlatformAliases(): readonly string[] {
