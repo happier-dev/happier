@@ -2,6 +2,7 @@ import type { ChatListItem } from '@/components/sessions/chatListItems';
 import type { Message } from "@happier-dev/session-core/messages";
 
 import type { TranscriptTurn } from './buildTranscriptTurns';
+import { resolveToolCallsGroupPresentation } from '@/components/sessions/transcript/toolCalls/resolveToolCallsGroupPresentation';
 
 type ForkMessageMetadata = Readonly<{
     originSessionId: string;
@@ -34,14 +35,14 @@ export type TranscriptToolGroupUnitItem =
         id: string; // `${groupId}#expand`
         groupId: string;
         toolMessageIds: string[];
-        hiddenCount: number; // > 0 by construction (only emitted while collapsed && hiddenCount > 0)
+        hiddenCount: number; // > 0 by construction, emitted only after collapsed preview rows
         createdAt: number;
         originSessionId?: string;
         isReadOnlyContext?: boolean;
     }
     | {
         kind: 'tool-group-tool';
-        id: string; // `${groupId}#tool:${toolMessageId}` — SAME id whether the row is a collapsed preview-tail row or an expanded body row
+        id: string; // `msg:${toolMessageId}` — stable across grouping, collapsed preview-tail, and expanded body rows
         groupId: string;
         toolMessageId: string;
         toolMessageIds: string[]; // full group membership (for expansion-state checks)
@@ -83,10 +84,6 @@ function normalizeCreatedAt(message: Message | null | undefined): number {
 
 function normalizeSeq(message: Message | null | undefined): number | null {
     return typeof message?.seq === 'number' && Number.isFinite(message.seq) ? Math.trunc(message.seq) : null;
-}
-
-function normalizeCollapsedPreviewCount(value: number): number {
-    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
 function metadataFields(metadata: ForkMessageMetadata | null): Partial<Pick<TranscriptToolGroupUnitItem, 'originSessionId' | 'isReadOnlyContext'>> {
@@ -135,12 +132,11 @@ function appendToolGroupUnits(params: Readonly<{
         ?? readMessageMetadata(params.metadataByMessageId, firstToolMessageId);
     const capMetadataFields = metadataFields(capMetadata);
 
-    const visibleToolMessageIds = expanded
-        ? toolMessageIds
-        : params.collapsedPreviewCount > 0
-            ? toolMessageIds.slice(Math.max(0, toolMessageIds.length - params.collapsedPreviewCount))
-            : [];
-    const hiddenCount = expanded ? 0 : toolMessageIds.length - visibleToolMessageIds.length;
+    const { visibleToolCalls: visibleToolMessageIds, hiddenCount, showExpandMore } = resolveToolCallsGroupPresentation({
+        toolCalls: toolMessageIds,
+        expanded,
+        collapsedPreviewCount: params.collapsedPreviewCount,
+    });
 
     params.output.push({
         kind: 'tool-group-header',
@@ -153,7 +149,24 @@ function appendToolGroupUnits(params: Readonly<{
         ...capMetadataFields,
     });
 
-    if (!expanded && hiddenCount > 0) {
+    for (const toolMessageId of visibleToolMessageIds) {
+        const message = params.getMessageById(toolMessageId);
+        const toolMetadata = readMessageMetadata(params.metadataByMessageId, toolMessageId)
+            ?? params.groupItemMetadata;
+        params.output.push({
+            kind: 'tool-group-tool',
+            id: `msg:${toolMessageId}`,
+            groupId: params.groupId,
+            toolMessageId,
+            toolMessageIds,
+            expanded,
+            createdAt: normalizeCreatedAt(message),
+            seq: normalizeSeq(message),
+            ...metadataFields(toolMetadata),
+        });
+    }
+
+    if (showExpandMore) {
         params.output.push({
             kind: 'tool-group-expand',
             id: `${params.groupId}#expand`,
@@ -165,23 +178,9 @@ function appendToolGroupUnits(params: Readonly<{
         });
     }
 
-    for (const toolMessageId of visibleToolMessageIds) {
-        const message = params.getMessageById(toolMessageId);
-        const toolMetadata = readMessageMetadata(params.metadataByMessageId, toolMessageId)
-            ?? params.groupItemMetadata;
-        params.output.push({
-            kind: 'tool-group-tool',
-            id: `${params.groupId}#tool:${toolMessageId}`,
-            groupId: params.groupId,
-            toolMessageId,
-            toolMessageIds,
-            expanded,
-            createdAt: normalizeCreatedAt(message),
-            seq: normalizeSeq(message),
-            ...metadataFields(toolMetadata),
-        });
-    }
-
+    // The footer is the group's bottom cap and its gap to the next row, not body content: a header-only
+    // group (D29, no previews) keeps it, exactly as the whole-group view keeps its card frame, so the
+    // header never butts against the next message and each unit kind keeps one measured height.
     params.output.push({
         kind: 'tool-group-footer',
         id: `${params.groupId}#footer`,
@@ -277,7 +276,7 @@ export function buildTranscriptTurnUnits(params: Readonly<{
     isGroupExpanded: (toolMessageIds: readonly string[]) => boolean;
     collapsedPreviewCount: number; // already-resolved K; <= 0 means no preview tail
 }>): TranscriptTurnUnitListItem[] {
-    const collapsedPreviewCount = normalizeCollapsedPreviewCount(params.collapsedPreviewCount);
+    const collapsedPreviewCount = params.collapsedPreviewCount;
     const output: TranscriptTurnUnitListItem[] = [];
 
     for (const item of params.items) {

@@ -47,9 +47,10 @@ export const ToolCallsGroupUnitHeaderRowWithSessionCommon = React.memo(function 
     const variant = resolveToolCallsGroupChromeVariant(props.toolChromeCommon);
     const chromeMode = toolCallsGroupChromeModeForVariant(variant);
     const { setExpanded } = props;
-    const onCollapse = React.useCallback(() => setExpanded(false), [setExpanded]);
+    const onToggleExpanded = React.useCallback(() => setExpanded(!props.expanded), [props.expanded, setExpanded]);
 
     const status = resolveToolCallsGroupStatus({
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         toolMessages: props.toolMessages,
         permissionDisabledReason: props.interaction.permissionDisabledReason,
     });
@@ -72,7 +73,8 @@ export const ToolCallsGroupUnitHeaderRowWithSessionCommon = React.memo(function 
                         status={status}
                         count={props.toolMessages.length}
                         expanded={props.expanded}
-                        onCollapse={onCollapse}
+                        onToggleExpanded={onToggleExpanded}
+                        showToolCalls={props.toolChromeCommon.showToolCalls}
                     />
                 </ToolCallsGroupUnitRowFrame>
             </TranscriptEnterWrapper>

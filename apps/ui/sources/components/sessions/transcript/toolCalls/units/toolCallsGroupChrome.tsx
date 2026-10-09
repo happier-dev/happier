@@ -12,21 +12,17 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 
 import type { GroupedToolCallChromeMode } from './groupedToolCallRowRenderDecision';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { shouldShowToolCallsGroupStatusIndicator } from '../resolveToolCallsGroupPresentation';
 
 export type ToolCallsGroupChromeVariant = 'cards' | 'feed' | 'feed_background';
 export type ToolCallsGroupUnitPosition = 'header' | 'middle' | 'footer';
-export type ToolCallsGroupStatus =
-    | 'running'
-    | 'completed'
-    | 'error'
-    | 'permission_denied'
-    | 'permission_canceled';
+import type { ToolCallsGroupStatus } from '../resolveToolCallsGroupPresentation';
+export { resolveToolCallsGroupStatus, type ToolCallsGroupStatus } from '../resolveToolCallsGroupPresentation';
 
 export function resolveToolCallsGroupChromeVariant(
     toolChromeCommon: TranscriptToolChromeCommon,
@@ -51,35 +47,6 @@ export function resolveToolCallMessageForSession(
     });
     if (nextTool === message.tool) return message;
     return { ...message, tool: nextTool };
-}
-
-export function resolveToolCallsGroupStatus(params: Readonly<{
-    toolMessages: readonly ToolCallMessage[];
-    permissionDisabledReason?: TranscriptInteraction['permissionDisabledReason'];
-}>): ToolCallsGroupStatus {
-    let sawError = false;
-    let sawPermissionDenied = false;
-    let sawPermissionCanceled = false;
-    for (const message of params.toolMessages) {
-        const tool = resolveInactiveSessionToolCallFailure({
-            tool: message.tool,
-            permissionDisabledReason: params.permissionDisabledReason,
-        });
-        const kind = resolveToolStatusIndicatorKind(tool);
-        if (kind === 'running' || kind === 'permission_pending') return 'running';
-        if (kind === 'error') sawError = true;
-        if (kind === 'permission_blocked') {
-            if (tool.permission?.status === 'denied') {
-                sawPermissionDenied = true;
-            } else {
-                sawPermissionCanceled = true;
-            }
-        }
-    }
-    if (sawError) return 'error';
-    if (sawPermissionDenied) return 'permission_denied';
-    if (sawPermissionCanceled) return 'permission_canceled';
-    return 'completed';
 }
 
 export function resolveToolCallsGroupUnitContainerStyle(
@@ -151,7 +118,7 @@ export function ToolCallsGroupUnitRowScaffold(props: Readonly<{ children: React.
 
 /**
  * The grouped tool-calls header row: icon, title + count, status indicator, and the
- * collapse affordance (chevron + press) when expanded. Shared between the whole-card
+ * disclosure affordance in both states. Shared between the whole-card
  * ToolCallsGroupView and the per-unit header row.
  */
 export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHeaderChrome(props: Readonly<{
@@ -159,10 +126,10 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
     status: ToolCallsGroupStatus;
     count: number;
     expanded: boolean;
-    onCollapse: () => void;
+    onToggleExpanded: () => void;
+    showToolCalls?: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const headerPressable = props.expanded;
     const terminalStatusLabel =
         props.status === 'error'
             ? t('common.error')
@@ -175,11 +142,13 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
     return (
         <Pressable
             testID="transcript-tool-calls-header"
-            onPress={headerPressable ? props.onCollapse : undefined}
-            disabled={!headerPressable}
+            onPress={props.onToggleExpanded}
+            accessibilityRole="button"
+            accessibilityLabel={t('session.toolCalls')}
+            accessibilityState={{ expanded: props.expanded }}
             style={({ pressed }) => [
                 chromeStyles.header,
-                headerPressable && pressed && (props.chromeMode === 'activity_feed' ? chromeStyles.headerFeedPressed : chromeStyles.headerCardsPressed),
+                pressed && (props.chromeMode === 'activity_feed' ? chromeStyles.headerFeedPressed : chromeStyles.headerCardsPressed),
             ]}
         >
             <View style={chromeStyles.headerGutter}>
@@ -190,7 +159,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                 <Text style={chromeStyles.subtitle}> · {props.count}</Text>
             </Text>
             <View style={chromeStyles.headerRight}>
-                <View
+                {shouldShowToolCallsGroupStatusIndicator(props) ? <View
                     testID={`tool-calls-group-status:${props.status}`}
                     accessible={terminalStatusLabel !== null}
                     accessibilityLabel={terminalStatusLabel ?? undefined}
@@ -211,14 +180,15 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                             {terminalStatusLabel}
                         </Text>
                     ) : null}
-                </View>
-                {props.expanded ? (
-                    <Icon
-                        name="caret-up"
-                        size={16}
-                        color={theme.colors.text.secondary}
-                    />
-                ) : null}
+                </View> : null}
+                {/* The header is the group's disclosure in both states, so its caret says which way it goes:
+                    the quietest mark in the header (lab `.l12-tg .cu`), one glyph per state. */}
+                <Icon
+                    testID="transcript-tool-calls-header-caret"
+                    name={props.expanded ? 'caret-up' : 'caret-down'}
+                    size={GROUP_CARET_SIZE_PX}
+                    color={theme.colors.text.tertiary}
+                />
             </View>
         </Pressable>
     );
@@ -246,6 +216,7 @@ export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroup
 });
 
 const GROUP_STATUS_ICON_SIZE_PX = 16;
+const GROUP_CARET_SIZE_PX = 14;
 
 const chromeStyles = StyleSheet.create((theme) => ({
     header: {
@@ -272,9 +243,11 @@ const chromeStyles = StyleSheet.create((theme) => ({
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
+    // The count is a quiet fact after the title: the title's size, not its weight.
     subtitle: {
         color: theme.colors.message.event.foreground,
         fontSize: 13,
+        ...Typography.default('regular'),
     },
     headerRight: {
         flexDirection: 'row',

@@ -14,6 +14,7 @@ import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInt
 import { resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
+import { resolveToolCallsGroupPresentation } from '@/components/sessions/transcript/toolCalls/resolveToolCallsGroupPresentation';
 import {
     useTranscriptSessionCommon,
     type TranscriptForkCommon,
@@ -53,6 +54,8 @@ type ToolCallsGroupViewWithSessionCommonProps = ToolCallsGroupViewProps & Readon
     toolRouteCommon: TranscriptToolRouteCommon;
 }>;
 
+const EMPTY_PREVIEW_MESSAGES: readonly ToolCallMessage[] = [];
+
 export const ToolCallsGroupView = React.memo((props: ToolCallsGroupViewProps) => {
     const transcriptSessionCommon = useTranscriptSessionCommon();
     const forkCommon = React.useMemo(() => transcriptSessionCommon.fork, [
@@ -78,6 +81,7 @@ export const ToolCallsGroupView = React.memo((props: ToolCallsGroupViewProps) =>
         transcriptSessionCommon.toolChrome.toolViewTimelineChromeMode,
         transcriptSessionCommon.toolChrome.transcriptToolCallsCollapsedPreviewCount,
         transcriptSessionCommon.toolChrome.transcriptToolCallsGroupShowBackground,
+        transcriptSessionCommon.toolChrome.showToolCalls,
     ]);
     const toolRouteCommon = React.useMemo(() => transcriptSessionCommon.toolRoute, [
         transcriptSessionCommon.toolRoute.messagesById,
@@ -120,16 +124,15 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
         }
         : null;
     const previewCount = resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCount);
-    const previewMessages = React.useMemo(() => {
-        if (expanded || previewCount <= 0) return [];
-        return props.toolMessages.slice(-previewCount);
-    }, [expanded, previewCount, props.toolMessages]);
-
-    const hiddenCount = expanded ? 0 : Math.max(0, count - previewMessages.length);
-    const showExpandButton = !expanded && hiddenCount > 0;
+    const presentation = React.useMemo(() => {
+        return resolveToolCallsGroupPresentation({ toolCalls: props.toolMessages, expanded, collapsedPreviewCount: previewCount,
+            showToolCalls: props.toolChromeCommon.showToolCalls });
+    }, [expanded, previewCount, props.toolMessages, props.toolChromeCommon.showToolCalls]);
+    const previewMessages = expanded ? EMPTY_PREVIEW_MESSAGES : presentation.visibleToolCalls;
+    const { hiddenCount, showExpandMore: showExpandButton, showBody } = presentation;
     const showCollapsedPreview = previewMessages.length > 0;
     const { setExpanded } = props;
-    const onCollapse = React.useCallback(() => setExpanded(false), [setExpanded]);
+    const onToggleExpanded = React.useCallback(() => setExpanded(!expanded), [expanded, setExpanded]);
     const onExpand = React.useCallback(() => setExpanded(true), [setExpanded]);
     const previewSidechainIds = React.useMemo(() => {
         return resolveGroupedPreviewSidechainIds({
@@ -180,19 +183,17 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                 status={props.status}
                 count={count}
                 expanded={expanded}
-                onCollapse={onCollapse}
+                onToggleExpanded={onToggleExpanded}
+                showToolCalls={props.toolChromeCommon.showToolCalls}
             />
 
-            <View style={[styles.contentRow, normalizedChromeMode === 'activity_feed' ? styles.contentRowFeed : styles.contentRowCards]}>
+            {showBody ? <View style={[styles.contentRow, normalizedChromeMode === 'activity_feed' ? styles.contentRowFeed : styles.contentRowCards]}>
                 <View style={styles.contentGutter}>
                     <View style={styles.gutterLine} />
                 </View>
                 <View style={styles.contentBody}>
                     {showExpandButton || showCollapsedPreview ? (
                         <View style={[styles.preview, normalizedChromeMode === 'activity_feed' ? styles.previewFeed : styles.previewCards]}>
-                            {showExpandButton ? (
-                                <ToolCallsGroupExpandMoreChrome hiddenCount={hiddenCount} onExpand={onExpand} />
-                            ) : null}
                             {showCollapsedPreview ? previewMessages.map((m) => {
                                 const nestedMessageId = resolveToolRouteMessageId(m);
                                 const toolPinAction = renderToolPinAction(m, nestedMessageId);
@@ -227,6 +228,9 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                                 </View>
                                 );
                             }) : null}
+                            {showExpandButton ? (
+                                <ToolCallsGroupExpandMoreChrome hiddenCount={hiddenCount} onExpand={onExpand} />
+                            ) : null}
                         </View>
                     ) : null}
 
@@ -272,7 +276,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                         </TranscriptCollapsible>
                     ) : null}
                 </View>
-            </View>
+            </View> : null}
         </View>
     );
 });

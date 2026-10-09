@@ -264,7 +264,10 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         lineHeight: 20,
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
+        // The title keeps its width and the subtitle gives way first, but a long title still ends in an
+        // ellipsis on a narrow row instead of pushing the row past its edge (lab `.l12-tl .tt`).
         flexShrink: 0,
+        maxWidth: '70%',
     },
     titleCompact: {
         fontSize: 13,

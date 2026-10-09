@@ -25,9 +25,10 @@ installToolCallsGroupViewCommonModuleMocks({
 });
 
 const interaction = { canSendMessages: true, canApprovePermissions: true } as const;
+// Collect the real host graph before a test starts its React lifetime.
+const { ToolCallsGroupUnitExpandRowWithSessionCommon } = await import('./ToolCallsGroupUnitExpandRow');
 
 async function renderExpandRow(props: Record<string, unknown>) {
-    const { ToolCallsGroupUnitExpandRowWithSessionCommon } = await import('./ToolCallsGroupUnitExpandRow');
     return renderScreen(React.createElement(ToolCallsGroupUnitExpandRowWithSessionCommon, {
         sessionId: 's1',
         groupId: 'toolCalls:t1:m1',

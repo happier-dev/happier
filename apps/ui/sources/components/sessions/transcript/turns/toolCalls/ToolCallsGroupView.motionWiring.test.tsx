@@ -46,14 +46,15 @@ describe('ToolCallsGroupView (real motion and row owners)', () => {
         ] });
         expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(0);
         expect(screen.findAllByType(TranscriptCollapsible)).toHaveLength(0);
-        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
+        expect(screen.findByTestId('transcript-tool-calls-preview-more')).toBeNull();
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
         expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(2);
         expect(screen.findByType(TranscriptCollapsible).props.expanded).toBe(true);
         expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(2);
         await screen.pressByTestIdAsync('transcript-tool-calls-header');
         expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);
         expect(screen.findAllByType(TranscriptEnterWrapper)).toHaveLength(0);
-        expect(screen.findByTestId('transcript-tool-calls-preview-more')).not.toBeNull();
+        expect(screen.findByTestId('transcript-tool-calls-preview-more')).toBeNull();
     });
 
     it('shows the real stack and collapse icon with an actionable expanded header', async () => {
@@ -62,10 +63,10 @@ describe('ToolCallsGroupView (real motion and row owners)', () => {
         const iconNames = () => screen.findAllByType(Icon).map(node => node.props.name);
         expect(iconNames()).toContain('stack-simple');
         expect(iconNames()).not.toContain('caret-up');
-        expect(screen.findByTestId('transcript-tool-calls-header')?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
+        expect(screen.findByTestId('transcript-tool-calls-header')?.props.accessibilityState).toEqual({ expanded: false });
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
         expect(iconNames()).toContain('caret-up');
-        expect(screen.findByTestId('transcript-tool-calls-header')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('transcript-tool-calls-header')?.props.accessibilityState).toEqual({ expanded: true });
         await screen.pressByTestIdAsync('transcript-tool-calls-header');
         expect(iconNames()).not.toContain('caret-up');
         expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);

@@ -116,6 +116,10 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
     ),
 }));
 
+// Match the unit-header harness: collect the real host graph outside an active
+// render so slow source transforms cannot outlive a test's React lifetime.
+await import('./ToolCallsGroupView');
+
 describe('ToolCallsGroupView (collapsed preview)', () => {
     beforeEach(() => {
         storageHookCalls.length = 0;
@@ -311,9 +315,9 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         )
             .map((n) => (n.props as any).testID);
         expect(order).toEqual([
+            'transcript-tool-calls-preview-row',
+            'transcript-tool-calls-preview-row',
             'transcript-tool-calls-preview-more',
-            'transcript-tool-calls-preview-row',
-            'transcript-tool-calls-preview-row',
         ]);
     });
 
@@ -408,7 +412,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         expect(screen.findAllHostsByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
     });
 
-    it('renders no previews when count is 0', async () => {
+    it('renders only a pressable header at zero previews and expands every tool', async () => {
         collapsedPreviewCount = 0;
 
         const toolMessages = [
@@ -416,16 +420,23 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
         ];
 
-        const screen = await renderToolCallsGroupView({
-            toolMessages,
-            setExpanded: vi.fn(),
-        });
-
-        const previews = screen.findAllByTestId('transcript-tool-calls-preview-row');
-        expect(previews).toHaveLength(0);
-
-        const moreRows = screen.findAllHostsByTestId('transcript-tool-calls-preview-more');
-        expect(moreRows).toHaveLength(1);
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
+        function ControlledGroup() {
+            const [expanded, setExpanded] = React.useState(false);
+            return <ToolCallsGroupView id="toolCalls:zero" status="running" toolMessages={toolMessages}
+                metadata={null} sessionId="s1" interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                expanded={expanded} setExpanded={setExpanded} />;
+        }
+        const { renderWithSessionTranscriptSource } = await import('@/dev/testkit');
+        const screen = await renderWithSessionTranscriptSource(<ControlledGroup />);
+        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('transcript-tool-calls-preview-more')).toHaveLength(0);
+        expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(0);
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(2);
+        expect(screen.findAllHostsByTestId('transcript-tool-calls-preview-more')).toHaveLength(0);
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(0);
     });
 
     it('clamps preview count to 15', async () => {
@@ -484,7 +495,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         expect(setExpanded).toHaveBeenCalledWith(true);
     });
 
-    it('does not request expansion when tapping the header while collapsed and hidden rows remain', async () => {
+    it('requests expansion when tapping the header while collapsed and hidden rows remain', async () => {
         collapsedPreviewCount = 1;
 
         const toolMessages = [
@@ -499,9 +510,8 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             setExpanded,
         });
 
-        const header = screen.findByTestId('transcript-tool-calls-header');
-        expect(header?.props.onPress).toBeUndefined();
-        expect(setExpanded).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(setExpanded).toHaveBeenCalledWith(true);
     });
 
     it('preserves nested route identities while the source withholds navigation', async () => {

@@ -53,6 +53,23 @@ async function renderHeaderRow(props: Record<string, unknown>) {
 }
 
 describe('ToolCallsGroupUnitHeaderRow', () => {
+    it('keeps a hidden running group quiet while preserving error recovery', async () => {
+        const common = createTranscriptSessionCommonPropsFixture();
+        const screen = await renderHeaderRow({
+            ...common,
+            toolChromeCommon: { ...common.toolChromeCommon, showToolCalls: false },
+            toolMessages: [createToolCallMessageFixture({ id: 'running' })],
+        });
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
+        expect(screen.findByTestId('transcript-tool-calls-header')).not.toBeNull();
+        await screen.update(React.createElement(ToolCallsGroupUnitHeaderRowWithSessionCommon, {
+            sessionId: 's1', groupId: 'group', metadata: null, interaction, expanded: false, setExpanded: vi.fn(),
+            ...common, toolChromeCommon: { ...common.toolChromeCommon, showToolCalls: false },
+            toolMessages: [createToolCallMessageFixture({ id: 'running' }),
+                createToolCallMessageFixture({ id: 'error', tool: { ...createToolCallMessageFixture().tool, state: 'error' } })],
+        }));
+        expect(screen.findByTestId('tool-calls-group-status:error')).not.toBeNull();
+    });
     it('shows the tool-calls title with count and a completed status icon when all tools completed', async () => {
         const screen = await renderHeaderRow({
             toolMessages: [
@@ -211,7 +228,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
     });
 
-    it('keeps the header non-pressable while collapsed and collapses via setExpanded(false) when expanded', async () => {
+    it('expands via the collapsed header and collapses via the expanded header', async () => {
         const setExpanded = vi.fn();
         const collapsed = await renderHeaderRow({
             toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
@@ -219,8 +236,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             setExpanded,
         });
 
-        const collapsedHeader = collapsed.findByTestId('transcript-tool-calls-header') as any;
-        expect(collapsedHeader?.props.onPress).toBeUndefined();
+        expect(collapsed.findByTestId('transcript-tool-calls-header')?.props.accessibilityState).toEqual({ expanded: false });
+        await collapsed.pressByTestIdAsync('transcript-tool-calls-header');
+        expect(setExpanded).toHaveBeenCalledWith(true);
 
         const expanded = await renderHeaderRow({
             toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
