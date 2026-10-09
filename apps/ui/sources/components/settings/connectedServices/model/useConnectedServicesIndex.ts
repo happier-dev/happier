@@ -15,9 +15,13 @@ import {
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPreferredLanguage, t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 
 import {
     buildConnectedServicesIndexModel,
@@ -36,12 +40,19 @@ import { resolveConnectedServiceRegistryEntryDisplayName } from './resolveConnec
  */
 export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached' }>) {
     const profile = useProfile();
+    const scope = useActiveServerAccountScope();
+    const appShellProjection = useAppShellPluginUiProjection();
+    const sourceMachineId = options.agents === 'load'
+        && appShellProjection.accountLifetime?.isCurrent()
+        && areServerAccountScopesEqual(appShellProjection.accountLifetime.scope, scope)
+        && selectActiveServerAccountScopeForServer(scope, appShellProjection.serverId)
+        ? appShellProjection.machineId : null;
+    const purposeCatalog = useConnectedAccountCatalog('purposes', scope, { sourceMachineId });
     const settings = useSettingsSelector((settings) => ({
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
         connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
     }));
-    const appShellProjection = useAppShellPluginUiProjection();
     const registrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const locale = getPreferredLanguage();
@@ -88,7 +99,7 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
     }, [transport, registryEntries, legacyServices]);
 
     const agentUses = React.useMemo((): readonly ConnectedServicesIndexAgentUse[] | null => {
-        if (!agentsKnown) return null;
+        if (!agentsKnown || purposeCatalog.status !== 'ready' || purposeCatalog.stale || !purposeCatalog.value) return null;
         return agentEntries
             .filter((agent) => agent.connectedAccounts.length > 0)
             .map((agent) => ({
@@ -98,9 +109,10 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
                 defaults: agent.identity
                     ? resolveAgentConnectedAccountPurposeDefaults({
                         settings: {
-                            connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
                             connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+                            connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
                         },
+                        purposeBindings: purposeCatalog.value,
                         agentId: agent.agentId,
                         consumer: agent.identity,
                         declarations: agent.connectedAccounts,
@@ -110,8 +122,11 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
     }, [
         agentEntries,
         agentsKnown,
-        settings.connectedAccountPurposeBindingsV1,
+        purposeCatalog.status,
+        purposeCatalog.stale,
+        purposeCatalog.value,
         settings.connectedServicesDefaultAuthByAgentIdV1,
+        settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
     ]);
 
     const indexModel = React.useMemo(() => buildConnectedServicesIndexModel({
@@ -127,7 +142,6 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         resolveFallbackEntry: getGeneratedLegacyConnectedServiceRegistryFallback,
         presentDiagnostics: (entry) => presentConnectedServiceIndexDiagnostics({
             entry,
-            registryErrorReason: registrySnapshot.errorReason,
         }),
         loadingLabel: t('common.loading'),
         agentUses,
@@ -141,12 +155,12 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         // The labels are localized.
         locale,
         localizePluginText,
-        registrySnapshot.errorReason,
         agentUses,
     ]);
 
     return {
         indexModel,
+        purposeCatalog,
         transport,
         agentEntries,
         agentsKnown,
