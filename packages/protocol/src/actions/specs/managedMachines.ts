@@ -17,6 +17,8 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.references.get': 'Review managed machine dependencies',
   'machines.managed.inspect': 'Check managed machine now',
   'machines.managed.bootstrap.retry': 'Retry Happier installation',
+  'machines.managed.setup.skip': 'Continue without setup',
+  'machines.environment.apply': 'Set up from a preset',
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
   'machines.managed.rebuild': 'Rebuild Dev Container',
@@ -28,11 +30,12 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
 
 export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   const effect = actionId === 'machines.managed.acquire'
+    || actionId === 'machines.environment.apply' || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
     || ['machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'].includes(actionId);
   const account = actionId === 'machines.provisioners.list'
     || actionId === 'machines.managed.list' || actionId === 'machines.managed.get'
-    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get';
+    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip';
   return {
     id: actionId,
     title: titles[actionId],
@@ -56,7 +59,7 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
     // This requester-private census is assembled by the Account's existing
     // readers; it has no server endpoint that could read E2EE references.
-    ...(actionId === 'machines.managed.references.get' ? {} : {
+    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.environment.apply' ? {} : {
       serverTransport: { method: 'POST' as const, path: managedMachineActionEndpointPathV1(actionId) },
     }),
     ...(effect ? { operation: {

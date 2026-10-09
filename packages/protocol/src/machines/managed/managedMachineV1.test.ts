@@ -19,6 +19,22 @@ describe('managed resource persistence and input contracts', () => {
     creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
   };
+  it('retains the exact preset environment and independent setup outcome on the creation row', () => {
+    const setup = { ...row, preset: { id: 'preset', revision: 4 }, enrolledMachineId: 'guest',
+      environmentSetup: { environment: { setupScript: 'echo prepared' }, state: 'failed', errorCode: 'setup_failed' } };
+    expect(schema.parse(setup)).toEqual(setup);
+    expect(createStoredReadSchema(schema).parse({ ...setup, environmentSetup: { ...setup.environmentSetup, future: true } })).toEqual(setup);
+    expect(schema.safeParse({ ...setup, preset: undefined }).success).toBe(false);
+    expect(schema.safeParse({ ...setup, environmentSetup: { ...setup.environmentSetup, state: 'succeeded', errorCode: 'setup_failed' } }).success).toBe(false);
+  });
+  it.each(['succeeded', 'failed', 'skipped'] as const)('retains historical %s setup when lifecycle retires the current enrollment', state => {
+    const retired = { ...row, creationState: 'retired', allocation: 'confirmed-absent', desired: 'delete',
+      preset: { id: 'preset', revision: 4 }, environmentSetup: { environment: { setupScript: 'echo admitted' }, state,
+        operation: { operationId: 'finished-setup' }, ...(state === 'failed' ? { errorCode: 'setup_failed' } : {}) } };
+    expect(schema.parse(retired)).toEqual(retired);
+    expect(createStoredReadSchema(schema).parse({ ...retired, environmentSetup: { ...retired.environmentSetup, future: true } })).toEqual(retired);
+    expect(schema.safeParse({ ...retired, preset: undefined }).success).toBe(false);
+  });
   it('captures each distinct purpose and its connection basis without admitting that basis as a selection', () => {
     const credentials = ['cloud', 'cua'].map(purpose => ({
       purpose: { consumer: row.launch.provider, purpose },

@@ -1,7 +1,14 @@
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
-export type { MemorySessionSnapshotV1, MemoryAccountContextV1, MemoryInheritedContextV1, MemoryLibraryActionPortV1 } from './memoryDocumentActions.js';
+import type { AcpCatalogSnapshotV1, AcpCatalogRowMutationV1 } from '../../acp/catalog/catalogRowsV1.js';
+import type { RequesterWorkAttributionV1 } from '../../machines/requesterWorkAttributionV1.js';
+import type { UsageSourceActionPort } from './usageSourceActions.js';
+export type { MemorySessionSnapshotV1, MemoryAccountContextV1, MemoryInheritedContextV1, MemoryScopeContextV1, MemoryLibraryActionPortV1 } from './memoryDocumentActions.js';
+export type { MemoryScopeTargetV1 } from '../../prompts/library/memoryActionsV1.js';
 import type { SetSessionPinRequest } from '../../sessions/organization/mutations.js';
 import type { ProfileActionRequestV1 } from '../../profiles/profileActionsV1.js';
+import type { McpServerActionRequestV1 } from '../../mcp/servers/serverActionsV1.js';
+import type { ProviderActionRequestV1 } from '../../providers/providerActionsV1.js';
+import type { RemoteHostActionRequestV1 } from '../../remoteHosts/remoteHostActionsV1.js';
 import type { FilesystemActionId } from '../filesystemActionFamily.js';
 import type { SessionStateFieldActionWrite } from '../sessionStateFieldActions.js';
 import type { ProjectContextUpdateInputV1, ProjectContextUpdateOutputV1 } from '../../projects/projectContextV1.js';
@@ -15,6 +22,7 @@ import type { HomeHubArtifactPortV1 } from '../../home/homeHubArtifactV1.js';
 import type { WidgetActionSurfacePortV1, WidgetActionInputResolverV1, WidgetCatalogSourceEntryV1, WidgetInstanceActionIdV1 } from '../../widgets/actionsV1.js';
 import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '../../widgets/widgetInstanceV1.js';
 import type { WidgetDefinitionActionDepsV1 } from '../../widgets/definitionActionsV1.js';
+import type { WidgetLayoutFragmentActionDepsV1 } from '../../widgets/fragmentActionsV1.js';
 import type { MachinesAgentsSignInStartInput, MachinesAgentsSignInStatusInput, MachinesAgentsSignInStartOutput, AgentSignInStatusResponse, MachinesAgentsSignInCancelInput, MachinesAgentsSignInCancelOutput } from '../../daemon/agentSignIn.js';
 import type { z } from 'zod';
 import type {
@@ -651,6 +659,8 @@ export type ActionExecutorContext = Readonly<{
   executionRunWorkflowObservationSink?: unknown;
   /** Host-private admitted Workflow identity, not caller Action input. */
   executionRunWorkflowRunId?: string;
+  /** Accepted host-private work observation; never Action input or execution authority. */
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
 
   /**
    * Optional explicit server routing hint. When omitted, deps may resolve serverId
@@ -876,6 +886,8 @@ type ExecutionRunActionOptions = Readonly<{
   workflowObservationSink?: unknown;
   /** Real admitted Workflow identity, host-only even without an observation sink. */
   workflowRunId?: string;
+  /** In-process accepted attribution; never serialized into a Run request. */
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   /** Absolute host-admitted delegation depth, never public Run input. */
   workDepth?: number;
   agentStartContext?: AgentStartContextV1;
@@ -934,8 +946,15 @@ export type WorkflowActionExecute = (args: WorkflowActionExecuteArgs) => Promise
 >;
 
 export type ActionExecutorDeps = Readonly<{
+  /** Authenticated source ownership, independent of the Machine executing a persisted read. */
+  resolveApiTokenGrantSessionMachineId?: (args: Readonly<{
+    actionId: ActionId;
+    sessionId: string;
+    context: ActionExecutorContext;
+  }>) => Promise<string | null>;
   /** Captured Account Artifact authority; memory content and approval decisions remain canonical. */
   memoryLibrary?: import('./memoryDocumentActions.js').MemoryLibraryActionPortV1;
+  usageActions?: import('./usageActions.js').UsageActionPorts;
   artifactFolders?: import('../../prompts/library/promptFolderActionsV1.js').ArtifactFolderActionPortV1;
   /** A client relays admitted typed-field discovery to the daemon's same options owner. */
   readAdmittedInputTypeOptions?: (request: Readonly<{ input: Readonly<Record<string, unknown>>;
@@ -954,7 +973,7 @@ export type ActionExecutorDeps = Readonly<{
   /** Captured authenticated Home/Account authority; never taken from widget input. */
   widgetAccountScope?: () => Readonly<{ serverId: string; accountId: string }> | null;
   widgetSurfaceActions?: Partial<Readonly<Record<WidgetSurfaceRefV1['owner']['kind'], WidgetActionSurfacePortV1>>>;
-  widgetDashboards?: import('../../widgets/actionsV1.js').WidgetDashboardActionPortV1;
+  widgetAreaLayouts?: import('../../widgets/actionsV1.js').WidgetAreaLayoutActionPortV1;
   widgetInputs?: WidgetActionInputResolverV1;
   widgetCatalog?: Readonly<{ list(surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal, boundSession?: Readonly<{ serverId: string; sessionId: string }>): Promise<readonly WidgetCatalogSourceEntryV1[] | ActionExecuteFailure> }>;
   /** Host-captured viewer Account inventory for an already-admitted widget field. */
@@ -962,6 +981,7 @@ export type ActionExecutorDeps = Readonly<{
     fieldPath: string; context: ActionExecutorContext }>) => Promise<readonly import('../../inputs/inputFields.js').InputOption[] | ActionExecuteFailure>;
   widgetRefresh?: (args: Readonly<{ ref: WidgetInstanceRefV1; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
   widgetDefinitionArtifacts?: WidgetDefinitionActionDepsV1['widgetDefinitionArtifacts'];
+  widgetLayoutFragmentArtifacts?: WidgetLayoutFragmentActionDepsV1['widgetLayoutFragmentArtifacts'];
   readSessionWidgetDefinitionSource?: WidgetDefinitionActionDepsV1['readSessionWidgetDefinitionSource'];
   describeWidgetDefinitionPlacements?: WidgetDefinitionActionDepsV1['describeWidgetDefinitionPlacements'];
   /** Current client inventory and captured Account settings; the Home layout owner decides mutations. */
@@ -1142,6 +1162,9 @@ export type ActionExecutorDeps = Readonly<{
   nextPendingSession?: (context: ActionExecutorContext) => Promise<Readonly<{ status: 'opened' | 'none' | 'unavailable' }>>;
   launchProfilePublish?: (input: Readonly<{ profileId: string }>, options?: Readonly<{ signal?: AbortSignal; context?: ActionExecutorContext }>) => Promise<Readonly<{ artifactId: string }>>;
   profileActionExecute?: (request: ProfileActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  mcpServerAction?: (request: McpServerActionRequestV1) => Promise<ActionExecuteResult>;
+  providerActionExecute?: (request: ProviderActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  remoteHostActionExecute?: (request: RemoteHostActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   roleActionExecute?: (args: Readonly<{
     actionId: RoleActionIdV1;
     input: unknown;
@@ -1533,6 +1556,14 @@ export type ActionExecutorDeps = Readonly<{
     sessionId: string; localId: string; serverId?: string; targetExecutionRunId?: string;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  sessionPendingResetStartSet?: (args: Readonly<{
+    sessionId: string; localId: string; serverId?: string;
+    reset: import('../../sessions/pending/pendingRequestedActionV1.js').PendingResetStartBindingV1;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
+  sessionPendingResetStartCancel?: (args: Readonly<{
+    sessionId: string; localId: string; serverId?: string; context: ActionExecutorContext;
+  }>) => Promise<unknown>;
   sessionPermissionModeSet?: (args: Readonly<{
     sessionId: string;
     context?: ActionExecutorContext;
@@ -1882,14 +1913,19 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   /**
-   * Compare-and-set the Account's custom ACP catalog (`acpCatalogSettingsV1`) through the host's
-   * Account settings writer. `mutate` receives the latest stored value and returns the next one;
-   * the host applies it once, with its own encryption mode and version handling.
+   * Read the captured Account's ACP row snapshot without activating or mutating it.
+   */
+  readAccountAcpCatalog?: (args: Readonly<{ signal?: AbortSignal }>) => Promise<AcpCatalogSnapshotV1>;
+  /**
+   * Compare-and-set the Account's ACP row through its canonical host owner. `mutate` receives
+   * an ephemeral v2 authoring projection; the host owns encryption and row revisions.
    */
   updateAccountAcpCatalogSettings?: (args: Readonly<{
     mutate: (current: unknown) => unknown;
     signal?: AbortSignal;
-  }>) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
+    expectedRevision?: AcpCatalogRowMutationV1['expectedRevision'];
+    sourceSettingsVersion?: AcpCatalogRowMutationV1['sourceSettingsVersion'];
+  }>) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string; error: string; details?: ActionExecuteFailure['details'] }>>;
   workBoardArtifacts?: Pick<WorkBoardArtifactPortV1, 'read' | 'apply' | 'readBoardAccess'> & Partial<Pick<WorkBoardArtifactPortV1, 'readBoard'>>;
   promptDocGet?: (args: Readonly<{ artifactId: string; signal?: AbortSignal }>) => Promise<unknown>;
   promptDocCreate?: (args: Readonly<{ title: string; markdown: string; folderId?: string | null;
@@ -2125,6 +2161,9 @@ export type ActionExecutorDeps = Readonly<{
     }>) => Promise<unknown>;
   }>;
 
+  /** Exact Home/Machine transport; client-local dismissal requires the mounted client owner. */
+  usageSourceAction?: UsageSourceActionPort;
+
   /** Declared preferences through the captured Account owner or the answering device's local owner. */
   settingsDeclarationAction?: (args: Readonly<{
     actionId: SettingsDeclarationActionIdV1;
@@ -2261,6 +2300,12 @@ export type ActionExecutorDeps = Readonly<{
   managedMachineAction?: (args: Readonly<{
     actionId: ManagedMachineActionIdV1;
     input: ManagedMachineActionInputV1<ManagedMachineActionIdV1>;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+  /** Exact enrolled target executes the admitted preset environment through its finite owner. */
+  machineEnvironmentApply?: (args: Readonly<{
+    input: import('../../machines/managed/actionsV1.js').MachineEnvironmentApplyInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;

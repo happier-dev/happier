@@ -17,6 +17,7 @@ import { MachineInstallationProofV1Schema } from '../identity/installationIdenti
 import { SocketRpcMachineAdmissionContextV1Schema } from '../machineAccessV1.js';
 import { MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { MachineReferenceCensusV1Schema } from '../machineReferenceCensusV1.js';
+import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
 export { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 
 const id = () => mini.string().check(mini.trim(), mini.minLength(1));
@@ -24,6 +25,17 @@ const revision = () => mini.int().check(mini.gte(0));
 export const ManagedMachineActionIdV1Schema = lazyDefinition(() => mini.enum(MANAGED_MACHINE_ACTION_IDS_V1));
 const target = () => ({ homeId: id(), managedId: id() });
 const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: ManagedControllerV1Schema });
+export const MachineEnvironmentApplyInputV1Schema = lazyZodSchema(() => z.object({
+  homeId: id(), machineId: id(), presetId: id(), presetRevision: revision(),
+}).strict());
+export type MachineEnvironmentApplyInputV1 = z.infer<typeof MachineEnvironmentApplyInputV1Schema>;
+export const MachineEnvironmentApplyResultV1Schema = lazyZodSchema(() => z.object({ operationId: id(), terminalId: mini.optional(id()) }).strict());
+export const MachineEnvironmentResolveResultV1Schema = lazyZodSchema(() => z.object({ environment: MachineEnvironmentV1Schema, managedId: mini.optional(id()) }).strict());
+export const MachineEnvironmentReportInputV1Schema = lazyZodSchema(() => MachineEnvironmentApplyInputV1Schema.extend({
+  managedId: id(), state: z.enum(['running', 'succeeded', 'failed']),
+  operation: z.object({ operationId: id() }).strict(), errorCode: z.string().min(1).optional(),
+}).strict());
+export type MachineEnvironmentReportInputV1 = z.infer<typeof MachineEnvironmentReportInputV1Schema>;
 
 // Classic roots are the actual public Action-spec consumer seam. Internal
 // fields remain one Mini tree; stored projections derive from these owners.
@@ -117,6 +129,8 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.references.get': ManagedGetInputV1Schema,
   'machines.managed.inspect': ManagedGetInputV1Schema,
   'machines.managed.bootstrap.retry': ManagedMutationInputV1Schema,
+  'machines.managed.setup.skip': ManagedMutationInputV1Schema,
+  'machines.environment.apply': MachineEnvironmentApplyInputV1Schema,
   'machines.managed.cancel': ManagedCancelInputV1Schema,
   'machines.managed.power.set': ManagedPowerInputV1Schema,
   'machines.managed.rebuild': ManagedRebuildInputV1Schema,
@@ -135,6 +149,8 @@ export const ManagedMachineActionOutputSchemasV1 = {
   'machines.managed.references.get': lazyZodSchema(() => z.lazy(() => MachineReferenceCensusV1Schema)),
   'machines.managed.inspect': ManagedInspectOutputV1Schema,
   'machines.managed.bootstrap.retry': ManagedAcceptedV1Schema,
+  'machines.managed.setup.skip': ManagedGetOutputV1Schema,
+  'machines.environment.apply': MachineEnvironmentApplyResultV1Schema,
   'machines.managed.cancel': ManagedCancelOutputV1Schema,
   'machines.managed.power.set': lazyZodSchema(() => z.lazy(() => ManagedIntentResultSchema)),
   'machines.managed.rebuild': lazyZodSchema(() => z.lazy(() => ManagedIntentResultSchema)),

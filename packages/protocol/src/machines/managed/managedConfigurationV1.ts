@@ -17,6 +17,7 @@ import {
   type ProviderNativeOptionFactsV1,
 } from './providerFactsV1.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
+import { MachineEnvironmentV1Schema, type MachineEnvironmentV1 } from './machineEnvironmentV1.js';
 
 const id = () => z.string().trim().min(1);
 const revision = () => z.number().int().nonnegative();
@@ -48,6 +49,7 @@ export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$
     nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
     prerequisites: z.array(ManagedPrerequisiteV1Schema), retentionCapabilities: RetentionCapabilitiesV1Schema,
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
+    environment: MachineEnvironmentV1Schema.optional(),
     preset: z.object({ id: id(), revision: revision(), name: id().optional() }).strict().optional(),
   }).strict();
 }
@@ -67,6 +69,7 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
   prices?: readonly ProviderPriceFactV1[];
   localResources?: ManagedLocalResourceFactsV1;
   nativeFacts?: ProviderNativeOptionFactsV1;
+  environment?: MachineEnvironmentV1;
   preset?: Readonly<{ id: string; revision: number; name?: string }> & MachineRetentionOverrideV1;
   machineOverride?: MachineRetentionOverrideV1; categoryPreferences?: MachineRetentionDefaultsV1;
 }>) {
@@ -80,6 +83,7 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
     ...(input.prices !== undefined ? { prices: input.prices } : {}),
     ...(input.localResources !== undefined ? { localResources: input.localResources } : {}),
     ...(input.nativeFacts !== undefined ? { nativeFacts: input.nativeFacts } : {}),
+    ...(input.environment !== undefined ? { environment: input.environment } : {}),
     ...(input.preset ? { preset: { id: input.preset.id, revision: input.preset.revision,
       ...(input.preset.name !== undefined ? { name: input.preset.name } : {}) } } : {}),
   });

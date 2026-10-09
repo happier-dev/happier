@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
-import { ProjectSetupConsentFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
+import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
 import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { ProjectCommandSourceV1Schema } from '../../workspaces/projectSetup/projectManifestV1.js';
@@ -97,7 +97,8 @@ const ActionOperationErrorCodeV1Schema = lazyZodSchema(() => z.string().trim().m
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.object({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().trim().min(1).max(ACTION_OPERATION_ERROR_MAX_LENGTH_V1),
-  details: z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectWorkerNoAcceptanceFailureDetailsV1Schema]).optional(),
+  details: z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
+    ProjectWorkerNoAcceptanceFailureDetailsV1Schema]).optional(),
 }).strict().refine(failure => !failure.details || (failure.details.kind === 'pendingApproval'
   ? failure.details.code === failure.errorCode
   : readProjectWorkerNoAcceptanceFailureV1({ ok: false, ...failure }) !== null), {
@@ -164,6 +165,19 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
   }).strict(),
   ProjectCommandAttachmentV1Schema,
   z.object({
+    kind: z.literal('machineEnvironment'),
+    serverId: ActionOperationIdentifierV1Schema,
+    machineId: ActionOperationIdentifierV1Schema,
+    preset: z.object({ id: ActionOperationIdentifierV1Schema, revision: z.number().int().nonnegative() }).strict(),
+    managedId: ActionOperationIdentifierV1Schema.optional(),
+    terminalId: ActionOperationIdentifierV1Schema.optional(),
+    terminals: z.object({
+      install: ActionOperationIdentifierV1Schema.optional(),
+      setup: ActionOperationIdentifierV1Schema.optional(),
+    }).strict().optional(),
+    exitCode: z.number().int().optional(),
+  }).strict(),
+  z.object({
     kind: z.literal('projectService'),
     purpose: z.literal('relocation'),
     workspace: WorkspaceAddressV1Schema,
@@ -171,6 +185,15 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     currentTarget: LocalServiceManagedServiceActionTargetV1Schema.optional(),
   }).strict(),
 ]).superRefine((reference, context) => {
+  if (reference.kind === 'machineEnvironment' && reference.exitCode !== undefined && !reference.terminalId) {
+    context.addIssue({ code: 'custom', path: ['exitCode'],
+      message: 'Observed process exit requires its actual terminal association.' });
+  }
+  if (reference.kind === 'machineEnvironment' && reference.terminals && reference.terminalId
+    && !Object.values(reference.terminals).includes(reference.terminalId)) {
+    context.addIssue({ code: 'custom', path: ['terminalId'],
+      message: 'Current setup output must be one of its observed phase terminals.' });
+  }
   if (reference.kind === 'projectService' && reference.declaration.workspaceRefId !== reference.workspace.workspaceId) {
     context.addIssue({ code: 'custom', path: ['declaration', 'workspaceRefId'],
       message: 'Service relocation must retain the selected Workspace declaration.' });

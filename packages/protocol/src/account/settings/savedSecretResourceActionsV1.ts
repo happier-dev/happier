@@ -9,6 +9,13 @@ import { readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { ProfileRecordIdV1Schema, ProfileReferenceGuardRevisionV1Schema, ProfileRowMutationV1Schema, ProfileRowRevisionV1Schema } from '../../profiles/profileRecordSchemaV1.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactActionsV1.js';
+import { McpServerCatalogRowMutationV1Schema } from '../../mcp/servers/catalogSchemasV1.js';
+import { AcpCatalogRowMutationV1Schema } from '../../acp/catalog/catalogSchemasV1.js';
+import { ProviderConnectionsRowMutationV1Schema } from '../../providers/connections/catalogSchemasV1.js';
+import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogKeyV1 } from '../../connect/connectedAccountCatalogSchemasV1.js';
+import { parseSavedSecretRefV1 } from './savedSecretReferenceV1.js';
+import { RemoteHostCatalogRowMutationV1Schema } from '../../remoteHosts/remoteHostSchemasV1.js';
+import { NotificationChannelCatalogMutationV1Schema } from './notificationChannelSchemasV1.js';
 
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';
 export { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';
@@ -16,6 +23,26 @@ export const SharedSavedSecretActionIdV1Schema = lazyZodSchema(() => z.enum(SHAR
 
 const ResourceIdSchema = lazyZodSchema(() => z.string().min(1).max(128));
 const GrantIdSchema = lazyZodSchema(() => z.string().min(1));
+
+export const SavedSecretCatalogRevisionsV1Schema = lazyZodSchema(() => z.object({
+  mcp: ProfileReferenceGuardRevisionV1Schema,
+  acp: ProfileReferenceGuardRevisionV1Schema,
+  providerConnections: ProfileReferenceGuardRevisionV1Schema,
+  connectedConfigurations: ProfileReferenceGuardRevisionV1Schema,
+  connectedPurposes: ProfileReferenceGuardRevisionV1Schema,
+}).strict());
+export type SavedSecretCatalogRevisionsV1 = z.infer<typeof SavedSecretCatalogRevisionsV1Schema>;
+
+const SavedSecretRemoteHostReferenceCensusV1Schema = lazyZodSchema(() => z.object({
+  revision: ProfileReferenceGuardRevisionV1Schema,
+  resourceRefs: z.array(z.string().min(1)),
+}).strict());
+const SavedSecretNotificationChannelReferenceCensusV1Schema = lazyZodSchema(() => z.object({
+  revision: ProfileReferenceGuardRevisionV1Schema,
+  resourceRefs: z.array(z.string().min(1).refine(value => {
+    try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
+  }, 'Expected a shared Saved Secret resource reference')),
+}).strict());
 
 /** Complete opened Profile inventory; the guard covers concurrent new identities. */
 export const SavedSecretReferenceCensusV1Schema = lazyZodSchema(() => z.object({
@@ -28,6 +55,10 @@ export const SavedSecretReferenceCensusV1Schema = lazyZodSchema(() => z.object({
   }).strict(),
   /** Only explicitly reached definitions, never the automatic shared catalog. */
   artifacts: z.array(ArtifactRevisionV1Schema.extend({ artifactId: z.string().min(1) }).strict()).optional(),
+  /** When catalog references are reached, all five authorities are captured. */
+  catalogs: SavedSecretCatalogRevisionsV1Schema.optional(),
+  remoteHosts: SavedSecretRemoteHostReferenceCensusV1Schema.optional(),
+  notificationChannels: SavedSecretNotificationChannelReferenceCensusV1Schema.optional(),
 }).strict().superRefine((value, context) => {
   const ids = new Set<string>();
   value.profiles.rows.forEach((row, index) => {
@@ -41,6 +72,40 @@ export const SavedSecretReferenceCensusV1Schema = lazyZodSchema(() => z.object({
   });
 }));
 export type SavedSecretReferenceCensusV1 = z.infer<typeof SavedSecretReferenceCensusV1Schema>;
+
+/** Promotion of existing catalog references does not claim a Profile inventory. */
+export const SavedSecretCatalogReferenceCensusV1Schema = lazyZodSchema(() => z.object({
+  scope: z.literal('catalogs'),
+  accountMode: z.enum(['plain', 'e2ee']),
+  catalogs: SavedSecretCatalogRevisionsV1Schema.partial(),
+  remoteHosts: SavedSecretRemoteHostReferenceCensusV1Schema.optional(),
+  notificationChannels: SavedSecretNotificationChannelReferenceCensusV1Schema.optional(),
+}).strict());
+export type SavedSecretCatalogReferenceCensusV1 = z.infer<typeof SavedSecretCatalogReferenceCensusV1Schema>;
+export const SavedSecretPromoteReferenceCensusV1Schema = lazyZodSchema(() => z.union([
+  SavedSecretReferenceCensusV1Schema, SavedSecretCatalogReferenceCensusV1Schema,
+]));
+export type SavedSecretPromoteReferenceCensusV1 = z.infer<typeof SavedSecretPromoteReferenceCensusV1Schema>;
+
+function connectedCatalogSecretMutationSchema(key: ConnectedAccountCatalogKeyV1) {
+  return ConnectedAccountCatalogRowMutationV1Schema.safeExtend({
+    // The outer resource transaction is the sole paired Settings writer.
+    settingsMutation: z.never().optional(),
+  }).superRefine((mutation, context) => {
+    if (mutation.content?.t === 'plain' && mutation.content.v.key !== key) {
+      context.addIssue({ code: 'custom', path: ['content'], message: 'Catalog content must match its mutation arm' });
+    }
+  });
+}
+
+export const SavedSecretCatalogMutationsV1Schema = lazyZodSchema(() => z.object({
+  mcp: McpServerCatalogRowMutationV1Schema.optional(),
+  acp: AcpCatalogRowMutationV1Schema.optional(),
+  providerConnections: ProviderConnectionsRowMutationV1Schema.optional(),
+  connectedConfigurations: connectedCatalogSecretMutationSchema('configurations').optional(),
+  connectedPurposes: connectedCatalogSecretMutationSchema('purposes').optional(),
+}).strict());
+export type SavedSecretCatalogMutationsV1 = z.infer<typeof SavedSecretCatalogMutationsV1Schema>;
 
 export const SavedSecretResourceRecipientEnvelopeInputV1Schema = lazyZodSchema(() => z.object({
   recipientAccountId: z.string().min(1),
@@ -70,12 +135,102 @@ export const SharedSavedSecretCreateInputV1Schema = lazyZodSchema(() => z.object
 
 export type SharedSavedSecretCreateInputV1 = z.infer<typeof SharedSavedSecretCreateInputV1Schema>;
 
+/** Source identities for equivalent reference rewrites owned by the promotion transaction. */
+export const SavedSecretPersonalPromotionsV1Schema = lazyZodSchema(() => z.array(z.object({
+  personalSecretId: z.string().min(1).refine(value => {
+    try { return parseSavedSecretRefV1(value).kind === 'personal'; } catch { return false; }
+  }, 'Expected a personal Saved Secret identity'),
+  resourceId: ResourceIdSchema,
+}).strict()).superRefine((promotions, context) => {
+  const sources = new Set<string>();
+  const destinations = new Set<string>();
+  promotions.forEach((promotion, index) => {
+    if (sources.has(promotion.personalSecretId) || destinations.has(promotion.resourceId)) {
+      context.addIssue({ code: 'custom', path: [index], message: 'Personal promotion source and destination identities must be unique' });
+    }
+    sources.add(promotion.personalSecretId);
+    destinations.add(promotion.resourceId);
+  });
+}));
+export type SavedSecretPersonalPromotionsV1 = z.infer<typeof SavedSecretPersonalPromotionsV1Schema>;
+
 export const SharedSavedSecretPromoteInputV1Schema = lazyZodSchema(() => SharedSavedSecretCreateInputV1Schema.extend({
-  expectedSettingsVersion: z.number().int().nonnegative(),
+  expectedSettingsVersion: z.number().int().nonnegative().optional(),
   nextSettings: AccountSettingsStoredContentEnvelopeSchema.nullable(),
-  referenceCensus: SavedSecretReferenceCensusV1Schema,
+  referenceCensus: SavedSecretPromoteReferenceCensusV1Schema,
   profileMutations: z.array(ProfileRowMutationV1Schema).default([]),
-}).strict());
+  catalogMutations: SavedSecretCatalogMutationsV1Schema.optional(),
+  additionalSavedSecretResources: z.array(SharedSavedSecretCreateInputV1Schema).optional(),
+  personalSecretPromotions: SavedSecretPersonalPromotionsV1Schema.optional(),
+  remoteHostMutation: z.optional(RemoteHostCatalogRowMutationV1Schema),
+  notificationChannelMutation: NotificationChannelCatalogMutationV1Schema.safeExtend({
+    // The outer resource transaction remains the sole paired Settings writer.
+    settingsMutation: z.never().optional(),
+  }).optional(),
+}).strict().superRefine((value, context) => {
+  const catalogOnly = 'scope' in value.referenceCensus;
+  if (catalogOnly) {
+    if (value.nextSettings !== null) context.addIssue({ code: 'custom', path: ['nextSettings'], message: 'Catalog-only promotion cannot write Settings' });
+    if (value.profileMutations.length !== 0) context.addIssue({ code: 'custom', path: ['profileMutations'], message: 'Catalog-only promotion cannot mutate Profiles' });
+    if (value.personalSecretPromotions?.length) context.addIssue({ code: 'custom', path: ['personalSecretPromotions'], message: 'Catalog-only promotion cannot rewrite personal source references' });
+  } else if (value.expectedSettingsVersion === undefined) {
+    context.addIssue({ code: 'custom', path: ['expectedSettingsVersion'], message: 'Full reference census requires captured Settings currentness' });
+  }
+  let mutationCount = 0;
+  for (const key of ['mcp', 'acp', 'providerConnections', 'connectedConfigurations', 'connectedPurposes'] as const) {
+    const mutation = value.catalogMutations?.[key];
+    const captured = value.referenceCensus.catalogs?.[key];
+    if (mutation) {
+      mutationCount += 1;
+      if (captured === undefined || captured !== mutation.expectedRevision) {
+        context.addIssue({ code: 'custom', path: ['catalogMutations', key, 'expectedRevision'], message: 'Catalog mutation must match its captured revision' });
+      }
+      if (catalogOnly && (mutation.expectedRevision === 'absent' || mutation.sourceSettingsVersion !== undefined
+        || 'source' in mutation && mutation.source !== undefined)) {
+        context.addIssue({ code: 'custom', path: ['catalogMutations', key], message: 'Catalog-only promotion changes existing destination authority only' });
+      }
+    } else if (catalogOnly && captured !== undefined) {
+      context.addIssue({ code: 'custom', path: ['referenceCensus', 'catalogs', key], message: 'Catalog-only census captures exactly the mutated catalogs' });
+    }
+  }
+  if (value.remoteHostMutation) {
+    mutationCount += 1;
+    if (value.referenceCensus.remoteHosts?.revision !== value.remoteHostMutation.expectedRevision
+      && !(value.referenceCensus.remoteHosts === undefined && !catalogOnly && value.remoteHostMutation.expectedRevision === 'absent')) {
+      context.addIssue({ code: 'custom', path: ['remoteHostMutation', 'expectedRevision'], message: 'Remote Host mutation must match its captured revision' });
+    }
+  } else if (catalogOnly && value.referenceCensus.remoteHosts !== undefined) {
+    context.addIssue({ code: 'custom', path: ['referenceCensus', 'remoteHosts'], message: 'Catalog-only census captures exactly the mutated catalogs' });
+  }
+  if (value.notificationChannelMutation) {
+    mutationCount += 1;
+    if (value.referenceCensus.notificationChannels?.revision !== value.notificationChannelMutation.expectedRevision) {
+      context.addIssue({ code: 'custom', path: ['notificationChannelMutation', 'expectedRevision'], message: 'Notification channel mutation must match its captured revision' });
+    }
+    if (catalogOnly && (value.notificationChannelMutation.expectedRevision === 'absent'
+      || value.notificationChannelMutation.sourceSettingsVersion !== undefined)) {
+      context.addIssue({ code: 'custom', path: ['notificationChannelMutation'], message: 'Catalog-only promotion changes existing destination authority only' });
+    }
+  } else if (catalogOnly && value.referenceCensus.notificationChannels !== undefined) {
+    context.addIssue({ code: 'custom', path: ['referenceCensus', 'notificationChannels'], message: 'Catalog-only census captures exactly the mutated catalogs' });
+  }
+  if (catalogOnly && mutationCount === 0) {
+    context.addIssue({ code: 'custom', path: ['catalogMutations'], message: 'Catalog-only promotion requires a catalog mutation' });
+  }
+  const resourceIds = new Set([value.resourceId]);
+  value.additionalSavedSecretResources?.forEach((resource, index) => {
+    if (resourceIds.has(resource.resourceId)) {
+      context.addIssue({ code: 'custom', path: ['additionalSavedSecretResources', index, 'resourceId'], message: 'SavedSecret batch identities must be unique' });
+    }
+    resourceIds.add(resource.resourceId);
+  });
+  value.personalSecretPromotions?.forEach((promotion, index) => {
+    if (!resourceIds.has(promotion.resourceId)) {
+      context.addIssue({ code: 'custom', path: ['personalSecretPromotions', index, 'resourceId'], message: 'Personal promotion destination must be a resource in this request' });
+    }
+  });
+}));
+export type SharedSavedSecretPromoteInputV1 = z.infer<typeof SharedSavedSecretPromoteInputV1Schema>;
 
 export const SharedSavedSecretGrantsSetInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: ResourceIdSchema,
@@ -128,6 +283,9 @@ export const SavedSecretResourceEnvelopeRepairOutputV1Schema = SharedSavedSecret
 export const SharedSavedSecretPromoteOutputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1),
   settingsVersion: z.number().int().nonnegative(),
+  remoteHostRevision: z.number().int().nonnegative().optional(),
+  notificationChannelRevision: z.number().int().nonnegative().optional(),
+  catalogRevisions: SavedSecretCatalogRevisionsV1Schema.partial().optional(),
 }).strict());
 export const SharedSavedSecretDeleteOutputV1Schema = lazyZodSchema(() => z.object({ resourceId: z.string() }).strict());
 

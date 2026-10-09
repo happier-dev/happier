@@ -1,4 +1,27 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export { resolveUsageTokenCategories } from './usage/usageTokenCategories.js';
+export {
+  resolveUsageCostBasis,
+  resolveUsageCostFacts,
+  resolveUsageCostFactForMode,
+  resolveEffectiveUsageCostUsd,
+  resolveUsageCostMode,
+  resolveUsageCostPresentationSource,
+  type UsageCostMode,
+  type UsageCostBasis,
+} from './usage/usageCost.js';
+export * from './usage/usageExport.js';
+export * from './usage/usageRecap.js';
+export { composeUsageRecap } from './usage/composeUsageRecap.js';
+export * from './usage/resolveUsagePageAggregation.js';
+export * from './inputs/usageQuery.js';
+export { resolveUsageBucketBounds, resolveUsageCalendarInstant, resolveUsageCalendarDateStart } from './usage/usageCalendar.js';
+export { allocateUsageOutcomes, UsageWorkProjectionSchema, type UsageWorkContribution, type UsageWorkEvidence,
+  type UsageWorkOutcome, type UsageWorkAllocation, type UsageWorkProjection } from './usage/usageOutcomeAllocation.js';
+export { projectUsageWorkIntervals, type UsageWorkIntervalFact, type UsageWorkPermissionFact, type UsageWorkIntervalsInput, type UsageWorkIntervalsProjection } from './usage/usageWorkIntervals.js';
+export { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWork, type UsageHowYouWorkDetailInput, type UsageAcceptedInputFact } from './usage/resolveUsageHowYouWork.js';
+export { projectUsageFootprint, UsageFootprintProjectionSchema, type UsageFootprintProjection } from './usage/usageFootprint.js';
+export * from './connect/connectedServicePoolSelection.js';
 export * from './sessions/context/sessionContextV1.js';
 export * from './scm/entriesHistoryV1.js';
 export * from './sessions/identity/sessionBotV1.js';
@@ -44,6 +67,7 @@ export {
 
 export {
   MachineAgentInventoryItemSchema,
+  MachineAgentInventoryUnavailableSchema,
   MachinesAgentsListInputSchema,
   MachinesAgentsListOutputSchema,
   buildMachineAgentsDetectRequest,
@@ -51,6 +75,7 @@ export {
   projectMachineAgentsDetectResponse,
   MachineAgentInventoryUnavailableError,
   type MachineAgentInventoryItem,
+  type MachineAgentInventoryUnavailable,
   type MachineAgentInventoryDescriptor,
   type MachinesAgentsListInput,
   type MachinesAgentsListOutput,
@@ -472,8 +497,12 @@ export {
 
 export {
   SessionMessageDeliveryResolutionV1Schema,
+  SessionMessageAcceptedDeliveryFactsV1Schema,
+  SessionMessageAcceptedDeliveryContentV1Schema,
   parseSessionMessageDeliveryResolutionV1,
   type SessionMessageDeliveryResolutionV1,
+  type SessionMessageAcceptedDeliveryFactsV1,
+  type SessionMessageAcceptedDeliveryContentV1,
 } from './sessions/messages/sessionMessageDeliveryResolutionV1.js';
 export {
   MESSAGE_ACTION_STRUCTURED_PRESENTATION_SUMMARY_MAX_UTF8_BYTES,
@@ -2633,6 +2662,13 @@ export type { ServerUsageAnalyticsCapabilities } from './features/payload/capabi
 export {
   SessionContextUsageSnapshotV1Schema,
   ServerUsageAnalyticsCapabilitiesSchema,
+  UsageAccountingMetadataSchema,
+  UsageAccountingCoverageReasonSchema,
+  UsageAnalyticsCostFactKindSchema,
+  UsageAnalyticsCostFactSchema,
+  UsageAnalyticsCoverageSchema,
+  UsageAnalyticsContributionSchema,
+  readUsageAccountingMetadata,
   UsageAnalyticsBreakdownDimensionSchema,
   UsageAnalyticsBreakdownEntrySchema,
   UsageAnalyticsBreakdownsSchema,
@@ -2651,6 +2687,12 @@ export {
 } from './usage/index.js';
 export type {
   SessionContextUsageSnapshotV1,
+  UsageAccountingMetadata,
+  UsageAccountingCoverageReason,
+  UsageAnalyticsCostFactKind,
+  UsageAnalyticsCostFact,
+  UsageAnalyticsCoverage,
+  UsageAnalyticsContribution,
   UsageAnalyticsBreakdownDimension,
   UsageAnalyticsBreakdownEntry,
   UsageAnalyticsBreakdowns,
@@ -3266,6 +3308,33 @@ export {
   type McpServersSettingsV1,
   type McpValueRefV1,
 } from './mcp/servers/settingsV1.js';
+
+export {
+  MCP_SERVER_CATALOG_ACCOUNT_KEY_V1, MCP_SERVER_CATALOG_ROWS_ROUTE_V1, MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1,
+  McpServerCatalogV1Schema, StoredMcpServerCatalogV1Schema,
+  McpServerCatalogContentV1Schema, StoredMcpServerCatalogContentV1Schema,
+  McpServerCatalogRowFailureV1Schema, McpServerCatalogRowReadResponseV1Schema,
+  McpServerCatalogRowMutationV1Schema, McpServerCatalogRowMutationResponseV1Schema,
+  AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema, AccountEncryptionMigrateMcpServerCatalogResultV1Schema,
+  assertMcpServerCatalogContentForModeV1, openMcpServerCatalogContentV1, sealMcpServerCatalogContentV1,
+  type McpServerCatalogV1, type McpServerCatalogContentV1, type StoredMcpServerCatalogContentV1,
+  type McpServerCatalogRowReadResponseV1, type McpServerCatalogRowMutationV1, type McpServerCatalogRowMutationResponseV1,
+  McpServerCatalogDiagnosticV1Schema, type McpServerCatalogDiagnosticV1, type McpServerCatalogOpenResultV1,
+  type AccountEncryptionMigrateMcpServerCatalogDirectiveV1, type AccountEncryptionMigrateMcpServerCatalogResultV1,
+} from './mcp/servers/serverRowsV1.js';
+export {
+  loadMcpServerCatalogV1, emptyMcpServerCatalogV1, readMcpServersFromCatalogSnapshotV1,
+  McpServerCatalogMutationV1Schema, applyMcpServerCatalogMutationV1, type McpServerCatalogMutationV1,
+  listMcpServerCatalogSavedSecretRefsV1, rewriteMcpServerCatalogSavedSecretRefsV1,
+  remapMcpServerCatalogSavedSecretReferencesV1,
+  McpServerCatalogSnapshotV1Schema, type McpServerCatalogSnapshotV1, type McpServerCatalogSourceTransferV1,
+  type McpServerCatalogSourceCleanupV1, type McpServerCatalogUnavailableReasonV1,
+} from './mcp/servers/serverCatalogV1.js';
+export {
+  MCP_SERVER_ACTION_IDS_V1, isMcpServerActionIdV1, MCP_SERVER_ACTION_INPUT_SCHEMAS_V1,
+  MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1, createMcpServerActionExecuteV1, projectMcpServerActionFailureV1,
+  type McpServerActionIdV1, type McpServerActionRequestV1, type McpServerActionPortsV1,
+} from './mcp/servers/serverActionsV1.js';
 
 export {
   resolveEffectiveServersV1,
@@ -5080,6 +5149,7 @@ export {
   FileChangeEvidenceSchema,
   FileChangeKindSchema,
   RepositoryCheckpointReceiptSchema,
+  RepositoryCheckpointCommitEvidenceSchema,
   RepositoryCheckpointTurnMetadataSchema,
   SessionAttributionConfidenceSchema,
   SessionAttributionReasonSchema,
@@ -5109,6 +5179,7 @@ export {
   type FileChangeEvidence,
   type FileChangeKind,
   type RepositoryCheckpointReceipt,
+  type RepositoryCheckpointCommitEvidence,
   type RepositoryCheckpointTurnMetadata,
   type SessionAttributionConfidence,
   type SessionAttributionReason,
@@ -5347,6 +5418,7 @@ export {
   ScmPullRequestStateSchema,
   ScmPullRequestStatusProjectionSchema,
   ScmPullRequestSummarySchema,
+  ScmPullRequestWorkEvidenceSchema,
   resolveScmHostingProviderFollowupAllowedBaseUrl,
   type ScmFollowupAction,
   type ScmHostingProviderCapabilities,
@@ -5379,6 +5451,7 @@ export {
   type ScmPullRequestState,
   type ScmPullRequestStatusProjection,
   type ScmPullRequestSummary,
+  type ScmPullRequestWorkEvidence,
 } from './scm/pullRequests.js';
 export {
   ScmReviewWorkspaceMaterializePreparedRequestSchema,

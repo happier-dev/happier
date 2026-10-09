@@ -4,8 +4,14 @@ import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Sche
 import { MEMORY_DOCUMENT_ACTION_SPECS_V1 } from './specs/memoryDocuments.js';
 import { MEMORY_DOCUMENT_ACTION_IDS_V1, MEMORY_WRITE_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { PROFILE_ACTION_SPECS_V1 } from './specs/profiles.js';
+import { MCP_SERVER_ACTION_SPECS_V1 } from './specs/mcpServers.js';
+import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1, type McpServerActionIdV1 } from '../mcp/servers/serverActionsV1.js';
+import { PROVIDER_ACTION_SPECS_V1 } from './specs/providers.js';
+import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, type ProviderActionIdV1 } from '../providers/providerActionsV1.js';
+import { REMOTE_HOST_ACTION_SPECS_V1 } from './specs/remoteHosts.js';
+import { REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1, REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1, type RemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionsV1.js';
 import { ARTIFACT_FOLDER_ACTION_SPECS_V1 } from './specs/artifactFolders.js';
-import { ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1, ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1 } from '../prompts/library/promptFolderActionsV1.js';
+import { ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1, ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1 } from '../prompts/library/promptFolderActionSchemasV1.js';
 import type { ArtifactFolderActionIdV1 } from '../prompts/library/artifactFolderActionIdsV1.js';
 import { PROFILE_ACTION_INPUT_SCHEMAS_V1, PROFILE_ACTION_OUTPUT_SCHEMAS_V1, type ProfileActionIdV1 } from '../profiles/profileActionsV1.js';
 import { FilesystemCreateDirectoryInputSchema, FilesystemRenameInputSchema, FilesystemDeleteInputSchema, FilesystemCopyInputSchema, FilesystemCopyOutputSchema, FilesystemMutationOutputSchema, FilesystemUploadInputSchema, FilesystemUploadOutputSchema, FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema, FilesystemTransferCancelInputSchema, FilesystemTransferCancelOutputSchema, FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
@@ -30,6 +36,8 @@ import {
 import {
   AgentsAcpBackendsDeleteInputV1Schema,
   AgentsAcpBackendsDeleteOutputV1Schema,
+  AgentsAcpBackendsGetInputV1Schema,
+  AgentsAcpBackendsGetOutputV1Schema,
   AgentsAcpBackendsUpsertInputV1Schema,
   AgentsAcpBackendsUpsertOutputV1Schema,
 } from '../acp/catalog/catalogMutationsV1.js';
@@ -432,7 +440,7 @@ import {
 } from '../sessions/messages/sessionInputAdmission.js';
 import { ExternalShareableTranscriptPageV1Schema } from '../sessions/messages/sessionExternalShareableTranscriptV1.js';
 import { PendingLocalIdSchema } from '../sessions/pending/pendingLocalId.js';
-import { PendingRequestedActionV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
+import { PendingRequestedActionV1Schema, PendingResetStartSetInputV1Schema, PendingResetStartCancelInputV1Schema, PendingResetStartSetResultV1Schema, PendingResetStartCancelResultV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import {
   SessionPermissionRemoteGrantRevokeInputV1Schema,
   SessionPermissionRemoteGrantRevokeOutputV1Schema,
@@ -614,9 +622,10 @@ import { SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS } from './specs/sessionOrgan
 import { SCOPE_ACTION_SPECS } from './specs/scope.js';
 import { HOME_HUB_LAYOUT_ACTION_SPECS } from './specs/homeHub.js';
 import { PROJECT_SOURCE_ACTION_SPECS_V1 } from './specs/projectSources.js';
-import { WIDGET_INSTANCE_ACTION_SPECS_V1, WIDGET_DEFINITION_ACTION_SPECS_V1, WIDGET_SNAPSHOT_ACTION_SPECS_V1 } from './specs/widgets.js';
+import { WIDGET_INSTANCE_ACTION_SPECS_V1, WIDGET_DEFINITION_ACTION_SPECS_V1, WIDGET_SNAPSHOT_ACTION_SPECS_V1, WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1 } from './specs/widgets.js';
 import type { WidgetInstanceActionIdV1, WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
 import type { WidgetDefinitionActionIdV1, WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1 } from '../widgets/definitionActionsV1.js';
+import type { WidgetLayoutFragmentActionIdV1, WidgetLayoutFragmentActionInputSchemasV1, WidgetLayoutFragmentActionOutputSchemasV1 } from '../widgets/fragmentActionsV1.js';
 import { MACHINE_CONNECTION_ACTION_SPECS } from './specs/machineConnection.js';
 import { MACHINE_TERMINAL_ACTION_SPECS, MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS,
   MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS, type MachineTerminalActionId } from './specs/machineTerminal.js';
@@ -624,6 +633,9 @@ import { MACHINE_ACCESS_ACTION_SPECS } from './specs/machineAccess.js';
 import { TEAM_ACTION_SPECS } from './specs/teams.js';
 import { SHARED_SAVED_SECRET_ACTION_SPECS } from './specs/sharedSavedSecrets.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS } from './specs/connectedServices.js';
+import { USAGE_SOURCE_ACTION_SPECS } from './specs/usageSources.js';
+import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS, USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS, type UsageSourceActionId } from '../usage/usageSources.js';
+import { USAGE_ACTION_SPECS } from './specs/usage.js';
 import {
   TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1,
@@ -1929,6 +1941,7 @@ const SessionSpawnNewApiInputSchema = lazyZodSchema(() => SessionSpawnNewInputV2
 }).strict().superRefine(refineSessionDirectoryIntentCheckoutV1));
 const SessionSpawnNewInputHints = {
   title: 'Create a new session',
+  description: 'Start a session with an agent on one of your machines.',
   fields: [
     { path: 'creationKey', title: 'Creation key', widget: 'text' },
     { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
@@ -2969,6 +2982,8 @@ const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.usage_sources,
+  ...ACTION_ID_FAMILIES_V1.providers,
   ...MACHINE_TERMINAL_ACTION_IDS,
   // The caller retains its actual byte reader/destination while admission
   // waits. Durable replay cannot reconstitute that local transport custody.
@@ -3001,7 +3016,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.session_terminals,
   ...ACTION_ID_FAMILIES_V1.workspace_layout,
   ...APP_SHELL_ACTION_IDS,
-  ...ACTION_ID_FAMILIES_V1.connected_services_configuration,
+  ...ACTION_ID_FAMILIES_V1.connected_services_configuration.filter((id) => id !== 'connectedServices.quota.get' && id !== 'connectedServices.pools.selection.get'),
   ...ACTION_ID_FAMILIES_V1.home_hub_layout,
   ...ACTION_ID_FAMILIES_V1.scope,
   ...SETTINGS_DECLARATION_ACTION_IDS_V1,
@@ -3014,6 +3029,8 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.artifact_folders,
   // Sharing's continuation needs the published Artifact id, including after approval replay.
   ...ACTION_ID_FAMILIES_V1.launch_profiles,
+  ...ACTION_ID_FAMILIES_V1.mcp_servers,
+  ...ACTION_ID_FAMILIES_V1.remote_hosts,
   ...ACTION_ID_FAMILIES_V1.notifications,
   ...ACTION_ID_FAMILIES_V1.machine_agent_install,
   ...ACTION_ID_FAMILIES_V1.machine_connection,
@@ -3049,6 +3066,8 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'ui.prompts.picker.open',
   'session.pending.next',
   'session.pending.withdraw',
+  'session.pending.resetStart.set',
+  'session.pending.resetStart.cancel',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
   ...ACTION_ID_FAMILIES_V1.account_security,
@@ -3081,6 +3100,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'servers.list',
   'review.engines.list',
   'agents.backends.list',
+  'agents.acp.backends.get',
   'machines.agents.list',
   'workspace.files.search',
   'agents.models.list',
@@ -3299,6 +3319,9 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_NONE_APPROVAL_ACTION_IDS = [
+  'connectedServices.quota.get',
+  'connectedServices.pools.selection.get',
+  ...ACTION_ID_FAMILIES_V1.usage,
   'memory.read', 'memory.list',
   'wait',
   'machines.agents.signIn.start',
@@ -5074,6 +5097,7 @@ const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
 // Reference family declarations so this aggregate preserves literal ids and
 // schemas without serializing every Zod schema into the inline tuple type.
 const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
+  | (typeof USAGE_ACTION_SPECS)[number]
   | (typeof HOME_GOVERNANCE_ACTION_SPECS)[number]
   | (typeof SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS)[number]
   | (typeof MACHINE_CONNECTION_ACTION_SPECS)[number]
@@ -5082,7 +5106,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof TEAM_ACTION_SPECS)[number]
   | (typeof SHARED_SAVED_SECRET_ACTION_SPECS)[number]
   | (typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS)[number]
+  | (typeof USAGE_SOURCE_ACTION_SPECS)[number]
   | (typeof PROFILE_ACTION_SPECS_V1)[number]
+  | (typeof MCP_SERVER_ACTION_SPECS_V1)[number]
+  | (typeof PROVIDER_ACTION_SPECS_V1)[number]
+  | (typeof REMOTE_HOST_ACTION_SPECS_V1)[number]
   | (typeof ARTIFACT_FOLDER_ACTION_SPECS_V1)[number]
   | (typeof MANAGED_IDENTITY_PROVIDER_ACTION_SPECS)[number]
   | (typeof MANAGED_GITHUB_APP_ACTION_SPECS)[number]
@@ -5090,6 +5118,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1)[number]
   | (typeof WORKFLOW_ACTION_SPECS_V1)[number]
 )[] = Object.freeze([
+  ...USAGE_ACTION_SPECS,
   ...HOME_GOVERNANCE_ACTION_SPECS,
   ...SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS,
   ...MACHINE_CONNECTION_ACTION_SPECS,
@@ -5098,7 +5127,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...TEAM_ACTION_SPECS,
   ...SHARED_SAVED_SECRET_ACTION_SPECS,
   ...CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS,
+  ...USAGE_SOURCE_ACTION_SPECS,
   ...PROFILE_ACTION_SPECS_V1,
+  ...MCP_SERVER_ACTION_SPECS_V1,
+  ...PROVIDER_ACTION_SPECS_V1,
+  ...REMOTE_HOST_ACTION_SPECS_V1,
   ...ARTIFACT_FOLDER_ACTION_SPECS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_SPECS,
   ...MANAGED_GITHUB_APP_ACTION_SPECS,
@@ -5148,6 +5181,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
   ...WORK_BOARD_ACTION_SPECS_V1,
   ...WIDGET_INSTANCE_ACTION_SPECS_V1,
   ...WIDGET_DEFINITION_ACTION_SPECS_V1,
+  ...WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1,
   ...WIDGET_SNAPSHOT_ACTION_SPECS_V1,
   ...HOME_HUB_LAYOUT_ACTION_SPECS,
   ...PROJECT_SOURCE_ACTION_SPECS_V1,
@@ -6069,14 +6103,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional blanket connected-services selection for every target. Use "native" to suppress all connected-service inheritance. An exact connectedServicesByBackendTargetKey entry overrides it.',
+          description: 'Optional blanket connected-services selection for every target. Omit to use Account defaults; use "native" to suppress them. An exact connectedServicesByBackendTargetKey entry overrides it.',
           widget: 'json',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
         {
           path: 'connectedServicesByBackendTargetKey',
           title: 'Connected services per target (json)',
-          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress all connected-service inheritance), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection or Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -6163,14 +6197,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional blanket connected-services selection for every target. Use "native" to suppress all connected-service inheritance. An exact connectedServicesByBackendTargetKey entry overrides it.',
+          description: 'Optional blanket connected-services selection for every target. Omit to use Account defaults; use "native" to suppress them. An exact connectedServicesByBackendTargetKey entry overrides it.',
           widget: 'json',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
         {
           path: 'connectedServicesByBackendTargetKey',
           title: 'Connected services per target (json)',
-          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress all connected-service inheritance), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection or Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -6496,7 +6530,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional connected-services selection for the run backend. Accepts "native" (suppress all connected-service inheritance), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted = session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection for the run backend. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omit to use Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -7660,6 +7694,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
   },
   {
     id: 'projects.open',
+    operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'current' } },
     title: 'Open a project',
     description: 'Prepare the selected checkout on the exact Machine and return its browse address without starting an Agent. Setup requires separate approval; client focus is optional and requires a mounted client.',
     safety: 'danger',
@@ -8355,6 +8390,31 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
     inputSchema: SessionPendingWithdrawInputV1Schema, outputSchema: SessionPendingWithdrawResultV1Schema,
   },
+  {
+    id: 'session.pending.resetStart.set', title: 'Start queued work after quota reset',
+    description: 'Hold an existing Pending message against an exact accepted quota witness. Only its admitted machine may release it after the same qualified reset.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account',
+    placements: ['pending_messages'],
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'session_pending_reset_start_set' },
+    cli: { acceptsServerId: true, commands: [] },
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'localId', title: 'Pending message id', widget: 'text', required: true },
+      { path: 'reset', title: 'Qualified accepted reset witness', widget: 'json', required: true }] },
+    inputSchema: PendingResetStartSetInputV1Schema, outputSchema: PendingResetStartSetResultV1Schema,
+  },
+  {
+    id: 'session.pending.resetStart.cancel', title: 'Cancel reset-bound queued work',
+    description: 'Withdraw the exact Pending message through its existing custody owner; already delivered or uncertain input cannot be reported as cancelled.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account',
+    placements: ['pending_messages'],
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'session_pending_reset_start_cancel' },
+    cli: { acceptsServerId: true, commands: [] },
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
+    inputSchema: PendingResetStartCancelInputV1Schema, outputSchema: PendingResetStartCancelResultV1Schema,
+  },
 ] as const));
 
 const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
@@ -8383,7 +8443,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       mcp: { argsExample: '{"intent":{"kind":"board.open","mode":"beside_chat"}}' },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
       agent: true,
       mcp: true,
@@ -10681,6 +10741,25 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     inputSchema: MemoryEnsureUpToDateInputSchema,
   },
   {
+    id: 'agents.acp.backends.get',
+    title: 'Read custom ACP agent',
+    description: 'Read one full Account-private configured ACP agent definition and its catalog revision.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    placements: [],
+    bindings: { mcpToolName: 'agents_acp_backends_get' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: AgentsAcpBackendsGetInputV1Schema,
+    outputSchema: AgentsAcpBackendsGetOutputV1Schema,
+    projectObservationOutput: output => {
+      const parsed = AgentsAcpBackendsGetOutputV1Schema.safeParse(output);
+      return parsed.success ? { backendId: parsed.data.backend.id, revision: parsed.data.revision } : undefined;
+    },
+    inputHints: { title: 'Read custom ACP agent', fields: [
+      { path: 'backendId', title: 'Id', widget: 'text', required: true },
+    ] },
+  },
+  {
     id: 'agents.acp.backends.upsert',
     title: 'Save custom ACP agent',
     description: 'Add or replace one custom ACP agent (a command that speaks the Agent Client Protocol) in the Account agent catalog. Names must be unique; an existing id is replaced.',
@@ -10688,7 +10767,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'agents_acp_backends_upsert' },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
       agent: true,
       mcp: true,
@@ -10716,7 +10795,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'agents_acp_backends_delete' },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
       agent: true,
       mcp: true,
@@ -12199,6 +12278,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ROLE_ACTION_IDS_V1.filter((actionId) => actionId.startsWith('roles.')),
     'launch_profiles.publish',
     ...PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
+    ...MCP_SERVER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
+    ...PROVIDER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
+    ...REMOTE_HOST_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
     ...ACTION_ID_FAMILIES_V1.approvals,
     ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
     ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
@@ -12221,7 +12303,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.teams,
     ...ACTION_ID_FAMILIES_V1.identity_providers,
     ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
-    ...ACTION_ID_FAMILIES_V1.widgets.filter((id) => id !== 'widgets.instance.refresh'),
+    ...ACTION_ID_FAMILIES_V1.widgets.filter((id) => id !== 'widgets.item.refresh'),
     ...ACTION_ID_FAMILIES_V1.workflows.filter((actionId) => actionId !== 'workflow.run.start'),
   ]);
 
@@ -12234,9 +12316,12 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   register('client', ACTION_ID_FAMILIES_V1.command_palette);
   register('client', ACTION_ID_FAMILIES_V1.find);
   register('client', ACTION_ID_FAMILIES_V1.prompt_picker);
-  register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.instance.refresh'));
+  register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.item.refresh'));
   register('client', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
+  register('client', REMOTE_HOST_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
   register('machine', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
+  register('machine', MCP_SERVER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
+  register('machine', PROVIDER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
   // Workflow effect actions declare their placement on their own spec (`stepActionsV1`).
   for (const spec of WORKFLOW_EFFECT_ACTION_SPECS_V1) register(spec.executionPlacement, [spec.id]);
 
@@ -12456,7 +12541,8 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
   ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
-    | SessionCanvasActionId | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1
+    | SessionCanvasActionId | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1 | WidgetLayoutFragmentActionIdV1
+    | ArtifactFolderActionIdV1 | ProfileActionIdV1 | ProviderActionIdV1 | RemoteHostActionIdV1 | ProjectActionIdV1 | WorkflowEffectActionIdV1 | UsageSourceActionId
     ? never
     : TSpec
   : never;
@@ -12671,6 +12757,12 @@ type WidgetDefinitionActionSpecDefinition = {
   >;
 }[WidgetDefinitionActionIdV1];
 
+type WidgetLayoutFragmentActionSpecDefinition = {
+  [Id in WidgetLayoutFragmentActionIdV1]: CanonicalActionSchemaDefinition<Id,
+    (typeof WidgetLayoutFragmentActionInputSchemasV1)[Id], (typeof WidgetLayoutFragmentActionOutputSchemasV1)[Id],
+    never, (typeof WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1)[number]['requiredAuthority']>;
+}[WidgetLayoutFragmentActionIdV1];
+
 type SessionTerminalActionSpecDefinition = {
   [TActionId in SessionTerminalActionId]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -12775,12 +12867,25 @@ type AccountSecurityActionSpecDefinition =
     >;
 
 export type CanonicalActionSpecDefinition =
+  | (typeof USAGE_ACTION_SPECS)[number]
+  | { [Id in UsageSourceActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof USAGE_SOURCE_ACTION_INPUT_SCHEMAS)[Id],
+      (typeof USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS)[Id]> }[UsageSourceActionId]
+  | { [Id in McpServerActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof MCP_SERVER_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
+    }[McpServerActionIdV1]
+  | { [Id in RemoteHostActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
+    }[RemoteHostActionIdV1]
   | { [Id in ArtifactFolderActionIdV1]: CanonicalActionSchemaDefinition<Id,
       (typeof ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
     }[ArtifactFolderActionIdV1]
   | { [Id in ProfileActionIdV1]: CanonicalActionSchemaDefinition<Id,
       (typeof PROFILE_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof PROFILE_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
     }[ProfileActionIdV1]
+  | { [Id in ProviderActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof PROVIDER_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof PROVIDER_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
+    }[ProviderActionIdV1]
   | { [Id in ProjectActionIdV1]: CanonicalActionSchemaDefinition<Id,
       (typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof PROJECT_ACTION_OUTPUT_SCHEMAS_V1)[Id]>
     }[ProjectActionIdV1]
@@ -12807,6 +12912,7 @@ export type CanonicalActionSpecDefinition =
   | ProjectDefinitionActionSpecDefinition
   | WidgetInstanceActionSpecDefinition
   | WidgetDefinitionActionSpecDefinition
+  | WidgetLayoutFragmentActionSpecDefinition
   | (typeof SCOPE_ACTION_SPECS)[number]
   | (typeof COMMAND_PALETTE_ACTION_SPECS)[number]
   | (typeof FIND_ACTION_SPECS)[number]
@@ -13065,6 +13171,12 @@ type PublicActionInputSchemaById = Readonly<{
       ? (typeof SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends ProfileActionIdV1
       ? (typeof PROFILE_ACTION_INPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends McpServerActionIdV1
+      ? (typeof MCP_SERVER_ACTION_INPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ProviderActionIdV1
+      ? (typeof PROVIDER_ACTION_INPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends RemoteHostActionIdV1
+      ? (typeof REMOTE_HOST_ACTION_INPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends ArtifactFolderActionIdV1
       ? (typeof ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1)[TActionId]
     : PublicActionSpecForId<TActionId> extends Readonly<{
@@ -13081,6 +13193,12 @@ type PublicActionOutputSchemaById = Readonly<{
       ? (typeof SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends ProfileActionIdV1
       ? (typeof PROFILE_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends McpServerActionIdV1
+      ? (typeof MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ProviderActionIdV1
+      ? (typeof PROVIDER_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends RemoteHostActionIdV1
+      ? (typeof REMOTE_HOST_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends ArtifactFolderActionIdV1
       ? (typeof ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
     : PublicActionSpecForId<TActionId> extends Readonly<{
@@ -13223,6 +13341,10 @@ const PLUGIN_RELOAD_CALLER_POLICY: ActionPluginCallerPolicy = {
 const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   Partial<Record<ActionId, ActionPluginCallerPolicy>>
 > = Object.freeze({
+  'connectedServices.quota.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'connectedServices.pools.selection.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.query': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.recap.compose': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'capture.view': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.reload': PLUGIN_RELOAD_CALLER_POLICY,
   'plugins.permissions.grants.request': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -13263,6 +13385,7 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'session.pending.withdraw': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.usageLimit.consumeResetCredit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'agents.acp.backends.upsert': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'agents.acp.backends.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'agents.acp.backends.delete': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_doc.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_doc.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -13442,6 +13565,20 @@ function resolveBuiltInActionContextualDefaults(actionId: ActionId): ActionConte
 // authored examples remain on their rows; this catalog-owned supplement adds
 // only the missing examples, not a runtime sample generator or another catalog.
 const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, string>>> = {
+  "widgets.group.create": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"groupId\":\"group-1\",\"instanceIds\":[\"widget-1\"]}",
+  "widgets.group.add": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"group\":{\"kind\":\"group\",\"id\":\"group-1\",\"children\":[{\"kind\":\"widget\",\"instance\":{\"v\":1,\"id\":\"widget-1\",\"definition\":{\"kind\":\"installed\",\"surface\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}},\"bindings\":{}}}]}}",
+  "widgets.group.ungroup": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"instanceId\":\"group-1\"}}",
+  "widgets.group.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"instanceId\":\"group-1\"},\"width\":\"full\",\"dividers\":\"none\"}",
+  "widgets.group.inputs.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"instanceId\":\"group-1\"},\"bindings\":{}}",
+  "widgets.area.layout.select": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}}}",
+  "widgets.area.layout.reset": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"expectedRevision\":null}",
+  "widgets.area.layout.undo": "{\"capture\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"previousLayout\":{\"v\":1,\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\"}},\"items\":[]},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1}}}",
+  "widgets.fragment.list": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"}}",
+  "widgets.fragment.get": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"},\"artifactId\":\"fragment-1\"}",
+  "widgets.fragment.create": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"},\"artifactId\":\"fragment-1\",\"fragment\":{\"name\":\"Project widgets\",\"inputs\":{\"fields\":[]},\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false},\"group\":{\"children\":[{\"kind\":\"widget\",\"instance\":{\"v\":1,\"definition\":{\"kind\":\"installed\",\"surface\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}},\"bindings\":{}}}]}}}",
+  "widgets.fragment.update": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"},\"artifactId\":\"fragment-1\",\"patch\":{\"name\":\"Project widgets\"}}",
+  "widgets.fragment.duplicate": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"},\"artifactId\":\"fragment-1\",\"newArtifactId\":\"fragment-2\"}",
+  "widgets.fragment.delete": "{\"account\":{\"serverId\":\"home\",\"accountId\":\"example\"},\"artifactId\":\"fragment-1\"}",
   "memory.remember": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"text\":\"Remember the verified project decision.\"}",
   "memory.update": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"factId\":\"example\",\"text\":\"Remember the verified project decision.\"}",
   "memory.forget": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"factId\":\"example\"}",
@@ -13456,25 +13593,23 @@ const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, string>>> = 
   "projects.manifest.update": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"expectedBasis\":{\"kind\":\"absent\"},\"bytes\":\"example\"}",
   "session.organization.pin.set": "{\"pinned\":false,\"sessionId\":\"session-1\"}",
   "widgets.catalog.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",
-  "widgets.instance.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",
-  "widgets.instance.add": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instance\":{\"v\":1,\"id\":\"example\",\"definition\":{\"kind\":\"installed\",\"surface\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}},\"bindings\":{}}}",
-  "widgets.instance.remove": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
-  "widgets.instance.move": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"toIndex\":0}",
-  "widgets.instance.rename": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"displayName\":\"example\"}",
-  "widgets.instance.size.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"size\":\"small\"}",
-  "widgets.instance.frame.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"frameStyle\":\"card\"}",
-  "widgets.instance.inputs.get": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
-  "widgets.instance.inputs.validate": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
-  "widgets.instance.inputs.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
-  "widgets.instance.inputs.reset": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
-  "widgets.instance.refresh": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
-  "widgets.area.layout.get": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"}}",
-  "widgets.area.layout.update": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"intent\":{\"kind\":\"move\",\"instanceId\":\"example\",\"toIndex\":0}}",
-  "widgets.area.dashboard.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"}}",
-  "widgets.area.dashboard.create": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"dashboardId\":\"example\",\"name\":\"example\"}",
-  "widgets.area.dashboard.rename": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"name\":\"example\"}",
-  "widgets.area.dashboard.delete": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1}}",
-  "widgets.area.dashboard.reorder": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"position\":{\"anchorId\":\"example\",\"placement\":\"before\"}}",
+  "widgets.item.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",
+  "widgets.item.add": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instance\":{\"v\":1,\"id\":\"example\",\"definition\":{\"kind\":\"installed\",\"surface\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}},\"bindings\":{}}}",
+  "widgets.item.remove": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.item.move": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"toIndex\":0}",
+  "widgets.item.rename": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"displayName\":\"example\"}",
+  "widgets.item.size.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"size\":\"small\"}",
+  "widgets.item.frame.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"frameStyle\":\"card\"}",
+  "widgets.item.inputs.get": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.item.inputs.validate": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
+  "widgets.item.inputs.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
+  "widgets.item.inputs.reset": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.item.refresh": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.area.layout.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"layoutId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"}}",
+  "widgets.area.layout.create": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"layoutId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"layoutId\":\"example\",\"name\":\"example\"}",
+  "widgets.area.layout.rename": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"layoutId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"name\":\"example\"}",
+  "widgets.area.layout.delete": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"layoutId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1}}",
+  "widgets.area.layout.reorder": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"layoutId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"position\":{\"anchorId\":\"example\",\"placement\":\"before\"}}",
   "projects.sources.list": "{\"serverId\":\"home\"}",
   "projects.sources.read": "{\"serverId\":\"home\",\"sourceId\":\"example\"}",
   "projects.sources.create": "{\"name\":\"example\",\"repository\":{\"provider\":{\"id\":\"example\",\"kind\":\"github\",\"displayName\":\"example\",\"baseUrl\":\"https://example.com\"},\"repository\":{\"nameWithOwner\":\"example\"},\"protocol\":\"auto\"},\"serverId\":\"home\",\"requestKey\":\"example\"}",
@@ -13513,6 +13648,8 @@ const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, string>>> = 
   "machines.managed.references.get": "{\"homeId\":\"example\",\"managedId\":\"example\"}",
   "machines.managed.inspect": "{\"homeId\":\"example\",\"managedId\":\"example\"}",
   "machines.managed.bootstrap.retry": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0}",
+  "machines.managed.setup.skip": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0}",
+  "machines.environment.apply": "{\"homeId\":\"example\",\"machineId\":\"machine-1\",\"presetId\":\"example\",\"presetRevision\":0}",
   "machines.managed.cancel": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0}",
   "machines.managed.power.set": "{\"homeId\":\"example\",\"managedId\":\"example\",\"when\":\"now\",\"expectedRevision\":0,\"intent\":\"start\"}",
   "machines.managed.rebuild": "{\"homeId\":\"example\",\"managedMachineId\":\"machine-1\",\"expectedRevision\":0,\"kind\":\"rebuild\",\"reviewedEffectDigest\":\"example\"}",

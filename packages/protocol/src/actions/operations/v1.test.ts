@@ -33,6 +33,30 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains machine setup output on the exact Home and Machine without exposing executable or secret material', () => {
+    const domainRef = { kind: 'machineEnvironment', serverId: 'setup-home', machineId: 'guest',
+      preset: { id: 'preset', revision: 3 }, managedId: 'paid', terminalId: 'actual-terminal', exitCode: 17 };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.environment.apply',
+      state: 'failed', startedAt: 110, settledAt: 120, domainRef,
+      error: { errorCode: 'machine_setup_failed', error: 'Setup failed' } });
+    expect(snapshot.domainRef).toEqual(domainRef);
+    expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('domainRef');
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, terminalId: undefined }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, setupScript: 'private script' }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, preset: { ...domainRef.preset, secret: 'private' } }).success).toBe(false);
+  });
+  it('retains both actual machine setup phase terminals after the current output changes', () => {
+    const domainRef = { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest',
+      preset: { id: 'preset', revision: 1 }, terminalId: 'setup-output',
+      terminals: { install: 'install-output', setup: 'setup-output' } };
+    expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, terminals: { arbitrary: 'output' } }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, terminalId: 'unrelated-output' }).success).toBe(false);
+  });
+  it('retains output for the canonical first preset revision zero', () => {
+    const domainRef = { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 0 } };
+    expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
+  });
   it('publishes numeric FIFO ahead as a queue phase while retaining the closed predecessor progress shape', () => {
     const progress = { kind: 'phase', phase: 'queued', label: 'Queued', queueAhead: 2 } as const;
     const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, progress });
@@ -148,6 +172,18 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, errorCode: 'different' }).success).toBe(false);
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, credential: 'private' } }).success).toBe(false);
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { arbitrary: 'private' } }).success).toBe(false);
+  });
+  it('retains terminal Script changed-effect review without granting a setup continuation', () => {
+    const failure = { errorCode: 'project_script_effect_changed', error: 'Script effect changed', details: {
+      kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: 'current-script',
+      reviewedEffect: { command: { kind: 'command', command: 'echo changed' }, environment: { kind: 'host' } },
+    } };
+    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, errorCode: 'project_setup_effect_changed' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, consentScope: 'untilChanged' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, setupGrant: 'private' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, reviewedEffect: { unsupported: undefined } } }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...baseSnapshot, actionId: 'projects.script.run', setupReview: failure.details }).success).toBe(false);
   });
   it('preserves configured worker fallback refusals without promoting unknown eligibility or exposing private facts', () => {
     for (const unavailable of ['ask', 'primary', 'fail'] as const) {

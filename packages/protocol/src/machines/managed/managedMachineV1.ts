@@ -8,8 +8,19 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connecte
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
 import { ManagedNativeOperationReferenceV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
+import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
+/** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
+export const ManagedMachineEnvironmentSetupV1Schema = lazyDefinition(() => z.strictObject({
+  environment: MachineEnvironmentV1Schema,
+  state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
+  operation: z.optional(z.strictObject({ operationId: id() })),
+  errorCode: z.optional(id()),
+}).check(z.superRefine((value, context) => {
+  if (value.state !== 'failed' && value.errorCode !== undefined) context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
+})));
+export type ManagedMachineEnvironmentSetupV1 = z.infer<typeof ManagedMachineEnvironmentSetupV1Schema>;
 export const RetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('until-delete') }),
   z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)), effect: z.enum(['stop', 'delete']) }),
@@ -52,6 +63,7 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: ManagedControllerV1Schema,
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),
+    environmentSetup: z.optional(ManagedMachineEnvironmentSetupV1Schema),
     allocation: z.enum(['unsubmitted', 'may-exist', 'bound', 'confirmed-absent']),
     creationState: z.enum(['active', 'canceled', 'retired']),
     nativeOperationRef: z.optional(z.strictObject({ ...ManagedNativeOperationReferenceV1Schema.shape, value: nativeOperation ?? PluginJsonValueV2Schema })),
@@ -67,6 +79,9 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(), observation: z.optional(ProviderObservationV1Schema),
     cleanup: z.optional(z.strictObject({ disposition: z.enum(['pending', 'unavailable']), reason: id() })),
   }).check(z.superRefine((value, context) => {
+    if (value.environmentSetup && !value.preset) {
+      context.addIssue({ code: 'custom', path: ['environmentSetup'], message: 'Setup requires its admitted preset.' });
+    }
     if (value.devcontainerChild && !managedDevcontainerChildProjectionsEqualV1(value.devcontainerChild,
       deriveManagedDevcontainerChildProjectionV1({ managedMachineId: value.id, controllerMachineId: value.controller.machineId,
         enrolledMachineId: value.enrolledMachineId, resource: value.resource }))) {

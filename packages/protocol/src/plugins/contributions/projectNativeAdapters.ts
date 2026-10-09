@@ -9,6 +9,22 @@ import { ProjectEnvironmentSelectionV1Schema, ProjectNativeFilePathV1Schema } fr
 export const PROJECT_NATIVE_ADAPTER_ROLES_V1 = ['detect', 'resolveCommand', 'produceEnvironment', 'nativeServiceLifecycle'] as const;
 export type ProjectNativeAdapterRoleV1 = typeof PROJECT_NATIVE_ADAPTER_ROLES_V1[number];
 
+export type BuiltinNativeEnvironmentAdapterV1 = Readonly<{
+    id: 'mise'; title: string;
+    platform: 'linux'; nativeVersion: string;
+    globalEnvironment: Readonly<{ configFile: 'config.toml'; installArgs: readonly string[] }>;
+}>;
+
+/** Builtin native qualification shares this descriptor owner with plugin
+ * declarations. Plugin produceEnvironment alone does not promise global setup. */
+const builtinNativeEnvironmentAdapters: readonly BuiltinNativeEnvironmentAdapterV1[] = Object.freeze([
+    Object.freeze({ id: 'mise', title: 'Mise', platform: 'linux', nativeVersion: '2026.10.4',
+        globalEnvironment: Object.freeze({ configFile: 'config.toml', installArgs: Object.freeze(['install']) }) }),
+]);
+export function listMachineEnvironmentAdaptersV1(platform: string): readonly BuiltinNativeEnvironmentAdapterV1[] {
+    return builtinNativeEnvironmentAdapters.filter(adapter => adapter.platform === platform);
+}
+
 /** File names are declarations, not permission to read outside the admitted root. */
 export const PluginProjectNativeAdapterContributionV1Schema = lazyZodSchema(() => z.object({
     id: asProtocolZod(PluginContributionLocalIdSchema),

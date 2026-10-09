@@ -1,4 +1,6 @@
 import { ACTION_IDS } from './actionIds.js';
+import { MCP_SERVER_ACTION_IDS_V1 } from '../mcp/servers/serverActionIdsV1.js';
+import { PROVIDER_ACTION_IDS_V1 } from '../providers/providerActionIdsV1.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
@@ -11,6 +13,7 @@ import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApproval
 import { getActionSpec, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import { readWidgetActionSurfaceV1, readWidgetActionDestinationV1 } from '../widgets/actionsV1.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
+import { isRemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
@@ -161,10 +164,19 @@ const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_ID_SET: ReadonlySet<ActionId> = n
  *   widgets-platform §4 — the same configurable policy owns their UI approval.
  */
 const PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET: ReadonlySet<ActionId> = new Set<ActionId>([
+  // MCP Actions have no separate UI-local confirmation host.
+  ...MCP_SERVER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger'),
+  // Provider settings use the canonical approval owner, not a local prompt.
+  ...PROVIDER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger'),
+  // Legacy Provider conversion reviews collect input; this owner confirms the effect.
+  'launch_profiles.legacy.convert',
+  'launch_profiles.legacy.resolve_conflict',
   'connectedServices.accounts.revoke',
   'action.operations.cancel',
   // Public admitted-creation CAS does not have a separate UI confirmation host.
   'machines.managed.cancel',
+  'machines.managed.setup.skip',
+  'machines.environment.apply',
   'session.responsibility.set',
   'session.reports_to.set',
   'session.board.item.upsert',
@@ -187,14 +199,17 @@ const PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET: ReadonlySet<ActionId> = ne
   'machines.terminal.restart',
   'widgets.definition.update',
   'widgets.definition.delete',
+  'widgets.fragment.update',
+  'widgets.fragment.delete',
   'widgets.snapshot.post',
 ]);
 
 function usesPresentUserUiPolicyConfirmation(actionId: ActionId, input: unknown): boolean {
+  if (isRemoteHostActionIdV1(actionId) && getActionSpec(actionId).safety === 'danger') return true;
   if (PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET.has(actionId)) return true;
-  if (!actionId.startsWith('widgets.instance.') || getActionSpec(actionId).safety !== 'danger') return false;
+  if (!actionId.startsWith('widgets.item.') || getActionSpec(actionId).safety !== 'danger') return false;
   const surface = readWidgetActionSurfaceV1(input);
-  const destination = actionId === 'widgets.instance.move' ? readWidgetActionDestinationV1(input) : null;
+  const destination = actionId === 'widgets.item.move' ? readWidgetActionDestinationV1(input) : null;
   // Missing target facts cannot establish that a write is only personal. The
   // executor supplies admitted input; Home/Companion inherit their safe owner policy.
   return !surface || surface.owner.kind === 'sessionBoard' || destination?.owner.kind === 'sessionBoard';
