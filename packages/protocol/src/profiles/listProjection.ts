@@ -4,11 +4,11 @@ import {
 } from './profileRequirements.js';
 import { isProfileCompatibleWithAgent } from './profileCompatibility.js';
 import { isLaunchProfileV2, type AiLaunchProfile } from './read.js';
-import type { AIBackendProfile } from './backendProfileSchema.js';
-import type {
-  LaunchProfileCheckoutPreferenceV1,
-  LaunchProfilePlacementPreferenceV1,
-} from './v2/schema.js';
+import { AIBackendProfileSchema } from './backendProfileSchema.js';
+import { LaunchProfileV2Schema } from './v2/schema.js';
+import { z } from 'zod';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ProfileRecordIdV1Schema } from './profileRecordSchemaV1.js';
 
 /**
  * The one projection of a Launch Profile onto the inventory row every launch
@@ -24,17 +24,17 @@ import type {
  * Protocol does not depend on. Compatibility itself is still decided here, so
  * the rule has one owner and only its input is supplied.
  */
-export type LaunchProfileListItemV1 = Readonly<{
-  id: string;
-  name: string;
-  isBuiltIn: boolean;
-  description?: string;
-  supportedAgentIds: string[];
-  requiredSecretEnvVarNames: string[];
-  requiredConfigEnvVarNames: string[];
-  authMode?: AIBackendProfile['authMode'];
-  requiresMachineLoginTargetKey?: string;
-  requiresMachineLogin?: string;
+export const LaunchProfileListItemV1Schema = lazyZodSchema(() => z.object({
+  id: ProfileRecordIdV1Schema,
+  name: AIBackendProfileSchema.shape.name,
+  isBuiltIn: z.boolean(),
+  description: AIBackendProfileSchema.shape.description,
+  supportedAgentIds: z.array(z.string()),
+  requiredSecretEnvVarNames: z.array(z.string()),
+  requiredConfigEnvVarNames: z.array(z.string()),
+  authMode: AIBackendProfileSchema.shape.authMode,
+  requiresMachineLoginTargetKey: AIBackendProfileSchema.shape.requiresMachineLoginTargetKey,
+  requiresMachineLogin: AIBackendProfileSchema.shape.requiresMachineLogin,
   /**
    * The three Session defaults a launching caller resolves the profile FOR.
    *
@@ -45,10 +45,11 @@ export type LaunchProfileListItemV1 = Readonly<{
    * only in its `fixed` arm, and `checkout` names what to DO, never a
    * materialized checkout's kind.
    */
-  preferredAgentTargetKey?: string;
-  placement?: LaunchProfilePlacementPreferenceV1;
-  checkout?: LaunchProfileCheckoutPreferenceV1;
-}>;
+  preferredAgentTargetKey: LaunchProfileV2Schema.shape.preferredAgentTargetKey,
+  placement: LaunchProfileV2Schema.shape.placement,
+  checkout: LaunchProfileV2Schema.shape.checkout,
+}).strict());
+export type LaunchProfileListItemV1 = Readonly<z.infer<typeof LaunchProfileListItemV1Schema>>;
 
 export function mapAiLaunchProfileToListItemV1(
   profile: AiLaunchProfile,

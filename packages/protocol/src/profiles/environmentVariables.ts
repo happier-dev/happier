@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 const ENVIRONMENT_VARIABLE_NAME_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
-export const EnvironmentVariableSchema = z.object({
+export const EnvironmentVariableSchema = lazyZodSchema(() => z.object({
   name: z.string().regex(
     ENVIRONMENT_VARIABLE_NAME_REGEX,
     'Invalid environment variable name',
@@ -13,13 +14,13 @@ export const EnvironmentVariableSchema = z.object({
   // - false: force non-secret handling in UI (unless daemon enforces)
   // - undefined: auto classification
   isSecret: z.boolean().optional(),
-});
+}).strict());
 
 export type EnvironmentVariable = z.infer<typeof EnvironmentVariableSchema>;
 
-const RequiredEnvironmentVariableKindSchema = z.enum(['secret', 'config']);
+const RequiredEnvironmentVariableKindSchema = lazyZodSchema(() => z.enum(['secret', 'config']));
 
-export const EnvVarRequirementSchema = z.object({
+export const EnvVarRequirementSchema = lazyZodSchema(() => z.object({
   name: z.string().regex(
     ENVIRONMENT_VARIABLE_NAME_REGEX,
     'Invalid environment variable name',
@@ -28,6 +29,6 @@ export const EnvVarRequirementSchema = z.object({
   // Required=true blocks session creation when unsatisfied.
   // Required=false is “optional” (still useful for vault binding, but does not block).
   required: z.boolean().default(true),
-});
+}).strict());
 
 export type EnvVarRequirement = z.infer<typeof EnvVarRequirementSchema>;

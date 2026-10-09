@@ -1,5 +1,7 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { BrowserActiveTargetV1Schema } from '../events/activeTarget.js';
+import { SecretFillScopeV1Schema } from '../../computer/v1.js';
 
 import { BrowserSemanticAdapterKindV1Schema } from '../adapters/kinds.js';
 import { BrowserDiagnosticsEvalRequestV1Schema } from '../diagnostics/v1.js';
@@ -24,12 +26,31 @@ export {
   redactBrowserAutomationTimelineDetails,
 } from './redaction.js';
 
-const IdSchema = z.string().trim().min(1).max(256);
-const NonNegativeIntSchema = z.number().int().nonnegative();
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const NonNegativeIntSchema = lazyZodSchema(() => z.number().int().nonnegative());
 export const BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS = 60_000;
-const PositiveTimeoutMsSchema = z.number().int().positive().max(BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS);
+const PositiveTimeoutMsSchema = lazyZodSchema(() => z.number().int().positive().max(BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS));
 
-export const BrowserAutomationReadOnlyActionKindV1Schema = z.enum([
+/** Exact observed browser field; never the generic automation payload/value bag. */
+export const BrowserAutomationSecretFillRequestV1Schema = lazyZodSchema(() => SecretFillScopeV1Schema.extend({
+  browserSessionId: IdSchema,
+  viewId: IdSchema,
+  tabId: IdSchema,
+  frameId: IdSchema,
+  documentId: IdSchema,
+  navigationGeneration: NonNegativeIntSchema,
+  origin: z.string().url().refine(value => {
+    try {
+      const url = new URL(value);
+      return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value;
+    } catch { return false; }
+  }, { message: 'Credential entry requires an exact HTTP origin' }),
+  field: z.object({ fieldId: IdSchema, focusId: IdSchema, locator: IdSchema }).strict(),
+  submit: z.object({ controlId: IdSchema, locator: IdSchema, label: IdSchema, consequence: IdSchema }).strict().optional(),
+}));
+export type BrowserAutomationSecretFillRequestV1 = z.infer<typeof BrowserAutomationSecretFillRequestV1Schema>;
+
+export const BrowserAutomationReadOnlyActionKindV1Schema = lazyZodSchema(() => z.enum([
   'getStatus',
   'snapshot',
   'semanticSnapshot',
@@ -37,12 +58,12 @@ export const BrowserAutomationReadOnlyActionKindV1Schema = z.enum([
   'getDiagnosticsSummary',
   'getActionTimeline',
   'waitFor',
-]);
+]));
 export type BrowserAutomationReadOnlyActionKindV1 = z.infer<
   typeof BrowserAutomationReadOnlyActionKindV1Schema
 >;
 
-export const BrowserAutomationMutatingActionKindV1Schema = z.enum([
+export const BrowserAutomationMutatingActionKindV1Schema = lazyZodSchema(() => z.enum([
   'navigate',
   'reload',
   'goBack',
@@ -61,18 +82,18 @@ export const BrowserAutomationMutatingActionKindV1Schema = z.enum([
   'evaluate',
   'startElementPicker',
   'cancelElementPicker',
-]);
+]));
 export type BrowserAutomationMutatingActionKindV1 = z.infer<
   typeof BrowserAutomationMutatingActionKindV1Schema
 >;
 
-export const BrowserAutomationActionKindV1Schema = z.enum([
+export const BrowserAutomationActionKindV1Schema = lazyZodSchema(() => z.enum([
   ...BrowserAutomationReadOnlyActionKindV1Schema.options,
   ...BrowserAutomationMutatingActionKindV1Schema.options,
-]);
+]));
 export type BrowserAutomationActionKindV1 = z.infer<typeof BrowserAutomationActionKindV1Schema>;
 
-export const BrowserAutomationAdapterCapabilityKindV1Schema = z.enum([
+export const BrowserAutomationAdapterCapabilityKindV1Schema = lazyZodSchema(() => z.enum([
   'snapshot',
   'semanticSnapshot',
   'locatorQuery',
@@ -92,7 +113,7 @@ export const BrowserAutomationAdapterCapabilityKindV1Schema = z.enum([
   'recording',
   'trustedInput',
   'crossOriginFrameAccess',
-]);
+]));
 export type BrowserAutomationAdapterCapabilityKindV1 = z.infer<
   typeof BrowserAutomationAdapterCapabilityKindV1Schema
 >;
@@ -105,13 +126,13 @@ export function isBrowserAutomationMutatingActionKind(
   return MUTATING_ACTIONS.has(actionKind);
 }
 
-const TimelineDetailsSchema = z
+const TimelineDetailsSchema = lazyZodSchema(() => z
   .record(z.string(), z.unknown())
   .superRefine((details, context) => rejectUnsafeBrowserEgressKeys(details, context, {
     message: 'Browser automation timeline data must not contain inline screenshots, diagnostics bundles, bodies, payloads, cookies, tokens, or storage values.',
-  }));
+  })));
 
-export const BrowserAutomationRequesterKindV1Schema = z.enum(['user', 'agent', 'plugin', 'system']);
+export const BrowserAutomationRequesterKindV1Schema = lazyZodSchema(() => z.enum(['user', 'agent', 'plugin', 'system']));
 export type BrowserAutomationRequesterKindV1 = z.infer<typeof BrowserAutomationRequesterKindV1Schema>;
 
 /** Action payloads cannot grant human input authority; only the host context can. */
@@ -123,18 +144,18 @@ export function resolveBrowserAutomationActionRequester(
   return requestedBy === 'user' ? null : 'agent';
 }
 
-export const BrowserAutomationRequesterRefV1Schema = z
+export const BrowserAutomationRequesterRefV1Schema = lazyZodSchema(() => z
   .object({
     kind: z.string().trim().min(1).max(64),
     id: IdSchema,
   })
-  .strict();
+  .strict());
 export type BrowserAutomationRequesterRefV1 = z.infer<typeof BrowserAutomationRequesterRefV1Schema>;
 
-export const BrowserAutomationControllerKindV1Schema = z.enum(['none', 'human', 'agent', 'system']);
+export const BrowserAutomationControllerKindV1Schema = lazyZodSchema(() => z.enum(['none', 'human', 'agent', 'system']));
 export type BrowserAutomationControllerKindV1 = z.infer<typeof BrowserAutomationControllerKindV1Schema>;
 
-export const BrowserAutomationActionRequestV1Schema = z
+export const BrowserAutomationActionRequestV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     automationRequestId: IdSchema,
@@ -176,10 +197,10 @@ export const BrowserAutomationActionRequestV1Schema = z
         message: 'Diagnostics eval request navigationGeneration must match the automation request generation.',
       });
     }
-  });
+  }));
 export type BrowserAutomationActionRequestV1 = z.infer<typeof BrowserAutomationActionRequestV1Schema>;
 
-export const BrowserAutomationActionStatusV1Schema = z.enum([
+export const BrowserAutomationActionStatusV1Schema = lazyZodSchema(() => z.enum([
   'succeeded',
   'failed',
   'interrupted',
@@ -188,10 +209,10 @@ export const BrowserAutomationActionStatusV1Schema = z.enum([
   'stale',
   'policy_denied',
   'unsupported',
-]);
+]));
 export type BrowserAutomationActionStatusV1 = z.infer<typeof BrowserAutomationActionStatusV1Schema>;
 
-export const BrowserAutomationJavaScriptDialogKindV1Schema = z.enum(['alert', 'confirm', 'prompt']);
+export const BrowserAutomationJavaScriptDialogKindV1Schema = lazyZodSchema(() => z.enum(['alert', 'confirm', 'prompt']));
 export type BrowserAutomationJavaScriptDialogKindV1 = z.infer<
   typeof BrowserAutomationJavaScriptDialogKindV1Schema
 >;
@@ -206,18 +227,18 @@ export type BrowserAutomationJavaScriptDialogKindV1 = z.infer<
  *
  * Metadata only. Dialog messages and prompt default values are page content and never egress.
  */
-export const BrowserAutomationJavaScriptDialogSummaryV1Schema = z
+export const BrowserAutomationJavaScriptDialogSummaryV1Schema = lazyZodSchema(() => z
   .object({
     count: z.number().int().positive().max(50),
     kinds: z.array(BrowserAutomationJavaScriptDialogKindV1Schema).min(1).max(3),
     handling: z.literal('dismissed'),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationJavaScriptDialogSummaryV1 = z.infer<
   typeof BrowserAutomationJavaScriptDialogSummaryV1Schema
 >;
 
-export const BrowserAutomationActionResultV1Schema = z
+export const BrowserAutomationActionResultV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     automationRequestId: IdSchema,
@@ -234,31 +255,31 @@ export const BrowserAutomationActionResultV1Schema = z
     diagnostics: TimelineDetailsSchema.optional().default({}),
     resultSummary: TimelineDetailsSchema.optional().default({}),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationActionResultV1 = z.infer<typeof BrowserAutomationActionResultV1Schema>;
 
 /** An issued effect lost its acknowledgement; engine result metadata is not known. */
-export const BrowserAutomationInterruptedResultV1Schema = z.object({
+export const BrowserAutomationInterruptedResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   status: z.literal('interrupted'),
   completion: z.literal('unknown'),
   automationRequestId: IdSchema.optional(),
-}).strict();
+}).strict());
 
 /**
  * Canceling is a command over the active automation set, not a result for one
  * request. Caller provenance remains host-stamped at the action admission
  * boundary, so this contract carries only the target browser view.
  */
-export const BrowserAutomationCancelActiveInputV1Schema = z.object({
+export const BrowserAutomationCancelActiveInputV1Schema = lazyZodSchema(() => z.object({
   browserSessionId: IdSchema,
   viewId: IdSchema,
-}).strict();
+}).strict());
 export type BrowserAutomationCancelActiveInputV1 = z.infer<
   typeof BrowserAutomationCancelActiveInputV1Schema
 >;
 
-export const BrowserAutomationCancelActiveResultV1Schema = z.discriminatedUnion('outcome', [
+export const BrowserAutomationCancelActiveResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.object({
     v: z.literal(1),
     outcome: z.literal('canceled'),
@@ -276,12 +297,12 @@ export const BrowserAutomationCancelActiveResultV1Schema = z.discriminatedUnion(
     outcome: z.literal('owner_mismatch'),
     canceledCount: z.literal(0),
   }).strict(),
-]);
+]));
 export type BrowserAutomationCancelActiveResultV1 = z.infer<
   typeof BrowserAutomationCancelActiveResultV1Schema
 >;
 
-export const BrowserAutomationTimelineEntryV1Schema = z
+export const BrowserAutomationTimelineEntryV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     timelineEntryId: IdSchema,
@@ -306,10 +327,10 @@ export const BrowserAutomationTimelineEntryV1Schema = z
     resultSummary: TimelineDetailsSchema.optional().default({}),
     reasonCode: BrowserAutomationErrorCodeV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationTimelineEntryV1 = z.infer<typeof BrowserAutomationTimelineEntryV1Schema>;
 
-export const BrowserAutomationTimelineV1Schema = z
+export const BrowserAutomationTimelineV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     browserSessionId: IdSchema,
@@ -326,7 +347,7 @@ export const BrowserAutomationTimelineV1Schema = z
         message: 'Browser automation timelines must not exceed maxEntries.',
       });
     }
-  });
+  }));
 export type BrowserAutomationTimelineV1 = z.infer<typeof BrowserAutomationTimelineV1Schema>;
 
 /**
@@ -338,7 +359,7 @@ export type BrowserAutomationTimelineV1 = z.infer<typeof BrowserAutomationTimeli
  * mutating verb undispatchable. Concurrency is single-flight, consent is the action-approval
  * danger floor, and human takeover is the human-input cancel path.
  */
-export const BrowserAutomationControllerStateV1Schema = z
+export const BrowserAutomationControllerStateV1Schema = lazyZodSchema(() => z
   .object({
     browserSessionId: IdSchema,
     viewId: IdSchema,
@@ -350,17 +371,17 @@ export const BrowserAutomationControllerStateV1Schema = z
     interruptionSettling: z.boolean().optional(),
     uncertain: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationControllerStateV1 = z.infer<typeof BrowserAutomationControllerStateV1Schema>;
 
-export const BrowserAutomationActionCapabilityV1Schema = z
+export const BrowserAutomationActionCapabilityV1Schema = lazyZodSchema(() => z
   .object({
     available: z.boolean().optional().default(false),
     fidelity: BrowserAutomationFidelityV1Schema.optional().default('unavailable'),
     trustedInput: z.boolean().optional().default(false),
     disabledReasons: z.array(z.string().trim().min(1)).optional().default([]),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationActionCapabilityV1 = z.infer<typeof BrowserAutomationActionCapabilityV1Schema>;
 
 const UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY: BrowserAutomationActionCapabilityV1 = {
@@ -392,7 +413,7 @@ export const DEFAULT_BROWSER_AUTOMATION_ACTION_CAPABILITIES = {
   crossOriginFrameAccess: UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
 } satisfies Record<BrowserAutomationAdapterCapabilityKindV1, BrowserAutomationActionCapabilityV1>;
 
-export const BrowserAutomationActionCapabilityMapV1Schema = z
+export const BrowserAutomationActionCapabilityMapV1Schema = lazyZodSchema(() => z
   .object({
     snapshot: BrowserAutomationActionCapabilityV1Schema.optional().default(UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY),
     semanticSnapshot: BrowserAutomationActionCapabilityV1Schema.optional().default(
@@ -426,20 +447,20 @@ export const BrowserAutomationActionCapabilityMapV1Schema = z
       UNAVAILABLE_AUTOMATION_ACTION_CAPABILITY,
     ),
   })
-  .strict();
+  .strict());
 export type BrowserAutomationActionCapabilityMapV1 = z.infer<
   typeof BrowserAutomationActionCapabilityMapV1Schema
 >;
 
-export const BrowserInjectedRuntimeModuleV1Schema = z.enum([
+export const BrowserInjectedRuntimeModuleV1Schema = lazyZodSchema(() => z.enum([
   'diagnostics',
   'automation',
   'picker',
   'annotations',
-]);
+]));
 export type BrowserInjectedRuntimeModuleV1 = z.infer<typeof BrowserInjectedRuntimeModuleV1Schema>;
 
-export const BrowserInjectedRuntimeCommandMessageV1Schema = z
+export const BrowserInjectedRuntimeCommandMessageV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     kind: z.literal('browser.injectedRuntime.command'),
@@ -456,12 +477,12 @@ export const BrowserInjectedRuntimeCommandMessageV1Schema = z
     commandName: z.string().trim().min(1).max(128),
     payload: z.record(z.string(), z.unknown()).optional().default({}),
   })
-  .strict();
+  .strict());
 export type BrowserInjectedRuntimeCommandMessageV1 = z.infer<
   typeof BrowserInjectedRuntimeCommandMessageV1Schema
 >;
 
-export const BrowserInjectedRuntimeResultMessageV1Schema = z
+export const BrowserInjectedRuntimeResultMessageV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     kind: z.literal('browser.injectedRuntime.result'),
@@ -485,7 +506,7 @@ export const BrowserInjectedRuntimeResultMessageV1Schema = z
     errorCode: BrowserAutomationErrorCodeV1Schema.optional(),
     data: TimelineDetailsSchema.optional().default({}),
   })
-  .strict();
+  .strict());
 export type BrowserInjectedRuntimeResultMessageV1 = z.infer<
   typeof BrowserInjectedRuntimeResultMessageV1Schema
 >;

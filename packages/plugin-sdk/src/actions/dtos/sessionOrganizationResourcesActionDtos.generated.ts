@@ -76,6 +76,8 @@ export type SessionOrganizationResourcesActionResultById = {
                 sessionId: string;
                 sortKey: string | null;
                 pinnedAt: number;
+                listPinned: boolean;
+                railPinned: boolean;
             }[];
             folders: {
                 folderId: string;
@@ -217,6 +219,8 @@ export type SessionOrganizationResourcesActionResultById = {
                 sessionId: string;
                 sortKey: string | null;
                 pinnedAt: number;
+                listPinned: boolean;
+                railPinned: boolean;
             }[];
             folders: {
                 folderId: string;

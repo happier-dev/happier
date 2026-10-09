@@ -36,6 +36,28 @@ export type MachinePoolsActionInputById = {
     readonly "machines.pools.resolve": {
         poolId: string;
         requestKey: string;
+        purpose?: 'session' | undefined;
+    } | {
+        poolId: string;
+        requestKey: string;
+        purpose: 'finite' | 'service-start';
+        workspace: {
+            serverId: string;
+            refId: string;
+        };
+        memoryDemand?: {
+            bytes: number;
+            basis: {
+                kind: 'declared';
+            } | {
+                kind: 'measured';
+                operation?: {
+                    serverId: string;
+                    machineId: string;
+                    operationId: string;
+                } | undefined;
+            };
+        } | undefined;
     };
 };
 export type MachinePoolsActionResultById = {

@@ -1,19 +1,20 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { EntityDragScopeV1Schema, EntityDragSessionAddressV1Schema } from '../plugins/ui/entityDragDrop.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
-export const WorkflowConversationBindInputV1Schema = z.object({
+export const WorkflowConversationBindInputV1Schema = lazyZodSchema(() => z.object({
   scope: EntityDragScopeV1Schema,
   draftId: z.string().trim().min(1),
   stepId: z.string().trim().min(1).nullable(),
   address: EntityDragSessionAddressV1Schema,
-}).strict();
-export const WorkflowConversationBindResultV1Schema = z.discriminatedUnion('status', [
+}).strict());
+export const WorkflowConversationBindResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied') }).strict(),
   z.object({ status: z.literal('unchanged') }).strict(),
   z.object({ status: z.literal('unavailable') }).strict(),
   z.object({ status: z.literal('refused'), reason: z.string().min(1) }).strict(),
-]);
+]));
 export type WorkflowConversationBindInputV1 = z.infer<typeof WorkflowConversationBindInputV1Schema>;
 export type WorkflowConversationBindResultV1 = z.infer<typeof WorkflowConversationBindResultV1Schema>;
 export const WORKFLOW_AUTHORING_ACTION_SPECS = [{

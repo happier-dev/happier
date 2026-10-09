@@ -27,7 +27,7 @@ export type LocalServicesInventoryActionResultById = {
             id: string;
             machineId: string;
             address: {
-                kind: 'loopback' | 'wildcard' | 'lan' | 'unknown';
+                kind: 'unknown' | 'loopback' | 'wildcard' | 'lan';
                 host: string;
                 family: 'unknown' | 'ipv4' | 'ipv6';
             };
@@ -113,7 +113,7 @@ export type LocalServicesInventoryActionResultById = {
             id: string;
             machineId: string;
             address: {
-                kind: 'loopback' | 'wildcard' | 'lan' | 'unknown';
+                kind: 'unknown' | 'loopback' | 'wildcard' | 'lan';
                 host: string;
                 family: 'unknown' | 'ipv4' | 'ipv6';
             };

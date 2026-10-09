@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
@@ -6,20 +7,20 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
 const id = z.string().trim().min(1);
 // V1 mutation envelopes, including routing, scope and anchors, are closed.
-export const TodoReorderInputV1Schema = z.object({
+export const TodoReorderInputV1Schema = lazyZodSchema(() => z.object({
   scope: EntityDragScopeV1Schema, sourceId: id, position: AnchoredListPositionV1Schema,
-}).strict();
-export const PendingReorderInputV1Schema = TodoReorderInputV1Schema.extend({
+}).strict());
+export const PendingReorderInputV1Schema = lazyZodSchema(() => TodoReorderInputV1Schema.extend({
   sessionId: id,
   // Main is explicit null; a selected Run never supplies a missing recipient.
   recipient: ParticipantExecutionRunRecipientRoutingIdentityV1Schema.nullable(),
-}).strict();
-export const ListReorderOutputV1Schema = z.discriminatedUnion('status', [
+}).strict());
+export const ListReorderOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('applied') }).strict(),
   z.object({ status: z.literal('unavailable') }).strict(),
   z.object({ status: z.literal('refused'), reason: id }).strict(),
   z.object({ status: z.literal('unknown'), reason: id }).strict(),
-]);
+]));
 export type TodoReorderInputV1 = z.infer<typeof TodoReorderInputV1Schema>;
 export type PendingReorderInputV1 = z.infer<typeof PendingReorderInputV1Schema>;
 export type ListReorderOutputV1 = z.infer<typeof ListReorderOutputV1Schema>;

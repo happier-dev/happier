@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -14,7 +15,7 @@ export type RuntimeActionSpecFamily = Readonly<{
   outputSchemas?: RuntimeActionSchemaMap;
 }>;
 
-export const PassthroughEmptyObjectSchema = z.object({}).passthrough();
+export const PassthroughEmptyObjectSchema = lazyZodSchema(() => z.object({}).passthrough());
 
 export function refineKindSchema(
   schema: z.ZodTypeAny,

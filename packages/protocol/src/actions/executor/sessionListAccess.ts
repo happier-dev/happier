@@ -1,5 +1,6 @@
 import type { ActionId } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { isSessionStateFieldActionId } from '../sessionStateFieldActions.js';
 import type { ActionContextualDefaults } from '../contextualDefaults.js';
 import { resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
@@ -50,8 +51,9 @@ export function resolveActionSessionListAccessFailure(
  * remain a convenience for unconstrained human/API callers. The Agent surface
  * is intrinsically bound to its current Session; other autonomous surfaces use
  * the host-only `sessionListAccess` fact to declare the same restricted corpus.
- * Read Actions may use the same host Session caller and server-proved led
- * subtree as start admission. This does not authorize starts or mutations.
+ * Read Actions and registered Session field setters may use the same host
+ * Session caller and server-proved led subtree as start admission. Other
+ * mutations remain current-Session-only.
  */
 export async function resolveActionCurrentSessionScopeFailure(
   actionId: ActionId,
@@ -87,7 +89,7 @@ export async function resolveActionCurrentSessionScopeFailure(
   if (targetSessionId === defaultSessionId) return null;
   if (context.sessionListAccess !== 'current_session'
     && context.sessionListAccess !== 'unavailable'
-    && getActionSpec(actionId).sideEffectClass === 'read') {
+    && (getActionSpec(actionId).sideEffectClass === 'read' || isSessionStateFieldActionId(actionId))) {
     const resolved = await resolveActionAgentStartContextV1(deps, context, targetSessionId);
     if (resolved?.caller.kind === 'session'
       && resolved.caller.sessionId === defaultSessionId

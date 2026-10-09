@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { ProjectOpenDraftDocumentV2Schema } from '../projects/openProjectDraftV1.js';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { normalizeParticipantRecipientRoutingIdentityV1 } from '../messages/structured/participantMessageV1.js';
@@ -57,11 +59,24 @@ const NewDiscussionDraftAddressSchema = z.object({
   sessionId: asProtocolZod(SessionIdSchema),
 }).strict();
 
-/** The address arms V1 cannot express; every one of them binds an existing Session. */
+export const ProjectOpenDraftAddressV2Schema = z.object({
+  kind: z.literal('projectOpen'),
+  draftId: SessionDraftAddressV1Schema.options[0].shape.draftId,
+}).strict();
+
+/** Account-owned drafts follow Account mode, independently of Session availability. */
+export const AccountOwnedDraftAddressV2Schema = z.union([
+  SessionDraftAddressV1Schema.options[0],
+  ProjectOpenDraftAddressV2Schema,
+]);
+export type AccountOwnedDraftAddressV2 = z.infer<typeof AccountOwnedDraftAddressV2Schema>;
+
+/** The address arms V1 cannot express. */
 export const SessionDraftAddressV2OnlySchema = z.union([
   RunDraftAddressSchema,
   DiscussionDraftAddressSchema,
   NewDiscussionDraftAddressSchema,
+  ProjectOpenDraftAddressV2Schema,
 ]);
 export type SessionDraftAddressV2Only = z.infer<typeof SessionDraftAddressV2OnlySchema>;
 
@@ -71,6 +86,10 @@ export const SessionDraftAddressV2Schema = z.union([
 ]);
 export type SessionDraftAddressV2 = z.infer<typeof SessionDraftAddressV2Schema>;
 
+export function isAccountOwnedDraftAddressV2(address: SessionDraftAddressV2): address is AccountOwnedDraftAddressV2 {
+  return address.kind === 'newSession' || address.kind === 'projectOpen';
+}
+
 export function isSessionDraftAddressV1(address: SessionDraftAddressV2): address is SessionDraftAddressV1 {
   return address.kind === 'newSession' || address.kind === 'session';
 }
@@ -79,6 +98,7 @@ const NEW_DISCUSSION_SEGMENT = 'new-discussion';
 
 export function canonicalSessionDraftAddressV2(address: SessionDraftAddressV2): string {
   if (isSessionDraftAddressV1(address)) return canonicalSessionDraftAddressV1(address);
+  if (address.kind === 'projectOpen') return `project-open/${address.draftId}`;
   const session = `session/${encodeURIComponent(address.sessionId)}`;
   if (address.kind === 'run') return `${session}/run/${encodeURIComponent(address.runId)}`;
   if (address.kind === 'discussion') {
@@ -104,6 +124,9 @@ export function parseCanonicalSessionDraftAddressV2(value: string): SessionDraft
   const candidate = ((): unknown => {
     if (value.startsWith('new-session/')) {
       return { kind: 'newSession', draftId: value.slice('new-session/'.length) };
+    }
+    if (value.startsWith('project-open/')) {
+      return { kind: 'projectOpen', draftId: value.slice('project-open/'.length) };
     }
     if (!value.startsWith('session/')) return null;
     const segments = value.slice('session/'.length).split('/');
@@ -186,6 +209,7 @@ export const SessionDraftDocumentV2Schema = z.union([
   SessionDraftDocumentV1Schema,
   NewSessionDraftDocumentV2Schema,
   SessionDiscussionDraftDocumentV2Schema,
+  ProjectOpenDraftDocumentV2Schema,
 ]);
 export type SessionDraftDocumentV2 = z.infer<typeof SessionDraftDocumentV2Schema>;
 
@@ -280,6 +304,7 @@ export const SessionDraftStoredContentEnvelopeV2Schema = z.discriminatedUnion('t
   }).strict(),
 ]);
 export type SessionDraftStoredContentEnvelopeV2 = z.infer<typeof SessionDraftStoredContentEnvelopeV2Schema>;
+export const SessionDraftStoredContentEnvelopeV2StoredSchema = createStoredReadSchema(SessionDraftStoredContentEnvelopeV2Schema);
 
 /** Address membership alone cannot determine whether a newSession row is V1-readable. */
 export function isSessionDraftContentV1(
@@ -319,6 +344,7 @@ export const SessionDraftAddressKindV2Schema = z.enum([
   'run',
   'discussion',
   'newDiscussion',
+  'projectOpen',
 ]);
 export type SessionDraftAddressKindV2 = z.infer<typeof SessionDraftAddressKindV2Schema>;
 

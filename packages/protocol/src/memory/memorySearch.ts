@@ -1,25 +1,30 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
+import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
+import { PromptDocArtifactRefV1Schema } from '../prompts/library/promptArtifactRefsV1.js';
+import { MemoryTopicSummaryV1Schema } from '../prompts/library/memoryDocV1.js';
+import { RPC_ERROR_CODES, readRpcErrorCode } from '../rpc/errors.js';
 
-export const MemorySearchScopeSchema = z.discriminatedUnion('type', [
+export const MemorySearchScopeSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
   z.object({ type: z.literal('session'), sessionId: z.string().min(1) }).passthrough(),
-]);
+]));
 export type MemorySearchScope = z.infer<typeof MemorySearchScopeSchema>;
 
-export const MemorySearchModeSchema = z.enum(['hints', 'deep', 'auto']);
+export const MemorySearchModeSchema = lazyZodSchema(() => z.enum(['hints', 'deep', 'auto']));
 export type MemorySearchMode = z.infer<typeof MemorySearchModeSchema>;
 
 // Stable error code vocabulary for memory RPC + action surfaces.
-export const MemorySearchErrorCodeSchema = z.enum([
+export const MemorySearchErrorCodeSchema = lazyZodSchema(() => z.enum([
   'memory_disabled',
   'memory_key_unavailable',
   'memory_index_missing',
   'memory_invalid_query',
   'memory_failed',
-]);
+]));
 export type MemorySearchErrorCode = z.infer<typeof MemorySearchErrorCodeSchema>;
 
-export const MemoryCitationV1Schema = z.object({
+export const MemoryCitationV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   seqFrom: z.number().int().min(0),
   seqTo: z.number().int().min(0),
@@ -27,10 +32,13 @@ export const MemoryCitationV1Schema = z.object({
   if (value.seqFrom > value.seqTo) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
   }
-});
+}));
 export type MemoryCitationV1 = z.infer<typeof MemoryCitationV1Schema>;
 
-export const MemorySearchHitV1Schema = z.object({
+export const MemorySearchHitV1Schema = lazyZodSchema(() => z.object({
+  // Released transcript hits are untagged. Never admit an artifact discriminator
+  // as a passthrough annotation on an otherwise transcript-shaped row.
+  type: z.never().optional(),
   sessionId: z.string().min(1),
   seqFrom: z.number().int().min(0),
   seqTo: z.number().int().min(0),
@@ -45,8 +53,41 @@ export const MemorySearchHitV1Schema = z.object({
   if (value.createdAtFromMs > value.createdAtToMs) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'createdAtFromMs must be <= createdAtToMs', path: ['createdAtFromMs'] });
   }
-});
+}));
 export type MemorySearchHitV1 = z.infer<typeof MemorySearchHitV1Schema>;
+
+/** Document navigation uses the Artifact revision and qualified address owners. */
+export const MemoryDocumentSearchHitV1Schema = lazyZodSchema(() => z.object({
+  type: z.literal('artifact'),
+  ref: PromptDocArtifactRefV1Schema.extend({ serverId: z.string().min(1) }).strict(),
+  revision: ArtifactRevisionV1Schema,
+  location: z.union([
+    z.enum(['facts', 'archive', 'document']),
+    z.object({ type: z.literal('topic'), title: MemoryTopicSummaryV1Schema.shape.title }).strict(),
+  ]),
+  factId: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  score: z.number().min(0).max(1),
+}).strict());
+export type MemoryDocumentSearchHitV1 = z.infer<typeof MemoryDocumentSearchHitV1Schema>;
+
+export const MemorySearchResultHitV1Schema = lazyZodSchema(() => z.union([
+  MemorySearchHitV1Schema,
+  MemoryDocumentSearchHitV1Schema,
+]));
+export type MemorySearchResultHitV1 = z.infer<typeof MemorySearchResultHitV1Schema>;
+
+export function isMemoryDocumentSearchHitV1(hit: MemorySearchResultHitV1): hit is MemoryDocumentSearchHitV1 {
+  return hit.type === 'artifact';
+}
+
+export const MemorySearchCorpusV1Schema = lazyZodSchema(() => z.enum(['sessions', 'documents']));
+export type MemorySearchCorpusV1 = z.infer<typeof MemorySearchCorpusV1Schema>;
+
+export const MemoryDocumentSearchCoverageV1Schema = lazyZodSchema(() => z.object({
+  state: z.enum(['ready', 'pending', 'unavailable']),
+}).strict());
+export type MemoryDocumentSearchCoverageV1 = z.infer<typeof MemoryDocumentSearchCoverageV1Schema>;
 
 /**
  * One shared query-length bound for every memory-search consumer (Home FTS route, daemon RPC,
@@ -63,11 +104,17 @@ export type MemorySearchHitV1 = z.infer<typeof MemorySearchHitV1Schema>;
  */
 export const MEMORY_SEARCH_QUERY_MAX_LENGTH = 1024;
 
-export const MemorySearchQueryV1Schema = z.object({
+export const MemorySearchQueryV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   query: z.string().min(1).max(MEMORY_SEARCH_QUERY_MAX_LENGTH),
   scope: MemorySearchScopeSchema,
   mode: MemorySearchModeSchema,
+  /**
+   * Omission retains the released Session-only contract. Documents are never
+   * safely ignorable: callers first require documentSearchSupported === true
+   * from this exact daemon, or report explicit unavailable document coverage.
+   */
+  corpora: z.array(MemorySearchCorpusV1Schema).min(1).optional(),
   /**
    * Optional caller-owned contextual eligibility. Current providers apply it
    * before their result limit. Absence preserves the released global/session
@@ -76,14 +123,15 @@ export const MemorySearchQueryV1Schema = z.object({
   eligibleSessionIds: z.array(z.string().min(1)).optional(),
   maxResults: z.number().int().min(1).max(100).optional(),
   minScore: z.number().min(0).max(1).optional(),
-}).passthrough();
+}).passthrough());
 export type MemorySearchQueryV1 = z.infer<typeof MemorySearchQueryV1Schema>;
 
-export const MemorySearchResultV1Schema = z.union([
+export const MemorySearchResultV1Schema = lazyZodSchema(() => z.union([
   z.object({
     v: z.literal(1),
     ok: z.literal(true),
-    hits: z.array(MemorySearchHitV1Schema),
+    hits: z.array(MemorySearchResultHitV1Schema),
+    documents: MemoryDocumentSearchCoverageV1Schema.optional(),
   }).passthrough(),
   z.object({
     v: z.literal(1),
@@ -91,5 +139,42 @@ export const MemorySearchResultV1Schema = z.union([
     errorCode: MemorySearchErrorCodeSchema,
     error: z.string().min(1),
   }).passthrough(),
-]);
+]));
 export type MemorySearchResultV1 = z.infer<typeof MemorySearchResultV1Schema>;
+
+/** One mixed-version corpus policy; callbacks retain their exact authenticated target. */
+export async function negotiateMemorySearchV1(params: Readonly<{
+  query: MemorySearchQueryV1;
+  readDocumentSearchSupport: () => Promise<boolean>;
+  search: (query: MemorySearchQueryV1) => Promise<unknown>;
+  signal?: AbortSignal;
+}>): Promise<MemorySearchResultV1> {
+  params.signal?.throwIfAborted();
+  const documentsRequested = params.query.corpora?.includes('documents') === true;
+  let documentSearchSupported = false;
+  if (documentsRequested) {
+    try {
+      documentSearchSupported = await params.readDocumentSearchSupport() === true;
+    } catch (error) {
+      params.signal?.throwIfAborted();
+      const code = readRpcErrorCode(error);
+      if (code !== RPC_ERROR_CODES.METHOD_NOT_AVAILABLE && code !== RPC_ERROR_CODES.METHOD_NOT_FOUND) throw error;
+    }
+    params.signal?.throwIfAborted();
+    if (!documentSearchSupported && !params.query.corpora?.includes('sessions')) {
+      return { v: 1, ok: true, hits: [], documents: { state: 'unavailable' } };
+    }
+  }
+  const { corpora, ...legacyQuery } = params.query;
+  const query = documentsRequested && !documentSearchSupported ? legacyQuery : params.query;
+  const result = MemorySearchResultV1Schema.parse(await params.search(query));
+  params.signal?.throwIfAborted();
+  if (!result.ok || !documentsRequested) return result;
+  return {
+    ...result,
+    hits: result.hits.filter((hit) => isMemoryDocumentSearchHitV1(hit)
+      ? documentSearchSupported
+      : corpora?.includes('sessions') === true),
+    documents: documentSearchSupported && result.documents ? result.documents : { state: 'unavailable' },
+  };
+}

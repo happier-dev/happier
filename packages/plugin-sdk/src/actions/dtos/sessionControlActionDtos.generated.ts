@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { SessionUsageLimitCheckNowRequestV1Input, SessionUsageLimitConsumeResetCreditRequestV1Input } from './pluginActionDtoSupport.generated.js';
+import type { SessionUsageLimitCheckNowRequestV1Input, SessionUsageLimitConsumeResetCreditRequestV1Input, VoiceProviderSettingsJsonValueV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionControlActionInputById = {
     readonly "session.stop": {
@@ -20,10 +20,106 @@ export type SessionControlActionInputById = {
         localId: string;
         expectedStateAtMs?: number | undefined;
     };
+    readonly "session.pending.withdraw": {
+        sessionId: string;
+        localId: string;
+        serverId?: string | undefined;
+        targetExecutionRunId?: string | undefined;
+    };
     readonly "session.title.set": {
         [x: string]: unknown;
         title: string;
         sessionId?: string | undefined;
+    };
+    readonly "session.bot.set": {
+        sessionId: string;
+        bot: {
+            kind: 'bot';
+        } | null;
+    };
+    readonly "session.memory.set": {
+        sessionId: string;
+        serverId: string;
+        expectedMetadataRevision: number;
+        enabled: boolean;
+    };
+    readonly "session.voice.preference.set": {
+        sessionId: string;
+        serverId: string;
+        expectedMetadataRevision: number;
+        preference: {
+            providerContributionId: string;
+            settingFieldPath: string;
+            value: VoiceProviderSettingsJsonValueV1<true>;
+        } | null;
+    };
+    readonly "session.context.update": {
+        sessionId: string;
+        serverId: string;
+        expectedMetadataRevision: number;
+        intent: {
+            kind: 'set';
+            entry: {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                placement?: 'system_append' | undefined;
+            };
+        } | {
+            kind: 'attach';
+            entry: {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                placement?: 'system_append' | undefined;
+            };
+        } | {
+            kind: 'detach';
+            entryId: string;
+        } | {
+            kind: 'reorder';
+            entryId: string;
+            siblingId: string;
+            position: 'before' | 'after';
+        } | {
+            kind: 'set_budget';
+            entryId: string;
+            maxChars: number | null;
+        } | {
+            kind: 'set_enabled';
+            entryId: string;
+            enabled: boolean;
+        } | {
+            kind: 'inherited_enable';
+            entryId: string;
+            enabled: boolean;
+        };
+    };
+    readonly "session.instructions.set": {
+        sessionId: string;
+        serverId: string;
+        expectedMetadataRevision: number;
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | null;
+    };
+    readonly "session.view.toolCalls.set": {
+        sessionId: string;
+        showToolCalls: boolean | null;
     };
     readonly "session.permission_mode.set": {
         [x: string]: unknown;
@@ -170,7 +266,28 @@ export type SessionControlActionResultById = {
         errorCode?: string | undefined;
         error?: string | undefined;
     };
+    readonly "session.pending.withdraw": {
+        outcome: 'removed' | 'already_delivered' | 'delivery_unknown';
+    };
     readonly "session.title.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.bot.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.memory.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.voice.preference.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.context.update": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.instructions.set": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+    readonly "session.view.toolCalls.set": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
     readonly "session.permission_mode.set": string | number | boolean | readonly JsonValue[] | {

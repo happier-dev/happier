@@ -1,4 +1,11 @@
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { removeTransferredProfileSourcesV1 } from '../../profiles/read.js';
+import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
+import { readSavedSecretTransferSourceV1 } from './savedSecretMutationOwner.js';
+import type { AccountSettingsHistorySavedSecretTransferV1, AccountSettingsHistoryLegacyRoleArtifactTransferV1 } from './accountSettingsApiV2.js';
+import { LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1 } from './rolesV1Migration.js';
+import type { PromptLibraryCatalogKeyV1 } from '../../prompts/library/promptLibraryRowsV1.js';
+import { removeTransferredPromptLibrarySourcesV1 } from '../../prompts/library/promptLibraryCatalogV1.js';
 import {
   ACCOUNT_SETTING_DEFINITIONS,
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
@@ -27,11 +34,33 @@ export type AccountSettingsHistoryRestoreApplicationV1 =
   | Readonly<{
     status: 'applied' | 'unchanged';
     raw: AccountSettingsPersistedObject;
+    /** Retained sensitive material still needs destination proof or exact purge. */
+    cleanupPending?: true;
   }>
   | Readonly<{
     status: 'invalid';
     reason: AccountSettingsHistoryRestoreInvalidReasonV1;
   }>;
+
+/** Content-free evidence supplied by the admitted destination domain owner. */
+export type AccountSettingsHistoryDestinationAuthorityV1 = Readonly<{
+  activeTransferredRoots: readonly string[];
+  /** Derived from an opened active Profile control, never from source rows. */
+  activeTransferredProfileIds?: readonly string[];
+  /** Derived from admitted prompt rows/tombstones; surface keys never claim private Profile stacks. */
+  activePromptLibraryKeys?: readonly PromptLibraryCatalogKeyV1[];
+  savedSecretTransfers?: readonly AccountSettingsHistorySavedSecretTransferV1[];
+  /** Complete current source retention, not a historical Role import inventory. */
+  legacyRoleArtifactTransfers?: readonly AccountSettingsHistoryLegacyRoleArtifactTransferV1[];
+}>;
+
+export const LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1 = LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1;
+function activeHistoryRoots(authority: AccountSettingsHistoryDestinationAuthorityV1): Set<string> {
+  const roots = new Set(authority.activeTransferredRoots.filter(root => root !== 'secrets' && root !== 'inferenceOpenAIKey'
+    && !(LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1 as readonly string[]).includes(root)));
+  if (authority.legacyRoleArtifactTransfers !== undefined) LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1.forEach(root => roots.add(root));
+  return roots;
+}
 
 function accountSettingDefinition(key: string) {
   return Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, key)
@@ -42,6 +71,50 @@ function accountSettingDefinition(key: string) {
 function invalid(reason: AccountSettingsHistoryRestoreInvalidReasonV1):
   AccountSettingsHistoryRestoreApplicationV1 {
   return Object.freeze({ status: 'invalid', reason });
+}
+
+/** Only an exact recognized source item is covered by a transfer identity. */
+export function readAccountSettingsHistorySavedSecretIdV1(value: unknown): string | null {
+  const parsed = SavedSecretSchema.strict().safeParse(value);
+  return parsed.success && sameStrictJsonValue(parsed.data, value) ? parsed.data.id : null;
+}
+
+/** Sanitizes one recorded document, not a restore: every unrelated byte value stays recorded. */
+export function normalizeTransferredAccountSettingsHistoryV1(
+  recordedRaw: unknown,
+  authority: AccountSettingsHistoryDestinationAuthorityV1,
+): AccountSettingsHistoryRestoreApplicationV1 {
+  if (recordedRaw === null || typeof recordedRaw !== 'object' || Array.isArray(recordedRaw)) {
+    return invalid('contentUnreadable');
+  }
+  const recorded = recordedRaw as Readonly<Record<string, unknown>>;
+  // SavedSecret migration is per source identity: other personal material can
+  // still share this root, so a transferred-root claim never deletes it whole.
+  const activeRoots = activeHistoryRoots(authority);
+  const stripped = Object.fromEntries(Object.entries(recorded).filter(([key]) => !activeRoots.has(key)));
+  const profilesRemoved = authority.activeTransferredProfileIds === undefined ? stripped
+    : removeTransferredProfileSourcesV1(stripped, authority.activeTransferredProfileIds);
+  const next = authority.activePromptLibraryKeys === undefined ? profilesRemoved
+    : removeTransferredPromptLibrarySourcesV1(profilesRemoved, authority.activePromptLibraryKeys);
+  if (authority.savedSecretTransfers?.length && Array.isArray(next.secrets)) {
+    const migrated = new Set(authority.savedSecretTransfers.flatMap(transfer => 'savedSecretId' in transfer ? [transfer.savedSecretId] : []));
+    next.secrets = next.secrets.filter(entry => {
+      // Nested released schemas can strip future fields or supply defaults.
+      // Only a losslessly recognized source item is covered by its identity proof.
+      const id = readAccountSettingsHistorySavedSecretIdV1(entry);
+      return id === null || !migrated.has(id);
+    });
+  }
+  const retainedSecrets = Object.hasOwn(next, 'secrets') && (!Array.isArray(next.secrets) || next.secrets.length > 0);
+  if (authority.savedSecretTransfers?.some(transfer => 'source' in transfer && transfer.source.kind === 'legacy-inference-openai-key')
+    && readSavedSecretTransferSourceV1({ inferenceOpenAIKey: next.inferenceOpenAIKey }).inferenceCredential) delete next.inferenceOpenAIKey;
+  // An unknown raw credential shape is never covered by a characterized source proof.
+  const retainedInferenceCredential = next.inferenceOpenAIKey != null && next.inferenceOpenAIKey !== '';
+  return Object.freeze({
+    status: sameStrictJsonValue(recorded, next) ? 'unchanged' : 'applied',
+    raw: Object.freeze(next) as AccountSettingsPersistedObject,
+    ...(retainedSecrets || retainedInferenceCredential ? { cleanupPending: true as const } : {}),
+  });
 }
 
 /**
@@ -64,11 +137,13 @@ function invalid(reason: AccountSettingsHistoryRestoreInvalidReasonV1):
 export function applyAccountSettingsHistoryRestoreV1(
   latestRaw: Readonly<Record<string, unknown>>,
   historicalRaw: unknown,
+  authority?: AccountSettingsHistoryDestinationAuthorityV1,
 ): AccountSettingsHistoryRestoreApplicationV1 {
   if (historicalRaw === null || typeof historicalRaw !== 'object' || Array.isArray(historicalRaw)) {
     return invalid('contentUnreadable');
   }
   const historical = historicalRaw as Readonly<Record<string, unknown>>;
+  const activeRoots = authority ? activeHistoryRoots(authority) : new Set<string>();
 
   const next: Record<string, unknown> = {};
 
@@ -77,6 +152,7 @@ export function applyAccountSettingsHistoryRestoreV1(
   // resurrect here. `schemaVersion` is unconditionally replaced below, so a
   // malformed historical copy can never fail the restore.
   for (const [key, historicalValue] of Object.entries(historical)) {
+    if (activeRoots.has(key)) continue;
     if (UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS.has(key)) continue;
     if (key === 'schemaVersion') continue;
     const definition = accountSettingDefinition(key);
@@ -91,6 +167,7 @@ export function applyAccountSettingsHistoryRestoreV1(
 
   // Carry the latest baseline forward under the same classification rules.
   for (const [key, latestValue] of Object.entries(latestRaw)) {
+    if (activeRoots.has(key)) continue;
     if (UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS.has(key)) continue;
     if (isRetiredAccountSettingsRootKey(key)) continue;
     const definition = accountSettingDefinition(key);
@@ -109,6 +186,12 @@ export function applyAccountSettingsHistoryRestoreV1(
   }
 
   // The restored document is current: a historical schemaVersion never rewinds it.
+  if (authority) {
+    const application = normalizeTransferredAccountSettingsHistoryV1(next, authority);
+    if (application.status === 'invalid') return application;
+    for (const key of Object.keys(next)) delete next[key];
+    Object.assign(next, application.raw);
+  }
   next.schemaVersion = ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION;
 
   // Validate every known root exactly like the ordinary writer's postcondition:

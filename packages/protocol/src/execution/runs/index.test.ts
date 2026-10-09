@@ -38,6 +38,36 @@ import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from '../../tools/v2/names.js';
 import type { ExecutionRunAgentIntentInputV1 } from '../../index.js';
 
 describe('executionRuns protocol', () => {
+  it('round-trips admitted Voice greeting bytes in start and retained state while keeping the welcome input closed', () => {
+    const base = { intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'read-only', retentionPolicy: 'ephemeral', runClass: 'long_lived', ioMode: 'streaming' };
+    const retained = { ...base, runId: 'voice', callId: 'call', sidechainId: 'sidechain', status: 'running', startedAtMs: 1 };
+    for (const [mode, text] of [['on_first_turn', ' \n '], ['immediate', '']] as const) {
+      const voicePolicy = { assistantLanguage: 'en', welcome: { enabled: true, mode, text } };
+      expect(ExecutionRunStartRequestSchema.parse({ ...base, intentInput: { voicePolicy } }).intentInput)
+        .toEqual({ voicePolicy });
+      expect(ExecutionRunPublicStateSchema.parse({ ...retained, voicePolicy }).voicePolicy).toEqual(voicePolicy);
+      expect(ExecutionRunPublicStateSchema.safeParse({ ...retained, voicePolicy: {
+        ...voicePolicy, welcome: { ...voicePolicy.welcome, unexpected: true },
+      } }).success).toBe(false);
+    }
+    expect(ExecutionRunPublicStateSchema.parse(retained).voicePolicy).toBeUndefined();
+    const oldPolicy = { assistantLanguage: null, welcome: { enabled: false, mode: 'immediate' } };
+    expect(ExecutionRunPublicStateSchema.parse({ ...retained, voicePolicy: oldPolicy }).voicePolicy).toEqual(oldPolicy);
+    expect(ExecutionRunPublicStateSchema.safeParse({ ...retained, voicePolicy: {
+      ...oldPolicy, welcome: { ...oldPolicy.welcome, text: 1 },
+    } }).success).toBe(false);
+  });
+
+  it('separates idle retained handles from bounded work and unobserved running turns', () => {
+    expect(Protocol.isExecutionRunActive({ status: 'running', runClass: 'long_lived', turnInFlight: false })).toBe(false);
+    expect(Protocol.isExecutionRunActive({ status: 'running', runClass: 'long_lived', turnInFlight: true })).toBe(true);
+    expect(Protocol.isExecutionRunActive({ status: 'running', runClass: 'bounded', turnInFlight: false })).toBe(true);
+    expect(Protocol.isExecutionRunActive({ status: 'running', runClass: 'long_lived' })).toBe(true);
+    expect(Protocol.isExecutionRunActive({ status: 'running', turnInFlight: false })).toBe(true);
+    expect(Protocol.isExecutionRunActive({ status: 'cancelled', runClass: 'long_lived', turnInFlight: true })).toBe(false);
+  });
+
   it('publishes the Agent intent and deferred-input schemas through the package root', () => {
     const input = {
       input: { path: 'src/index.ts' },

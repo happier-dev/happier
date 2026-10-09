@@ -43,6 +43,22 @@ function createDeps(): ActionExecutorDeps {
 }
 
 describe('createActionExecutor (memory)', () => {
+  it.each(['cli', 'mcp'] as const)('searches both corpora through the existing %s Action surface', async (surface) => {
+    const deps = createDeps();
+    const result = { v: 1, ok: true, hits: [{
+      type: 'artifact', ref: { kind: 'doc', serverId: 'home-1', artifactId: 'doc-1' },
+      revision: { headerVersion: 2, bodyVersion: 3 }, factId: 'fact-1', location: 'archive',
+      summary: 'Remembered decision', score: 1,
+    }], documents: { state: 'ready' } };
+    deps.daemonMemorySearch = vi.fn(async () => result);
+    const query = { v: 1, query: 'decision', scope: { type: 'global' }, mode: 'deep', corpora: ['sessions', 'documents'] };
+    const res = await createActionExecutor(deps).execute('memory.search', { machineId: 'm1', query }, {
+      surface, serverId: 'home-1',
+    });
+    expect(res).toEqual({ ok: true, result });
+    expect(deps.daemonMemorySearch).toHaveBeenCalledWith({ machineId: 'm1', query, serverId: 'home-1' });
+  });
+
   it('routes memory.search to deps.daemonMemorySearch', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);

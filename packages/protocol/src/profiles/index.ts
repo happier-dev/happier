@@ -38,6 +38,7 @@ export {
 export { isProfileCompatibleWithAgent, isProfileCompatibleWithBackendTarget } from './profileCompatibility.js';
 
 export {
+  LaunchProfileListItemV1Schema,
   mapAiLaunchProfileToListItemV1,
   projectLaunchProfileListV1,
   type LaunchProfileListItemV1,

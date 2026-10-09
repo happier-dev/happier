@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { AIBackendProfileSchema } from '../../profiles/backendProfileSchema.js';
+import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
+import { LaunchProfileV2Schema } from '../../profiles/v2/schema.js';
+import { normalizeBackendTargetKeyV2Input } from '../../backends/targets/backendTargetRefV2.js';
 
 import {
   confirmLegacyAiLaunchProfileMigrationV1,
   createLegacyProfileMigrationSourceFingerprintV1,
   LegacyProfileReviewedMappingV1Schema,
   migrateLegacyAiLaunchProfilesV1,
+  listLegacyAiLaunchProfileCredentialEnvironmentVariableNamesV1,
+  listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1,
+  requiresLegacyAiLaunchProfileProviderSourcePreparationV1,
 } from './legacyProfilesV1.js';
 
 function connectionCandidate(sourceProfileId: string, connectionId: string, secretId = 'secret-a') {
@@ -32,6 +38,148 @@ function connectionCandidate(sourceProfileId: string, connectionId: string, secr
 }
 
 describe('migrateLegacyAiLaunchProfilesV1', () => {
+  it('preserves an existing private long untrimmed legacy identity and predecessor environment counts after accepted Provider conversion', () => {
+    const id = `  retained-${'x'.repeat(270)}  `;
+    const publicEnvironment = Array.from({ length: 257 }, (_, index) => ({ name: `TEAM_FLAG_${index}`, value: `public-${index}` }));
+    const publicRequirements = publicEnvironment.map(({ name }) => ({ name, kind: 'config' as const, required: true }));
+    const profile = AIBackendProfileSchema.parse({ id, name: '  Retained company profile  ', description: 'd'.repeat(500),
+      environmentVariables: [{ name: 'DEEPSEEK_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' }, ...publicEnvironment],
+      envVarRequirements: [{ name: 'DEEPSEEK_AUTH_TOKEN', kind: 'secret', required: true }, ...publicRequirements],
+      defaultPermissionModeByTargetKey: { 'agent:claude': 'default' },
+      defaultPersistenceModeByTargetKey: { 'agent:claude': 'direct' },
+      compatibilityByTargetKey: { 'agent:claude': true },
+      codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'disabled' }, createdAt: 1, updatedAt: 2 });
+    const record = ProfileRecordV1Schema.parse({ v: 1, id, definition: { kind: 'legacy', profile }, enabled: false,
+      promptStack: [{ id: 'private-stack-entry', ref: { kind: 'doc', artifactId: 'private-prompt' }, enabled: true, placement: 'system_append', required: true }],
+      secretBindings: { DEEPSEEK_AUTH_TOKEN: 'secret-a', OTHER_TOKEN: 'private-secret' } });
+    const promptStacksV1 = { v: 1, surfaces: { coding: [], voice: [], profilesById: { [id]: record.promptStack } } };
+    const raw = { profiles: [profile], profileEnabledById: { [id]: record.enabled }, favoriteProfiles: [id],
+      secretBindingsByProfileId: { [id]: record.secretBindings }, promptStacksV1, unrelated: { keep: true } };
+
+    // New authoring remains bounded; representation conversion must not re-author retained data.
+    const authored = { v: 2, id, name: profile.name, extraEnvironmentVariables: publicEnvironment, envVarRequirements: publicRequirements, createdAt: 1, updatedAt: 2 };
+    expect(LaunchProfileV2Schema.safeParse({ ...authored, extraEnvironmentVariables: [], envVarRequirements: [] }).success).toBe(false);
+    expect(LaunchProfileV2Schema.safeParse({ ...authored, id: 'new-profile' }).success).toBe(false);
+    expect(LaunchProfileV2Schema.safeParse({ ...authored, id: 'new-profile', extraEnvironmentVariables: [], envVarRequirements: [] }).success).toBe(true);
+
+    const reviewedMapping = LegacyProfileReviewedMappingV1Schema.parse({
+      connection: { v: 1, id: 'pc-company', role: 'named', displayName: 'Company', displayNameMode: 'custom',
+        revision: 0, createdAt: 20, updatedAt: 20, source: { kind: 'custom', template: { v: 1, name: 'Company',
+          endpointTemplates: [{ id: 'chat', protocol: 'openai-chat', baseUrl: 'https://company.example/v1',
+            capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+          credential: { kind: 'apiKey', slotId: 'apiKey', required: true,
+            transports: [{ id: 'key', protocols: ['openai-chat'], uses: ['probe', 'runtime'],
+              destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
+          catalog: { source: 'manual', manualModelPolicy: 'allowed' } } } },
+      credentialMoves: [{ legacyEnvVarName: 'DEEPSEEK_AUTH_TOKEN', credentialSlotId: 'apiKey', credentialStyle: 'bearer' }],
+      routingEnvironmentVariableNames: [], manualModelIds: ['company-model'],
+      selectedModel: { agentTargetKey: 'agent:claude', modelId: 'company-model' },
+    });
+    const confirmation = { rawSettings: raw, sourceProfileId: id, reviewedMapping, authoringMemory: { lastUsedProfile: id },
+      recordContext: { profileRecordIds: [id], records: [{ record, revision: 4 }] } };
+    const result = confirmLegacyAiLaunchProfileMigrationV1({ ...confirmation, migratedAt: 20,
+      expectedSourceFingerprint: createLegacyProfileMigrationSourceFingerprintV1(confirmation) });
+    expect(result.ok ? true : result).toBe(true);
+    if (!result.ok) throw new Error('expected accepted Provider conversion');
+    expect(result.settings).toMatchObject({ profiles: [{ v: 2, id, name: profile.name, description: profile.description,
+      extraEnvironmentVariables: publicEnvironment, envVarRequirements: publicRequirements,
+      defaultPermissionModeByTargetKey: profile.defaultPermissionModeByTargetKey,
+      defaultPersistenceModeByTargetKey: profile.defaultPersistenceModeByTargetKey,
+      compatibilityByTargetKey: profile.compatibilityByTargetKey,
+      codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' },
+      preferredModelSelection: { ref: { providerConnectionId: 'pc-company' } }, createdAt: 1, updatedAt: 2 }],
+      profileEnabledById: { [id]: false }, secretBindingsByProfileId: { [id]: { OTHER_TOKEN: 'private-secret' } },
+      promptStacksV1, unrelated: { keep: true },
+      providerSettingsV1: { migration: { completedSources: [{ sourceProfileId: id, kind: 'connection', connectionId: 'pc-company' }] } } });
+    expect(result).not.toHaveProperty('lastUsedProfileClear');
+    const convertedProfile = Array.isArray(result.settings.profiles) ? result.settings.profiles[0] : undefined;
+    const convertedRecord = ProfileRecordV1Schema.parse({ ...record, definition: { kind: 'inline', profile: convertedProfile },
+      secretBindings: { OTHER_TOKEN: 'private-secret' } });
+    expect(convertedRecord).toMatchObject({ id, enabled: record.enabled, promptStack: record.promptStack,
+      secretBindings: { OTHER_TOKEN: 'private-secret' }, definition: { kind: 'inline', profile: { id } } });
+    expect(record.definition).toEqual({ kind: 'legacy', profile });
+  });
+
+  it('preserves private record identity, enablement and remaining bindings when routing is the entire profile', () => {
+    const profile = AIBackendProfileSchema.parse({ id: 'deepseek', name: 'My routing profile', isBuiltIn: true,
+      environmentVariables: [{ name: 'DEEPSEEK_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' }],
+      codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'disabled' }, createdAt: 1, updatedAt: 1 });
+    const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile],
+      profileEnabledById: { deepseek: true }, favoriteProfiles: ['deepseek'],
+      secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'secret-a', OTHER_TOKEN: 'secret-private' } },
+    }, { migratedAt: 20, candidates: [connectionCandidate('deepseek', 'pc-deepseek')], pendingCustomProfileIds: [] },
+    { lastUsedProfile: 'deepseek' }, { profileRecordIds: ['deepseek'] });
+    expect(result).toMatchObject({ ok: true, settings: {
+      profiles: [{ v: 2, id: 'deepseek', name: 'My routing profile', extraEnvironmentVariables: [],
+        codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' },
+        preferredModelSelection: { ref: { providerConnectionId: 'pc-deepseek' } } }],
+      profileEnabledById: { deepseek: true }, favoriteProfiles: ['deepseek'],
+      secretBindingsByProfileId: { deepseek: { OTHER_TOKEN: 'secret-private' } },
+    } });
+    expect(result).not.toHaveProperty('lastUsedProfileClear');
+  });
+
+  it('keeps private machine-login compatibility definitions and their attachments on Default Environment migration', () => {
+    const profile = AIBackendProfileSchema.parse({ id: 'anthropic', name: 'Claude login', authMode: 'machineLogin',
+      requiresMachineLoginTargetKey: 'agent:claude', createdAt: 1, updatedAt: 1 });
+    const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile], profileEnabledById: { anthropic: true },
+      secretBindingsByProfileId: { anthropic: { OTHER_TOKEN: 'secret-private' } },
+    }, { migratedAt: 20, candidates: [{ kind: 'default_environment', sourceProfileId: 'anthropic' }], pendingCustomProfileIds: [] },
+    { lastUsedProfile: 'anthropic' }, { profileRecordIds: ['anthropic'] });
+    expect(result).toMatchObject({ ok: true, settings: { profiles: [profile], profileEnabledById: { anthropic: true },
+      secretBindingsByProfileId: { anthropic: { OTHER_TOKEN: 'secret-private' } } } });
+    expect(result).not.toHaveProperty('lastUsedProfileClear');
+  });
+
+  it('preserves a private machine-login prerequisite when its Provider connection is converted', () => {
+    const profile = AIBackendProfileSchema.parse({ id: 'company', name: 'Company', authMode: 'machineLogin',
+      requiresMachineLoginTargetKey: 'agent:claude', environmentVariables: [
+        { name: 'DEEPSEEK_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' }, { name: 'TEAM_FLAG', value: 'public' }],
+      envVarRequirements: [{ name: 'DEEPSEEK_AUTH_TOKEN', kind: 'secret', required: true }], createdAt: 1, updatedAt: 1 });
+    const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile], secretBindingsByProfileId: {
+      company: { DEEPSEEK_AUTH_TOKEN: 'secret-a', OTHER_TOKEN: 'private-secret' } },
+    }, { migratedAt: 20, candidates: [connectionCandidate('company', 'pc-company')], pendingCustomProfileIds: [] },
+    { lastUsedProfile: 'company' }, { profileRecordIds: ['company'] });
+    expect(result).toMatchObject({ ok: true, settings: { profiles: [{ id: 'company', authMode: 'machineLogin',
+      requiresMachineLoginTargetKey: normalizeBackendTargetKeyV2Input('agent:claude'), environmentVariables: [{ name: 'TEAM_FLAG', value: 'public' }], envVarRequirements: [] }],
+      secretBindingsByProfileId: { company: { OTHER_TOKEN: 'private-secret' } }, providerSettingsV1: { connections: [{ id: 'pc-company' }] } } });
+    expect(result).not.toHaveProperty('lastUsedProfileClear');
+  });
+
+  it('classifies descriptor credential aliases and secret requirements without treating endpoint or model literals as credentials', () => {
+    const profile = AIBackendProfileSchema.parse({ id: 'custom', name: 'Custom', environmentVariables: [
+      { name: 'ANTHROPIC_AUTH_TOKEN', value: 'literal-key' }, { name: 'DEEPSEEK_AUTH_TOKEN', value: 'other-key' },
+      { name: 'ANTHROPIC_BASE_URL', value: 'https://example.test' }, { name: 'ANTHROPIC_MODEL', value: 'model' },
+      { name: 'PRIVATE_VALUE', value: 'private', isSecret: true },
+    ], envVarRequirements: [{ name: 'REQUIRED_KEY', kind: 'secret', required: true }], createdAt: 1, updatedAt: 1 });
+    const names = listLegacyAiLaunchProfileCredentialEnvironmentVariableNamesV1(profile, [{ legacyProfileMigrations: [{
+      sourceProfileId: 'deepseek', descriptorRevision: 1, implicitModelAliasReplacements: [],
+      credentialBinding: { legacyEnvVarName: 'DEEPSEEK_AUTH_TOKEN', credentialSlotId: 'apiKey' },
+      migratedEnvironmentVariables: [
+        { name: 'ANTHROPIC_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' },
+        { name: 'ANTHROPIC_BASE_URL', value: '${DEEPSEEK_BASE_URL:-https://example.test}' },
+        { name: 'ANTHROPIC_MODEL', value: '${DEEPSEEK_MODEL:-model}' },
+      ], retainedEnvironmentVariables: [],
+    }] }]);
+    expect(new Set(names)).toEqual(new Set(['ANTHROPIC_AUTH_TOKEN', 'DEEPSEEK_AUTH_TOKEN', 'PRIVATE_VALUE', 'REQUIRED_KEY']));
+    const template = { ...profile, environmentVariables: [
+      { name: 'PRIVATE_VALUE', value: '${BOUND_KEY}', isSecret: true },
+      { name: 'REQUIRED_KEY', value: '${MISSING_KEY}' },
+      { name: 'ANTHROPIC_MODEL', value: 'not-a-secret' },
+    ] };
+    expect(listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1(template, [], { BOUND_KEY: 'secret-a' }))
+      .toEqual(['REQUIRED_KEY']);
+    expect(requiresLegacyAiLaunchProfileProviderSourcePreparationV1({ environmentVariables: [
+      { name: 'TEAM_FLAG', value: 'public' }, { name: 'PRIVATE_VALUE', value: '${BOUND_KEY}', isSecret: true },
+    ], envVarRequirements: [] }, { BOUND_KEY: 'secret-a' })).toBe(false);
+    expect(requiresLegacyAiLaunchProfileProviderSourcePreparationV1({ environmentVariables: [
+      { name: 'DEEPSEEK_AUTH_TOKEN', value: 'literal' },
+    ], envVarRequirements: [] }, {})).toBe(true);
+    expect(requiresLegacyAiLaunchProfileProviderSourcePreparationV1({ environmentVariables: [
+      { name: 'PRIVATE_VALUE', value: 'literal', isSecret: true },
+    ], envVarRequirements: [] }, {})).toBe(true);
+  });
+
   it('returns a conditional authoring-memory clear when removing a Profile, without writing a Settings root, and repairs an interrupted clear', () => {
     const raw = {
       profiles: [{ id: 'deepseek', name: 'DeepSeek', environmentVariables: [{ name: 'DEEPSEEK_AUTH_TOKEN', value: '${DEEPSEEK_AUTH_TOKEN}' }], createdAt: 1, updatedAt: 1 }],
@@ -204,6 +352,17 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
     const fingerprint = createLegacyProfileMigrationSourceFingerprintV1({
       rawSettings: raw, sourceProfileId: 'company', reviewedMapping, authoringMemory: { lastUsedProfile: 'company' },
     });
+    const privateRecord = ProfileRecordV1Schema.parse({ v: 1, id: 'company', enabled: true,
+      definition: { kind: 'legacy', profile: raw.profiles[0] }, promptStack: [],
+      secretBindings: raw.secretBindingsByProfileId.company });
+    const recordAwareInput = { rawSettings: raw, sourceProfileId: 'company', reviewedMapping,
+      authoringMemory: { lastUsedProfile: 'company' },
+      recordContext: { profileRecordIds: ['company'], records: [{ record: privateRecord, revision: 2 }] } };
+    const privateFingerprint = createLegacyProfileMigrationSourceFingerprintV1(recordAwareInput);
+    expect(createLegacyProfileMigrationSourceFingerprintV1({ ...recordAwareInput,
+      recordContext: { ...recordAwareInput.recordContext, records: [{ record: { ...privateRecord,
+        secretBindings: { ...privateRecord.secretBindings, RETAINED_TOKEN: 'secret-other' } }, revision: 3 }] },
+    })).not.toBe(privateFingerprint);
     expect(createLegacyProfileMigrationSourceFingerprintV1({
       rawSettings: { ...raw, lastUsedProfile: 'retired-raw-value' }, sourceProfileId: 'company', reviewedMapping,
       authoringMemory: { lastUsedProfile: 'company' },

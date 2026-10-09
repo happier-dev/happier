@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
@@ -50,13 +51,13 @@ export const SESSION_STOP_CLI_PROJECTION: ActionCliProjection = {
  * command sent. Rejecting an unknown alias at the caller schema keeps the
  * diagnostic naming the value the user typed.
  */
-export const SessionPermissionModeSetCliInputSchema = z.object({
+export const SessionPermissionModeSetCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   permissionMode: z.string().trim().min(1).refine(
     (value) => parseAgentPermissionIntentV1Alias(value) !== null,
     { message: 'Invalid permission mode' },
   ),
-}).strict();
+}).strict());
 export type SessionPermissionModeSetCliInput = z.infer<typeof SessionPermissionModeSetCliInputSchema>;
 
 export function bindSessionPermissionModeSetCliInput(
@@ -94,11 +95,11 @@ export const SESSION_PERMISSION_MODE_SET_CLI_PROJECTION: ActionCliProjection = {
  * Action contract represents as a null connection id. Omitting the flag leaves
  * the current selection untouched.
  */
-export const SessionModelSetCliInputSchema = z.object({
+export const SessionModelSetCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   modelId: z.string().trim().min(1),
   providerConnection: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 export type SessionModelSetCliInput = z.infer<typeof SessionModelSetCliInputSchema>;
 
 export function bindSessionModelSetCliInput(
@@ -143,10 +144,10 @@ export const SESSION_MODEL_SET_CLI_PROJECTION: ActionCliProjection = {
  * accepted range, so the clamp lives in this caller projection rather than
  * widening the Action.
  */
-export const SessionWaitIdleCliInputSchema = z.object({
+export const SessionWaitIdleCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   timeoutSeconds: z.number().int().min(1).optional(),
-}).strict();
+}).strict());
 export type SessionWaitIdleCliInput = z.infer<typeof SessionWaitIdleCliInputSchema>;
 
 /**

@@ -1,5 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
+import { SessionVoicePreferenceV1Schema } from '../sessions/instructions/sessionVoicePreferenceV1.js';
 
 export const VOICE_CONVERSATION_ACTION_IDS = [
   'ui.voice_global.get', 'ui.voice_global.start', 'ui.voice_global.end', 'ui.voice_global.set_muted',
@@ -12,15 +14,15 @@ export function isVoiceConversationActionId(value: string): value is VoiceConver
   return (VOICE_CONVERSATION_ACTION_IDS as readonly string[]).includes(value);
 }
 
-const IdSchema = z.string().trim().min(1);
-const AddressSchema = z.object({ serverId: IdSchema, sessionId: IdSchema }).strict();
-export const VoiceConversationTargetSchema = z.discriminatedUnion('kind', [
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const AddressSchema = lazyZodSchema(() => z.object({ serverId: IdSchema, sessionId: IdSchema }).strict());
+export const VoiceConversationTargetSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('global') }).strict(),
   z.object({ kind: z.literal('session'), sessionAddress: AddressSchema.nullable() }).strict(),
   z.object({ kind: z.literal('default') }).strict(),
-]);
-const AttemptInputSchema = z.object({ expectedAttempt: IdSchema }).strict();
-const BriefInputSchema = z.object({ expectedAttemptId: IdSchema.optional() }).strict();
+]));
+const AttemptInputSchema = lazyZodSchema(() => z.object({ expectedAttempt: IdSchema }).strict());
+const BriefInputSchema = lazyZodSchema(() => z.object({ expectedAttemptId: IdSchema.optional() }).strict());
 export const VoiceConversationActionInputSchemas = {
   'ui.voice_global.get': z.object({ target: VoiceConversationTargetSchema.optional() }).strict(),
   'ui.voice_global.start': z.object({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }).strict(),
@@ -37,7 +39,13 @@ export const VoiceConversationActionInputSchemas = {
   'ui.voice_global.brief.stop': BriefInputSchema,
 } as const;
 
-export const VoiceConversationStatusSchema = z.object({
+/** The adapter's accepted voice for this attempt, never its saved next-attempt preference. */
+export const VoiceConversationInUseVoiceSchema = lazyZodSchema(() => SessionVoicePreferenceV1Schema.extend({
+  displayName: z.string().trim().min(1),
+}).strict());
+export type VoiceConversationInUseVoice = z.infer<typeof VoiceConversationInUseVoiceSchema>;
+
+export const VoiceConversationStatusSchema = lazyZodSchema(() => z.object({
   attemptId: IdSchema.nullable(), adapterId: IdSchema.nullable(), sessionId: IdSchema.nullable(),
   status: z.enum(['disconnected', 'connecting', 'connected', 'error']),
   mode: z.enum(['idle', 'listening', 'transcribing', 'thinking', 'speaking']),
@@ -46,15 +54,16 @@ export const VoiceConversationStatusSchema = z.object({
   canStart: z.boolean(), canStop: z.boolean(), canMute: z.boolean(), canCommitInput: z.boolean(),
   canHoldToTalk: z.boolean(), muted: z.boolean(), canDismissFailedAttempt: z.boolean(), canDismissEnded: z.boolean(),
   recoveryAction: IdSchema.nullable(), availability: z.enum(['ready', 'recoverable', 'setup', 'unavailable']),
-}).strict();
+  inUseVoice: VoiceConversationInUseVoiceSchema.nullable(),
+}).strict());
 export type VoiceConversationStatus = z.infer<typeof VoiceConversationStatusSchema>;
-export const VoiceConversationActionResultSchema = z.discriminatedUnion('status', [
+export const VoiceConversationActionResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('completed'), voice: VoiceConversationStatusSchema }).strict(),
   z.object({ status: z.literal('unavailable'), code: IdSchema, voice: VoiceConversationStatusSchema }).strict(),
-]);
-const BriefResultSchema = z.object({
+]));
+const BriefResultSchema = lazyZodSchema(() => z.object({
   status: z.enum(['waiting', 'sent', 'refused', 'stopped']), attemptId: IdSchema.nullable(),
-}).strict();
+}).strict());
 export const VoiceConversationActionOutputSchemas = {
   'ui.voice_global.get': VoiceConversationActionResultSchema,
   'ui.voice_global.start': VoiceConversationActionResultSchema,

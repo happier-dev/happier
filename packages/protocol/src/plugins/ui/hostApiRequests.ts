@@ -1,5 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
+import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
 
 import {
   PluginContributionIdentityV1Schema,
@@ -60,6 +62,9 @@ import {
   SessionAwarenessWorkspaceV1Schema,
 } from '../../sessions/awareness/projectionV1.js';
 import { ProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { PluginUiNewSessionSeedOriginV1Schema } from './newSessionSeedOrigin.js';
+export { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema,
+  type PluginUiNewSessionSeedOriginV1 } from './newSessionSeedOrigin.js';
 
 export {
   PLUGIN_UI_INSTANCE_KEY_MAX_UTF8_BYTES_V1,
@@ -264,6 +269,13 @@ export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.object({
   // Exact mounted Account scope, not the client's currently focused Home.
   serverId: z.string().trim().min(1).optional(),
   title: z.string().min(1).optional(),
+  /** Catalog presentation only; unknown identity stays absent rather than selecting a default Agent. */
+  agent: z.object({
+    agentId: z.string().trim().min(1),
+    displayName: z.string().trim().min(1),
+    /** Exact package target for the public BrandMark owner, when the catalog knows it. */
+    brand: z.object({ pluginId: asProtocolZod(PluginIdSchema) }).strict().optional(),
+  }).strict().optional(),
   lifecycle: SessionAwarenessLifecycleV1Schema,
   runtime: SessionAwarenessRuntimeV1Schema,
   operational: SessionAwarenessOperationalPrimaryV1Schema,
@@ -511,12 +523,12 @@ export type PluginUiExecuteActionRequestV1 =
 export type PluginUiJsonObjectV1 = { readonly [key: string]: PluginUiJsonValueV1 };
 
 /** Selection values share the incumbent bounded host-input JSON boundary. */
-export const PluginUiJsonObjectV1Schema = PluginUiLaunchInputV1Schema.refine(
+export const PluginUiJsonObjectV1Schema = lazyZodSchema(() => PluginUiLaunchInputV1Schema.refine(
   (value): value is PluginUiJsonObjectV1 => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
   ),
   'Action input selection values must be JSON objects.',
-);
+));
 
 /**
  * No-invoke selection names one exact operation already admitted into the
@@ -643,8 +655,13 @@ export type PluginUiNewSessionPlacementV1 =
   z.infer<typeof PluginUiNewSessionPlacementV1Schema>;
 
 export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.object({
+  /** An empty name requests the ordinary Session's automatic name. */
+  sessionName: z.string().optional(),
+  initialSessionFacts: SessionIdentityAdditionsV1Schema.optional(),
+  promptStack: SessionPromptStackV1Schema.optional(),
   prompt: z.string().trim().min(1).optional(),
   profileId: z.string().trim().min(1).optional(),
+  origin: PluginUiNewSessionSeedOriginV1Schema.optional(),
   /**
    * A resolved checkout question, not a concrete checkout draft. The New
    * Session screen owns the eventual worktree name, base ref and persisted
@@ -680,6 +697,36 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.object({
     .optional(),
 }).strict());
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
+
+const SessionNewSessionSeedFailureV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('invalid'), reason: z.enum([
+    'seed_invalid', 'seed_empty', 'seed_attachments_uncredited',
+  ]) }).strict(),
+  z.object({ kind: z.literal('unavailable'), reason: z.enum([
+    'aborted', 'navigation_unavailable', 'prepared_review_workspace_unavailable', 'origin_unavailable',
+  ]) }).strict(),
+  z.object({ kind: z.literal('stale'), reason: z.literal('host_retired') }).strict(),
+]));
+
+/** One settlement vocabulary for page and embedded New Session hosts. */
+export const SessionNewSessionSeedOutcomeSchema = lazyZodSchema(() => z.union([
+  z.object({ kind: z.literal('opened'), dataId: z.string().nullable(), draftId: z.string().min(1) }).strict(),
+  SessionNewSessionSeedFailureV1Schema,
+]));
+export type SessionNewSessionSeedOutcome = z.infer<typeof SessionNewSessionSeedOutcomeSchema>;
+
+export const SessionAuthoringOpenV1Schema = lazyZodSchema(() => z.object({
+  seed: PluginUiNewSessionSeedV1Schema,
+}).strict());
+export type SessionAuthoringOpenV1 = z.infer<typeof SessionAuthoringOpenV1Schema>;
+
+/** The Action acknowledges an editable page draft, never a Session or a writable copy. */
+export const SessionAuthoringOpenResultV1Schema = lazyZodSchema(() => z.union([
+  z.object({ kind: z.literal('opened'), draftId: z.string().min(1), destination: z.literal('newSession') }).strict(),
+  SessionNewSessionSeedFailureV1Schema,
+  z.object({ kind: z.literal('unavailable'), reason: z.literal('client_unavailable') }).strict(),
+]));
+export type SessionAuthoringOpenResultV1 = z.infer<typeof SessionAuthoringOpenResultV1Schema>;
 
 /**
  * Open the incumbent New Session screen with one author-shaped handoff.

@@ -406,7 +406,7 @@ export type ExecutionRunControlActionInputById = {
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'review' | 'file' | 'external' | 'action' | 'unavailable' | 'search' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'review' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                     tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                 };
                 content?: {
@@ -996,7 +996,7 @@ export type ExecutionRunControlActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'review' | 'file' | 'external' | 'action' | 'unavailable' | 'search' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'review' | 'action' | 'unavailable' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
                     };
                     content?: {
@@ -1211,6 +1211,7 @@ export type ExecutionRunControlActionInputById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -1352,6 +1353,7 @@ export type ExecutionRunControlActionInputById = {
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
                     };
                 } | undefined;
                 finishedAtMs?: number | undefined;
@@ -1382,8 +1384,7 @@ export type ExecutionRunControlActionResultById = {
         } | undefined;
         wait?: {
             ok: true;
-            status: 'running';
-            disposition: 'needs_attention';
+            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
             result: {
                 [x: string]: unknown;
                 run: {
@@ -1405,6 +1406,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -1571,6 +1573,216 @@ export type ExecutionRunControlActionResultById = {
                         welcome: {
                             enabled: boolean;
                             mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
+                        };
+                    } | undefined;
+                    finishedAtMs?: number | undefined;
+                    error?: {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                    } | undefined;
+                };
+                latestToolResult?: unknown;
+                structuredMeta?: {
+                    [x: string]: unknown;
+                    kind: string;
+                    payload: unknown;
+                } | undefined;
+            };
+        } | {
+            ok: true;
+            status: 'running';
+            disposition: 'needs_attention';
+            result: {
+                [x: string]: unknown;
+                run: {
+                    [x: string]: unknown;
+                    runId: string;
+                    callId: string;
+                    sidechainId: string;
+                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    backendTarget: {
+                        kind: 'builtInAgent';
+                        agentId: string;
+                    } | {
+                        kind: 'configuredAcpBackend';
+                        backendId: string;
+                    };
+                    permissionMode: string;
+                    retentionPolicy: 'ephemeral' | 'resumable';
+                    runClass: 'bounded' | 'long_lived';
+                    ioMode: 'request_response' | 'streaming';
+                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                    startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
+                    display?: {
+                        [x: string]: unknown;
+                        title?: string | undefined;
+                        participantLabel?: string | undefined;
+                        groupId?: string | undefined;
+                    } | undefined;
+                    launchOrigin?: {
+                        kind: 'session';
+                        sessionId: string;
+                        draftCorrelationId?: string | undefined;
+                    } | {
+                        kind: 'session_discussion';
+                        sessionId: string;
+                        discussionId: string;
+                        messageIds: string[];
+                        draftCorrelationId?: string | undefined;
+                    } | {
+                        kind: 'external';
+                        source?: 'cli' | 'mcp' | 'action' | undefined;
+                    } | undefined;
+                    requestedConfiguration?: {
+                        modelId?: string | undefined;
+                        reasoningEffort?: string | undefined;
+                    } | undefined;
+                    turnInFlight?: boolean | undefined;
+                    inputTurns?: {
+                        occurrenceId: string;
+                        current?: {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'failed' | 'cancelled' | 'active' | 'completed';
+                            result?: {
+                                kind: 'text';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: string | number | boolean | readonly JsonValue[] | {
+                                    readonly [key: string]: JsonValue;
+                                } | null;
+                            } | {
+                                kind: 'decision';
+                                value: string;
+                            } | undefined;
+                        } | undefined;
+                        last?: {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'failed' | 'cancelled' | 'active' | 'completed';
+                            result?: {
+                                kind: 'text';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: string | number | boolean | readonly JsonValue[] | {
+                                    readonly [key: string]: JsonValue;
+                                } | null;
+                            } | {
+                                kind: 'decision';
+                                value: string;
+                            } | undefined;
+                        } | undefined;
+                    } | undefined;
+                    interaction?: {
+                        kind: 'retained_agent_session.v1';
+                        capabilities: {
+                            open: ('resume' | 'create' | 'fork')[];
+                            delivery: ('newTurn' | 'steer' | 'followUp')[];
+                            cancel: boolean;
+                            configuration?: boolean | undefined;
+                            workspaceWrites?: 'deny' | undefined;
+                            compaction?: {
+                                events: true;
+                                manual?: true | undefined;
+                            } | undefined;
+                            conversationRollback?: true | undefined;
+                            goals?: {
+                                source: string;
+                                active?: {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: {
+                                        fields: ('status' | 'objective' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
+                                    } | undefined;
+                                } | undefined;
+                                inactive?: {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: {
+                                        fields: ('status' | 'objective' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
+                                    } | undefined;
+                                } | undefined;
+                            } | undefined;
+                            usageReporting?: true | undefined;
+                            catalog?: {
+                                active?: ('vendorPlugins' | 'skills')[] | undefined;
+                                inactive?: ('vendorPlugins' | 'skills')[] | undefined;
+                            } | undefined;
+                            usageLimitRecovery?: {
+                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            } | undefined;
+                            continuationVerification?: {
+                                intents: ('resume' | 'fork')[];
+                                requirement: 'required' | 'advisory';
+                            } | undefined;
+                            workStateSources?: {
+                                id: string;
+                                itemKinds: ('task' | 'goal' | 'todo')[];
+                            }[] | undefined;
+                            runtimeActivitySnapshots?: true | undefined;
+                            startupInstructions?: {
+                                versions: [
+                                    1
+                                ];
+                                revisionChanges?: 'resume' | undefined;
+                            } | undefined;
+                            executionRunContext?: {
+                                versions: [
+                                    1
+                                ];
+                            } | undefined;
+                        };
+                    } | undefined;
+                    attention?: {
+                        kind: 'permission_required';
+                        requestIds: string[];
+                    } | undefined;
+                    lifecycle?: {
+                        v: 1;
+                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
+                    } | undefined;
+                    availableActionIds?: string[] | undefined;
+                    resumeHandle?: {
+                        [x: string]: unknown;
+                        kind: 'provider_session.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        providerSessionId: string;
+                    } | {
+                        [x: string]: unknown;
+                        kind: 'voice_agent_sessions.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        chatProviderSessionId: string;
+                        commitProviderSessionId: string;
+                    } | undefined;
+                    transcript?: {
+                        [x: string]: unknown;
+                        persistenceMode: 'ephemeral' | 'persistent';
+                        epoch: number;
+                    } | undefined;
+                    voicePolicy?: {
+                        assistantLanguage: string | null;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
                         };
                     } | undefined;
                     finishedAtMs?: number | undefined;
@@ -1612,6 +1824,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -1778,6 +1991,7 @@ export type ExecutionRunControlActionResultById = {
                         welcome: {
                             enabled: boolean;
                             mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
                         };
                     } | undefined;
                     finishedAtMs?: number | undefined;
@@ -1823,6 +2037,7 @@ export type ExecutionRunControlActionResultById = {
                     ioMode: 'request_response' | 'streaming';
                     status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                     startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
                     display?: {
                         [x: string]: unknown;
                         title?: string | undefined;
@@ -1989,212 +2204,7 @@ export type ExecutionRunControlActionResultById = {
                         welcome: {
                             enabled: boolean;
                             mode: 'immediate' | 'on_first_turn';
-                        };
-                    } | undefined;
-                    finishedAtMs?: number | undefined;
-                    error?: {
-                        [x: string]: unknown;
-                        code: string;
-                        message?: string | undefined;
-                    } | undefined;
-                };
-                latestToolResult?: unknown;
-                structuredMeta?: {
-                    [x: string]: unknown;
-                    kind: string;
-                    payload: unknown;
-                } | undefined;
-            };
-        } | {
-            ok: true;
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
-            result: {
-                [x: string]: unknown;
-                run: {
-                    [x: string]: unknown;
-                    runId: string;
-                    callId: string;
-                    sidechainId: string;
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                    backendTarget: {
-                        kind: 'builtInAgent';
-                        agentId: string;
-                    } | {
-                        kind: 'configuredAcpBackend';
-                        backendId: string;
-                    };
-                    permissionMode: string;
-                    retentionPolicy: 'ephemeral' | 'resumable';
-                    runClass: 'bounded' | 'long_lived';
-                    ioMode: 'request_response' | 'streaming';
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                    startedAtMs: number;
-                    display?: {
-                        [x: string]: unknown;
-                        title?: string | undefined;
-                        participantLabel?: string | undefined;
-                        groupId?: string | undefined;
-                    } | undefined;
-                    launchOrigin?: {
-                        kind: 'session';
-                        sessionId: string;
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'session_discussion';
-                        sessionId: string;
-                        discussionId: string;
-                        messageIds: string[];
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'external';
-                        source?: 'cli' | 'mcp' | 'action' | undefined;
-                    } | undefined;
-                    requestedConfiguration?: {
-                        modelId?: string | undefined;
-                        reasoningEffort?: string | undefined;
-                    } | undefined;
-                    turnInFlight?: boolean | undefined;
-                    inputTurns?: {
-                        occurrenceId: string;
-                        current?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: string | number | boolean | readonly JsonValue[] | {
-                                    readonly [key: string]: JsonValue;
-                                } | null;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                        last?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: string | number | boolean | readonly JsonValue[] | {
-                                    readonly [key: string]: JsonValue;
-                                } | null;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
-                    interaction?: {
-                        kind: 'retained_agent_session.v1';
-                        capabilities: {
-                            open: ('resume' | 'create' | 'fork')[];
-                            delivery: ('newTurn' | 'steer' | 'followUp')[];
-                            cancel: boolean;
-                            configuration?: boolean | undefined;
-                            workspaceWrites?: 'deny' | undefined;
-                            compaction?: {
-                                events: true;
-                                manual?: true | undefined;
-                            } | undefined;
-                            conversationRollback?: true | undefined;
-                            goals?: {
-                                source: string;
-                                active?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                                inactive?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
-                            usageReporting?: true | undefined;
-                            catalog?: {
-                                active?: ('vendorPlugins' | 'skills')[] | undefined;
-                                inactive?: ('vendorPlugins' | 'skills')[] | undefined;
-                            } | undefined;
-                            usageLimitRecovery?: {
-                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            } | undefined;
-                            continuationVerification?: {
-                                intents: ('resume' | 'fork')[];
-                                requirement: 'required' | 'advisory';
-                            } | undefined;
-                            workStateSources?: {
-                                id: string;
-                                itemKinds: ('task' | 'goal' | 'todo')[];
-                            }[] | undefined;
-                            runtimeActivitySnapshots?: true | undefined;
-                            startupInstructions?: {
-                                versions: [
-                                    1
-                                ];
-                                revisionChanges?: 'resume' | undefined;
-                            } | undefined;
-                            executionRunContext?: {
-                                versions: [
-                                    1
-                                ];
-                            } | undefined;
-                        };
-                    } | undefined;
-                    attention?: {
-                        kind: 'permission_required';
-                        requestIds: string[];
-                    } | undefined;
-                    lifecycle?: {
-                        v: 1;
-                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                    } | undefined;
-                    availableActionIds?: string[] | undefined;
-                    resumeHandle?: {
-                        [x: string]: unknown;
-                        kind: 'provider_session.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        providerSessionId: string;
-                    } | {
-                        [x: string]: unknown;
-                        kind: 'voice_agent_sessions.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        chatProviderSessionId: string;
-                        commitProviderSessionId: string;
-                    } | undefined;
-                    transcript?: {
-                        [x: string]: unknown;
-                        persistenceMode: 'ephemeral' | 'persistent';
-                        epoch: number;
-                    } | undefined;
-                    voicePolicy?: {
-                        assistantLanguage: string | null;
-                        welcome: {
-                            enabled: boolean;
-                            mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
                         };
                     } | undefined;
                     finishedAtMs?: number | undefined;
@@ -2248,6 +2258,7 @@ export type ExecutionRunControlActionResultById = {
             ioMode: 'request_response' | 'streaming';
             status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
             startedAtMs: number;
+            originWorkflowRunId?: string | undefined;
             display?: {
                 [x: string]: unknown;
                 title?: string | undefined;
@@ -2414,6 +2425,7 @@ export type ExecutionRunControlActionResultById = {
                 welcome: {
                     enabled: boolean;
                     mode: 'immediate' | 'on_first_turn';
+                    text?: string | undefined;
                 };
             } | undefined;
             finishedAtMs?: number | undefined;
@@ -2445,6 +2457,7 @@ export type ExecutionRunControlActionResultById = {
             ioMode: 'request_response' | 'streaming';
             status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
             startedAtMs: number;
+            originWorkflowRunId?: string | undefined;
             display?: {
                 [x: string]: unknown;
                 title?: string | undefined;
@@ -2611,6 +2624,7 @@ export type ExecutionRunControlActionResultById = {
                 welcome: {
                     enabled: boolean;
                     mode: 'immediate' | 'on_first_turn';
+                    text?: string | undefined;
                 };
             } | undefined;
             finishedAtMs?: number | undefined;
@@ -2733,8 +2747,7 @@ export type ExecutionRunControlActionResultById = {
     };
     readonly "execution.run.wait": {
         ok: true;
-        status: 'running';
-        disposition: 'needs_attention';
+        status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
         result: {
             [x: string]: unknown;
             run: {
@@ -2756,6 +2769,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -2922,6 +2936,216 @@ export type ExecutionRunControlActionResultById = {
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
+                    };
+                } | undefined;
+                finishedAtMs?: number | undefined;
+                error?: {
+                    [x: string]: unknown;
+                    code: string;
+                    message?: string | undefined;
+                } | undefined;
+            };
+            latestToolResult?: unknown;
+            structuredMeta?: {
+                [x: string]: unknown;
+                kind: string;
+                payload: unknown;
+            } | undefined;
+        };
+    } | {
+        ok: true;
+        status: 'running';
+        disposition: 'needs_attention';
+        result: {
+            [x: string]: unknown;
+            run: {
+                [x: string]: unknown;
+                runId: string;
+                callId: string;
+                sidechainId: string;
+                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                backendTarget: {
+                    kind: 'builtInAgent';
+                    agentId: string;
+                } | {
+                    kind: 'configuredAcpBackend';
+                    backendId: string;
+                };
+                permissionMode: string;
+                retentionPolicy: 'ephemeral' | 'resumable';
+                runClass: 'bounded' | 'long_lived';
+                ioMode: 'request_response' | 'streaming';
+                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
+                display?: {
+                    [x: string]: unknown;
+                    title?: string | undefined;
+                    participantLabel?: string | undefined;
+                    groupId?: string | undefined;
+                } | undefined;
+                launchOrigin?: {
+                    kind: 'session';
+                    sessionId: string;
+                    draftCorrelationId?: string | undefined;
+                } | {
+                    kind: 'session_discussion';
+                    sessionId: string;
+                    discussionId: string;
+                    messageIds: string[];
+                    draftCorrelationId?: string | undefined;
+                } | {
+                    kind: 'external';
+                    source?: 'cli' | 'mcp' | 'action' | undefined;
+                } | undefined;
+                requestedConfiguration?: {
+                    modelId?: string | undefined;
+                    reasoningEffort?: string | undefined;
+                } | undefined;
+                turnInFlight?: boolean | undefined;
+                inputTurns?: {
+                    occurrenceId: string;
+                    current?: {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'failed' | 'cancelled' | 'active' | 'completed';
+                        result?: {
+                            kind: 'text';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: string | number | boolean | readonly JsonValue[] | {
+                                readonly [key: string]: JsonValue;
+                            } | null;
+                        } | {
+                            kind: 'decision';
+                            value: string;
+                        } | undefined;
+                    } | undefined;
+                    last?: {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'failed' | 'cancelled' | 'active' | 'completed';
+                        result?: {
+                            kind: 'text';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: string | number | boolean | readonly JsonValue[] | {
+                                readonly [key: string]: JsonValue;
+                            } | null;
+                        } | {
+                            kind: 'decision';
+                            value: string;
+                        } | undefined;
+                    } | undefined;
+                } | undefined;
+                interaction?: {
+                    kind: 'retained_agent_session.v1';
+                    capabilities: {
+                        open: ('resume' | 'create' | 'fork')[];
+                        delivery: ('newTurn' | 'steer' | 'followUp')[];
+                        cancel: boolean;
+                        configuration?: boolean | undefined;
+                        workspaceWrites?: 'deny' | undefined;
+                        compaction?: {
+                            events: true;
+                            manual?: true | undefined;
+                        } | undefined;
+                        conversationRollback?: true | undefined;
+                        goals?: {
+                            source: string;
+                            active?: {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: {
+                                    fields: ('status' | 'objective' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
+                                } | undefined;
+                            } | undefined;
+                            inactive?: {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: {
+                                    fields: ('status' | 'objective' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
+                                } | undefined;
+                            } | undefined;
+                        } | undefined;
+                        usageReporting?: true | undefined;
+                        catalog?: {
+                            active?: ('vendorPlugins' | 'skills')[] | undefined;
+                            inactive?: ('vendorPlugins' | 'skills')[] | undefined;
+                        } | undefined;
+                        usageLimitRecovery?: {
+                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                        } | undefined;
+                        continuationVerification?: {
+                            intents: ('resume' | 'fork')[];
+                            requirement: 'required' | 'advisory';
+                        } | undefined;
+                        workStateSources?: {
+                            id: string;
+                            itemKinds: ('task' | 'goal' | 'todo')[];
+                        }[] | undefined;
+                        runtimeActivitySnapshots?: true | undefined;
+                        startupInstructions?: {
+                            versions: [
+                                1
+                            ];
+                            revisionChanges?: 'resume' | undefined;
+                        } | undefined;
+                        executionRunContext?: {
+                            versions: [
+                                1
+                            ];
+                        } | undefined;
+                    };
+                } | undefined;
+                attention?: {
+                    kind: 'permission_required';
+                    requestIds: string[];
+                } | undefined;
+                lifecycle?: {
+                    v: 1;
+                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
+                } | undefined;
+                availableActionIds?: string[] | undefined;
+                resumeHandle?: {
+                    [x: string]: unknown;
+                    kind: 'provider_session.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    providerSessionId: string;
+                } | {
+                    [x: string]: unknown;
+                    kind: 'voice_agent_sessions.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    chatProviderSessionId: string;
+                    commitProviderSessionId: string;
+                } | undefined;
+                transcript?: {
+                    [x: string]: unknown;
+                    persistenceMode: 'ephemeral' | 'persistent';
+                    epoch: number;
+                } | undefined;
+                voicePolicy?: {
+                    assistantLanguage: string | null;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
                     };
                 } | undefined;
                 finishedAtMs?: number | undefined;
@@ -2963,6 +3187,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -3129,6 +3354,7 @@ export type ExecutionRunControlActionResultById = {
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
                     };
                 } | undefined;
                 finishedAtMs?: number | undefined;
@@ -3174,6 +3400,7 @@ export type ExecutionRunControlActionResultById = {
                 ioMode: 'request_response' | 'streaming';
                 status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
                 startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
                 display?: {
                     [x: string]: unknown;
                     title?: string | undefined;
@@ -3340,212 +3567,7 @@ export type ExecutionRunControlActionResultById = {
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
-                    };
-                } | undefined;
-                finishedAtMs?: number | undefined;
-                error?: {
-                    [x: string]: unknown;
-                    code: string;
-                    message?: string | undefined;
-                } | undefined;
-            };
-            latestToolResult?: unknown;
-            structuredMeta?: {
-                [x: string]: unknown;
-                kind: string;
-                payload: unknown;
-            } | undefined;
-        };
-    } | {
-        ok: true;
-        status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
-        result: {
-            [x: string]: unknown;
-            run: {
-                [x: string]: unknown;
-                runId: string;
-                callId: string;
-                sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                backendTarget: {
-                    kind: 'builtInAgent';
-                    agentId: string;
-                } | {
-                    kind: 'configuredAcpBackend';
-                    backendId: string;
-                };
-                permissionMode: string;
-                retentionPolicy: 'ephemeral' | 'resumable';
-                runClass: 'bounded' | 'long_lived';
-                ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                startedAtMs: number;
-                display?: {
-                    [x: string]: unknown;
-                    title?: string | undefined;
-                    participantLabel?: string | undefined;
-                    groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
-                    kind: 'session';
-                    sessionId: string;
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'session_discussion';
-                    sessionId: string;
-                    discussionId: string;
-                    messageIds: string[];
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
-                    modelId?: string | undefined;
-                    reasoningEffort?: string | undefined;
-                } | undefined;
-                turnInFlight?: boolean | undefined;
-                inputTurns?: {
-                    occurrenceId: string;
-                    current?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: string | number | boolean | readonly JsonValue[] | {
-                                readonly [key: string]: JsonValue;
-                            } | null;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: string | number | boolean | readonly JsonValue[] | {
-                                readonly [key: string]: JsonValue;
-                            } | null;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
-                    kind: 'retained_agent_session.v1';
-                    capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
-                        cancel: boolean;
-                        configuration?: boolean | undefined;
-                        workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
-                            events: true;
-                            manual?: true | undefined;
-                        } | undefined;
-                        conversationRollback?: true | undefined;
-                        goals?: {
-                            source: string;
-                            active?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
-                        usageReporting?: true | undefined;
-                        catalog?: {
-                            active?: ('vendorPlugins' | 'skills')[] | undefined;
-                            inactive?: ('vendorPlugins' | 'skills')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
-                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
-                            id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
-                        runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
-                            versions: [
-                                1
-                            ];
-                            revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
-                            versions: [
-                                1
-                            ];
-                        } | undefined;
-                    };
-                } | undefined;
-                attention?: {
-                    kind: 'permission_required';
-                    requestIds: string[];
-                } | undefined;
-                lifecycle?: {
-                    v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
-                availableActionIds?: string[] | undefined;
-                resumeHandle?: {
-                    [x: string]: unknown;
-                    kind: 'provider_session.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    providerSessionId: string;
-                } | {
-                    [x: string]: unknown;
-                    kind: 'voice_agent_sessions.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    chatProviderSessionId: string;
-                    commitProviderSessionId: string;
-                } | undefined;
-                transcript?: {
-                    [x: string]: unknown;
-                    persistenceMode: 'ephemeral' | 'persistent';
-                    epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
-                    welcome: {
-                        enabled: boolean;
-                        mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
                     };
                 } | undefined;
                 finishedAtMs?: number | undefined;

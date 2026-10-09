@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -5,10 +6,12 @@ import {
   LocalServiceActionRequestV1Schema,
   LocalServiceActionResultV1Schema,
   type LocalServiceActionKindV1,
+  type LocalServiceActionRequestV1,
 } from '../../local/services/actions/v1.js';
 import { LocalServiceInventorySnapshotV1Schema } from '../../local/services/inventory/v1.js';
 import {
   DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
+  DaemonLocalServiceLauncherLeafRequestV1Schema,
   DaemonLocalServiceLauncherOpenPreviewResponseV1Schema,
   DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
   DaemonLocalServiceLauncherStartRequestV1Schema,
@@ -19,6 +22,7 @@ import {
   DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
   DaemonLocalServicePreviewRevokeResponseV1Schema,
   LocalServicePreviewSnapshotV1Schema,
+  LocalServicePreviewServiceTargetV1Schema,
 } from '../../local/services/preview/v1.js';
 import {
   DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
@@ -27,31 +31,35 @@ import {
   LocalServicePublicPreviewSnapshotV1Schema,
 } from '../../local/services/public/v1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
+import { ProjectServiceRelocateInputV1Schema, ProjectServiceRelocateResultV1Schema } from '../../workspaces/projectServiceRelocationV1.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
 
-const RuntimeLocalServiceMachineInputSchema = z
+const RuntimeLocalServiceMachineInputSchema = lazyZodSchema(() => z
   .object({
     machineId: z.string().trim().min(1).max(256).optional(),
     sessionId: z.string().trim().min(1).max(256).optional(),
     workspaceId: z.string().trim().min(1).max(256).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const RuntimeLocalServiceLauncherActionInputSchema = RuntimeLocalServiceMachineInputSchema.extend({
+const RuntimeLocalServiceLauncherActionInputSchema = lazyZodSchema(() => RuntimeLocalServiceMachineInputSchema.extend({
   targetId: z.string().trim().min(1).max(256).optional(),
-}).passthrough();
+  scope: DaemonLocalServiceLauncherLeafRequestV1Schema.shape.scope,
+  workspaceRoot: DaemonLocalServiceLauncherLeafRequestV1Schema.shape.workspaceRoot,
+}).passthrough());
 
-const RuntimeLocalServicePreviewActionInputSchema = RuntimeLocalServiceMachineInputSchema.extend({
+const RuntimeLocalServicePreviewActionInputSchema = lazyZodSchema(() => RuntimeLocalServiceMachineInputSchema.extend({
   previewId: z.string().trim().min(1).max(256).optional(),
   targetId: z.string().trim().min(1).max(256).optional(),
-}).passthrough();
+}).passthrough());
 
-const RuntimeLocalServicePublicPreviewActionInputSchema = RuntimeLocalServicePreviewActionInputSchema.extend({
+const RuntimeLocalServicePublicPreviewActionInputSchema = lazyZodSchema(() => RuntimeLocalServicePreviewActionInputSchema.extend({
   exposureId: z.string().trim().min(1).max(256).optional(),
   mode: z.enum(['authenticated', 'secret_link', 'public']).optional(),
   ttlMs: z.number().int().positive().optional(),
-}).passthrough();
+}).passthrough());
 
-type LocalServicesRuntimeActionId = Extract<RuntimeActionIdV1, `localServices.${string}`>;
+type LocalServicesRuntimeActionId = Extract<RuntimeActionIdV1, `localServices.${string}` | 'projects.service.relocate'>;
 
 const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION = Object.freeze({
   'localServices.actions.copyUrl': 'copy_url',
@@ -63,6 +71,16 @@ const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION = Object.freeze({
 } as const satisfies Readonly<Partial<Record<RuntimeActionIdV1, LocalServiceActionKindV1>>>);
 
 type LocalServiceActionRuntimeActionId = keyof typeof LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION;
+
+/** Distinct methods let the ordinary Action RPC owner enforce each control's current policy. */
+export const LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS = Object.freeze({
+  'localServices.actions.copyUrl': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_COPY_URL,
+  'localServices.actions.openPreview': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_OPEN_PREVIEW,
+  'localServices.actions.forget': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_FORGET,
+  'localServices.actions.stopManaged': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_STOP_MANAGED,
+  'localServices.actions.restartManaged': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_RESTART_MANAGED,
+  'localServices.actions.terminateDetected': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_TERMINATE_DETECTED,
+} satisfies Readonly<Record<LocalServiceActionRuntimeActionId, string>>);
 
 export function resolveLocalServiceActionKindForRuntimeActionId(
   actionId: RuntimeActionIdV1,
@@ -86,6 +104,7 @@ function localServiceActionRequestSchema(
 }
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'projects.service.relocate': 'Move service',
   'localServices.inventory.list': 'List local services',
   'localServices.inventory.refresh': 'Refresh local services',
   'localServices.launcher.snapshot': 'Get local service launcher snapshot',
@@ -109,6 +128,7 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<Runti
 });
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'projects.service.relocate': 'Stop the exact current service, prepare current files, then start on the reviewed destination. A failed start leaves the service stopped; sharing must be reviewed again.',
   'localServices.inventory.list': 'List the local services detected on a machine.',
   'localServices.inventory.refresh': 'Refresh the detected local services inventory.',
   'localServices.launcher.snapshot': 'Read the current local service launcher state.',
@@ -138,6 +158,7 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record
  * the Action becomes publicly discoverable.
  */
 export const LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  'projects.service.relocate': ProjectServiceRelocateInputV1Schema,
   'localServices.inventory.list': RuntimeLocalServiceMachineInputSchema,
   'localServices.inventory.refresh': RuntimeLocalServiceMachineInputSchema,
   'localServices.launcher.snapshot': RuntimeLocalServiceMachineInputSchema,
@@ -161,6 +182,7 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
 } as const satisfies Readonly<Record<LocalServicesRuntimeActionId, z.ZodTypeAny>>);
 
 export const LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
+  'projects.service.relocate': ProjectServiceRelocateResultV1Schema,
   'localServices.inventory.list': LocalServiceInventorySnapshotV1Schema,
   'localServices.inventory.refresh': LocalServiceInventorySnapshotV1Schema,
   'localServices.launcher.snapshot': LocalServiceLauncherSnapshotV1Schema,
@@ -189,3 +211,19 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   inputSchemas: LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS,
   outputSchemas: LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);
+
+/** Explicit current-service provenance is not the invoking Session's scope. */
+export function isSourceQualifiedLocalServicePreviewActionInput(actionId: string, input: unknown): boolean {
+  if (actionId !== 'localServices.preview.openOrCreate' && actionId !== 'localServices.preview.revoke'
+    && actionId !== 'localServices.publicPreview.create' && actionId !== 'localServices.publicPreview.status'
+    && actionId !== 'localServices.publicPreview.revoke' && actionId !== 'localServices.publicPreview.copyUrl') return false;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  return LocalServicePreviewServiceTargetV1Schema.safeParse((input as Readonly<Record<string, unknown>>).serviceTarget).success;
+}
+
+/** One schema-owned selector for approval provenance and transport locality. */
+export function readLocalServiceControlActionRequest(actionId: string, input: unknown): LocalServiceActionRequestV1 | null {
+  if (!Object.hasOwn(LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION, actionId)) return null;
+  const parsed = LOCAL_SERVICES_RUNTIME_ACTION_INPUT_SCHEMAS[actionId as LocalServiceActionRuntimeActionId].safeParse(input);
+  return parsed.success ? parsed.data : null;
+}

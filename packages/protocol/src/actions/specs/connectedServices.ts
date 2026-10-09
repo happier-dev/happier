@@ -17,6 +17,14 @@ const memberFields = [
   { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
 ] satisfies readonly ActionInputFieldHint[];
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
+  { ...common, id: 'connectedServices.accounts.revoke', executionPlacement: 'machine', sideEffectClass: 'danger', surfaces: { ...common.surfaces, voice: true }, title: 'Revoke connected account', description: 'Review and revoke the exact qualified account through its current daemon owner. Ordinary removal discloses retained resource dependencies; explicit emergency revocation keeps its existing semantics.', bindings: { mcpToolName: 'connected_services_accounts_revoke' }, inputSchema: inputs['connectedServices.accounts.revoke'], outputSchema: outputs['connectedServices.accounts.revoke'], inputHints: { fields: [
+    { path: 'account', title: 'Qualified account', widget: 'json', required: true },
+    { path: 'expectedCredentialRevision', title: 'Presented credential revision', widget: 'text' },
+    { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+    { path: 'cleanupGroupReferences', title: 'Remove pool references', widget: 'boolean', required: true },
+    { path: 'emergencyRevoke', title: 'Emergency local revocation', widget: 'boolean' },
+    { path: 'managedResourceDispositions', title: 'Reviewed manual resource responsibility', widget: 'json' },
+  ] } },
   { ...common, id: 'connectedServices.accounts.default.set', title: 'Set connected-account default', description: 'Set or clear this account as an Agent default through its declared connected-account purposes.', bindings: { mcpToolName: 'connected_services_accounts_default_set' }, inputSchema: inputs['connectedServices.accounts.default.set'], outputSchema: outputs['connectedServices.accounts.default.set'], inputHints: { fields: [
     { path: 'account', title: 'Qualified account', widget: 'json', required: true },
     { path: 'agentId', title: 'Agent id', widget: 'text', required: true },

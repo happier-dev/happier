@@ -2,7 +2,12 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ArtifactBlobAccountEncryptionStageV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { classifyAccountJsonKvKey } from './accountJsonKv.js';
-import { AuthoringMemoryContentV1Schema, AuthoringMemoryKeyV1Schema, AuthoringMemoryRowV1Schema } from './authoringMemory.js';
+import { AuthoringMemoryContentV1Schema, AuthoringMemoryKeyV1Schema, AuthoringMemoryRowV1Schema, assertAuthoringMemoryValueForKeyV1 } from './authoringMemory.js';
+import { AccountEncryptionMigratePromptLibraryDirectiveV1Schema, AccountEncryptionMigratePromptLibraryResultV1Schema, type AccountEncryptionMigratePromptLibraryDirectiveV1 } from '../prompts/library/promptLibraryRowsV1.js';
+import { WorkspaceExecutionConfigContentV1Schema, WorkspaceExecutionConfigRowIdV1Schema, WorkspaceExecutionConfigRowV1Schema } from '../workspaces/workspaceExecutionConfigRowV1.js';
+import { ProjectAccountRowContentV1Schema, ProjectAccountRowKeyV1Schema, ProjectAccountRowV1Schema, buildProjectAccountRowPhysicalKeyV1 } from '../projects/projectAccountRowsV1.js';
+import { AccountEncryptionMigrateProfileRowsDirectiveSchema, AccountEncryptionMigrateProfileRowsResultSchema } from '../profiles/profileRecordSchemaV1.js';
+import { ProjectTrustContentV1Schema, ProjectTrustRowV1Schema, QualifiedProjectTrustProjectV1Schema } from '../workspaces/projectSetup/projectTrustRowV1.js';
 import { ArtifactRecipientKeyEnvelopesV1Schema } from '../artifacts/artifactAccessV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
 import { sha256 } from '@noble/hashes/sha2';
@@ -42,7 +47,7 @@ import {
   SessionOwnerMetadataEnvelopeV1Schema,
 } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_ID_LENGTH, SESSION_ORGANIZATION_MAX_KEY_LENGTH, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '../sessions/organization/constants.js';
-import { SessionOrganizationContentEnvelopeSchema } from '../sessions/organization/content.js';
+import { SessionOrganizationContentEnvelopeSchema } from '../sessions/organization/contentSchemas.js';
 import { SessionOrganizationLabelKindSchema } from '../sessions/organization/ordering.js';
 import {
   BoundReviewCommentEventSensitiveEnvelopeV1Schema,
@@ -85,6 +90,8 @@ import {
   SessionDraftStoredContentEnvelopeV1Schema,
 } from '../drafts/sessionDrafts.js';
 import {
+  AccountOwnedDraftAddressV2Schema,
+  canonicalSessionDraftAddressV2,
   SessionDraftRecordV2Schema,
   SessionDraftStoredContentEnvelopeV2Schema,
 } from '../drafts/sessionDraftsV2.js';
@@ -673,6 +680,7 @@ function refineAccountEncryptionMigrateRequest(
       action: string;
       items?: Array<{ blobs: Array<{ content: { t: string } }> }>;
     };
+    promptLibrary?: AccountEncryptionMigratePromptLibraryDirectiveV1;
     reviewComments?: {
       action: string;
       items?: Array<{
@@ -735,6 +743,10 @@ function refineAccountEncryptionMigrateRequest(
     }
     const targetEnvelopeKind =
       request.toMode === 'plain' ? 'plain' : 'encrypted';
+    request.promptLibrary?.items.forEach((item, index) => {
+      if (item.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: ['promptLibrary', 'items', index, 'content'], message: 'Prompt catalog replacement must match the target Account mode' });
+    });
     if (request.artifacts?.action === 'migrate' && request.artifacts.items) {
       request.artifacts.items.forEach((item, index) => item.blobs.forEach((blob, blobIndex) => {
         if (blob.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
@@ -1487,6 +1499,7 @@ export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = lazyZodSchem
   z.object({
     v: z.literal(2),
     items: z.array(AccountEncryptionMigrateSessionDraftItemSchema.extend({
+      address: AccountOwnedDraftAddressV2Schema,
       content: SessionDraftStoredContentEnvelopeV2Schema,
     }))
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
@@ -1494,14 +1507,15 @@ export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = lazyZodSchem
 ]).superRefine((value, context) => {
   const seen = new Set<string>();
   value.items.forEach((item, index) => {
-    if (seen.has(item.address.draftId)) {
+    const key = canonicalSessionDraftAddressV2(item.address);
+    if (seen.has(key)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['items', index, 'address', 'draftId'],
-        message: 'Account migration cannot replace the same new-session draft twice',
+        message: 'Account migration cannot replace the same Account-owned draft twice',
       });
     }
-    seen.add(item.address.draftId);
+    seen.add(key);
   });
 }));
 export type AccountEncryptionMigrateSessionDraftsDirective = z.infer<
@@ -1523,9 +1537,58 @@ export const AccountEncryptionMigrateAuthoringMemoryDirectiveSchema = lazyZodSch
       message: 'Account migration cannot replace the same authoring memory row twice',
     });
     seen.add(item.key);
+    if (item.content.t === 'plain') {
+      try { assertAuthoringMemoryValueForKeyV1(item.key, item.content.v); }
+      catch { context.addIssue({ code: z.ZodIssueCode.custom, path: ['items', index, 'content'], message: 'Invalid authoring memory value for row key' }); }
+    }
   });
 }));
 export type AccountEncryptionMigrateAuthoringMemoryDirective = z.infer<typeof AccountEncryptionMigrateAuthoringMemoryDirectiveSchema>;
+
+export const AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema = lazyZodSchema(() => z.object({
+  items: z.array(z.object({ rowId: WorkspaceExecutionConfigRowIdV1Schema, expectedRevision: NonNegativeSafeIntegerSchema, content: WorkspaceExecutionConfigContentV1Schema }).strict()),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.items.forEach((item, index) => {
+    if (seen.has(item.rowId)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['items', index, 'rowId'], message: 'Workspace config migration row ids must be unique' });
+    seen.add(item.rowId);
+  });
+}));
+export type AccountEncryptionMigrateWorkspaceExecutionConfigDirective = z.infer<typeof AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema>;
+
+/** Complete replacements for the explicitly registered private Project row grammar. */
+export const AccountEncryptionMigrateProjectRowsDirectiveSchema = lazyZodSchema(() => z.object({
+  items: z.array(z.object({
+    key: ProjectAccountRowKeyV1Schema,
+    expectedRevision: NonNegativeSafeIntegerSchema,
+    content: ProjectAccountRowContentV1Schema,
+  }).strict()),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.items.forEach((item, index) => {
+    const identity = buildProjectAccountRowPhysicalKeyV1(item.key);
+    if (seen.has(identity)) context.addIssue({
+      code: z.ZodIssueCode.custom, path: ['items', index, 'key'],
+      message: 'Account migration cannot replace the same Project row twice',
+    });
+    seen.add(identity);
+  });
+}));
+export type AccountEncryptionMigrateProjectRowsDirective = z.infer<typeof AccountEncryptionMigrateProjectRowsDirectiveSchema>;
+
+export const AccountEncryptionMigrateProjectTrustDirectiveSchema = lazyZodSchema(() => z.object({
+  items: z.array(z.object({ project: QualifiedProjectTrustProjectV1Schema, expectedRevision: NonNegativeSafeIntegerSchema,
+    content: ProjectTrustContentV1Schema,
+  }).strict()),
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.items.forEach((item, index) => {
+    const identity = JSON.stringify([item.project.serverId, item.project.projectId]);
+    if (seen.has(identity)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['items', index, 'project'], message: 'Account migration cannot replace the same Project Trust row twice' });
+    seen.add(identity);
+  });
+}));
+export type AccountEncryptionMigrateProjectTrustDirective = z.infer<typeof AccountEncryptionMigrateProjectTrustDirectiveSchema>;
 
 const AccountEncryptionMigrateCurrentRequestShape = {
   toMode: AccountEncryptionMigrateToModeSchema,
@@ -1551,6 +1614,11 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   pets: AccountEncryptionMigratePetsDirectiveSchema,
   sessionDrafts: AccountEncryptionMigrateSessionDraftsDirectiveSchema.optional(),
   authoringMemory: AccountEncryptionMigrateAuthoringMemoryDirectiveSchema.optional(),
+  promptLibrary: AccountEncryptionMigratePromptLibraryDirectiveV1Schema.optional(),
+  profileRows: AccountEncryptionMigrateProfileRowsDirectiveSchema.optional(),
+  workspaceExecutionConfig: AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema.optional(),
+  projectRows: AccountEncryptionMigrateProjectRowsDirectiveSchema.optional(),
+  projectTrust: AccountEncryptionMigrateProjectTrustDirectiveSchema.optional(),
   externalAuthProof:
     AccountEncryptionMigrateExternalAuthProofSchema.optional(),
   passwordCredential:
@@ -1929,6 +1997,11 @@ export const AccountEncryptionMigrateSuccessResponseSchema = lazyZodSchema(() =>
     accountVersion: NonNegativeSafeIntegerSchema,
     settingsVersion: NonNegativeSafeIntegerSchema,
     authoringMemory: z.object({ rows: z.array(AuthoringMemoryRowV1Schema) }).strict().optional(),
+    promptLibrary: AccountEncryptionMigratePromptLibraryResultV1Schema.optional(),
+    profileRows: AccountEncryptionMigrateProfileRowsResultSchema.optional(),
+    workspaceExecutionConfig: z.object({ rows: z.array(WorkspaceExecutionConfigRowV1Schema) }).strict().optional(),
+    projectRows: z.object({ rows: z.array(ProjectAccountRowV1Schema) }).strict().optional(),
+    projectTrust: z.object({ rows: z.array(ProjectTrustRowV1Schema) }).strict().optional(),
     sessionDrafts: z.union([
       z.object({
         records: z.array(SessionDraftRecordV1Schema)

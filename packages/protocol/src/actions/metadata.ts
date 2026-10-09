@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 export {
@@ -5,7 +6,7 @@ export {
   type ActionInputHints,
 } from './actionInputHints.js';
 
-export const ActionSurfaceSchema = z.object({
+export const ActionSurfaceSchema = lazyZodSchema(() => z.object({
   ui: z.boolean(),
   voice: z.boolean(),
   agent: z.boolean(),
@@ -14,7 +15,7 @@ export const ActionSurfaceSchema = z.object({
   rpc: z.boolean(),
   api: z.boolean(),
   plugin: z.boolean(),
-}).strict();
+}).strict());
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
 /**
@@ -23,7 +24,7 @@ export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
  * automation authority, while an interactive host path can carry a present
  * user. Action input never carries this fact.
  */
-export const ActionRequiredAuthoritySchema = z.enum(['account_automation', 'present_user']);
+export const ActionRequiredAuthoritySchema = lazyZodSchema(() => z.enum(['account_automation', 'present_user']));
 export type ActionRequiredAuthority = z.infer<typeof ActionRequiredAuthoritySchema>;
 
 /**
@@ -31,20 +32,20 @@ export type ActionRequiredAuthority = z.infer<typeof ActionRequiredAuthoritySche
  * target. The target itself remains host routing metadata rather than Action
  * input; `client` executes through the connected app after canonical admission.
  */
-export const ActionExecutionPlacementSchema = z.enum(['account', 'machine', 'session', 'client']);
+export const ActionExecutionPlacementSchema = lazyZodSchema(() => z.enum(['account', 'machine', 'session', 'client']));
 export type ActionExecutionPlacement = z.infer<typeof ActionExecutionPlacementSchema>;
 
-export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
+export const ActionToolExposureModeSchema = lazyZodSchema(() => z.enum(['direct', 'discoverable_only']));
 export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
 
-export const ActionToolExposureSurfaceSchema = z.enum(['agent', 'mcp', 'cli']);
+export const ActionToolExposureSurfaceSchema = lazyZodSchema(() => z.enum(['agent', 'mcp', 'cli']));
 export type ActionToolExposureSurface = z.infer<typeof ActionToolExposureSurfaceSchema>;
 
-export const ActionToolExposureSchema = z
+export const ActionToolExposureSchema = lazyZodSchema(() => z
   .object({
     agent: ActionToolExposureModeSchema.optional(),
     mcp: ActionToolExposureModeSchema.optional(),
     cli: ActionToolExposureModeSchema.optional(),
   })
-  .strict();
+  .strict());
 export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;

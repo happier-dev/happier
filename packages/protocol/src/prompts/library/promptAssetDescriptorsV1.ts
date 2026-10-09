@@ -1,43 +1,44 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const PromptAssetScopeV1Schema = z.enum(['user', 'project']);
+export const PromptAssetScopeV1Schema = lazyZodSchema(() => z.enum(['user', 'project']));
 export type PromptAssetScopeV1 = z.infer<typeof PromptAssetScopeV1Schema>;
 
-export const PromptAssetLibraryKindV1Schema = z.enum(['doc', 'bundle']);
+export const PromptAssetLibraryKindV1Schema = lazyZodSchema(() => z.enum(['doc', 'bundle']));
 export type PromptAssetLibraryKindV1 = z.infer<typeof PromptAssetLibraryKindV1Schema>;
 
-export const PromptAssetInstallModeV1Schema = z.enum(['copy', 'symlink']);
+export const PromptAssetInstallModeV1Schema = lazyZodSchema(() => z.enum(['copy', 'symlink']));
 export type PromptAssetInstallModeV1 = z.infer<typeof PromptAssetInstallModeV1Schema>;
 
-export const PromptAssetSupportsScopeV1Schema = z
+export const PromptAssetSupportsScopeV1Schema = lazyZodSchema(() => z
   .object({
     user: z.boolean(),
     project: z.boolean(),
   })
-  .passthrough();
+  .passthrough());
 export type PromptAssetSupportsScopeV1 = z.infer<typeof PromptAssetSupportsScopeV1Schema>;
 
-export const PromptAssetCapabilitiesV1Schema = z
+export const PromptAssetCapabilitiesV1Schema = lazyZodSchema(() => z
   .object({
     supportsCatalogInstall: z.boolean().optional(),
     supportsNestedNamespaces: z.boolean().optional(),
     supportsSymlinkInstall: z.boolean().optional(),
   })
   .passthrough()
-  .default({});
+  .default({}));
 export type PromptAssetCapabilitiesV1 = z.infer<typeof PromptAssetCapabilitiesV1Schema>;
 export type PromptAssetCapabilities = z.infer<typeof PromptAssetCapabilitiesV1Schema>;
 
-export const PromptAssetDefaultRootV1Schema = z
+export const PromptAssetDefaultRootV1Schema = lazyZodSchema(() => z
   .object({
     label: z.string().min(1),
     scope: PromptAssetScopeV1Schema,
     pathTemplate: z.string().min(1),
   })
-  .passthrough();
+  .passthrough());
 export type PromptAssetDefaultRootV1 = z.infer<typeof PromptAssetDefaultRootV1Schema>;
 
-export const PromptAssetTypeDescriptorV1Schema = z
+export const PromptAssetTypeDescriptorV1Schema = lazyZodSchema(() => z
   .object({
     id: z.string().min(1),
     providerId: z.string().min(1),
@@ -50,6 +51,6 @@ export const PromptAssetTypeDescriptorV1Schema = z
     defaultRoots: z.array(PromptAssetDefaultRootV1Schema),
     capabilities: PromptAssetCapabilitiesV1Schema,
   })
-  .passthrough();
+  .passthrough());
 export type PromptAssetTypeDescriptorV1 = z.infer<typeof PromptAssetTypeDescriptorV1Schema>;
 export type PromptAssetTypeDescriptor = z.infer<typeof PromptAssetTypeDescriptorV1Schema>;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -11,7 +12,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
  * the Agent without deriving it from presentation fields. Configured ACP rows
  * remain selectable through `backendId` and intentionally need not have one.
  */
-export const AgentBackendInventoryItemSchema = z.object({
+export const AgentBackendInventoryItemSchema = lazyZodSchema(() => z.object({
   targetKey: z.string().min(1),
   label: z.string().min(1),
   enabled: z.boolean(),
@@ -19,10 +20,10 @@ export const AgentBackendInventoryItemSchema = z.object({
   identity: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
   backendId: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
-}).strict();
+}).strict());
 export type AgentBackendInventoryItem = z.output<typeof AgentBackendInventoryItemSchema>;
 
-export const AgentsBackendsListOutputSchema = z.object({
+export const AgentsBackendsListOutputSchema = lazyZodSchema(() => z.object({
   items: z.array(AgentBackendInventoryItemSchema),
-}).strict();
+}).strict());
 export type AgentsBackendsListOutput = z.output<typeof AgentsBackendsListOutputSchema>;

@@ -1,6 +1,7 @@
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { isActionEnabledByActionsSettings, type ActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { isMemoryWriteActionV1 } from '../prompts/library/memoryActionsV1.js';
 import {
   getActionSpec,
   type ActionSpec,
@@ -81,8 +82,14 @@ export type ActionSurfaceAvailability = Readonly<{
 export type ActionSurfaceAvailabilityContext = Readonly<{
   settings?: ActionsSettingsV1 | null;
   isActionEnabled?: ((id: ActionId) => boolean) | null;
+  /** Undefined means an Account host without a bound Session. */
+  sessionMemoryEnabled?: boolean;
   requireToolBinding?: boolean | null;
 }>;
+
+export function isActionEnabledWithSessionMemory(actionId: string, sessionMemoryEnabled?: boolean): boolean {
+  return sessionMemoryEnabled !== false || !isMemoryWriteActionV1(actionId);
+}
 
 export function listActionSurfacePolicies(): readonly ActionSurfacePolicy[] {
   return ACTION_SURFACE_POLICIES;
@@ -213,7 +220,10 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
     };
   }
 
-  if (params.isActionEnabled && !params.isActionEnabled(parsedActionId.data)) {
+  if (
+    !isActionEnabledWithSessionMemory(actionId, params.sessionMemoryEnabled)
+    || (params.isActionEnabled && !params.isActionEnabled(parsedActionId.data))
+  ) {
     return {
       available: false,
       reason: 'disabled_by_policy',

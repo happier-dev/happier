@@ -72,6 +72,10 @@ export type HomeHubLayoutActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -187,6 +191,10 @@ export type HomeHubLayoutActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -286,6 +294,11 @@ export type HomeHubLayoutActionInputById = {
                 kind: 'viewer';
                 purpose: string;
             }>;
+            paths?: string[] | undefined;
+        } | {
+            kind: 'widget_inputs_reset';
+            instanceId: string;
+            paths?: string[] | undefined;
         } | {
             kind: 'widget_size';
             instanceId: string;
@@ -331,6 +344,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -451,6 +468,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -570,6 +591,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -690,6 +715,10 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];

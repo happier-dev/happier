@@ -78,7 +78,7 @@ describe('keyholding Artifact public-link Actions', () => {
         return { publicShares: [{ ...publicShare, subject: { kind: 'artifact', id: 'other' } }] };
       } });
     await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } })).resolves.toMatchObject({ publicShare, url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) });
-    await expect(execute({ actionId: 'artifact.public_link.revoke', input: { artifactId: 'artifact-1', shareId: 'share-1' } })).rejects.toMatchObject({ code: 'public_share_not_found' });
+    await expect(execute({ actionId: 'artifact.public_link.revoke', input: { artifactId: 'artifact-1', shareId: 'share-1' } })).rejects.toMatchObject({ code: 'public_share_subject_mismatch' });
     expect(requests).toEqual(['POST', 'GET']);
   });
   it('does not disclose a local custody failure after the Home committed creation', async () => {

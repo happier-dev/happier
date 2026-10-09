@@ -47,6 +47,22 @@ import {
 } from './encryptionMigrate.js';
 
 describe('account/encryptionMigrate', () => {
+  it('binds prompt catalog resealing into the existing all-domain conversion', () => {
+    const promptLibrary = { items: [{ key: 'role-overrides' as const, expectedRevision: 3,
+      content: { t: 'plain' as const, v: { key: 'role-overrides' as const, value: { v: 1 as const,
+        overrides: { reviewer: { roleId: 'reviewer', workspaceWrites: 'deny' as const } } } } },
+    }] };
+    const request = AccountEncryptionMigrateRequestSchema.parse({ ...createPlainRequest(), promptLibrary });
+    const binding = { accountId: 'account', sourceMode: 'e2ee' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
+      promptLibrary: { items: [{ ...promptLibrary.items[0], expectedRevision: 4 }] } }, ...binding })).not.toBe(digest);
+    expect(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode: 'plain', accountVersion: 1, settingsVersion: 1,
+      promptLibrary: { rows: [{ key: 'role-overrides', revision: 4, content: promptLibrary.items[0].content }] },
+    })).toHaveProperty('promptLibrary');
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, promptLibrary: { items: [promptLibrary.items[0], promptLibrary.items[0]] } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, promptLibrary: { items: [{ ...promptLibrary.items[0], content: { t: 'encrypted', c: 'cipher' } }] } }).success).toBe(false);
+  });
   it('retains classic proof projection and key-binding refinement identity', () => {
     for (const target of ['draft-7', 'draft-2020-12'] as const) {
       expect(zodSchemaToJsonSchemaObject(AccountEncryptionMigrateKeyProofSchema, { target })).toMatchObject({
@@ -84,6 +100,27 @@ describe('account/encryptionMigrate', () => {
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
       artifacts: { ...request.artifacts, items: [{ ...item, blobs: [{ ...blob, content: { ...blob.content, t: 'encrypted' } }] }] } }).success).toBe(false);
   });
+  it('binds the complete 257-Profile inventory and exact guard and transfer-control revisions', () => {
+    const request = createPlainRequest();
+    const items = Array.from({ length: 257 }, (_, index) => ({ id: `profile-${index}`, expectedRevision: 3,
+      content: { t: 'plain' as const, v: { v: 1 as const, id: `profile-${index}`, definition: { kind: 'artifact' as const, artifactId: `artifact-${index}` },
+        enabled: true, promptStack: [], secretBindings: {} } },
+    }));
+    const profileRows = { items, expectedReferenceGuardRevision: 7, transferControl: { expectedRevision: 'absent' as const, content: null } };
+    const parsed = AccountEncryptionMigrateRequestSchema.parse({ ...request, profileRows });
+    const binding = { accountId: 'account', sourceMode: 'e2ee' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request: parsed, ...binding });
+    for (const candidate of [
+      { ...profileRows, expectedReferenceGuardRevision: 8 },
+      { ...profileRows, transferControl: { ...profileRows.transferControl, expectedRevision: 1 } },
+      { ...profileRows, items: items.slice(1) },
+      { ...profileRows, items: items.map((item, index) => index === 256 ? { ...item, expectedRevision: 4 } : item) },
+    ]) expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...parsed, profileRows: candidate }, ...binding })).not.toBe(digest);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, profileRows: { ...profileRows, transferControl: undefined } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, profileRows: { ...profileRows, items: [...items, items[0]] } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, profileRows: { ...profileRows, items: [{ ...items[0], id: 'different' }] } }).success).toBe(false);
+  });
+
   it('converts the canonical content-key digest to the Account-currentness fingerprint without rehashing', () => {
     const publicKey = new Uint8Array(32).fill(0x5a);
 
@@ -168,6 +205,18 @@ describe('account/encryptionMigrate', () => {
     expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, workspace: { ...workspace, unknown: true } }).success).toBe(false);
   });
 
+  it('admits and binds explicit Project row replacements without accepting arbitrary reserved keys', () => {
+    const request = createPlainRequest();
+    const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'project' };
+    const projectRows = { items: [{ key, expectedRevision: 4, content: { t: 'plain' as const, v: { key, value: { hidden: true } } } }] };
+    const parsed = AccountEncryptionMigrateRequestSchema.parse({ ...request, projectRows });
+    expect(parsed).toHaveProperty('projectRows', projectRows);
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: parsed, accountId: 'account', sourceMode: 'e2ee' }))
+      .not.toBe(createAccountEncryptionMigrateRequestBindingDigestV1({ request, accountId: 'account', sourceMode: 'e2ee' }));
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, projectRows: { items: [...projectRows.items, ...projectRows.items] } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, projectRows: { items: [{ ...projectRows.items[0], key: { kind: 'arbitrary-reserved-row' } }] } }).success).toBe(false);
+  });
+
   it('carries bounded new-session draft replacements on the incumbent Account migration wire', () => {
     const address = {
       kind: 'newSession' as const,
@@ -224,6 +273,18 @@ describe('account/encryptionMigrate', () => {
     expect(AccountEncryptionMigrateSuccessResponseSchema.parse(response)).toEqual(response);
     expect(AccountEncryptionMigrateSuccessResponseSchema.safeParse({
       ...response, sessionDrafts: { records: response.sessionDrafts.records },
+    }).success).toBe(false);
+  });
+
+  it('converts both Account-owned draft kinds under V2 without confusing equal draft ids', () => {
+    const draftId = '00000000-0000-4000-8000-000000000001';
+    const content = { t: 'encrypted' as const, v: 2 as const, c: 'project-open-ciphertext' };
+    const items = ['newSession', 'projectOpen'].map(kind => ({ address: { kind, draftId }, expectedRevision: 0, content }));
+    expect(AccountEncryptionMigrateSessionDraftsDirectiveSchema.safeParse({ v: 2, items }).success).toBe(true);
+    expect(AccountEncryptionMigrateSessionDraftsDirectiveSchema.safeParse({ items }).success).toBe(false);
+    expect(AccountEncryptionMigrateSessionDraftsDirectiveSchema.safeParse({ v: 2, items: [items[1], items[1]] }).success).toBe(false);
+    expect(AccountEncryptionMigrateSessionDraftsDirectiveSchema.safeParse({
+      v: 2, items: [{ address: { kind: 'session', sessionId: 's1' }, expectedRevision: 0, content }],
     }).success).toBe(false);
   });
 

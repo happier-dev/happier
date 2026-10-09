@@ -19,6 +19,7 @@ import {
   SessionDraftDocumentV1Schema,
 } from './sessionDrafts.js';
 import { SyncedSessionAuthoringFieldIdV1Schema } from '../sessions/authoring/index.js';
+import { OpenProjectDraftSelectionV1Schema, ProjectOpenDraftDocumentV2StoredSchema } from '../projects/openProjectDraftV1.js';
 import {
   SESSION_DRAFT_V2_ROUTE_LIST,
   SESSION_DRAFT_V2_ROUTE_MUTATE,
@@ -68,6 +69,65 @@ function discussionDocument(kind: 'discussion' | 'newDiscussion') {
 }
 
 describe('session draft V2 addresses', () => {
+  it('retains agent-free project selections and uncertain issued inputs in an Account draft', () => {
+    const address = { kind: 'projectOpen' as const, draftId: '00000000-0000-4000-8000-00000000000a' };
+    const input = {
+      serverId: 'home-a', machineId: 'machine-a', source: { kind: 'folder', path: '/workspace' },
+      materialization: { kind: 'attach' },
+    };
+    const document = {
+      v: 2, target: { kind: 'projectOpen' },
+      selection: field({ ...input, machineId: '', source: { kind: 'folder', path: '' } }),
+      uncertainInputs: field([input]), result: field({ kind: 'outcomeUnknown' }),
+      retiredAttempt: field(null),
+    };
+    const payload = { v: 2, address, document };
+    expect(SessionDraftPrivatePayloadV2Schema.safeParse(payload).success).toBe(true);
+    expect(canonicalSessionDraftAddressV2(SessionDraftAddressV2Schema.parse(address)))
+      .toBe('project-open/00000000-0000-4000-8000-00000000000a');
+    expect(parseCanonicalSessionDraftAddressV2('project-open/00000000-0000-4000-8000-00000000000a'))
+      .toEqual(address);
+    expect(SessionDraftPrivatePayloadV1Schema.safeParse(payload).success).toBe(false);
+    expect(SessionDraftPrivatePayloadV2Schema.safeParse({
+      ...payload, document: { ...document, uncertainInputs: field([document.selection.value]) },
+    }).success).toBe(false);
+    expect(SessionDraftPrivatePayloadV2Schema.safeParse({
+      ...payload, document: { ...document, composer: { text: field('start an Agent') } },
+    }).success).toBe(false);
+    expect(ProjectOpenDraftDocumentV2StoredSchema.parse({
+      ...document, futureField: true, target: { ...document.target, futureTarget: true },
+    })).toEqual(document);
+    expect(ProjectOpenDraftDocumentV2StoredSchema.safeParse({ ...document, uncertainInputs: field('invalid') }).success)
+      .toBe(false);
+    expect(SessionDraftPrivatePayloadV2Schema.safeParse({
+      ...payload, address: { kind: 'newSession', draftId: address.draftId },
+    }).success).toBe(false);
+  });
+
+  it('allows unfinished Open fields without relaxing clone traversal or credential-free admission', () => {
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({ serverId: 'home-a', ref: 'main' }).success).toBe(true);
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({
+      serverId: 'home-a', machineId: 'machine-a', materialization: { kind: 'attach' },
+    }).success).toBe(true);
+    const selection = {
+      serverId: 'home-a', machineId: '', source: { kind: 'folder', path: '' },
+      materialization: { kind: 'clone', destinationParentPath: '', destinationDirectoryName: '' },
+    };
+    expect(OpenProjectDraftSelectionV1Schema.safeParse(selection).success).toBe(true);
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({
+      ...selection, materialization: { ...selection.materialization, destinationDirectoryName: '../elsewhere' },
+    }).success).toBe(false);
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({
+      ...selection, source: { kind: 'folder', path: '\0' },
+    }).success).toBe(false);
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({
+      ...selection, materialization: { kind: 'worktree', checkout: { kind: 'git_worktree', displayName: '', baseRef: null } },
+    }).success).toBe(true);
+    expect(OpenProjectDraftSelectionV1Schema.safeParse({
+      ...selection, materialization: { kind: 'sync', targetPath: '', workspaceAction: { kind: 'none' } },
+    }).success).toBe(false);
+  });
+
   it('accepts every V1 address plus the three Lane 05 kinds', () => {
     const addresses = [
       { kind: 'newSession', draftId: '00000000-0000-4000-8000-00000000000a' },

@@ -20,6 +20,7 @@ export function isActionExecutableFromStandaloneMcp(spec: ActionSpec): boolean {
 export type ActionToolExposureResolutionContext = Readonly<{
   settings?: ActionsSettingsV1 | null;
   isActionEnabled?: ((id: ActionId) => boolean) | null;
+  sessionMemoryEnabled?: boolean;
 }>;
 
 export function resolveActionToolExposureMode(
@@ -40,6 +41,7 @@ export function isActionDirectToolExposedOn(
     surface,
     settings: context?.settings ?? null,
     isActionEnabled: context?.isActionEnabled ?? null,
+    sessionMemoryEnabled: context?.sessionMemoryEnabled,
     requireToolBinding: true,
   });
   return availability.available
@@ -56,5 +58,6 @@ export function isActionDiscoverableOnToolSurface(
     surface,
     settings: context?.settings ?? null,
     isActionEnabled: context?.isActionEnabled ?? null,
+    sessionMemoryEnabled: context?.sessionMemoryEnabled,
   }).available;
 }

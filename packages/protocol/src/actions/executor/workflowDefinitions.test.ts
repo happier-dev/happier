@@ -119,14 +119,18 @@ describe('shared workflow definition create', () => {
     readWorkflowTriggerSummaries: async () => new Map() });
     const first = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
     expect(first.definitions.map((entry) => entry.definitionId)).toEqual([definitionId]);
-    expect(first.pluginWorkflows?.map((entry) => entry.workflow)).toEqual([plugins[0]!.workflow]);
+    expect(first.pluginWorkflows).toBeUndefined();
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(first)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     expect(first.nextCursor).toBeDefined();
     const next = WorkflowDefinitionListResultV1Schema.parse(await owner.list({ cursor: first.nextCursor }));
     expect(next.definitions).toEqual([]);
-    expect(next.pluginWorkflows?.map((entry) => entry.workflow)).toEqual([plugins[1]!.workflow]);
-    expect(next.nextCursor).toBeUndefined();
+    expect(next.pluginWorkflows?.map((entry) => entry.workflow)).toEqual([plugins[0]!.workflow]);
+    expect(next.nextCursor).toBeDefined();
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(next)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const last = WorkflowDefinitionListResultV1Schema.parse(await owner.list({ cursor: next.nextCursor }));
+    expect(last.pluginWorkflows?.map((entry) => entry.workflow)).toEqual([plugins[1]!.workflow]);
+    expect(last.nextCursor).toBeUndefined();
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(last)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
   });
   it('lists read-only plugin workflows through the same Action without reading or writing Artifacts', async () => {
     const plugin = { workflow: 'plugin:com.acme.workflows/review', pluginId: 'com.acme.workflows',
@@ -144,7 +148,10 @@ describe('shared workflow definition create', () => {
           witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
         normalizeAbsolutePath: () => null, randomBytes: () => { throw new Error('no_keys'); } }),
     });
-    const result = await execute({ actionId: 'workflow.definition.list', input: {}, context: { surface: 'agent' } });
+    const first = WorkflowDefinitionListResultV1Schema.parse(await execute({ actionId: 'workflow.definition.list', input: {}, context: { surface: 'agent' } }));
+    expect(first.definitions).toEqual([]);
+    expect(first.nextCursor).toBeDefined();
+    const result = await execute({ actionId: 'workflow.definition.list', input: { cursor: first.nextCursor }, context: { surface: 'agent' } });
     expect(result).toEqual({ definitions: [], pluginWorkflows: [plugin] });
     expect(WorkflowDefinitionListResultV1Schema.parse(result)).toEqual(result);
   });

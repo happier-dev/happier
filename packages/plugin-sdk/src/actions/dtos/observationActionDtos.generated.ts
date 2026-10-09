@@ -12,6 +12,11 @@ export type ObservationActionInputById = {
             runId: string;
             sessionId?: string | undefined;
         } | {
+            kind: 'action_operation';
+            serverId: string;
+            machineId: string;
+            operationId: string;
+        } | {
             kind: 'session';
             serverId: string;
             sessionId: string;
@@ -49,6 +54,11 @@ export type ObservationActionResultById = {
             runId: string;
             sessionId?: string | undefined;
         } | {
+            kind: 'action_operation';
+            serverId: string;
+            machineId: string;
+            operationId: string;
+        } | {
             kind: 'session';
             serverId: string;
             sessionId: string;
@@ -72,7 +82,7 @@ export type ObservationActionResultById = {
             actionLocalId: string;
             condition: string;
         };
-        disposition: 'matched' | 'observation_timeout' | 'cancelled' | 'target_unavailable' | 'permission_denied' | 'unsupported_condition' | 'disconnected';
+        disposition: 'matched' | 'observation_timeout' | 'cancelled' | 'target_unavailable' | 'permission_denied' | 'unsupported_condition' | 'disconnected' | 'outcome_uncertain';
         snapshot?: string | number | boolean | readonly JsonValue[] | {
             readonly [key: string]: JsonValue;
         } | null | undefined;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
@@ -40,7 +41,7 @@ import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarratio
 
 // Canonical, stable error code vocabulary for RPC `errorCode` and MCP `error.code`.
 // Keep this pinned and deterministic; clients should branch on these strings.
-export const ExecutionRunTransportErrorCodeSchema = z.enum([
+export const ExecutionRunTransportErrorCodeSchema = lazyZodSchema(() => z.enum([
   'execution_run_not_allowed',
   'execution_run_not_found',
   'execution_run_action_not_supported',
@@ -59,16 +60,16 @@ export const ExecutionRunTransportErrorCodeSchema = z.enum([
   'execution_run_connected_service_generation_refresh_required',
   'run_depth_exceeded',
   'permission_denied',
-]);
+]));
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
 
-export const ExecutionRunStartRunCreationSchema = z.enum(['noRunCreated', 'outcomeUnknown']);
+export const ExecutionRunStartRunCreationSchema = lazyZodSchema(() => z.enum(['noRunCreated', 'outcomeUnknown']));
 export type ExecutionRunStartRunCreation = z.infer<typeof ExecutionRunStartRunCreationSchema>;
 
-const ExecutionRunStartFailureEvidenceV1Schema = z.object({
+const ExecutionRunStartFailureEvidenceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   runCreation: ExecutionRunStartRunCreationSchema,
-}).strict();
+}).strict());
 
 /**
  * Strict, versioned evidence emitted by the execution-run start owner. A caller
@@ -76,10 +77,10 @@ const ExecutionRunStartFailureEvidenceV1Schema = z.object({
  * policy authorizes one; absent, malformed, or contradictory evidence must be
  * treated as `outcomeUnknown`.
  */
-export const ExecutionRunStartFailureDetailsV1Schema = z.object({
+export const ExecutionRunStartFailureDetailsV1Schema = lazyZodSchema(() => z.object({
   executionRunStart: ExecutionRunStartFailureEvidenceV1Schema,
   updateRequired: OperationUpdateRequiredV1Schema.optional(),
-}).strict();
+}).strict());
 export type ExecutionRunStartFailureDetailsV1 = z.infer<typeof ExecutionRunStartFailureDetailsV1Schema>;
 
 export function readExecutionRunStartRunCreation(details: unknown): ExecutionRunStartRunCreation {
@@ -110,41 +111,41 @@ export type ExecutionRunStatus = ExecutionRunStatusBase;
 export const ExecutionRunListRequestSchema = ExecutionRunListRequestSchemaBase;
 export type ExecutionRunListRequest = ExecutionRunListRequestBase;
 
-export const ExecutionRunErrorSchema = z.object({
+export const ExecutionRunErrorSchema = lazyZodSchema(() => z.object({
   code: z.string().min(1),
   message: z.string().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunError = z.infer<typeof ExecutionRunErrorSchema>;
 
-export const ExecutionRunTranscriptSchema = z.object({
+export const ExecutionRunTranscriptSchema = lazyZodSchema(() => z.object({
   persistenceMode: z.enum(['ephemeral', 'persistent']),
   epoch: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
 
 /** Native acceptance and terminal evidence for one retained runtime turn. */
-export const ExecutionRunTurnResultV1Schema = z.discriminatedUnion('kind', [
+export const ExecutionRunTurnResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), value: z.string() }).strict(),
   z.object({ kind: z.literal('json'), value: StrictJsonValueSchema }).strict(),
   z.object({ kind: z.literal('decision'), value: z.string() }).strict(),
-]);
+]));
 export type ExecutionRunTurnResultV1 = z.infer<typeof ExecutionRunTurnResultV1Schema>;
 
-export const ExecutionRunInputTurnV1Schema = z.object({
+export const ExecutionRunInputTurnV1Schema = lazyZodSchema(() => z.object({
   turnId: z.string().min(1),
   inputIds: z.array(z.string().min(1)).nonempty(),
   state: z.enum(['active', 'completed', 'failed', 'cancelled']),
   result: ExecutionRunTurnResultV1Schema.optional(),
-}).strict();
+}).strict());
 export type ExecutionRunInputTurnV1 = z.infer<typeof ExecutionRunInputTurnV1Schema>;
 
-const ExecutionRunInputTurnsV1Schema = z.object({
+const ExecutionRunInputTurnsV1Schema = lazyZodSchema(() => z.object({
   occurrenceId: z.string().min(1),
   current: ExecutionRunInputTurnV1Schema.optional(),
   last: ExecutionRunInputTurnV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const ExecutionRunPublicStateSchema = z.object({
+export const ExecutionRunPublicStateSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   /** Retained host launch provenance, never authored execution input. */
   originWorkflowRunId: z.string().min(1).optional(),
@@ -185,28 +186,40 @@ export const ExecutionRunPublicStateSchema = z.object({
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
 
-export const ExecutionRunListResponseSchema = z.object({
+/** Retained lifetime and current work are separate: an idle interactive run remains sendable. */
+export function isExecutionRunActive(run: Readonly<{
+  status?: string | null;
+  runClass?: string | null;
+  turnInFlight?: boolean | null;
+}>): boolean {
+  // A bounded run still owns outcome processing after its provider turn settles. Older producers
+  // and provisioning runs without a turn observation remain conservatively active.
+  return run.status === 'running' && (run.runClass !== 'long_lived' || run.turnInFlight !== false);
+}
+
+
+export const ExecutionRunListResponseSchema = lazyZodSchema(() => z.object({
   runs: z.array(ExecutionRunPublicStateSchema),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunListResponse = z.infer<typeof ExecutionRunListResponseSchema>;
 
-export const ExecutionRunGetRequestSchema = z.object({
+export const ExecutionRunGetRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   includeStructured: z.boolean().optional(),
   /** Await this exact current/last input turn before returning the Run snapshot. */
   waitForInputId: z.string().trim().min(1).optional(),
   waitForOutput: ReviewWalkthroughObservationSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunGetRequest = z.infer<typeof ExecutionRunGetRequestSchema>;
 
-export const ExecutionRunGetResponseSchema = z.object({
+export const ExecutionRunGetResponseSchema = lazyZodSchema(() => z.object({
   run: ExecutionRunPublicStateSchema,
   latestToolResult: z.unknown().optional(),
   structuredMeta: z.object({ kind: z.string(), payload: z.unknown() }).passthrough().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunGetResponse = z.infer<typeof ExecutionRunGetResponseSchema>;
 
 /**
@@ -214,7 +227,7 @@ export type ExecutionRunGetResponse = z.infer<typeof ExecutionRunGetResponseSche
  * `execution.run.start({ waitForCompletion: true })` composition. It says
  * nothing about starting, stopping, retrying, or re-targeting the run.
  */
-const ExecutionRunWaitCompletedResultSchema = z.object({
+const ExecutionRunWaitCompletedResultSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   status: ExecutionRunTerminalStatusSchema,
   result: ExecutionRunGetResponseSchema,
@@ -226,9 +239,9 @@ const ExecutionRunWaitCompletedResultSchema = z.object({
       message: 'wait terminal status must match the observed run status',
     });
   }
-});
+}));
 
-const ExecutionRunWaitObservationTimeoutSchema = z.object({
+const ExecutionRunWaitObservationTimeoutSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   status: z.literal('running'),
   disposition: z.literal('observation_timeout'),
@@ -236,9 +249,9 @@ const ExecutionRunWaitObservationTimeoutSchema = z.object({
   timeoutMs: z.number().finite().positive(),
   observedAtMs: z.number().finite(),
   deadlineAtMs: z.number().finite(),
-}).strict();
+}).strict());
 
-export const ExecutionRunWaitResultSchema = z.union([
+export const ExecutionRunWaitResultSchema = lazyZodSchema(() => z.union([
   ExecutionRunWaitCompletedResultSchema,
   z.object({ ok: z.literal(true), status: z.literal('running'), disposition: z.literal('needs_attention'),
     result: ExecutionRunGetResponseSchema }).strict().superRefine((value, ctx) => {
@@ -261,22 +274,22 @@ export const ExecutionRunWaitResultSchema = z.union([
   }),
   z.object({ ok: z.literal(false), code: z.literal('cancelled') }).strict(),
   z.object({ ok: z.literal(false), code: ExecutionRunTransportErrorCodeSchema }).strict(),
-]);
+]));
 export type ExecutionRunWaitResult = z.infer<typeof ExecutionRunWaitResultSchema>;
 
-export const ExecutionRunStartResponseSchema = z.object({
+export const ExecutionRunStartResponseSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   requestedConfiguration: ExecutionRunRequestedConfigurationSchema.optional(),
   wait: ExecutionRunWaitResultSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;
 
-export const ExecutionRunSendResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
+export const ExecutionRunSendResponseSchema = lazyZodSchema(() => z.object({ ok: z.literal(true) }).passthrough());
 export type ExecutionRunSendResponse = z.infer<typeof ExecutionRunSendResponseSchema>;
 
-export const ExecutionRunStopResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
+export const ExecutionRunStopResponseSchema = lazyZodSchema(() => z.object({ ok: z.literal(true) }).passthrough());
 export type ExecutionRunStopResponse = z.infer<typeof ExecutionRunStopResponseSchema>;
 
 // Keep the schema-owner imports explicit: these aliases are the public contract types

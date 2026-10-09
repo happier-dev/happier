@@ -29,6 +29,7 @@ export async function dispatchRuntimeAction(args: Readonly<{
   input: unknown;
   context: RuntimeActionExecuteArgsFor<RuntimeActionIdV1>['context'];
   runtimeActionExecute?: RuntimeActionExecute;
+  executeCanonicalAction?: RuntimeActionExecuteArgsFor<RuntimeActionIdV1>['executeCanonicalAction'];
 }>): Promise<unknown> {
   const actionId = args.actionId;
   if (!args.runtimeActionExecute) {
@@ -56,6 +57,7 @@ export async function dispatchRuntimeAction(args: Readonly<{
       input: args.input,
       context: args.context,
       runtimeActionExecute: args.runtimeActionExecute,
+      ...(args.executeCanonicalAction ? { executeCanonicalAction: args.executeCanonicalAction } : {}),
     });
   }
   if (isPeerMediationRuntimeActionId(actionId)) {

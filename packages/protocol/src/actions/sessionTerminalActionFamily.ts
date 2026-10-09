@@ -47,7 +47,7 @@ export const SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS = {
   'session.terminals.detach': mutation,
   'session.terminals.reorder': mutation,
 } as const;
-const scopeHint = { path: 'scopeId', title: 'Home-qualified Session scope', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const scopeHint = { path: 'scopeId', title: 'Home-qualified Session or Project scope', widget: 'text', required: true } satisfies ActionInputFieldHint;
 const terminalHint = { path: 'terminalId', title: 'Terminal id', widget: 'text', required: true } satisfies ActionInputFieldHint;
 const tabHint = { path: 'tabId', title: 'Terminal tab id', widget: 'text', required: true } satisfies ActionInputFieldHint;
 const targetHint = { path: 'target', title: 'Shell or attachment target', widget: 'json', required: true } satisfies ActionInputFieldHint;
@@ -92,11 +92,13 @@ const voiceExamples = {
   'session.terminals.reorder': '{"scopeId":"home:session","tabId":"tab-main","index":0}',
 } satisfies Record<SessionTerminalActionId, string>;
 function row<const T extends SessionTerminalActionId>(actionId: T, title: string) {
-  const mutatesProcess = actionId === 'session.terminals.run_script' || actionId === 'session.terminals.open' || actionId === 'session.terminals.split'
-    || actionId === 'session.terminals.close' || actionId === 'session.terminals.close_tab' || actionId === 'session.terminals.close_others' || actionId === 'session.terminals.restart';
+  // Creation and restart request pane/controller intents. The physical Machine
+  // Action admits every launch with the original verified caller provenance.
+  const mutatesProcess = actionId === 'session.terminals.close' || actionId === 'session.terminals.close_tab'
+    || actionId === 'session.terminals.close_others';
   return {
     id: actionId, title,
-    description: 'Operate on the invoking mounted client session terminal pane. Scope IDs are Home-qualified; a headless host returns unsupported_action. Closing stops owned shell terminals; attached agent terminals and borrowed views are only removed from the pane.',
+    description: 'Operate on the invoking mounted client terminal pane for a Home-qualified Session or an accepted requester Project checkout. Open, split and run_script return a pane member intent, not a ready shell. Restart requests the mounted controller, not a completed process restart. The Machine open/restart Actions own physical launch approval with the original caller provenance. Project shells retain their exact accepted workspace. A headless host returns unsupported_action. Closing stops owned shell terminals; attached agent terminals and borrowed views are only removed from the pane.',
     safety: mutatesProcess ? 'danger' : 'safe',
     sideEffectClass: actionId === 'session.terminals.list' ? 'read' : mutatesProcess ? 'danger' : 'external',
     executionPlacement: 'client', placements: [],

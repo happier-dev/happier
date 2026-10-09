@@ -249,6 +249,14 @@ describe('workflow Action contracts', () => {
     }
   });
 
+  it('admits explicit invocation content on history pages while keeping parent projections lean', () => {
+    const schema = WorkflowActionInputSchemasV1['workflow.run.invocations.list'];
+    const runId = '11111111-1111-4111-8111-111111111111';
+    expect(schema.safeParse({ runId, includeContent: true }).success).toBe(true);
+    expect(schema.safeParse({ runId, includeContent: false, parentRecordId: '22222222-2222-4222-8222-222222222222' }).success).toBe(true);
+    expect(schema.safeParse({ runId, includeContent: true, parentRecordId: '22222222-2222-4222-8222-222222222222' }).success).toBe(false);
+  });
+
   it('projects accepted execution context without the admitted authorization', () => {
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
       id: 'run-1', origin: { kind: 'direct' }, state: 'succeeded', revision: 1,
@@ -318,12 +326,12 @@ describe('workflow Action contracts', () => {
     }).metadataByRunId).toEqual({ 'run-1': { kind: 'available', value: { title: 'Frozen title' } } });
     expect(WorkflowActionOutputSchemasV1['workflow.run.list'].safeParse({ runs: [{ ...run, title: 'leak' }] }).success).toBe(false);
     expect(WorkflowActionOutputSchemasV1['workflow.run.list'].safeParse({
-      runs: [run], metadataByRunId: { 'run-1': { kind: 'unavailable' } },
+      runs: [run], metadataByRunId: { 'run-1': { kind: 'unavailable', reason: 'content_unavailable' } },
     }).success).toBe(true);
     expect(WorkflowActionOutputSchemasV1['workflow.run.list'].safeParse({
       runs: [run],
       metadataByRunId: {
-        'run-1': { kind: 'unavailable' },
+        'run-1': { kind: 'unavailable', reason: 'content_unavailable' },
         'off-page-run': { kind: 'available', value: { title: 'Not in this page' } },
       },
     }).success).toBe(false);

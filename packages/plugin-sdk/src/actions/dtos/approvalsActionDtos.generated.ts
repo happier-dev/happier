@@ -39,9 +39,8 @@ export type ApprovalsActionInputById = {
         preview?: unknown;
     };
     readonly "approval.request.decide": {
-        [x: string]: unknown;
         artifactId: string;
-        decision: 'approve' | 'reject';
+        decision: 'approve' | 'reject' | 'cancel';
         computerTarget?: {
             kind: 'window';
             displayId: string;

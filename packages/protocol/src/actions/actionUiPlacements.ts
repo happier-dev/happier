@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -18,5 +19,5 @@ export const ACTION_UI_PLACEMENTS = [
   'run_card',
 ] as const;
 
-export const ActionUiPlacementSchema = z.enum(ACTION_UI_PLACEMENTS);
+export const ActionUiPlacementSchema = lazyZodSchema(() => z.enum(ACTION_UI_PLACEMENTS));
 export type ActionUiPlacement = z.infer<typeof ActionUiPlacementSchema>;

@@ -38,3 +38,44 @@ export function formatSharedSavedSecretRefV1(resourceId: string): string {
   assertSharedSavedSecretResourceIdV1(resourceId);
   return `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}`;
 }
+
+/**
+ * Identifiable reference carriers in original JSON, before stored projections
+ * can discard additive fields. This does not authorize or rewrite a reference:
+ * the domain census compares these paths with its known admitted bindings.
+ */
+export function listSavedSecretReferenceCarrierPathsV1(
+  value: unknown,
+  options: Readonly<{ secretId?: string; initialPath?: string }> = {},
+): readonly string[] {
+  const paths = new Set<string>();
+  const segment = (key: string) => /^[A-Za-z_$][\w$]*$/u.test(key)
+    ? `.${key}` : `[${JSON.stringify(key)}]`;
+  const visit = (candidate: unknown, path: string, referenceContainer: boolean): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach((entry, index) => visit(entry, `${path}[${index}]`, referenceContainer));
+      return;
+    }
+    if (candidate === null || typeof candidate !== 'object') return;
+    const record = candidate as Record<string, unknown>;
+    for (const [key, entry] of Object.entries(record)) {
+      const childPath = path ? `${path}${segment(key)}` : key;
+      const isReference = key === 'secretId' || key === 'savedSecretId' || key === 'secretRef'
+        || key === 'bootstrapCredentialRef' || /(?:SecretId|SecretRef)$/u.test(key)
+        || (key === 'ref' && (record.t === 'savedSecret' || record.kind === 'savedSecret'));
+      if (typeof entry === 'string' && (options.secretId === undefined || entry === options.secretId)
+        && (referenceContainer || isReference)) {
+        paths.add(key === 'savedSecretId' || (key === 'secretId' && record.t === 'savedSecret')
+          ? path : childPath);
+      }
+      const isReferenceContainer = key === 'secretRefs' || key === 'secretBindings'
+        || key === 'credentialBindings' || key.startsWith('secretBindingsBy');
+      // Voice entry identity/source metadata is not a credential binding map.
+      const childIsReferenceContainer = key === 'credentialBindings' && Array.isArray(entry)
+        ? false : referenceContainer || isReferenceContainer;
+      visit(entry, childPath, childIsReferenceContainer);
+    }
+  };
+  visit(value, options.initialPath ?? '', false);
+  return Object.freeze([...paths]);
+}

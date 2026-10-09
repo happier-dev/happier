@@ -1,4 +1,23 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PromptDocRevisionV1Schema } from '../prompts/library/promptDocV2.js';
+import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../sessions/control/pendingWithdrawV1.js';
+import { MEMORY_DOCUMENT_ACTION_SPECS_V1 } from './specs/memoryDocuments.js';
+import { MEMORY_DOCUMENT_ACTION_IDS_V1, MEMORY_WRITE_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
+import { PROFILE_ACTION_SPECS_V1 } from './specs/profiles.js';
+import { ARTIFACT_FOLDER_ACTION_SPECS_V1 } from './specs/artifactFolders.js';
+import { ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1, ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1 } from '../prompts/library/promptFolderActionsV1.js';
+import type { ArtifactFolderActionIdV1 } from '../prompts/library/artifactFolderActionIdsV1.js';
+import { PROFILE_ACTION_INPUT_SCHEMAS_V1, PROFILE_ACTION_OUTPUT_SCHEMAS_V1, type ProfileActionIdV1 } from '../profiles/profileActionsV1.js';
+import { FilesystemCreateDirectoryInputSchema, FilesystemRenameInputSchema, FilesystemDeleteInputSchema, FilesystemCopyInputSchema, FilesystemCopyOutputSchema, FilesystemMutationOutputSchema, FilesystemUploadInputSchema, FilesystemUploadOutputSchema, FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema, FilesystemTransferCancelInputSchema, FilesystemTransferCancelOutputSchema, FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
+import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../projects/openProjectV1.js';
+import { BotSetInputSchema } from '../sessions/identity/sessionBotV1.js';
+import { MANAGED_MACHINE_ACTION_SPECS } from './specs/managedMachines.js';
+import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1 } from '../machines/managed/actionsV1.js';
+import { SessionTitleSetInputSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from './sessionStateFieldActions.js';
+import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema } from '../projects/projectContextV1.js';
+import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../projects/projectVisibilityV1.js';
+import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema,
+  ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../projects/projectWorkspaceActionsV1.js';
 import { PassthroughEmptyObjectSchema } from './specs/common.js';
 import { InputOptionsConsumerV1Schema } from '../inputs/inputOptionsConsumer.js';
 import { VOICE_CONVERSATION_ACTION_IDS, VOICE_CONVERSATION_ACTION_SPECS, VoiceConversationActionInputSchemas, VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from './voiceConversationActionFamily.js';
@@ -66,16 +85,23 @@ import type { ActionCompletionDeclaration } from './actionCompletion.js';
 import { planStartCompletion, reviewStartCompletion, reviewWalkthroughCompletion } from './specs/executionRunCompletion.js';
 import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
 import { WORKSPACE_ACTION_SPECS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, type WorkspaceActionId } from './workspaceActionFamily.js';
+import { PROJECT_DEFINITION_ACTION_SPECS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, PROJECT_DEFINITION_ACTION_OUTPUT_SCHEMAS, type ProjectDefinitionActionId } from './projectDefinitionActionFamily.js';
+import { PROJECT_ACTION_SPECS_V1, PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, type ProjectActionIdV1 } from './projectActionFamily.js';
 import { SESSION_CANVAS_ACTION_SPECS, SESSION_CANVAS_ACTION_INPUT_SCHEMAS, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS, type SessionCanvasActionId } from './sessionCanvasActionFamily.js';
 import { SESSION_TERMINAL_ACTION_SPECS, SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS, type SessionTerminalActionId } from './sessionTerminalActionFamily.js';
 import { COMMAND_PALETTE_ACTION_SPECS } from './commandPaletteActionSpecs.js';
 import { FIND_ACTION_SPECS } from './findActionSpecs.js';
 import { PROMPT_PICKER_ACTION_SPECS } from './promptPickerActionSpecs.js';
 import { SESSION_PENDING_NEXT_ACTION_SPECS } from './specs/sessionPendingNext.js';
+import { PROJECT_WORKER_ACTION_SPECS, ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1,
+  type ProjectWorkerActionIdV1 } from './specs/projectWorkers.js';
+import { ACTION_OPERATION_ACTION_SPECS, ActionOperationActionInputSchemasV1, ActionOperationActionOutputSchemasV1,
+  type ActionOperationActionIdV1 } from './specs/actionOperations.js';
 import { SESSION_ORGANIZATION_MOVE_ACTION_SPECS } from './sessionOrganizationMoveAction.js';
 import { LIST_REORDER_ACTION_SPECS } from './listReorderAction.js';
 import { TODO_SESSION_LINK_ACTION_SPECS } from './todoSessionLinkAction.js';
 import { WORKFLOW_AUTHORING_ACTION_SPECS } from './workflowAuthoringAction.js';
+import { SessionAuthoringOpenV1Schema, SessionAuthoringOpenResultV1Schema } from '../plugins/ui/hostApiRequests.js';
 import { COMPOSER_INGRESS_ACTION_SPECS } from './composerIngressAction.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { readAccountSettingDeclarationV1 } from './accountSettingDeclarations.js';
@@ -123,6 +149,11 @@ import {
   machinePoolActionEndpointPathV1,
   type MachinePoolActionIdV1,
 } from '../machines/pools/actionsV1.js';
+import {
+  MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1,
+  machinePresetActionEndpointPathV1,
+  type MachinePresetActionIdV1,
+} from '../machines/managed/machinePresetActionsV1.js';
 import {
   EPHEMERAL_RUNNER_ACTION_IDS_V1,
   EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1,
@@ -582,10 +613,14 @@ import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
 import { SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS } from './specs/sessionOrganization.js';
 import { SCOPE_ACTION_SPECS } from './specs/scope.js';
 import { HOME_HUB_LAYOUT_ACTION_SPECS } from './specs/homeHub.js';
+import { PROJECT_SOURCE_ACTION_SPECS_V1 } from './specs/projectSources.js';
 import { WIDGET_INSTANCE_ACTION_SPECS_V1, WIDGET_DEFINITION_ACTION_SPECS_V1, WIDGET_SNAPSHOT_ACTION_SPECS_V1 } from './specs/widgets.js';
 import type { WidgetInstanceActionIdV1, WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
 import type { WidgetDefinitionActionIdV1, WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1 } from '../widgets/definitionActionsV1.js';
 import { MACHINE_CONNECTION_ACTION_SPECS } from './specs/machineConnection.js';
+import { MACHINE_TERMINAL_ACTION_SPECS, MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS,
+  MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS, type MachineTerminalActionId } from './specs/machineTerminal.js';
+import { MACHINE_ACCESS_ACTION_SPECS } from './specs/machineAccess.js';
 import { TEAM_ACTION_SPECS } from './specs/teams.js';
 import { SHARED_SAVED_SECRET_ACTION_SPECS } from './specs/sharedSavedSecrets.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS } from './specs/connectedServices.js';
@@ -673,6 +708,7 @@ import {
 import { ActionApprovalSchema, resolveActionApprovalFlow, type ActionApproval } from './actionApprovalMetadata.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ActionInvokeInputSchema } from './actionInvokeInput.js';
+import { isSourceQualifiedLocalServicePreviewActionInput } from './specs/localServices.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import {
   ActionContextualDefaultsSchema,
@@ -700,11 +736,11 @@ export {
   type ActionApprovalResult,
 } from './actionApprovalMetadata.js';
 
-const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
+const ZodSchemaLike = lazyZodSchema(() => z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
   const v = value as any;
   return typeof v.safeParse === 'function' && typeof v.parse === 'function';
-}, { message: 'Expected a Zod schema' });
+}, { message: 'Expected a Zod schema' }));
 
 export type ActionSurfaceBindingCaller = ActionCaller;
 
@@ -854,12 +890,29 @@ export const ActionSpecSchema = lazyZodSchema(() => z.object({
   surfaceBindings: ActionSpecSurfaceBindingsSchema.optional(),
   outputSchema: ZodSchemaLike.optional(),
   /** Host-private launch/terminal projection. Only its schema and awaits marker are frozen. */
-  completion: z.object({
-    awaits: z.literal('execution_runs'),
-    terminalOutputSchema: ZodSchemaLike,
-    launched: z.custom<ActionCompletionDeclaration['launched']>((value) => typeof value === 'function'),
-    terminal: z.custom<ActionCompletionDeclaration['terminal']>((value) => typeof value === 'function'),
-  }).strict().optional(),
+  completion: z.discriminatedUnion('awaits', [
+    z.object({
+      awaits: z.literal('execution_runs'),
+      terminalOutputSchema: ZodSchemaLike,
+      launched: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['launched']>(
+        (value) => typeof value === 'function',
+      ),
+      terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'execution_runs' }>['terminal']>(
+        (value) => typeof value === 'function',
+      ),
+    }).strict(),
+    z.object({
+      awaits: z.literal('action_operations'),
+      immediateResultSchema: ZodSchemaLike.optional(),
+      terminalOutputSchema: ZodSchemaLike,
+      launched: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'action_operations' }>['launched']>(
+        (value) => typeof value === 'function',
+      ),
+      terminal: z.custom<Extract<ActionCompletionDeclaration, { awaits: 'action_operations' }>['terminal']>(
+        (value) => typeof value === 'function',
+      ),
+    }).strict(),
+  ]).optional(),
   /** Host-private input projection for observers; secrets must never enter Action history. */
   projectObservationInput: z.custom<(value: unknown) => unknown>(
     (value) => typeof value === 'function',
@@ -1237,11 +1290,6 @@ const OptionalSessionIdInputSchema = lazyZodSchema(() => z.object({
 
 const SessionIdRequiredInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
-}).passthrough());
-
-const SessionTitleSetInputSchema = lazyZodSchema(() => z.object({
-  sessionId: z.string().min(1).optional(),
-  title: z.string().trim().min(1),
 }).passthrough());
 
 const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.object({
@@ -2009,17 +2057,19 @@ const PathsListRecentInputSchema = lazyZodSchema(() => z.object({
 /**
  * The persisted project registry read.
  *
- * It narrows by machine and count only. It deliberately does NOT filter by
+ * It narrows by Home, machine, visibility and an explicit count. It does not filter by
  * hosting provider or repository name: matching a repository to a checkout is
  * one decision with one owner, and a filter here would make this a second place
  * that rule lives — silently disagreeing with the caller's own matcher the day
- * either one changes. The registry is a bounded local read, so the caller
- * receives it and decides.
+ * either one changes. Registry coverage accompanies the result so callers
+ * cannot infer uniqueness from a partial answer.
  */
 const ProjectsListInputSchema = lazyZodSchema(() => z.object({
+  serverId: z.string().trim().min(1).optional(),
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough());
+  includeHidden: z.boolean().optional(),
+}).strict());
 
 /**
  * The Prompt Library invocation inventory read.
@@ -2047,8 +2097,9 @@ const PromptInvocationResolveInputSchema = lazyZodSchema(() => z.object({
 }).passthrough());
 
 const MachinesListInputSchema = lazyZodSchema(() => z.object({
+  serverId: z.string().trim().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough());
+}).strict());
 
 /**
  * The friendly `happier machines list` bound has always been the whole page. It
@@ -2056,6 +2107,7 @@ const MachinesListInputSchema = lazyZodSchema(() => z.object({
  */
 const MACHINES_LIST_CLI_DEFAULT_LIMIT = 200;
 const MachinesListCliInputSchema = lazyZodSchema(() => z.object({
+  serverId: z.string().trim().min(1).optional(),
   limit: z.number().int().min(1).max(MACHINES_LIST_CLI_DEFAULT_LIMIT).optional(),
 }).strict());
 
@@ -2766,7 +2818,7 @@ const ApprovalRequestGetInputSchema = lazyZodSchema(() => z.object({
 
 const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
-  decision: z.enum(['approve', 'reject']),
+  decision: z.enum(['approve', 'reject', 'cancel']),
   /** Human picker choice for an open computer.target.select request; never caller authority. */
   computerTarget: ComputerTargetV1Schema.optional(),
   computerAccess: ComputerAccessV1Schema.optional(),
@@ -2774,15 +2826,16 @@ const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.object({
   originServerId: z.string().min(1).optional(),
   /** Stable Home identity selected by the current device before exact-daemon routing. */
   serverIdentityId: z.string().min(1).optional(),
-}).passthrough());
+}).strict());
 
 const PromptDocUpdateInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
   title: z.string().min(1),
   markdown: z.string(),
+  expectedRevision: PromptDocRevisionV1Schema.optional(),
   folderId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
-}).passthrough());
+}).strict());
 
 const PromptBundleUpdateInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
@@ -2898,6 +2951,12 @@ const RESULT_NONE_DEFERRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
+  // Owned pane creation/restart must receive the existing durable Artifact
+  // custody before human settlement, without changing the original caller.
+  'machines.terminal.open',
+  'machines.terminal.restart',
+  'computer.secret.fill',
+  'browser.automation.secret.fill',
   ...TEAM_DEFERRED_APPROVAL_REPLAY_SAFE_ACTION_IDS,
   // The Team settings shell refreshes the exact Team after replay and therefore
   // has a real result consumer. Deferred metadata lets its UI receive and show
@@ -2910,10 +2969,29 @@ const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
+  ...MACHINE_TERMINAL_ACTION_IDS,
+  // The caller retains its actual byte reader/destination while admission
+  // waits. Durable replay cannot reconstitute that local transport custody.
+  'daemon.filesystem.upload',
+  'daemon.filesystem.download',
+  'daemon.filesystem.copy',
+  ...ACTION_ID_FAMILIES_V1.project_definitions,
+  ...ACTION_ID_FAMILIES_V1.project_sources,
+  ...ACTION_ID_FAMILIES_V1.operation_output,
+  'projects.visibility.set',
+  'projects.workspace.update',
+  'projects.workspace.forget',
+  ...ACTION_ID_FAMILIES_V1.managed_machines,
+  ...ACTION_ID_FAMILIES_V1.machine_presets,
+  ...ACTION_ID_FAMILIES_V1.project_execution,
+  ...ACTION_ID_FAMILIES_V1.project_definitions,
+  'projects.context.update',
+  'projects.open',
   ...ACTION_ID_FAMILIES_V1.workflow_effects,
   ...VOICE_CONVERSATION_ACTION_IDS,
   ...ACTION_ID_FAMILIES_V1.composer_ingress,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,
+  ...ACTION_ID_FAMILIES_V1.session_authoring,
   ...ACTION_ID_FAMILIES_V1.list_reorder,
   ...ACTION_ID_FAMILIES_V1.todo_session_link,
   ...ACTION_ID_FAMILIES_V1.session_organization_move,
@@ -2933,11 +3011,14 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ARTIFACT_ACCESS_ACTION_IDS_V1,
   ...ARTIFACT_ACTION_IDS_V1,
+  ...ACTION_ID_FAMILIES_V1.artifact_folders,
   // Sharing's continuation needs the published Artifact id, including after approval replay.
   ...ACTION_ID_FAMILIES_V1.launch_profiles,
   ...ACTION_ID_FAMILIES_V1.notifications,
   ...ACTION_ID_FAMILIES_V1.machine_agent_install,
   ...ACTION_ID_FAMILIES_V1.machine_connection,
+  ...ACTION_ID_FAMILIES_V1.machine_access,
+  ...ACTION_ID_FAMILIES_V1.machine_work_summary,
   ...ACTION_ID_FAMILIES_V1.scm_git,
   ...ROLE_ACTION_IDS_V1,
   ...MANAGED_GITHUB_APP_ACTION_IDS_V1,
@@ -2948,6 +3029,11 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'machines.pools.list',
   'machines.pools.get',
   'machines.pools.resolve',
+  'projects.worker.preferences.get',
+  'projects.worker.status',
+  'projects.service.placement.get',
+  'projects.service.relocate',
+  'machines.worker.policy.get',
   'sessions.runner.activation.get',
   'session.follow.get',
   'session.follow.preferences.get',
@@ -2962,6 +3048,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'ui.find',
   'ui.prompts.picker.open',
   'session.pending.next',
+  'session.pending.withdraw',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
   ...ACTION_ID_FAMILIES_V1.account_security,
@@ -2985,6 +3072,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'workspace.sync.conflict.inspect',
   'paths.list_recent',
   'projects.list',
+  ...ACTION_ID_FAMILIES_V1.project_sources,
   'prompt_doc.get',
   'prompts.library.list',
   'prompts.invocations.list',
@@ -3004,6 +3092,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'session.status.get',
   'session.work_state.get',
   'session.goal.get',
+  'session.goal.clear',
   'session.usageLimit.checkNow',
   'session.usageLimit.consumeResetCredit',
   'session.terminalComposer.clear',
@@ -3013,6 +3102,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   // report settlement. Human-confirmation policy remains independently
   // resolved by the shared Action settings owner.
   'session.presentation.apply',
+  'session.authoring.open',
   'session.worker.publish',
   // Catalog reads answer synchronously with the resource rows the caller renders.
   // Mutations are classified from the source-owned danger rows above so their
@@ -3070,6 +3160,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'scm.pullRequest.get',
   'scm.pullRequest.openCompose',
   'scm.hostingRepository.describePublishTargets',
+  'scm.hostingRepository.resolveAddress',
   'scm.diffSummary.capture',
   'scm.diffSummary.generate',
   'scm.diffSummary.result.read',
@@ -3208,6 +3299,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_NONE_APPROVAL_ACTION_IDS = [
+  'memory.read', 'memory.list',
   'wait',
   'machines.agents.signIn.start',
   'machines.agents.signIn.status',
@@ -3223,6 +3315,12 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'session.folder.set',
   'session.tags.set',
   'session.title.set',
+  'session.bot.set',
+  'session.memory.set',
+  'session.voice.preference.set',
+  'session.context.update',
+  'session.instructions.set',
+  'session.view.toolCalls.set',
   'session.permission_mode.set',
   'session.approval_reviewer.set',
   'session.attention.set',
@@ -3230,7 +3328,6 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
   'session.archive',
   'session.unarchive',
   'session.goal.set',
-  'session.goal.clear',
   'transcript.unfollow',
   'ui.voice_global.reset',
   'ui.pet.choose',
@@ -3277,6 +3374,13 @@ const RESULT_NONE_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
+  ...MEMORY_WRITE_ACTION_IDS_V1,
+  'projects.service.relocate',
+  'projects.worker.preferences.set',
+  'projects.worker.copy.retire',
+  'projects.service.placement.set',
+  'projects.worker.preferences.reset',
+  'machines.worker.policy.set',
   'home.hub.layout.update',
   ...WORKFLOW_MUTATION_ACTION_IDS,
   'session.access.grant.set',
@@ -3360,6 +3464,7 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'daemon.promptAssets.delete',
   'daemon.promptRegistry.install',
   'daemon.filesystem.writeFile',
+  ...FILESYSTEM_ACTION_IDS.filter((id) => id !== 'daemon.filesystem.upload' && id !== 'daemon.filesystem.download' && id !== 'daemon.filesystem.copy'),
   'bugreport.uploadArtifact',
   'transcript.import',
   'sessions.external.candidate.delete',
@@ -4869,6 +4974,9 @@ const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WORKFLOW_AC
         ? [{ path: 'target.ref', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' }]
       : actionId === 'workflow.run.start'
         ? [{ path: 'source.workflow', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' }]
+      : actionId === 'workflow.run.invocations.list'
+        ? [{ path: 'includeContent', title: 'Include invocation content', widget: 'boolean',
+          description: 'Open progress and output beside each history row in the same page. Not available with parentRecordId.' }]
       : [] },
     cli: {
       acceptsServerId: true,
@@ -4969,9 +5077,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof HOME_GOVERNANCE_ACTION_SPECS)[number]
   | (typeof SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS)[number]
   | (typeof MACHINE_CONNECTION_ACTION_SPECS)[number]
+  | (typeof MACHINE_TERMINAL_ACTION_SPECS)[number]
+  | (typeof MACHINE_ACCESS_ACTION_SPECS)[number]
   | (typeof TEAM_ACTION_SPECS)[number]
   | (typeof SHARED_SAVED_SECRET_ACTION_SPECS)[number]
   | (typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS)[number]
+  | (typeof PROFILE_ACTION_SPECS_V1)[number]
+  | (typeof ARTIFACT_FOLDER_ACTION_SPECS_V1)[number]
   | (typeof MANAGED_IDENTITY_PROVIDER_ACTION_SPECS)[number]
   | (typeof MANAGED_GITHUB_APP_ACTION_SPECS)[number]
   | (typeof PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1)[number]
@@ -4981,9 +5093,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...HOME_GOVERNANCE_ACTION_SPECS,
   ...SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS,
   ...MACHINE_CONNECTION_ACTION_SPECS,
+  ...MACHINE_TERMINAL_ACTION_SPECS,
+  ...MACHINE_ACCESS_ACTION_SPECS,
   ...TEAM_ACTION_SPECS,
   ...SHARED_SAVED_SECRET_ACTION_SPECS,
   ...CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS,
+  ...PROFILE_ACTION_SPECS_V1,
+  ...ARTIFACT_FOLDER_ACTION_SPECS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_SPECS,
   ...MANAGED_GITHUB_APP_ACTION_SPECS,
   ...PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1,
@@ -4992,8 +5108,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
 ]);
 
 const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpecs([
+  ...MEMORY_DOCUMENT_ACTION_SPECS_V1,
+  ...PROJECT_ACTION_SPECS_V1,
   ...WORKFLOW_EFFECT_ACTION_SPECS_V1,
   ...WORKSPACE_ACTION_SPECS,
+  ...PROJECT_DEFINITION_ACTION_SPECS,
   ...SESSION_CANVAS_ACTION_SPECS,
   ...WORKFLOW_AUTHORING_ACTION_SPECS,
   ...COMPOSER_INGRESS_ACTION_SPECS,
@@ -5012,7 +5131,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
     safety: id === 'settings.set' ? 'danger' : 'safe',
     sideEffectClass: id === 'settings.set' || id === 'settings.invoke' ? 'write' : 'read',
     requiredAuthority: 'account_automation', executionPlacement: id === 'settings.invoke' ? 'client' : 'account', placements: [],
-    executionPlacementForInput: (input: unknown) => id === 'settings.list' ? 'account'
+    executionPlacementForInput: (input: unknown) => id === 'settings.list' ? 'client'
       : id !== 'settings.invoke' && typeof input === 'object' && input !== null && 'anchor' in input
         && readAccountSettingDeclarationV1(input.anchor) ? 'account' : 'client',
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
@@ -5031,10 +5150,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
   ...WIDGET_DEFINITION_ACTION_SPECS_V1,
   ...WIDGET_SNAPSHOT_ACTION_SPECS_V1,
   ...HOME_HUB_LAYOUT_ACTION_SPECS,
+  ...PROJECT_SOURCE_ACTION_SPECS_V1,
   ...ARTIFACT_ACCESS_ACTION_SPECS,
   ...ARTIFACT_ACTION_SPECS,
   {
-    id: 'launch_profiles.publish', title: 'Publish launch profile', safety: 'safe',
+    id: 'launch_profiles.publish', title: 'Publish launch profile', safety: 'danger',
     placements: [], bindings: { rpcMethod: 'launch_profiles.publish' },
     requiredAuthority: 'account_automation', sideEffectClass: 'write',
     surfaces: { ui: true, cli: true, agent: true, mcp: false, voice: false, rpc: true },
@@ -5132,6 +5252,24 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
 ] as const));
 
 const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
+  ...MACHINE_PRESET_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
+    const verb = id.slice('machines.presets.'.length);
+    const read = id === 'machines.presets.list' || id === 'machines.presets.get';
+    const title = `${verb[0]!.toUpperCase()}${verb.slice(1)} Machine preset`;
+    return {
+      id, title, description: `${title} on the exact authenticated Home. Preset changes affect future machines only.`,
+      safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger', placements: [],
+      bindings: { mcpToolName: `machines_presets_${verb}`, voiceClientToolName: `machines_presets_${verb}` },
+      surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+      cli: { acceptsServerId: true, commands: [{ path: ['machines', 'presets', verb], visibility: 'canonical' }] },
+      inputHints: { title, fields: [] },
+      inputSchema: MachinePresetActionInputSchemasV1[id], outputSchema: MachinePresetActionOutputSchemasV1[id],
+      serverTransport: { method: 'POST', path: machinePresetActionEndpointPathV1(id) },
+    };
+  }),
+  ...MANAGED_MACHINE_ACTION_SPECS,
+  ...PROJECT_WORKER_ACTION_SPECS,
+  ...ACTION_OPERATION_ACTION_SPECS,
   ...MACHINE_POOL_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
     const verb = actionId.slice('machines.pools.'.length);
     const isDelete = actionId === 'machines.pools.delete';
@@ -6989,8 +7127,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: true,
       },
@@ -7336,6 +7474,24 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     inputSchema: WorkspaceSyncConflictInspectActionInputV1Schema,
   },
   {
+    id: 'session.authoring.open',
+    title: 'Open editable Session draft',
+    description: 'Open the ordinary editable New Session composer in an answering Happier client with a validated seed. Nothing starts until the user explicitly sends. Returns typed unavailability when no client can answer.',
+    sideEffectClass: 'external',
+    safety: 'safe',
+    executionPlacement: 'client',
+    placements: [],
+    bindings: { voiceClientToolName: 'openSessionAuthoring', mcpToolName: 'session_authoring_open' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'authoring', 'open'], visibility: 'canonical' }] },
+    inputHints: { title: 'Open editable Session draft', fields: [
+      { path: 'seed', title: 'New Session seed', widget: 'json', required: true },
+    ] },
+    examples: { voice: { argsExample: '{"seed":{"prompt":"Help me author this checkout."}}' } },
+    inputSchema: SessionAuthoringOpenV1Schema,
+    outputSchema: SessionAuthoringOpenResultV1Schema,
+  },
+  {
     id: 'session.spawn_new',
     operation: {
       version: 1,
@@ -7412,30 +7568,121 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     inputSchema: PathsListRecentInputSchema,
   },
   {
+    id: 'projects.context.update',
+    title: 'Update Project context',
+    description: 'Attach, detach, reorder or adjust one personal Project context entry at the reviewed organization row revision.',
+    sideEffectClass: 'write',
+    safety: 'safe',
+    executionPlacement: 'account',
+    placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_context_update' },
+    cli: { commands: [{ path: ['projects', 'context', 'update'], visibility: 'canonical' }] },
+    inputSchema: ProjectContextUpdateInputV1Schema,
+    outputSchema: ProjectContextUpdateOutputV1Schema,
+    inputHints: { fields: [
+      { path: 'target', title: 'Qualified Project', widget: 'json', required: true },
+      { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
+      { path: 'intent', title: 'Personal context edit', widget: 'json', required: true },
+    ] },
+  },
+  {
+    id: 'projects.visibility.set', title: 'Hide or show a Project',
+    description: 'Change visibility for one Home-qualified private Project at the observed organization row revision. Sessions and files remain unchanged.',
+    sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_visibility_set', voiceClientToolName: 'projects_visibility_set' },
+    cli: { commands: [{ path: ['projects', 'visibility', 'set'], visibility: 'canonical' }] },
+    inputSchema: ProjectVisibilitySetInputV1Schema, outputSchema: ProjectVisibilitySetOutputV1Schema,
+    inputHints: { fields: [
+      { path: 'target', title: 'Qualified Project', widget: 'json', required: true },
+      { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
+      { path: 'hidden', title: 'Hidden', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'projects.workspace.update', title: 'Update workspace label or pin',
+    description: 'Update only label and personal pin metadata for an accepted Home-qualified workspace. Checkout roots, files and Sessions remain unchanged.',
+    sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_workspace_update', voiceClientToolName: 'projects_workspace_update' },
+    cli: { acceptsServerId: true, requiresServerId: true, commands: [{ path: ['projects', 'workspace', 'update'], visibility: 'canonical' }] },
+    inputSchema: ProjectWorkspaceUpdateInputV1Schema, outputSchema: ProjectWorkspaceUpdateOutputV1Schema,
+    inputHints: { fields: [
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'workspaceId', title: 'Workspace id', widget: 'text', required: true },
+      { path: 'label', title: 'Label', widget: 'text' },
+      { path: 'pinned', title: 'Pinned', widget: 'boolean' },
+    ] },
+  },
+  {
+    id: 'projects.workspace.forget', title: 'Forget a workspace',
+    description: 'Forget one accepted Home-qualified private workspace after approval. Linked workspaces are protected; no files, Sessions or Sources are deleted.',
+    sideEffectClass: 'danger', safety: 'danger', executionPlacement: 'account', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_workspace_forget', voiceClientToolName: 'projects_workspace_forget' },
+    cli: { acceptsServerId: true, requiresServerId: true, commands: [{ path: ['projects', 'workspace', 'forget'], visibility: 'canonical' }] },
+    inputSchema: ProjectWorkspaceForgetInputV1Schema, outputSchema: ProjectWorkspaceForgetOutputV1Schema,
+    inputHints: { fields: [
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'workspaceId', title: 'Workspace id', widget: 'text', required: true },
+    ] },
+  },
+  {
     id: 'projects.list',
     title: 'List projects',
     sideEffectClass: 'read',
     description:
       'List the account\'s persisted projects with each one\'s resolved hosting provider and worktrees.',
     safety: 'safe',
+    executionPlacement: 'account',
     placements: [],
     surfaces: {
       ui: true,
-      voice: false,
+      voice: true,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: false,
     },
     inputHints: {
       title: 'List projects',
       fields: [
+        { path: 'serverId', title: 'Home id', widget: 'text' },
         { path: 'machineId', title: 'Machine id', widget: 'text' },
         { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'includeHidden', title: 'Include hidden projects', widget: 'boolean' },
       ],
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: ProjectsListInputSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['projects', 'list'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'projects.open',
+    title: 'Open a project',
+    description: 'Prepare the selected checkout on the exact Machine and return its browse address without starting an Agent. Setup requires separate approval; client focus is optional and requires a mounted client.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    executionPlacement: 'machine',
+    placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_open', voiceClientToolName: 'projects_open' },
+    cli: { commands: [{ path: ['projects', 'open'], visibility: 'canonical' }], acceptsServerId: true, requiresServerId: true },
+    inputSchema: OpenProjectInputV1Schema,
+    outputSchema: OpenProjectResultV1Schema,
+    inputHints: {
+      title: 'Open a project',
+      fields: [
+        { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'source', title: 'Source', widget: 'json', required: true },
+        { path: 'ref', title: 'Branch or ref', widget: 'text' },
+        { path: 'subdir', title: 'Project subdirectory', widget: 'text' },
+        { path: 'materialization', title: 'Checkout choice', widget: 'json', required: true },
+      ],
+    },
+    examples: { voice: { argsExample: '{"serverId":"{{serverId}}","machineId":"{{machineId}}","source":{"kind":"folder","path":"/workspace/project"},"materialization":{"kind":"attach"}}' } },
   },
   {
     id: 'prompts.invocations.list',
@@ -7494,10 +7741,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     id: 'machines.list',
     title: 'List machines',
     sideEffectClass: 'read',
-    description: 'List machines available on the active server scope.',
+    description: 'List accessible machines on the qualified Home, including shared role, resource mode and current readiness. Offline and pending machines remain visible.',
     safety: 'safe',
     placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listMachines' },
+    bindings: { voiceClientToolName: 'listMachines', mcpToolName: 'machines_list' },
     examples: {
       voice: { argsExample: '{"limit":50}' },
     },
@@ -7505,13 +7752,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       ui: true,
       voice: true,
       agent: true,
-      mcp: false,
+      mcp: true,
       cli: true,
       rpc: false,
       },
     inputHints: {
       title: 'List machines',
-      fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
+      fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'limit', title: 'Limit', widget: 'text' }],
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: MachinesListInputSchema,
@@ -7519,6 +7766,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       commands: [{ path: ['machines', 'list'], visibility: 'canonical' }],
       inputSchema: MachinesListCliInputSchema,
       bindInput: (value) => ({
+        ...((value as Readonly<{ serverId?: string }>).serverId ? { serverId: (value as Readonly<{ serverId: string }>).serverId } : {}),
         limit: (value as Readonly<{ limit?: number }>).limit ?? MACHINES_LIST_CLI_DEFAULT_LIMIT,
       }),
     },
@@ -8094,6 +8342,19 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     outputSchema: SessionPendingInputInterruptAndRunResultV1Schema,
     inputSchema: SessionPendingInputInterruptAndRunRequestV1Schema,
   },
+  {
+    id: 'session.pending.withdraw', title: 'Withdraw queued message',
+    description: 'Remove an exact pending message before delivery; delivered or uncertain input cannot be moved back.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account',
+    placements: ['pending_messages'],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    bindings: { mcpToolName: 'session_pending_withdraw', rpcMethod: 'session.pending.withdraw' },
+    serverTransport: { method: 'POST', path: '/v2/sessions/:sessionId/pending/:localId/withdraw' },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'pending', 'withdraw'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
+    inputSchema: SessionPendingWithdrawInputV1Schema, outputSchema: SessionPendingWithdrawResultV1Schema,
+  },
 ] as const));
 
 const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
@@ -8111,7 +8372,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
   {
     id: 'session.presentation.apply',
     title: 'Present in the current Session',
-    description: 'Apply one reversible Board, Companion, or Chat presentation intent to the exact focused viewer bound to this Agent Session. This never mutates durable Board content.',
+    description: 'Apply one reversible Board, Companion, Chat, or Computer/Browser viewer presentation intent to the exact focused client bound to this Agent Session. This never mutates durable Board content or target execution.',
     safety: 'safe',
     sideEffectClass: 'write',
     requiredAuthority: 'account_automation',
@@ -8493,6 +8754,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Set session title',
     description: 'Set the title (summary text) shown for a session.',
     safety: 'safe',
+    executionPlacement: 'account',
     placements: [],
     bindings: { mcpToolName: 'session_title_set' },
     examples: {
@@ -8516,6 +8778,94 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: StrictJsonValueSchema,
     inputSchema: SessionTitleSetInputSchema,
     cli: SESSION_TITLE_SET_CLI_PROJECTION,
+  },
+  {
+    id: 'session.bot.set',
+    title: 'Make a session a bot or a regular session',
+    description: 'Set the reversible Bot marker through Account metadata without waking its execution host.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_bot_set', voiceClientToolName: 'setSessionBot' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Set Bot marker', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'bot', title: 'Bot marker, or null for a regular session', widget: 'json', required: true },
+    ] },
+    inputSchema: BotSetInputSchema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'bot', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'session.memory.set', title: 'Use memory in this session',
+    description: 'Save the Session memory choice without creating or editing documents.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_memory_set', voiceClientToolName: 'setSessionMemory' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Use memory', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
+      { path: 'enabled', title: 'Use memory', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionMemorySetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'memory', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'session.voice.preference.set', title: 'Set session voice preference',
+    description: 'Select one declared voice setting without changing provider or Account settings; null inherits Account settings.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_voice_preference_set', voiceClientToolName: 'setSessionVoicePreference' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Session voice', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
+      { path: 'preference', title: 'Voice preference, or null to inherit', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionVoicePreferenceSetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'voice', 'preference', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'session.context.update', title: 'Update session context',
+    description: 'Apply one context-entry or inherited-entry switch intent against its reviewed metadata revision.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_context_update', voiceClientToolName: 'updateSessionContext' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Update context', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
+      { path: 'intent', title: 'Context intent', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionContextUpdateInputV1Schema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'context', 'update'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'session.instructions.set', title: 'Set session instructions',
+    description: 'Select or detach the reserved Session instruction entry; the document remains in the library.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_instructions_set', voiceClientToolName: 'setSessionInstructions' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Set instructions', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
+      { path: 'ref', title: 'Document reference, or null to detach', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionInstructionsSetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'instructions', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  },
+  {
+    id: 'session.view.toolCalls.set', title: 'Show or hide session tool calls',
+    description: 'Save a human transcript view choice; null restores the session default.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    requiredAuthority: 'present_user',
+    bindings: { voiceClientToolName: 'setSessionToolCalls' },
+    surfaces: { ui: true, voice: true, agent: false, mcp: false, cli: true, rpc: false },
+    inputHints: { title: 'Show tool calls', fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'showToolCalls', title: 'Show tool calls, or null to use the default', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionToolCallsSetInputSchema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'view', 'tools', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   },
   {
     id: 'session.permission_mode.set',
@@ -8732,6 +9082,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Get session goal',
     description: 'Get the editable session goal when the provider supports native goals.',
     safety: 'safe',
+    toolExposure: { agent: 'direct' },
     placements: [],
     bindings: { mcpToolName: 'session_goal_get' },
     examples: {
@@ -8757,6 +9108,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Set session goal',
     description: 'Set or update the native session goal.',
     safety: 'safe',
+    toolExposure: { agent: 'direct' },
     placements: [],
     bindings: { mcpToolName: 'session_goal_set' },
     examples: {
@@ -8787,6 +9139,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Clear session goal',
     description: 'Clear the native session goal.',
     safety: 'safe',
+    toolExposure: { agent: 'direct' },
     placements: [],
     bindings: { mcpToolName: 'session_goal_clear' },
     examples: {
@@ -10211,7 +10564,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     id: 'memory.search',
     title: 'Search memory',
     sideEffectClass: 'read',
-    description: 'Search the local daemon memory index (opt-in).',
+    description: 'Search the local daemon memory index.',
     safety: 'safe',
     placements: ['voice_panel', 'command_palette'],
     prompting: { voiceHotPath: true },
@@ -10256,8 +10609,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       ui: true,
       voice: true,
       agent: true,
-      mcp: false,
-      cli: false,
+      mcp: true,
+      cli: true,
       rpc: false,
       },
     outputSchema: MemorySearchResultV1Schema,
@@ -10382,14 +10735,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
   {
     id: 'prompt_doc.get',
     title: 'Read prompt document',
-    description: 'Read the current Account-private prompt document, including workstream memory, by its Artifact reference.',
+    description: 'Read the current prompt document and its observed Artifact revision.',
     safety: 'safe',
     sideEffectClass: 'read',
     placements: [],
-    bindings: { mcpToolName: 'prompt_doc_get' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'prompt_doc_get', voiceClientToolName: 'getPromptDoc' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.object({ artifactId: z.string().min(1) }).strict()),
-    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1), title: z.string().min(1), markdown: z.string() }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1), title: z.string().min(1), markdown: z.string(),
+      revision: PromptDocRevisionV1Schema }).strict()),
     inputHints: { title: 'Read prompt document', fields: [
       { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
     ] },
@@ -10401,8 +10755,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'danger',
     sideEffectClass: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'prompt_doc_create' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'prompt_doc_create', voiceClientToolName: 'createPromptDoc' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.object({ title: z.string().min(1), markdown: z.string(), folderId: z.string().nullable().optional(),
       tags: z.array(z.string()).optional(), favorite: z.boolean().optional() }).strict()),
     outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict()),
@@ -10421,8 +10775,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe',
     sideEffectClass: 'write',
     placements: [],
-    bindings: { mcpToolName: 'prompt_doc_favorite_set' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'prompt_doc_favorite_set', voiceClientToolName: 'setPromptDocFavorite' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.object({ artifactId: z.string().min(1), favorite: z.boolean() }).strict()),
     outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict()),
     inputHints: { title: 'Set prompt favourite', fields: [
@@ -10437,8 +10791,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe',
     sideEffectClass: 'read',
     placements: [],
-    bindings: { mcpToolName: 'prompts_library_list' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'prompts_library_list', voiceClientToolName: 'listPromptLibrary' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: lazyZodSchema(() => z.object({ query: z.string().optional(), includeBundles: z.literal(false).optional() }).strict()),
     outputSchema: lazyZodSchema(() => z.object({ coverage: z.enum(['complete', 'partial', 'unavailable']), items: z.array(z.object({
       artifactId: z.string().min(1), title: z.string(), folderId: z.string().nullable(), tags: z.array(z.string()),
@@ -10449,19 +10803,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
   {
     id: 'prompt_doc.update',
     title: 'Update prompt document',
-    description: 'Update a prompt document stored in the Happier prompt library.',
+    description: 'Update a prompt document. Supply the reviewed Artifact revision to refuse changed content without rebasing the edit.',
     safety: 'danger',
+    sideEffectClass: 'write',
     placements: [],
-    bindings: { mcpToolName: 'prompt_doc_update' },
+    bindings: { mcpToolName: 'prompt_doc_update', voiceClientToolName: 'updatePromptDoc' },
     surfaces: {
       ui: true,
-      voice: false,
+      voice: true,
       agent: true,
       mcp: true,
       cli: true,
       rpc: false,
       },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string(), revision: PromptDocRevisionV1Schema.optional() }).strict(),
     inputSchema: PromptDocUpdateInputSchema,
     inputHints: {
       title: 'Update prompt document',
@@ -10469,6 +10824,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
         { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
         { path: 'title', title: 'Title', widget: 'text', required: true },
         { path: 'markdown', title: 'Markdown', widget: 'textarea', required: true },
+        { path: 'expectedRevision.headerVersion', title: 'Reviewed header version', widget: 'text' },
+        { path: 'expectedRevision.bodyVersion', title: 'Reviewed body version', widget: 'text' },
         { path: 'folderId', title: 'Folder id', widget: 'text' },
         { path: 'tags', title: 'Tags', widget: 'text_list', listSeparator: 'comma' },
       ],
@@ -10506,13 +10863,15 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     title: 'Export prompt asset',
     description: 'Export a prompt doc or skill bundle from the Happier library to a provider-native asset.',
     safety: 'danger',
+    sideEffectClass: 'write',
     placements: [],
+    bindings: { mcpToolName: 'prompt_asset_export', voiceClientToolName: 'exportPromptAsset' },
     surfaces: {
       ui: true,
-      voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: false,
       },
     outputSchema: StrictJsonValueSchema,
@@ -10673,6 +11032,135 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: StrictJsonValueSchema,
     inputSchema: DaemonFilesystemWriteFileInputSchema,
     inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.createDirectory',
+    title: 'Create directory',
+    description: 'Create a directory under the explicitly admitted workspace root.',
+    safety: 'danger',
+    workspaceWrite: true,
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY, rpcMethodAliases: [RPC_METHODS.CREATE_DIRECTORY], mcpToolName: 'daemon_filesystem_create_directory', voiceClientToolName: 'daemonFilesystemCreateDirectory' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'danger',
+    inputSchema: FilesystemCreateDirectoryInputSchema,
+    outputSchema: FilesystemMutationOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'path', title: 'Directory path', widget: 'text', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.rename',
+    title: 'Rename path',
+    description: 'Rename a path under the explicitly admitted workspace root.',
+    safety: 'danger',
+    workspaceWrite: true,
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_RENAME, rpcMethodAliases: [RPC_METHODS.RENAME_PATH], mcpToolName: 'daemon_filesystem_rename', voiceClientToolName: 'daemonFilesystemRename' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'danger',
+    inputSchema: FilesystemRenameInputSchema,
+    outputSchema: FilesystemMutationOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'from', title: 'Source path', widget: 'text', required: true },
+      { path: 'to', title: 'Destination path', widget: 'text', required: true },
+      { path: 'overwrite', title: 'Replace existing destination', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.delete',
+    title: 'Delete path',
+    description: 'Delete a path under the explicitly admitted workspace root.',
+    safety: 'danger',
+    workspaceWrite: true,
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_DELETE, rpcMethodAliases: [RPC_METHODS.DELETE_PATH], mcpToolName: 'daemon_filesystem_delete', voiceClientToolName: 'daemonFilesystemDelete' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'danger',
+    inputSchema: FilesystemDeleteInputSchema,
+    outputSchema: FilesystemMutationOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'path', title: 'Path', widget: 'text', required: true },
+      { path: 'recursive', title: 'Delete directory contents', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.copy',
+    title: 'Copy path',
+    description: 'Copy within an admitted root, or copy admitted entries between qualified filesystem targets.',
+    approvalResultCustody: 'live_only',
+    projectObservationOutput: () => ({ redacted: true }),
+    safety: 'danger',
+    workspaceWrite: true,
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_COPY, rpcMethodAliases: [RPC_METHODS.COPY_PATH], mcpToolName: 'daemon_filesystem_copy', voiceClientToolName: 'daemonFilesystemCopy' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'danger',
+    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'activity' } },
+    inputSchema: FilesystemCopyInputSchema,
+    outputSchema: FilesystemCopyOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Local workspace root', widget: 'text' },
+      { path: 'from', title: 'Local source path', widget: 'text' },
+      { path: 'to', title: 'Local destination path', widget: 'text' },
+      { path: 'source', title: 'Qualified admitted source', widget: 'json' },
+      { path: 'destination', title: 'Qualified destination', widget: 'json' },
+      { path: 'overwrite', title: 'Replace existing destination', widget: 'boolean', required: true },
+      { path: 'recursive', title: 'Copy directory contents', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.upload',
+    title: 'Upload file',
+    description: 'Upload actual bytes from the prepared source into the admitted workspace root.',
+    approvalResultCustody: 'live_only',
+    projectObservationOutput: () => ({ redacted: true }),
+    safety: 'danger', workspaceWrite: true, sideEffectClass: 'danger', placements: [],
+    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'activity' } },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_UPLOAD, mcpToolName: 'daemon_filesystem_upload', voiceClientToolName: 'daemonFilesystemUpload' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: FilesystemUploadInputSchema, outputSchema: FilesystemUploadOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'path', title: 'Destination path', widget: 'text', required: true },
+      { path: 'source', title: 'Prepared source', widget: 'json', required: true },
+      { path: 'overwrite', title: 'Replace existing destination', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.download',
+    title: 'Download file',
+    description: 'Download actual bytes into the admitted destination and acknowledge successful destination close.',
+    approvalResultCustody: 'live_only',
+    projectObservationOutput: () => ({ redacted: true }),
+    safety: 'danger', sideEffectClass: 'danger', placements: [],
+    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'activity' } },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD, mcpToolName: 'daemon_filesystem_download', voiceClientToolName: 'daemonFilesystemDownload' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: FilesystemDownloadInputSchema, outputSchema: FilesystemDownloadOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'path', title: 'Source path', widget: 'text', required: true },
+      { path: 'destination', title: 'Admitted destination', widget: 'json', required: true },
+      { path: 'asZip', title: 'Download as ZIP', widget: 'boolean', required: true },
+    ] },
+  },
+  {
+    id: 'daemon.filesystem.transfer.cancel',
+    title: 'Cancel file transfer',
+    description: 'Cancel only the transfer owned by the admitted requester and workspace root.',
+    safety: 'danger', sideEffectClass: 'danger', placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL, mcpToolName: 'daemon_filesystem_transfer_cancel', voiceClientToolName: 'daemonFilesystemTransferCancel' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: FilesystemTransferCancelInputSchema, outputSchema: FilesystemTransferCancelOutputSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'direction', title: 'Transfer direction', widget: 'text', required: true },
+      { path: 'transferId', title: 'Owned transfer', widget: 'text', required: true },
+    ] },
   },
   {
     id: 'daemon.filesystem.listDirectory',
@@ -10868,7 +11356,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       return observed;
     },
     title: 'Decide approval request',
-    description: 'Approve or reject an approval request.',
+    description: 'Approve, reject or cancel an open approval request. Cancellation settles without authorizing its effect.',
     safety: 'danger',
     placements: [],
     bindings: { mcpToolName: 'approval_request_decide', rpcMethod: 'approval.request.decide' },
@@ -10884,7 +11372,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: StrictJsonValueSchema,
     inputSchema: ApprovalRequestDecideInputSchema,
     inputHints: {
-      title: 'Approve or reject',
+      title: 'Approve, reject or cancel',
       fields: [
         { path: 'artifactId', title: 'Approval artifact id', widget: 'text', required: true },
         {
@@ -10895,6 +11383,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
           options: [
             { value: 'approve', label: 'Approve' },
             { value: 'reject', label: 'Reject' },
+            { value: 'cancel', label: 'Cancel' },
           ],
         },
       ],
@@ -11535,6 +12024,7 @@ export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_A
  * are intentionally absent from the generic API and trusted-plugin catalogs.
  */
 const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.session_authoring,
   ...ACTION_ID_FAMILIES_V1.composer_ingress,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,
   ...ACTION_ID_FAMILIES_V1.list_reorder,
@@ -11557,7 +12047,6 @@ const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
   'machines.add.ssh.respond',
   'machines.add.ssh.cancel',
   'servers.list',
-  'projects.list',
   'session.target.primary.set',
   'session.target.tracked.set',
   'devices.simulator.input.orientation',
@@ -11652,8 +12141,17 @@ const PERSISTED_TRANSCRIPT_READ_ACTION_ID_SET = new Set<ActionId>(PERSISTED_TRAN
 
 const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPlacement> = (() => {
   const placements = new Map<ActionId, ActionExecutionPlacement>();
+  const declaredPlacementIds = new Set<ActionId>();
+  // Row declarations own placement; the legacy census fills only undeclared rows.
+  for (const spec of ACTION_SPECS_WITHOUT_APPROVAL) {
+    if ('executionPlacement' in spec && spec.executionPlacement) {
+      placements.set(spec.id, spec.executionPlacement);
+      declaredPlacementIds.add(spec.id);
+    }
+  }
   const register = (placement: ActionExecutionPlacement, actionIds: readonly ActionId[]) => {
     for (const actionId of actionIds) {
+      if (declaredPlacementIds.has(actionId)) continue;
       if (placements.has(actionId)) {
         throw new Error(`Action ${actionId} has more than one execution placement`);
       }
@@ -11663,6 +12161,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
 
   // Account/server data can run before an exact machine is known.
   register('account', [
+    ...MEMORY_DOCUMENT_ACTION_IDS_V1,
+    ...ACTION_ID_FAMILIES_V1.project_sources,
+    ...MANAGED_MACHINE_ACTION_SPECS.filter((spec) => spec.executionPlacement === 'account').map((spec) => spec.id),
     'home.hub.layout.get',
     'home.hub.layout.update',
     ...ACTION_ID_FAMILIES_V1.todo_session_link,
@@ -11696,7 +12197,8 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     // The custom ACP catalog is an Account setting: no machine has to be reachable to edit it.
     ...ACTION_ID_FAMILIES_V1.agent_acp_catalog,
     ...ROLE_ACTION_IDS_V1.filter((actionId) => actionId.startsWith('roles.')),
-    ...ACTION_ID_FAMILIES_V1.launch_profiles,
+    'launch_profiles.publish',
+    ...PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
     ...ACTION_ID_FAMILIES_V1.approvals,
     ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
     ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
@@ -11708,6 +12210,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.session_organization_resources,
     ...ACTION_ID_FAMILIES_V1.identity_github_apps,
     ...ACTION_ID_FAMILIES_V1.machine_pools,
+    ...ACTION_ID_FAMILIES_V1.machine_presets,
     ...ACTION_ID_FAMILIES_V1.ephemeral_runner,
     ...ACTION_ID_FAMILIES_V1.automation_events,
     ...ACTION_ID_FAMILIES_V1.automation_conversation,
@@ -11732,6 +12235,8 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   register('client', ACTION_ID_FAMILIES_V1.find);
   register('client', ACTION_ID_FAMILIES_V1.prompt_picker);
   register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.instance.refresh'));
+  register('client', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
+  register('machine', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
   // Workflow effect actions declare their placement on their own spec (`stepActionsV1`).
   for (const spec of WORKFLOW_EFFECT_ACTION_SPECS_V1) register(spec.executionPlacement, [spec.id]);
 
@@ -11768,16 +12273,17 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
   // execution runs, local indexes/filesystem/plugin/scm owners, and external
   // session operations whose request selects a concrete daemon runtime.
   register('machine', [
+    ...MANAGED_MACHINE_ACTION_SPECS.filter((spec) => spec.executionPlacement === 'machine').map((spec) => spec.id),
     'artifact.publish_from_file',
     'connectedServices.quota.reset',
-    'machines.terminal.open',
-    'machines.terminal.list',
+    ...MACHINE_TERMINAL_ACTION_IDS,
     ...ACTION_ID_FAMILIES_V1.machine_agent_install,
     'action.options.resolve',
     'action.invoke',
     'session.spawn_new',
     ...PERSISTED_TRANSCRIPT_READ_ACTION_IDS,
     'paths.list_recent',
+    'projects.open',
     'agents.backends.list',
     'machines.agents.list',
     'workspace.files.search',
@@ -11790,10 +12296,11 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     'sessions.spawn.mcp_servers.preview',
     ...ACTION_ID_FAMILIES_V1.execution_run_control,
     'workflow.run.start',
-    ...ACTION_ID_FAMILIES_V1.memory,
+    ...ACTION_ID_FAMILIES_V1.memory.filter(id => !MEMORY_DOCUMENT_ACTION_IDS_V1.some(documentId => documentId === id)),
     'prompt_asset.export',
     'prompt_registry.install',
     ...ACTION_ID_FAMILIES_V1.daemon_admin,
+    ...ACTION_ID_FAMILIES_V1.filesystem,
     ...ACTION_ID_FAMILIES_V1.plugin_dev_loop,
     ...ACTION_ID_FAMILIES_V1.plugin_settings_administration,
     'sessions.external.candidates.list',
@@ -11856,19 +12363,25 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   const isPluginSurfaceExcluded = isPluginSurfaceExcludedActionId(spec.id);
   const executionPlacement = resolveActionExecutionPlacement(spec);
   const requiredAuthority = resolveActionRequiredAuthority(spec);
-  const presentUserRequestable = !isInternal && canRequestPresentUserApprovalForActionInputV1({
-    id: spec.id, requiredAuthority, approvalInputCustody: spec.approvalInputCustody,
-  });
+  const canExposeCli = executionPlacement !== 'client' || spec.cli !== undefined;
+  // The human transcript preference explicitly forbids Agent/MCP mutation;
+  // general approval requestability must not resurrect those declared surfaces.
+  // Trusted plugin and human admission still use the ordinary authority owner.
+  const presentUserRequestable = !isInternal && spec.id !== 'session.view.toolCalls.set'
+    && canRequestPresentUserApprovalForActionInputV1({
+      id: spec.id, requiredAuthority, approvalInputCustody: spec.approvalInputCustody,
+    });
   return {
     ...spec,
     requiredAuthority,
     executionPlacement,
-    cli: executionPlacement === 'client' ? undefined : spec.cli,
+    cli: canExposeCli ? spec.cli : undefined,
     surfaces: {
       ...spec.surfaces,
-      // Standalone CLI has no bound answering app. Daemon-hosted Agent/MCP
-      // invocations can use the admitted client's existing reverse-RPC channel.
-      cli: executionPlacement !== 'client' && spec.surfaces.cli,
+      // Client placement alone does not expose a standalone CLI command. An
+      // explicit command declaration opts into answering-client dispatch and
+      // its typed unavailable result when no client is bound.
+      cli: canExposeCli && spec.surfaces.cli,
       mcp: spec.surfaces.mcp || presentUserRequestable
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
       agent: spec.surfaces.agent || presentUserRequestable
@@ -11942,7 +12455,7 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
 }>
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
-  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | WorkspaceActionId
+  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
     | SessionCanvasActionId | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1
     ? never
     : TSpec
@@ -12044,6 +12557,35 @@ type MachinePoolActionSpecDefinition = {
   >;
 }[MachinePoolActionIdV1];
 
+type MachinePresetActionSpecDefinition = {
+  [Id in MachinePresetActionIdV1]: CanonicalActionSchemaDefinition<Id,
+    (typeof MachinePresetActionInputSchemasV1)[Id], (typeof MachinePresetActionOutputSchemasV1)[Id]>;
+}[MachinePresetActionIdV1];
+
+type ManagedMachineActionSpecDefinition = {
+  [TActionId in ManagedMachineActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof ManagedMachineActionInputSchemasV1)[TActionId],
+    (typeof ManagedMachineActionOutputSchemasV1)[TActionId]
+  >;
+}[ManagedMachineActionIdV1];
+
+type ProjectWorkerActionSpecDefinition = {
+  [TActionId in ProjectWorkerActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof ProjectWorkerActionInputSchemasV1)[TActionId],
+    (typeof ProjectWorkerActionOutputSchemasV1)[TActionId]
+  >;
+}[ProjectWorkerActionIdV1];
+
+type ActionOperationActionSpecDefinition = {
+  [TActionId in ActionOperationActionIdV1]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof ActionOperationActionInputSchemasV1)[TActionId],
+    (typeof ActionOperationActionOutputSchemasV1)[TActionId]
+  >;
+}[ActionOperationActionIdV1];
+
 type EphemeralRunnerActionSpecDefinition = {
   [TActionId in EphemeralRunnerActionIdV1]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -12104,6 +12646,11 @@ type WorkspaceActionSpecDefinition = {
   >;
 }[WorkspaceActionId];
 
+type ProjectDefinitionActionSpecDefinition = {
+  [Id in ProjectDefinitionActionId]: CanonicalActionSchemaDefinition<Id,
+    (typeof PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS)[Id], (typeof PROJECT_DEFINITION_ACTION_OUTPUT_SCHEMAS)[Id]>;
+}[ProjectDefinitionActionId];
+
 type WidgetInstanceActionSpecDefinition = {
   [TActionId in WidgetInstanceActionIdV1]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -12131,6 +12678,14 @@ type SessionTerminalActionSpecDefinition = {
     (typeof SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS)[TActionId]
   >;
 }[SessionTerminalActionId];
+
+type MachineTerminalActionSpecDefinition = {
+  [TActionId in MachineTerminalActionId]: CanonicalActionSchemaDefinition<
+    TActionId,
+    (typeof MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS)[TActionId],
+    (typeof MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS)[TActionId]
+  >;
+}[MachineTerminalActionId];
 
 type ScmGitActionSpecDefinition = (typeof SCM_GIT_ACTION_SPECS)[number];
 
@@ -12220,6 +12775,15 @@ type AccountSecurityActionSpecDefinition =
     >;
 
 export type CanonicalActionSpecDefinition =
+  | { [Id in ArtifactFolderActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
+    }[ArtifactFolderActionIdV1]
+  | { [Id in ProfileActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof PROFILE_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof PROFILE_ACTION_OUTPUT_SCHEMAS_V1)[Id], never, 'account_automation'>
+    }[ProfileActionIdV1]
+  | { [Id in ProjectActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)[Id], (typeof PROJECT_ACTION_OUTPUT_SCHEMAS_V1)[Id]>
+    }[ProjectActionIdV1]
   | { [Id in WorkflowEffectActionIdV1]: CanonicalActionSchemaDefinition<Id,
       (typeof WorkflowEffectActionInputSchemasV1)[Id], (typeof WorkflowEffectActionOutputSchemasV1)[Id]>
     }[WorkflowEffectActionIdV1]
@@ -12238,7 +12802,9 @@ export type CanonicalActionSpecDefinition =
       (typeof AppUpdateActionInputSchemas)[Id], (typeof AppUpdateActionOutputSchemas)[Id]>
     }[AppUpdateActionId]
   | SessionTerminalActionSpecDefinition
+  | MachineTerminalActionSpecDefinition
   | WorkspaceActionSpecDefinition
+  | ProjectDefinitionActionSpecDefinition
   | WidgetInstanceActionSpecDefinition
   | WidgetDefinitionActionSpecDefinition
   | (typeof SCOPE_ACTION_SPECS)[number]
@@ -12262,6 +12828,10 @@ export type CanonicalActionSpecDefinition =
   | PluginAutomationEventActionSpecDefinition
   | PluginAutomationConversationActionSpecDefinition
   | MachinePoolActionSpecDefinition
+  | MachinePresetActionSpecDefinition
+  | ManagedMachineActionSpecDefinition
+  | ProjectWorkerActionSpecDefinition
+  | ActionOperationActionSpecDefinition
   | EphemeralRunnerActionSpecDefinition
   | WorkflowActionSpecDefinition
   | TeamCredentialActionSpecDefinition
@@ -12493,6 +13063,10 @@ type PublicActionInputSchemaById = Readonly<{
     ? (typeof TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends SharedSavedSecretActionIdV1
       ? (typeof SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ProfileActionIdV1
+      ? (typeof PROFILE_ACTION_INPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ArtifactFolderActionIdV1
+      ? (typeof ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1)[TActionId]
     : PublicActionSpecForId<TActionId> extends Readonly<{
     surfaceBindings: Readonly<{ api: Readonly<{ inputSchema: infer TInputSchema extends z.ZodTypeAny }> }>;
   }>
@@ -12505,6 +13079,10 @@ type PublicActionOutputSchemaById = Readonly<{
     ? (typeof TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
     : TActionId extends SharedSavedSecretActionIdV1
       ? (typeof SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ProfileActionIdV1
+      ? (typeof PROFILE_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
+    : TActionId extends ArtifactFolderActionIdV1
+      ? (typeof ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1)[TActionId]
     : PublicActionSpecForId<TActionId> extends Readonly<{
       surfaceBindings: Readonly<{ api: Readonly<{ outputSchema: infer TOutputSchema extends z.ZodTypeAny }> }>;
     }>
@@ -12682,6 +13260,7 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'session.restore': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.terminalComposer.clear': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.pendingInput.interruptAndRun': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'session.pending.withdraw': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'session.usageLimit.consumeResetCredit': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'agents.acp.backends.upsert': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'agents.acp.backends.delete': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -12734,7 +13313,6 @@ const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'localServices.inventory.list',
   'localServices.inventory.refresh',
   'localServices.launcher.snapshot',
-  'localServices.launcher.start',
   'localServices.launcher.openPreview',
   'localServices.launcher.registerPreview',
   'localServices.launcher.history.clear',
@@ -12785,6 +13363,13 @@ const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'session.terminalComposer.clear',
   'session.pendingInput.interruptAndRun',
   'session.title.set',
+  'session.bot.set',
+  'session.organization.pin.set',
+  'session.view.toolCalls.set',
+  'session.memory.set',
+  'session.voice.preference.set',
+  'session.context.update',
+  'session.instructions.set',
   'session.permission_mode.set',
   'session.approval_reviewer.set',
   'session.attention.set',
@@ -12853,12 +13438,131 @@ function resolveBuiltInActionContextualDefaults(actionId: ActionId): ActionConte
     : undefined;
 }
 
+// Schema-admitted examples for the newly surfaced Action families. Existing
+// authored examples remain on their rows; this catalog-owned supplement adds
+// only the missing examples, not a runtime sample generator or another catalog.
+const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, string>>> = {
+  "memory.remember": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"text\":\"Remember the verified project decision.\"}",
+  "memory.update": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"factId\":\"example\",\"text\":\"Remember the verified project decision.\"}",
+  "memory.forget": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"},\"expectedRevision\":{\"headerVersion\":0,\"bodyVersion\":0},\"factId\":\"example\"}",
+  "memory.read": "{\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"}}",
+  "memory.list": "{}",
+  "projects.trust.list": "{}",
+  "projects.trust.revoke": "{\"project\":{\"serverId\":\"home\",\"projectId\":\"example\"},\"expectedRevision\":0,\"expectedEffectDigest\":\"example\"}",
+  "projects.prepare": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"phase\":\"setup\"}",
+  "projects.script.run": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"selection\":{\"kind\":\"named\",\"name\":\"example\"}}",
+  "projects.compute.exec": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"executable\":\"example\",\"argv\":[],\"cwd\":\"example\"}",
+  "projects.inspect": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"}}",
+  "projects.manifest.update": "{\"workspace\":{\"serverId\":\"home\",\"workspaceId\":\"example\",\"machineId\":\"machine-1\",\"rootPath\":\"/workspace\"},\"expectedBasis\":{\"kind\":\"absent\"},\"bytes\":\"example\"}",
+  "session.organization.pin.set": "{\"pinned\":false,\"sessionId\":\"session-1\"}",
+  "widgets.catalog.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",
+  "widgets.instance.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}}}",
+  "widgets.instance.add": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instance\":{\"v\":1,\"id\":\"example\",\"definition\":{\"kind\":\"installed\",\"surface\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}},\"bindings\":{}}}",
+  "widgets.instance.remove": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.instance.move": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"toIndex\":0}",
+  "widgets.instance.rename": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"displayName\":\"example\"}",
+  "widgets.instance.size.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"size\":\"small\"}",
+  "widgets.instance.frame.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"frameStyle\":\"card\"}",
+  "widgets.instance.inputs.get": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.instance.inputs.validate": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
+  "widgets.instance.inputs.set": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"},\"bindings\":{}}",
+  "widgets.instance.inputs.reset": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.instance.refresh": "{\"ref\":{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"home\"}},\"instanceId\":\"example\"}}",
+  "widgets.area.layout.get": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"}}",
+  "widgets.area.layout.update": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"intent\":{\"kind\":\"move\",\"instanceId\":\"example\",\"toIndex\":0}}",
+  "widgets.area.dashboard.list": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"}}",
+  "widgets.area.dashboard.create": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"dashboardId\":\"example\",\"name\":\"example\"}",
+  "widgets.area.dashboard.rename": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"name\":\"example\"}",
+  "widgets.area.dashboard.delete": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1}}",
+  "widgets.area.dashboard.reorder": "{\"surface\":{\"serverId\":\"home\",\"accountId\":\"example\",\"owner\":{\"kind\":\"project\",\"projectId\":\"project-1\",\"dashboardId\":\"dashboard-1\"},\"artifactId\":\"dashboard-artifact\"},\"expectedRevision\":{\"headerVersion\":1,\"bodyVersion\":1},\"position\":{\"anchorId\":\"example\",\"placement\":\"before\"}}",
+  "projects.sources.list": "{\"serverId\":\"home\"}",
+  "projects.sources.read": "{\"serverId\":\"home\",\"sourceId\":\"example\"}",
+  "projects.sources.create": "{\"name\":\"example\",\"repository\":{\"provider\":{\"id\":\"example\",\"kind\":\"github\",\"displayName\":\"example\",\"baseUrl\":\"https://example.com\"},\"repository\":{\"nameWithOwner\":\"example\"},\"protocol\":\"auto\"},\"serverId\":\"home\",\"requestKey\":\"example\"}",
+  "projects.sources.update": "{\"serverId\":\"home\",\"sourceId\":\"example\",\"expectedRevision\":1,\"patch\":{}}",
+  "projects.sources.delete": "{\"serverId\":\"home\",\"sourceId\":\"example\",\"expectedRevision\":1}",
+  "localServices.launcher.start": "{\"machineId\":\"machine-1\",\"targetId\":\"example\"}",
+  "localServices.actions.forget": "{\"requestId\":\"example\",\"target\":{\"kind\":\"inventory_entry\",\"inventoryEntryId\":\"example\",\"machineId\":\"machine-1\"},\"action\":\"forget\"}",
+  "localServices.actions.stopManaged": "{\"requestId\":\"example\",\"target\":{\"kind\":\"inventory_entry\",\"inventoryEntryId\":\"example\",\"machineId\":\"machine-1\"},\"action\":\"stop_managed\",\"confirmationNonce\":\"{{confirmationNonce}}\"}",
+  "localServices.actions.restartManaged": "{\"requestId\":\"example\",\"target\":{\"kind\":\"inventory_entry\",\"inventoryEntryId\":\"example\",\"machineId\":\"machine-1\"},\"action\":\"restart_managed\",\"confirmationNonce\":\"{{confirmationNonce}}\"}",
+  "localServices.actions.terminateDetected": "{\"requestId\":\"example\",\"target\":{\"kind\":\"inventory_entry\",\"inventoryEntryId\":\"example\",\"machineId\":\"machine-1\"},\"action\":\"terminate_detected\",\"confirmationNonce\":\"{{confirmationNonce}}\"}",
+  "machines.terminal.open": "{\"terminalKey\":\"example\",\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.terminal.list": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.terminal.read": "{\"terminalId\":\"example\",\"byteOffset\":0,\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.terminal.write": "{\"terminalId\":\"example\",\"event\":{\"t\":\"text\",\"text\":\"Remember the verified project decision.\"},\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.terminal.close": "{\"terminalId\":\"example\",\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.terminal.restart": "{\"terminalKey\":\"example\",\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.work.summary.get": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.access.grants.list": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.access.grant.set": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"principal\":{\"kind\":\"account\",\"accountId\":\"example\"},\"level\":\"view\"}",
+  "machines.access.grant.remove": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"principal\":{\"kind\":\"account\",\"accountId\":\"example\"}}",
+  "machines.access.leave": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "machines.access.prepareKeys": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "connectedServices.accounts.revoke": "{\"account\":{\"service\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"accountId\":\"example\"},\"cleanupGroupReferences\":false,\"machineId\":\"machine-1\"}",
+  "machines.presets.list": "{\"homeId\":\"example\"}",
+  "machines.presets.get": "{\"homeId\":\"example\",\"id\":\"example\"}",
+  "machines.presets.create": "{\"id\":\"example\",\"homeId\":\"example\",\"name\":\"example\",\"owner\":{\"kind\":\"account\",\"accountId\":\"example\"},\"recipe\":{\"provider\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"schemaVersion\":1,\"name\":\"example\",\"choices\":false},\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"}}",
+  "machines.presets.update": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0,\"patch\":{}}",
+  "machines.presets.archive": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0}",
+  "machines.presets.restore": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0}",
+  "machines.provisioners.list": "{\"homeId\":\"example\"}",
+  "machines.provisioners.check": "{\"homeId\":\"example\",\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"},\"contribution\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"}}",
+  "machines.provisioners.options": "{\"homeId\":\"example\",\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"},\"contribution\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"selectors\":false}",
+  "machines.managed.acquire": "{\"selection\":{\"kind\":\"one-off\",\"homeId\":\"example\",\"launch\":{\"provider\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"schemaVersion\":1,\"name\":\"example\",\"choices\":false},\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"},\"retention\":{\"kind\":\"until-delete\"},\"wakeOnAcceptedMessage\":false}}",
+  "machines.managed.list": "{\"homeId\":\"example\"}",
+  "machines.managed.get": "{\"homeId\":\"example\",\"managedId\":\"example\"}",
+  "machines.managed.references.get": "{\"homeId\":\"example\",\"managedId\":\"example\"}",
+  "machines.managed.inspect": "{\"homeId\":\"example\",\"managedId\":\"example\"}",
+  "machines.managed.bootstrap.retry": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0}",
+  "machines.managed.cancel": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0}",
+  "machines.managed.power.set": "{\"homeId\":\"example\",\"managedId\":\"example\",\"when\":\"now\",\"expectedRevision\":0,\"intent\":\"start\"}",
+  "machines.managed.rebuild": "{\"homeId\":\"example\",\"managedMachineId\":\"machine-1\",\"expectedRevision\":0,\"kind\":\"rebuild\",\"reviewedEffectDigest\":\"example\"}",
+  "machines.managed.retention.update": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0,\"retention\":{\"kind\":\"until-delete\"},\"wakeOnAcceptedMessage\":false}",
+  "machines.managed.delete": "{\"homeId\":\"example\",\"managedId\":\"example\",\"when\":\"now\",\"expectedRevision\":0,\"intent\":\"delete\",\"reviewedDependencies\":true}",
+  "machines.managed.controller.update": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0,\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"},\"reviewedPendingEffects\":true}",
+  "machines.managed.retire": "{\"homeId\":\"example\",\"managedId\":\"example\",\"expectedIntentRevision\":0,\"manualResponsibility\":true}",
+  "action.operations.list": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "action.operations.get": "{\"operationId\":\"example\",\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
+  "action.operations.cancel": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\"}",
+  "projects.execution.output.read": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\",\"byteOffset\":0}",
+  "projects.execution.output.open": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\"}",
+  "projects.execution.output.copy": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\",\"byteOffset\":0}",
+  "projects.context.update": "{\"target\":{\"serverId\":\"home\",\"projectKey\":\"example\"},\"expectedRevision\":0,\"intent\":{\"kind\":\"attach\",\"entry\":{\"id\":\"example\",\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"}}}}",
+  "projects.visibility.set": "{\"target\":{\"serverId\":\"home\",\"projectKey\":\"example\"},\"expectedRevision\":0,\"hidden\":false}",
+  "projects.workspace.update": "{\"serverId\":\"home\",\"workspaceId\":\"example\"}",
+  "projects.workspace.forget": "{\"serverId\":\"home\",\"workspaceId\":\"example\"}",
+  "projects.list": "{}",
+  "session.pending.withdraw": "{\"sessionId\":\"session-1\",\"localId\":\"example\"}",
+  "session.bot.set": "{\"sessionId\":\"session-1\",\"bot\":{\"kind\":\"bot\"}}",
+  "session.memory.set": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"enabled\":false}",
+  "session.voice.preference.set": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"preference\":{\"providerContributionId\":\"example.voice/speech\",\"settingFieldPath\":\"voice\",\"value\":\"example\"}}",
+  "session.context.update": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"intent\":{\"kind\":\"set\",\"entry\":{\"id\":\"example\",\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"}}}}",
+  "session.instructions.set": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"}}",
+  "session.view.toolCalls.set": "{\"sessionId\":\"session-1\",\"showToolCalls\":false}",
+  "prompt_doc.get": "{\"artifactId\":\"example\"}",
+  "prompt_doc.create": "{\"title\":\"example\",\"markdown\":\"example\"}",
+  "prompt_doc.favorite.set": "{\"artifactId\":\"example\",\"favorite\":false}",
+  "prompts.library.list": "{}",
+  "prompt_doc.update": "{\"artifactId\":\"example\",\"title\":\"example\",\"markdown\":\"example\"}",
+  "prompt_asset.export": "{\"artifactId\":\"example\",\"machineId\":\"machine-1\",\"assetTypeId\":\"example\",\"scope\":\"user\",\"targetPath\":\"/workspace/prompt.md\"}",
+  "daemon.filesystem.createDirectory": "{\"rootPath\":\"/workspace\",\"path\":\"/workspace\"}",
+  "daemon.filesystem.rename": "{\"rootPath\":\"/workspace\",\"from\":\"example\",\"to\":\"example\",\"overwrite\":false}",
+  "daemon.filesystem.delete": "{\"rootPath\":\"/workspace\",\"path\":\"/workspace\",\"recursive\":false}",
+  "daemon.filesystem.copy": "{\"rootPath\":\"/workspace\",\"from\":\"example\",\"to\":\"example\",\"overwrite\":false,\"recursive\":false}",
+  "daemon.filesystem.upload": "{\"rootPath\":\"/workspace\",\"path\":\"/workspace\",\"source\":{\"sourceId\":\"example\",\"sizeBytes\":0},\"overwrite\":false}",
+  "daemon.filesystem.download": "{\"rootPath\":\"/workspace\",\"path\":\"/workspace\",\"destination\":{\"destinationId\":\"example\"},\"asZip\":false}",
+  "daemon.filesystem.transfer.cancel": "{\"rootPath\":\"/workspace\",\"direction\":\"upload\",\"transferId\":\"example\"}",
+  "scm.history.entries": "{\"cwd\":\"example\",\"folder\":\"example\",\"paths\":[]}",
+  "scm.hostingRepository.resolveAddress": "{\"address\":\"example\"}",
+};
+
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
   ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
     const contextualDefaults = resolveBuiltInActionContextualDefaults(spec.id);
+    const argsExample = spec.examples?.voice?.argsExample ?? ACTION_VOICE_ARGS_EXAMPLES[spec.id];
     return {
       ...spec,
+      ...(argsExample ? { examples: { ...spec.examples, voice: { ...spec.examples?.voice, argsExample } } } : {}),
       requiredAuthority: resolveActionRequiredAuthority(spec),
       executionPlacement: resolveActionExecutionPlacement(spec),
       ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
@@ -12886,6 +13590,7 @@ export function getActionSpec(id: ActionId): ActionSpec {
 
 export function getActionContextualDefaults(
   action: ActionId | string | ActionSpec,
+  input?: unknown,
 ): ActionContextualDefaults | null {
   const spec = typeof action === 'string'
     ? (() => {
@@ -12894,6 +13599,7 @@ export function getActionContextualDefaults(
     })()
     : action;
   if (!spec) return null;
+  if (isSourceQualifiedLocalServicePreviewActionInput(spec.id, input)) return null;
   return spec.contextualDefaults ?? null;
 }
 

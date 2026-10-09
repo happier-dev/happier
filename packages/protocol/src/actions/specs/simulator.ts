@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -10,14 +11,14 @@ import {
 import type { MachineLiveStreamControlSidebandV1 } from '../../machines/peer/mediation/stream/controlV1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
 
-const RuntimeSimulatorQualityScalarInputSchema = z
+const RuntimeSimulatorQualityScalarInputSchema = lazyZodSchema(() => z
   .object({
     simulatorId: z.string().trim().min(1).max(256),
     streamId: z.string().trim().min(1).max(256),
     sourceId: z.string().trim().min(1).max(256),
     value: z.number().positive(),
   })
-  .passthrough();
+  .passthrough());
 
 type DevicesSimulatorRuntimeActionId = Extract<RuntimeActionIdV1, `devices.simulator.${string}`>;
 

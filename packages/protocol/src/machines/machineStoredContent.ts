@@ -1,7 +1,11 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
+import tweetnacl from 'tweetnacl';
 
-import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import {
   computeRunnerMachineContentKeyFingerprintV1,
   openRunnerMachineContentKeyVerifierFactV1,
@@ -11,11 +15,20 @@ import {
 } from '../ephemeralRunner/machineContentKeyBinding.js';
 import { RunnerClaimV1Schema, verifyRunnerClaimV1 } from '../ephemeralRunner/endpoint.js';
 import { MachineKindFromLegacyProjectionSchema } from './machineKind.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { MachineFinitePolicyV1StoredSchema } from './machineFinitePolicyV1.js';
+import { AccessibleMachineAccessStoredReadV1Schema } from './machineAccessV1.js';
 
-const MachinePlainStoredContentEnvelopeSchema = z.object({
+/** Known policy fields inside opened Machine metadata, not another content carrier. */
+export const MachineStoredMetadataPolicyFieldsV1Schema = lazyZodSchema(() => z.object({
+  finitePolicyV1: MachineFinitePolicyV1StoredSchema.optional(),
+}));
+
+const MachinePlainStoredContentEnvelopeSchema = lazyZodSchema(() => z.object({
   t: z.literal('plain'),
   v: z.json(),
-}).strict();
+}).strict());
+const MachinePlainStoredContentReadSchema = createStoredReadSchema(MachinePlainStoredContentEnvelopeSchema);
 
 function encodeMachinePlainEnvelope(value: unknown): string {
   let envelope: ReturnType<typeof MachinePlainStoredContentEnvelopeSchema.safeParse>;
@@ -35,11 +48,11 @@ function encodeMachinePlainEnvelope(value: unknown): string {
   );
 }
 
-function parseMachinePlainEnvelopeBytes(value: Uint8Array): z.infer<
+function parseMachinePlainEnvelopeBytes(value: Uint8Array, strict = false): z.infer<
   typeof MachinePlainStoredContentEnvelopeSchema
 > | null {
   try {
-    const parsed = MachinePlainStoredContentEnvelopeSchema.safeParse(
+    const parsed = (strict ? MachinePlainStoredContentEnvelopeSchema : MachinePlainStoredContentReadSchema).safeParse(
       JSON.parse(new TextDecoder().decode(value)),
     );
     return parsed.success ? parsed.data : null;
@@ -48,11 +61,11 @@ function parseMachinePlainEnvelopeBytes(value: Uint8Array): z.infer<
   }
 }
 
-function parseEncodedMachinePlainEnvelope(value: string): z.infer<
+function parseEncodedMachinePlainEnvelope(value: string, strict = false): z.infer<
   typeof MachinePlainStoredContentEnvelopeSchema
 > | null {
   try {
-    return parseMachinePlainEnvelopeBytes(decodeBase64(value, 'base64'));
+    return parseMachinePlainEnvelopeBytes(decodeBase64(value, 'base64'), strict);
   } catch {
     return null;
   }
@@ -71,12 +84,44 @@ export function isPlainMachineDataKeyMarker(
   return envelope?.v === null;
 }
 
+/** C40 provenance decision only; permission and raw publication safety remain separate owners. */
+export function isMachineDataEncryptionKeyTransferableV1(params: Readonly<{
+  publishedDataEncryptionKey: string | null | undefined;
+  openedDataEncryptionKey: Uint8Array | null;
+  accountScopedMaterial: AccountScopedCryptoMaterial;
+}>): boolean {
+  const key = params.openedDataEncryptionKey;
+  if (!params.publishedDataEncryptionKey || isPlainMachineDataKeyMarker(params.publishedDataEncryptionKey)
+    || !key || key.byteLength !== ENCRYPTED_DATA_KEY_V1_BYTES) return false;
+  const material = params.accountScopedMaterial;
+  const historicalKeys = material.type === 'dataKey' ? [material.machineKey]
+    : [material.secret, deriveAccountMachineKeyFromRecoverySecret(material.secret)];
+  return !historicalKeys.some(historical => historical.length === key.length
+    && historical.every((byte, index) => byte === key[index]));
+}
+
+/** The C40 resource-key producer, shared by its CLI and UI lifecycle adapters. */
+export function createMachineDataEncryptionKeyV1(params: Readonly<{
+  material: AccountScopedCryptoMaterial;
+  dataKeyPublicKey?: Uint8Array;
+  randomBytes: (length: number) => Uint8Array;
+}>): Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey'; dataEncryptionKey: Uint8Array }> {
+  const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+    material: params.material, ...(params.dataKeyPublicKey ? { dataKeyPublicKey: params.dataKeyPublicKey } : {}) });
+  const accountSecret = snapshot.material.type === 'dataKey' ? snapshot.material.machineKey
+    : deriveAccountMachineKeyFromRecoverySecret(snapshot.material.secret);
+  const encryptionKey = params.randomBytes(ENCRYPTED_DATA_KEY_V1_BYTES);
+  const dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({ dataKey: encryptionKey,
+    recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(accountSecret).publicKey, randomBytes: params.randomBytes });
+  return { encryptionKey, encryptionVariant: 'dataKey', dataEncryptionKey };
+}
+
 export function encodePlainMachineStoredContent(value: unknown): string {
   return encodeMachinePlainEnvelope(value);
 }
 
-function isPlainMachineStoredContent(value: unknown): boolean {
-  return typeof value === 'string' && parseEncodedMachinePlainEnvelope(value) !== null;
+function isPlainMachineStoredContent(value: unknown, strict = false): boolean {
+  return typeof value === 'string' && parseEncodedMachinePlainEnvelope(value, strict) !== null;
 }
 
 export function decodePlainMachineStoredContent(value: string): unknown {
@@ -92,15 +137,17 @@ export function machineStoredContentMatchesAccountMode(params: Readonly<{
   metadata: string;
   daemonState?: string;
   dataEncryptionKey?: string | Uint8Array | null;
+  /** Persistence inspection tolerates additive fields; mutation admission remains strict. */
+  storedRead?: boolean;
 }>): boolean {
   const hasPlainMarker = isPlainMachineDataKeyMarker(params.dataEncryptionKey);
   if (params.mode === 'plain') {
     return (
       hasPlainMarker
-      && isPlainMachineStoredContent(params.metadata)
+      && isPlainMachineStoredContent(params.metadata, params.storedRead !== true)
       && (
         params.daemonState === undefined
-        || isPlainMachineStoredContent(params.daemonState)
+        || isPlainMachineStoredContent(params.daemonState, params.storedRead !== true)
       )
     );
   }
@@ -122,8 +169,8 @@ export function machineUpdateMatchesStoredMode(params: Readonly<{
   const plain = isPlainMachineDataKeyMarker(params.dataEncryptionKey);
   if (plain) {
     return (
-      (params.metadata === undefined || isPlainMachineStoredContent(params.metadata))
-      && (params.daemonState === undefined || isPlainMachineStoredContent(params.daemonState))
+      (params.metadata === undefined || isPlainMachineStoredContent(params.metadata, true))
+      && (params.daemonState === undefined || isPlainMachineStoredContent(params.daemonState, true))
     );
   }
   return (
@@ -137,6 +184,8 @@ export type PublishedMachineDataEncryptionKeyV1 = Readonly<{
   kind?: 'persistent' | 'ephemeral_session_runner';
   installationId?: string | null;
   dataEncryptionKey?: unknown;
+  /** Authenticated resource facts, never the viewer Account's storage mode. */
+  access?: unknown;
   runnerContentKeyBinding?: unknown;
   /**
    * Runner only; the activation-signed `RunnerClaimV1` persisted when the
@@ -239,6 +288,8 @@ export function resolvePublishedMachineDataEncryptionKeyV1(params: Readonly<{
   expectedRunnerBinding?: ExpectedRunnerMachineContentKeyBindingV1;
   /** Trusted Account mode. A Home-published plain marker cannot decide it. */
   expectedAccountMode?: 'plain' | 'e2ee';
+  /** Authenticated reading Account; only the custodian may read absent-envelope history. */
+  viewerAccountId?: string;
   /**
    * Classification the caller established independently of this response —
    * creator-device custody, or the pins its own credential carries. Only the
@@ -257,13 +308,26 @@ export function resolvePublishedMachineDataEncryptionKeyV1(params: Readonly<{
 
   const published = params.machine.dataEncryptionKey;
   const openedDataEncryptionKey = params.openedDataEncryptionKey;
+  let expectedMode = params.expectedAccountMode;
+  let mayReadLegacy = true;
+  if (params.machine.access !== undefined) {
+    const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(params.machine.access);
+    if (!access.success || access.data.accessState !== 'ready') return { status: 'unavailable' };
+    expectedMode = access.data.resourceMode;
+    mayReadLegacy = access.data.custodian.accountId === params.viewerAccountId;
+  }
+  if (!isRunner && expectedMode === 'plain') {
+    return published === null || published === undefined || isPlainMachineDataKeyMarker(typeof published === 'string' ? published : null)
+      ? { status: 'plain' }
+      : { status: 'unavailable' };
+  }
   if (typeof published === 'string' && isPlainMachineDataKeyMarker(published)) {
     if (
-      params.expectedAccountMode === 'e2ee'
+      expectedMode === 'e2ee'
       || (
         isRunner
         && (
-          params.expectedAccountMode !== 'plain'
+          expectedMode !== 'plain'
           || carriesRunnerContentKeyBinding
         )
       )
@@ -272,7 +336,7 @@ export function resolvePublishedMachineDataEncryptionKeyV1(params: Readonly<{
   }
 
   if (!isRunner) {
-    if (published === null || published === undefined) return { status: 'legacy' };
+    if (published === null || published === undefined) return { status: mayReadLegacy ? 'legacy' : 'unavailable' };
     return typeof published === 'string' && openedDataEncryptionKey !== null && openedDataEncryptionKey.length > 0
       ? { status: 'e2ee', dataKey: openedDataEncryptionKey }
       : { status: 'unavailable' };
@@ -286,8 +350,8 @@ export function resolvePublishedMachineDataEncryptionKeyV1(params: Readonly<{
     || params.machine.installationId.length === 0
     || !params.expectedRunnerBinding
     || (
-      params.expectedAccountMode !== undefined
-      && params.expectedAccountMode !== 'e2ee'
+      expectedMode !== undefined
+      && expectedMode !== 'e2ee'
     )
   ) return { status: 'unavailable' };
 

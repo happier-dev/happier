@@ -1,10 +1,11 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /** A current sibling anchor; null names the start/end of the current list. */
-export const AnchoredListPositionV1Schema = z.object({
+export const AnchoredListPositionV1Schema = lazyZodSchema(() => z.object({
   anchorId: z.string().trim().min(1).nullable(),
   placement: z.enum(['before', 'after']),
-}).strict();
+}).strict());
 export type AnchoredListPositionV1 = Readonly<z.infer<typeof AnchoredListPositionV1Schema>>;
 
 /** Never fabricates membership. Domain owners supply their current eligible order. */

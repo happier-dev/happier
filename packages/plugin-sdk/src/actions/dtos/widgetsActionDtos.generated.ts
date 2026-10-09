@@ -23,12 +23,14 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         boundSession?: {
             serverId: string;
@@ -53,12 +55,14 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
     };
     readonly "widgets.instance.add": {
@@ -79,12 +83,14 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         instance: {
             v: 1;
@@ -114,6 +120,10 @@ export type WidgetsActionInputById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -190,6 +200,7 @@ export type WidgetsActionInputById = {
             }>;
             displayName?: string | undefined;
         };
+        area?: 'main' | 'aside' | undefined;
         size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
         toIndex?: number | undefined;
         placement?: {
@@ -222,12 +233,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -251,16 +264,19 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
         toIndex: number;
+        area?: 'main' | 'aside' | undefined;
     } | {
         ref: {
             surface: {
@@ -280,12 +296,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -307,15 +325,18 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             index: number;
             tabId?: string | undefined;
+            area?: 'main' | 'aside' | undefined;
         };
     };
     readonly "widgets.instance.rename": {
@@ -337,12 +358,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -367,12 +390,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -397,12 +422,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -427,12 +454,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -456,12 +485,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -495,12 +526,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -514,6 +547,7 @@ export type WidgetsActionInputById = {
             kind: 'viewer';
             purpose: string;
         }>;
+        paths?: string[] | undefined;
     };
     readonly "widgets.instance.inputs.reset": {
         ref: {
@@ -534,15 +568,18 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
+        paths?: string[] | undefined;
     };
     readonly "widgets.instance.refresh": {
         ref: {
@@ -563,12 +600,14 @@ export type WidgetsActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -591,12 +630,14 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
     };
     readonly "widgets.area.layout.update": {
@@ -617,17 +658,20 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         intent: {
             kind: 'move';
             instanceId: string;
             toIndex: number;
+            area?: 'main' | 'aside' | undefined;
         } | {
             kind: 'size';
             instanceId: string;
@@ -636,6 +680,165 @@ export type WidgetsActionInputById = {
             kind: 'frame';
             instanceId: string;
             frameStyle: 'card' | 'plain' | null;
+        };
+    };
+    readonly "widgets.area.dashboard.list": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+    };
+    readonly "widgets.area.dashboard.create": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        dashboardId: string;
+        name: string;
+    };
+    readonly "widgets.area.dashboard.rename": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | null;
+        name: string;
+    };
+    readonly "widgets.area.dashboard.delete": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | null;
+    };
+    readonly "widgets.area.dashboard.reorder": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | null;
+        position: {
+            anchorId: string | null;
+            placement: 'before' | 'after';
         };
     };
     readonly "widgets.definition.list": {
@@ -834,12 +1037,14 @@ export type WidgetsActionInputById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         itemId: string;
         title: string;
@@ -884,12 +1089,14 @@ export type WidgetsActionResultById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         entries: {
             sizeDeclaration: {
@@ -925,6 +1132,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1046,12 +1257,14 @@ export type WidgetsActionResultById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         instances: {
             instance: {
@@ -1082,6 +1295,10 @@ export type WidgetsActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1163,10 +1380,18 @@ export type WidgetsActionResultById = {
                 }>;
                 displayName?: string | undefined;
             };
+            area?: 'main' | 'aside' | undefined;
             size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
         }[];
         canEdit: boolean;
+        state?: 'missing' | 'present' | undefined;
+        isShared?: boolean | undefined;
+        dashboard?: {
+            name: string;
+            ownerAccountId: string;
+            access: 'owner' | 'view' | 'edit' | 'admin';
+        } | undefined;
     };
     readonly "widgets.instance.add": {
         ref: {
@@ -1187,12 +1412,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1224,6 +1451,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1305,6 +1536,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.remove": {
         ref: {
@@ -1325,12 +1557,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1362,6 +1596,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1443,6 +1681,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.move": {
         ref: {
@@ -1463,12 +1702,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1500,6 +1741,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1581,6 +1826,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
         fromRef?: {
             surface: {
                 serverId: string;
@@ -1599,12 +1845,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         } | undefined;
@@ -1629,12 +1877,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1666,6 +1916,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1747,6 +2001,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.size.set": {
         ref: {
@@ -1767,12 +2022,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1804,6 +2061,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -1885,6 +2146,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.frame.set": {
         ref: {
@@ -1905,12 +2167,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -1942,6 +2206,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2023,6 +2291,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.inputs.get": {
         ref: {
@@ -2043,12 +2312,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -2097,12 +2368,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -2134,6 +2407,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2215,6 +2492,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.inputs.reset": {
         ref: {
@@ -2235,12 +2513,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -2272,6 +2552,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2353,6 +2637,7 @@ export type WidgetsActionResultById = {
             }>;
             displayName?: string | undefined;
         } | null;
+        area?: 'main' | 'aside' | undefined;
     };
     readonly "widgets.instance.refresh": {
         ref: {
@@ -2373,12 +2658,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -2402,12 +2689,14 @@ export type WidgetsActionResultById = {
             } | {
                 kind: 'project';
                 projectId: string;
+                dashboardId?: string | undefined;
             } | {
                 kind: 'pluginArea';
                 pluginId: string;
                 pageId: string;
                 area: string;
             };
+            artifactId?: string | undefined;
         };
         instances: {
             instance: {
@@ -2438,6 +2727,10 @@ export type WidgetsActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2519,10 +2812,18 @@ export type WidgetsActionResultById = {
                 }>;
                 displayName?: string | undefined;
             };
+            area?: 'main' | 'aside' | undefined;
             size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
         }[];
         canEdit: boolean;
+        state?: 'missing' | 'present' | undefined;
+        isShared?: boolean | undefined;
+        dashboard?: {
+            name: string;
+            ownerAccountId: string;
+            access: 'owner' | 'view' | 'edit' | 'admin';
+        } | undefined;
     };
     readonly "widgets.area.layout.update": {
         ref: {
@@ -2543,12 +2844,14 @@ export type WidgetsActionResultById = {
                 } | {
                     kind: 'project';
                     projectId: string;
+                    dashboardId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
                 };
+                artifactId?: string | undefined;
             };
             instanceId: string;
         };
@@ -2580,6 +2883,10 @@ export type WidgetsActionResultById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
+                        author?: {
+                            kind: 'person' | 'agent' | 'plugin';
+                        } | undefined;
+                        createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
                         sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2660,6 +2967,208 @@ export type WidgetsActionResultById = {
                 purpose: string;
             }>;
             displayName?: string | undefined;
+        } | null;
+        area?: 'main' | 'aside' | undefined;
+    };
+    readonly "widgets.area.dashboard.list": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        dashboards: {
+            artifactId: string;
+            surface: {
+                serverId: string;
+                accountId: string;
+                owner: {
+                    kind: 'home';
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'companion';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
+                } | {
+                    kind: 'project';
+                    projectId: string;
+                    dashboardId?: string | undefined;
+                } | {
+                    kind: 'pluginArea';
+                    pluginId: string;
+                    pageId: string;
+                    area: string;
+                };
+                artifactId?: string | undefined;
+            };
+            name: string;
+            sortKey: string;
+            isDefault: boolean;
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            } | null;
+        }[];
+    };
+    readonly "widgets.area.dashboard.create": {
+        artifactId: string;
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        name: string;
+        sortKey: string;
+        isDefault: boolean;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | null;
+    };
+    readonly "widgets.area.dashboard.rename": {
+        artifactId: string;
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        name: string;
+        sortKey: string;
+        isDefault: boolean;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | null;
+    };
+    readonly "widgets.area.dashboard.delete": {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        artifactId: string;
+    };
+    readonly "widgets.area.dashboard.reorder": {
+        artifactId: string;
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+                dashboardId?: string | undefined;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+            artifactId?: string | undefined;
+        };
+        name: string;
+        sortKey: string;
+        isDefault: boolean;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
         } | null;
     };
     readonly "widgets.definition.list": {
@@ -2719,6 +3228,10 @@ export type WidgetsActionResultById = {
                 };
                 nativeServicePath?: string | undefined;
             }[] | undefined;
+            author?: {
+                kind: 'person' | 'agent' | 'plugin';
+            } | undefined;
+            createdAt?: number | undefined;
             sourceDefinition?: {
                 kind: 'installed';
                 surface: {
@@ -2740,6 +3253,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2825,12 +3342,14 @@ export type WidgetsActionResultById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             }[];
@@ -2849,6 +3368,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -2928,6 +3451,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -3007,6 +3534,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -3090,6 +3621,10 @@ export type WidgetsActionResultById = {
                     itemId: string;
                 };
                 authorAccountId?: string | undefined;
+                author?: {
+                    kind: 'person' | 'agent' | 'plugin';
+                } | undefined;
+                createdAt?: number | undefined;
             };
             sizeDeclaration: {
                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];

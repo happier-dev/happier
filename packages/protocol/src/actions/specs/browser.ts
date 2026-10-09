@@ -1,8 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
+import { SecretFillSettlementV1Schema } from '../../computer/v1.js';
 import {
   BrowserAutomationActionRequestV1Schema,
+  BrowserAutomationSecretFillRequestV1Schema,
   BrowserAutomationActionResultV1Schema as BrowserAutomationEngineActionResultV1Schema,
   BrowserAutomationCancelActiveInputV1Schema,
   BrowserAutomationCancelActiveResultV1Schema as BrowserAutomationEngineCancelActiveResultV1Schema,
@@ -56,44 +59,44 @@ import {
 } from '../../browser/recording/v1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
 
-const BrowserAutomationActionResultV1Schema = z.union([
+const BrowserAutomationActionResultV1Schema = lazyZodSchema(() => z.union([
   BrowserAutomationEngineActionResultV1Schema, BrowserAutomationInterruptedResultV1Schema,
-]);
-const BrowserAutomationCancelActiveResultV1Schema = z.union([
+]));
+const BrowserAutomationCancelActiveResultV1Schema = lazyZodSchema(() => z.union([
   BrowserAutomationEngineCancelActiveResultV1Schema, BrowserAutomationInterruptedResultV1Schema,
-]);
+]));
 
-const BrowserDiagnosticsClearResultV1Schema = z.object({
+const BrowserDiagnosticsClearResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
-}).strict();
+}).strict());
 
-const BrowserDiagnosticsPauseResultV1Schema = z.object({
+const BrowserDiagnosticsPauseResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   status: z.literal('paused'),
   viewId: z.string().trim().min(1).max(256),
-}).strict();
+}).strict());
 
-const BrowserDiagnosticsResumeResultV1Schema = z.object({
+const BrowserDiagnosticsResumeResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   status: z.literal('resumed'),
   viewId: z.string().trim().min(1).max(256),
-}).strict();
+}).strict());
 
-const BrowserRecordingAttachToComposerResultV1Schema = z.object({
+const BrowserRecordingAttachToComposerResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   attachmentId: z.string().trim().min(1).max(256),
-}).strict();
+}).strict());
 
-const BrowserRecordingListResultV1Schema = z.array(BrowserRecordingSessionV1Schema);
+const BrowserRecordingListResultV1Schema = lazyZodSchema(() => z.array(BrowserRecordingSessionV1Schema));
 
-const BrowserSandboxInstallInputV1Schema = z.object({ machineId: z.string().trim().min(1) }).strict();
-const BrowserSandboxInstallResultV1Schema = z.discriminatedUnion('status', [
+const BrowserSandboxInstallInputV1Schema = lazyZodSchema(() => z.object({ machineId: z.string().trim().min(1) }).strict());
+const BrowserSandboxInstallResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('installed') }).strict(),
   z.object({ status: z.literal('failed'), code: z.enum([
     'platform_unsupported', 'managed_browser_unavailable', 'managed_browser_install_failed',
     'os_authorization_required', 'sandbox_install_failed', 'cancelled',
   ]) }).strict(),
-]);
+]));
 
 type BrowserRuntimeActionId = Extract<RuntimeActionIdV1, `browser.${string}`>;
 
@@ -106,28 +109,28 @@ function createBrowserAutomationActionInputSchema<
   );
 }
 
-const RuntimeBrowserViewInputSchema = z
+const RuntimeBrowserViewInputSchema = lazyZodSchema(() => z
   .object({
     browserSessionId: z.string().trim().min(1).max(256),
     viewId: z.string().trim().min(1).max(256),
   })
-  .passthrough();
+  .passthrough());
 
-const RuntimeBrowserContextActionInputSchema = RuntimeBrowserViewInputSchema.extend({
+const RuntimeBrowserContextActionInputSchema = lazyZodSchema(() => RuntimeBrowserViewInputSchema.extend({
   navigationGeneration: z.number().int().nonnegative().optional(),
   contextId: z.string().trim().min(1).max(256).optional(),
   annotationId: z.string().trim().min(1).max(256).optional(),
   command: BrowserContextCommandV1Schema.optional(),
   comment: z.string().trim().min(1).max(2048).optional(),
   styleIntent: BrowserAnnotationStyleIntentV1Schema.optional(),
-}).passthrough();
+}).passthrough());
 
-const RuntimeBrowserRecordingAttachInputSchema = z
+const RuntimeBrowserRecordingAttachInputSchema = lazyZodSchema(() => z
   .object({
     recordingId: z.string().trim().min(1).max(256),
     sessionId: z.string().trim().min(1).max(256).optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
   'browser.sandbox.install': 'Install managed browser sandbox permission',
@@ -186,6 +189,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.automation.focus': 'Focus browser element',
   'browser.automation.select': 'Select browser option',
   'browser.automation.setValue': 'Set browser field value',
+  'browser.automation.secret.fill': 'Request confidential browser credential entry',
   'browser.automation.upload': 'Upload files to browser input',
   'browser.automation.drag': 'Drag between browser elements',
   'browser.recording.start': 'Start browser recording',
@@ -243,6 +247,7 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
   'browser.automation.focus': 'Automate focusing a browser element.',
   'browser.automation.select': 'Automate selecting an option in the browser view.',
   'browser.automation.setValue': 'Automate setting the value of a browser field.',
+  'browser.automation.secret.fill': 'Request a human credential choice for the exact observed browser field and origin. Confidential entry never accepts a value in Action arguments or returns a browser result bag.',
   'browser.automation.upload': 'Attach one or more files to a browser file input.',
   'browser.automation.drag': 'Drag a browser element onto a drop target.',
   'browser.recording.attachToComposer': 'Attach a captured browser recording to the message composer.',
@@ -310,6 +315,7 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
   'browser.automation.focus': createBrowserAutomationActionInputSchema('focus'),
   'browser.automation.select': createBrowserAutomationActionInputSchema('select'),
   'browser.automation.setValue': createBrowserAutomationActionInputSchema('setValue'),
+  'browser.automation.secret.fill': BrowserAutomationSecretFillRequestV1Schema,
   'browser.automation.upload': createBrowserAutomationActionInputSchema('upload'),
   'browser.automation.drag': createBrowserAutomationActionInputSchema('drag'),
   'browser.recording.start': DaemonBrowserRecordingStartInputV1Schema,
@@ -379,6 +385,7 @@ export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
   'browser.automation.focus': BrowserAutomationActionResultV1Schema,
   'browser.automation.select': BrowserAutomationActionResultV1Schema,
   'browser.automation.setValue': BrowserAutomationActionResultV1Schema,
+  'browser.automation.secret.fill': SecretFillSettlementV1Schema,
   'browser.automation.upload': BrowserAutomationActionResultV1Schema,
   'browser.automation.drag': BrowserAutomationActionResultV1Schema,
   'browser.recording.start': DaemonBrowserRecordingStartResultV1Schema,

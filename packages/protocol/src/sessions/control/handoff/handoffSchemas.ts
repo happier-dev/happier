@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod';
 import {
   ExternalSessionAgentIdSchema,
@@ -70,7 +71,7 @@ function rejectRetiredWorkspaceActionFields(
   }
 }
 
-const SessionHandoffAgentBundleTransferPublicationSchema = z
+const SessionHandoffAgentBundleTransferPublicationSchema = lazyZodSchema(() => z
   .object({
     transferId: z.string().min(1).max(MAX_TRANSFER_ID_LENGTH),
     sizeBytes: z.number().int().min(0),
@@ -78,7 +79,7 @@ const SessionHandoffAgentBundleTransferPublicationSchema = z
     // Preserve all routes, including those advertised by supported predecessor daemons.
     endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffAgentBundleTransferPublication = z.infer<
   typeof SessionHandoffAgentBundleTransferPublicationSchema
 >;
@@ -128,7 +129,7 @@ function areEquivalentHandoffPublicationValues(
   ));
 }
 
-export const SessionHandoffMetadataV2Schema = z
+export const SessionHandoffMetadataV2Schema = lazyZodSchema(() => z
   .object({
     agentBundleTransferPublication: SessionHandoffAgentBundleTransferPublicationSchema.optional(),
     workspaceSeedTransferPublication: SessionHandoffAgentBundleTransferPublicationSchema.strict().optional(),
@@ -167,10 +168,10 @@ export const SessionHandoffMetadataV2Schema = z
         ? { agentBundleTransferPublication: normalizedAgentBundleTransferPublication }
         : {}),
     };
-  });
+  }));
 export type SessionHandoffMetadataV2 = z.infer<typeof SessionHandoffMetadataV2Schema>;
 
-const SessionHandoffResumePlanSchema = z
+const SessionHandoffResumePlanSchema = lazyZodSchema(() => z
   .object({
     directory: z.string().min(1).max(MAX_PATH_LENGTH),
     directoryKind: z.enum(['path', 'managed']).optional(),
@@ -192,10 +193,10 @@ const SessionHandoffResumePlanSchema = z
         message: 'experimentalCodexAcp is not supported',
       });
     }
-  });
+  }));
 export type SessionHandoffResumePlan = z.infer<typeof SessionHandoffResumePlanSchema>;
 
-export const SessionHandoffStartRequestSchema = z
+export const SessionHandoffStartRequestSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     sourceMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
@@ -220,10 +221,10 @@ export const SessionHandoffStartRequestSchema = z
     }
   })
   .superRefine(rejectLegacyInlineTransferFields)
-  .superRefine(rejectRetiredWorkspaceActionFields);
+  .superRefine(rejectRetiredWorkspaceActionFields));
 export type SessionHandoffStartRequest = z.infer<typeof SessionHandoffStartRequestSchema>;
 
-export const SessionHandoffPrepareTargetRequestSchema = z
+const SessionHandoffPrepareTargetFieldsSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     sourceMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
@@ -246,9 +247,11 @@ export const SessionHandoffPrepareTargetRequestSchema = z
       .default(() => []),
     handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
     workspaceAction: HandoffWorkspaceActionV1Schema.optional(),
-  })
-  .passthrough()
-  .superRefine((value, context) => {
+  }));
+
+function refineSessionHandoffPrepareTargetRequest(
+  value: z.infer<typeof SessionHandoffPrepareTargetFieldsSchema>, context: z.RefinementCtx,
+): void {
     if (value.targetDirectory?.kind === 'managed') {
       for (const field of ['operationId', 'sessionId'] as const) {
         if (!value[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: 'Managed handoff requires target allocation identity' });
@@ -266,47 +269,59 @@ export const SessionHandoffPrepareTargetRequestSchema = z
         message: 'workspace root and session-relative cwd must be provided together',
       });
     }
-  })
+}
+
+export const SessionHandoffPrepareTargetRequestSchema = lazyZodSchema(() => SessionHandoffPrepareTargetFieldsSchema
+  .passthrough()
+  .superRefine(refineSessionHandoffPrepareTargetRequest)
   .superRefine(rejectLegacyInlineTransferFields)
-  .superRefine(rejectRetiredWorkspaceActionFields);
+  .superRefine(rejectRetiredWorkspaceActionFields));
 export type SessionHandoffPrepareTargetRequest = z.infer<typeof SessionHandoffPrepareTargetRequestSchema>;
 
-export const SessionHandoffPrepareTargetResultGetRequestSchema = z
+/** Host-private credential transfer is closed and always names the existing Session. */
+export const SessionHandoffPrepareTargetPrivateRequestV1Schema = lazyZodSchema(() => SessionHandoffPrepareTargetFieldsSchema
+  .extend({ sessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH) })
+  .strict()
+  .superRefine(refineSessionHandoffPrepareTargetRequest)
+  .superRefine(rejectLegacyInlineTransferFields)
+  .superRefine(rejectRetiredWorkspaceActionFields));
+
+export const SessionHandoffPrepareTargetResultGetRequestSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
   })
-  .strict();
+  .strict());
 export type SessionHandoffPrepareTargetResultGetRequest = z.infer<typeof SessionHandoffPrepareTargetResultGetRequestSchema>;
 
-export const SessionHandoffPrepareTargetResumeRequestSchema = z
+export const SessionHandoffPrepareTargetResumeRequestSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     jobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).regex(/^[A-Za-z0-9._-]+$/u),
     expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     attemptId: z.string().min(1).max(MAX_ATTEMPT_ID_LENGTH),
   })
-  .strict();
+  .strict());
 export type SessionHandoffPrepareTargetResumeRequest = z.infer<
   typeof SessionHandoffPrepareTargetResumeRequestSchema
 >;
 
-export const SessionHandoffCommitRequestSchema = z
+export const SessionHandoffCommitRequestSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     mode: z.enum(['target', 'source_cleanup']).optional(),
   })
-  .strict();
+  .strict());
 export type SessionHandoffCommitRequest = z.infer<typeof SessionHandoffCommitRequestSchema>;
 
-export const SessionHandoffAbortRequestSchema = z
+export const SessionHandoffAbortRequestSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     reason: z.string().min(1).max(1024),
   })
-  .strict();
+  .strict());
 export type SessionHandoffAbortRequest = z.infer<typeof SessionHandoffAbortRequestSchema>;
 
-export const SessionHandoffStartResponseSchema = z
+export const SessionHandoffStartResponseSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
@@ -318,7 +333,7 @@ export const SessionHandoffStartResponseSchema = z
     handoffMetadataV2: SessionHandoffMetadataV2Schema.optional(),
   })
   .passthrough()
-  .superRefine(rejectLegacyInlineTransferFields);
+  .superRefine(rejectLegacyInlineTransferFields));
 export type SessionHandoffStartResponse = z.infer<typeof SessionHandoffStartResponseSchema>;
 
 /**
@@ -326,7 +341,7 @@ export type SessionHandoffStartResponse = z.infer<typeof SessionHandoffStartResp
  * and coordinator success envelopes stay behind their owning adapters; Action
  * callers receive the committed handoff state and any bounded recovery facts.
  */
-export const SessionHandoffActionResultV1Schema = z
+export const SessionHandoffActionResultV1Schema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
@@ -339,10 +354,10 @@ export const SessionHandoffActionResultV1Schema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict());
 export type SessionHandoffActionResultV1 = z.infer<typeof SessionHandoffActionResultV1Schema>;
 
-export const SessionHandoffPrepareTargetResponseSchema = z
+export const SessionHandoffPrepareTargetResponseSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
@@ -352,10 +367,10 @@ export const SessionHandoffPrepareTargetResponseSchema = z
     resume: SessionHandoffResumePlanSchema.optional(),
   })
   .passthrough()
-  .superRefine(rejectLegacyInlineTransferFields);
+  .superRefine(rejectLegacyInlineTransferFields));
 export type SessionHandoffPrepareTargetResponse = z.infer<typeof SessionHandoffPrepareTargetResponseSchema>;
 
-export const SessionHandoffPrepareTargetResultGetSuccessResponseSchema = z
+export const SessionHandoffPrepareTargetResultGetSuccessResponseSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
@@ -364,12 +379,12 @@ export const SessionHandoffPrepareTargetResultGetSuccessResponseSchema = z
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema,
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffPrepareTargetResultGetSuccessResponse = z.infer<
   typeof SessionHandoffPrepareTargetResultGetSuccessResponseSchema
 >;
 
-const SessionHandoffPrepareTargetResultGetFailureResponseSchema = z.discriminatedUnion('errorCode', [
+const SessionHandoffPrepareTargetResultGetFailureResponseSchema = lazyZodSchema(() => z.discriminatedUnion('errorCode', [
   z.object({
     ok: z.literal(false),
     errorCode: z.enum([
@@ -400,15 +415,15 @@ const SessionHandoffPrepareTargetResultGetFailureResponseSchema = z.discriminate
       .min(1)
       .max(SESSION_HANDOFF_PREPARE_TARGET_FAILURE_MESSAGE_MAX_LENGTH),
   }).strict(),
-]);
+]));
 
-export const SessionHandoffPrepareTargetResultGetResponseSchema = z.union([
+export const SessionHandoffPrepareTargetResultGetResponseSchema = lazyZodSchema(() => z.union([
   SessionHandoffPrepareTargetResultGetSuccessResponseSchema,
   SessionHandoffPrepareTargetResultGetFailureResponseSchema,
-]);
+]));
 export type SessionHandoffPrepareTargetResultGetResponse = z.infer<typeof SessionHandoffPrepareTargetResultGetResponseSchema>;
 
-export const SessionHandoffPrepareTargetResumeErrorCodeSchema = z.enum([
+export const SessionHandoffPrepareTargetResumeErrorCodeSchema = lazyZodSchema(() => z.enum([
   'invalid_request',
   'not_found',
   'identity_conflict',
@@ -417,12 +432,12 @@ export const SessionHandoffPrepareTargetResumeErrorCodeSchema = z.enum([
   'invalid_state',
   'reconciliation_required',
   'internal_error',
-]);
+]));
 export type SessionHandoffPrepareTargetResumeErrorCode = z.infer<
   typeof SessionHandoffPrepareTargetResumeErrorCodeSchema
 >;
 
-export const SessionHandoffPrepareTargetResumeResponseSchema = z.discriminatedUnion('ok', [
+export const SessionHandoffPrepareTargetResumeResponseSchema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
@@ -437,32 +452,32 @@ export const SessionHandoffPrepareTargetResumeResponseSchema = z.discriminatedUn
       message: z.string().min(1).max(2_000),
     }).strict(),
   }).strict(),
-]);
+]));
 export type SessionHandoffPrepareTargetResumeResponse = z.infer<
   typeof SessionHandoffPrepareTargetResumeResponseSchema
 >;
 
-export const SessionHandoffCommitResponseSchema = z
+export const SessionHandoffCommitResponseSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
   })
-  .strict();
+  .strict());
 export type SessionHandoffCommitResponse = z.infer<typeof SessionHandoffCommitResponseSchema>;
 
-export const SessionHandoffAbortResponseSchema = z
+export const SessionHandoffAbortResponseSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
   })
-  .strict();
+  .strict());
 export type SessionHandoffAbortResponse = z.infer<typeof SessionHandoffAbortResponseSchema>;
 
-export const SessionHandoffStatusGetRequestSchema = z
+export const SessionHandoffStatusGetRequestSchema = lazyZodSchema(() => z
   .object({
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
   })
-  .passthrough();
+  .passthrough());
 export type SessionHandoffStatusGetRequest = z.infer<typeof SessionHandoffStatusGetRequestSchema>;
 
 export {

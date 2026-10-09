@@ -30,6 +30,7 @@ export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends tr
     uniqueItems?: boolean | undefined;
     minimum?: number | undefined;
     maximum?: number | undefined;
+    multipleOf?: number | undefined;
     exclusiveMinimum?: number | undefined;
     exclusiveMaximum?: number | undefined;
     minLength?: number | undefined;
@@ -63,6 +64,7 @@ export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends tr
     uniqueItems?: boolean | undefined;
     minimum?: number | undefined;
     maximum?: number | undefined;
+    multipleOf?: number | undefined;
     exclusiveMinimum?: number | undefined;
     exclusiveMaximum?: number | undefined;
     minLength?: number | undefined;
@@ -924,6 +926,15 @@ export type PluginActionWorkflowDefinitionV1 = {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -988,6 +999,8 @@ export type PluginActionWorkflowDefinitionV1 = {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -1078,7 +1091,6 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     kind: "step";
     id: string;
     document: {
-        text: string;
         references: {
             [x: string]: unknown;
             kind: string;
@@ -1099,10 +1111,12 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
+        text: string;
+        displayText?: string | undefined;
     };
     input: PluginActionWorkflowValueReferenceV1<true>[];
     result: {
@@ -1115,6 +1129,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         schema: PluginJsonSchemaV2<true>;
     };
     name?: string | undefined;
+    inputMode?: "none" | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -1217,6 +1232,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -1281,6 +1305,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -1316,6 +1342,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "action";
     actionId: string;
@@ -1433,6 +1460,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -1497,6 +1533,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -1530,6 +1568,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "workflow";
     workflowRef: string;
@@ -1638,6 +1677,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -1702,6 +1750,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -1735,6 +1785,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "wait";
     document: {
@@ -1759,10 +1810,11 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
+        displayText?: string | undefined;
     };
     id: string;
     result?: {
@@ -1877,6 +1929,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -1941,6 +2002,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -1974,17 +2037,20 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | Readonly<{
     kind: "parallel";
     id: string;
     name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
+        name?: string | undefined;
         blocks: readonly PluginActionWorkflowBlockV1<true>[];
     }>[];
     failurePolicy: "fail_stop" | "collect_outcomes";
     maxConcurrent?: number | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 }> | Readonly<{
     kind: "loop";
     id: string;
@@ -1992,6 +2058,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     body: readonly PluginActionWorkflowBlockV1<true>[];
     repetition: PluginActionWorkflowRepetitionV1<true>;
     onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 }> | Readonly<{
     kind: "if";
     id: string;
@@ -1999,11 +2066,11 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     when: PluginActionWorkflowConditionV1<true>;
     then: readonly PluginActionWorkflowBlockV1<true>[];
     otherwise: readonly PluginActionWorkflowBlockV1<true>[];
+    runWhen?: "success" | "failure" | "always" | undefined;
 }> : {
     kind: "step";
     id: string;
     document: {
-        text: string;
         references: {
             [x: string]: unknown;
             kind: string;
@@ -2024,10 +2091,12 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
+        text: string;
+        displayText?: string | undefined;
     };
     input: PluginActionWorkflowValueReferenceV1[];
     result: {
@@ -2040,6 +2109,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         schema: PluginJsonSchemaV2;
     };
     name?: string | undefined;
+    inputMode?: "none" | undefined;
     execution?: {
         agentTarget?: {
             kind: "agent";
@@ -2142,6 +2212,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -2206,6 +2285,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -2241,6 +2322,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "action";
     actionId: string;
@@ -2358,6 +2440,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -2422,6 +2513,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -2455,6 +2548,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "workflow";
     workflowRef: string;
@@ -2563,6 +2657,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -2627,6 +2730,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -2660,6 +2765,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | {
     kind: "wait";
     document: {
@@ -2684,10 +2790,11 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                 tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
+        displayText?: string | undefined;
     };
     id: string;
     result?: {
@@ -2802,6 +2909,15 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: "provider_session.v1";
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: "shared_run";
         } | {
@@ -2866,6 +2982,8 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -2899,17 +3017,20 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 } | Readonly<{
     kind: "parallel";
     id: string;
     name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
+        name?: string | undefined;
         blocks: readonly PluginActionWorkflowBlockV1[];
     }>[];
     failurePolicy: "fail_stop" | "collect_outcomes";
     maxConcurrent?: number | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 }> | Readonly<{
     kind: "loop";
     id: string;
@@ -2917,6 +3038,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     body: readonly PluginActionWorkflowBlockV1[];
     repetition: PluginActionWorkflowRepetitionV1;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: "success" | "failure" | "always" | undefined;
 }> | Readonly<{
     kind: "if";
     id: string;
@@ -2924,6 +3046,7 @@ export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input e
     when: PluginActionWorkflowConditionV1;
     then: readonly PluginActionWorkflowBlockV1[];
     otherwise: readonly PluginActionWorkflowBlockV1[];
+    runWhen?: "success" | "failure" | "always" | undefined;
 }>;
 export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = Input extends true ? Readonly<{
     kind: "count";
@@ -2951,7 +3074,6 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         kind: "step";
         id: string;
         document: {
-            text: string;
             references: {
                 [x: string]: unknown;
                 kind: string;
@@ -2972,10 +3094,12 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                    icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                     tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
                 };
             }[];
+            text: string;
+            displayText?: string | undefined;
         };
         input: PluginActionWorkflowValueReferenceV1<true>[];
         result: {
@@ -2988,6 +3112,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             schema: PluginJsonSchemaV2<true>;
         };
         name?: string | undefined;
+        inputMode?: "none" | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -3090,6 +3215,15 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
+            permissionModeUpdatedAt?: number | undefined;
+            launchEnvironment?: {
+                values: Record<string, string>;
+                unset: string[];
+            } | undefined;
+            providerSessionResume?: {
+                kind: "provider_session.v1";
+                providerSessionId: string;
+            } | undefined;
             conversation?: {
                 kind: "shared_run";
             } | {
@@ -3154,6 +3288,8 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                         };
                     };
                 };
+                displayName?: string | undefined;
+                baseRef?: string | null | undefined;
             } | undefined;
             engine?: {
                 role: string;
@@ -3189,6 +3325,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         timeoutMs?: number | undefined;
         pauseForReview?: boolean | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+        runWhen?: "success" | "failure" | "always" | undefined;
     } | {
         kind: "action";
         actionId: string;
@@ -3306,6 +3443,15 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
+            permissionModeUpdatedAt?: number | undefined;
+            launchEnvironment?: {
+                values: Record<string, string>;
+                unset: string[];
+            } | undefined;
+            providerSessionResume?: {
+                kind: "provider_session.v1";
+                providerSessionId: string;
+            } | undefined;
             conversation?: {
                 kind: "shared_run";
             } | {
@@ -3370,6 +3516,8 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                         };
                     };
                 };
+                displayName?: string | undefined;
+                baseRef?: string | null | undefined;
             } | undefined;
             engine?: {
                 role: string;
@@ -3403,6 +3551,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             } | undefined;
         } | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+        runWhen?: "success" | "failure" | "always" | undefined;
     };
     history: "all" | "none" | "latest";
 }> : Readonly<{
@@ -3431,7 +3580,6 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         kind: "step";
         id: string;
         document: {
-            text: string;
             references: {
                 [x: string]: unknown;
                 kind: string;
@@ -3452,10 +3600,12 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | undefined;
+                    icon?: "file" | "external" | "search" | "error" | "check" | "settings" | "action" | "terminal" | "review" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | "attention" | "escalating" | "merge-ready" | "mention" | "assigned" | "new" | "waiting" | "list" | "board" | undefined;
                     tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
                 };
             }[];
+            text: string;
+            displayText?: string | undefined;
         };
         input: PluginActionWorkflowValueReferenceV1[];
         result: {
@@ -3468,6 +3618,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             schema: PluginJsonSchemaV2;
         };
         name?: string | undefined;
+        inputMode?: "none" | undefined;
         execution?: {
             agentTarget?: {
                 kind: "agent";
@@ -3570,6 +3721,15 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
+            permissionModeUpdatedAt?: number | undefined;
+            launchEnvironment?: {
+                values: Record<string, string>;
+                unset: string[];
+            } | undefined;
+            providerSessionResume?: {
+                kind: "provider_session.v1";
+                providerSessionId: string;
+            } | undefined;
             conversation?: {
                 kind: "shared_run";
             } | {
@@ -3634,6 +3794,8 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                         };
                     };
                 };
+                displayName?: string | undefined;
+                baseRef?: string | null | undefined;
             } | undefined;
             engine?: {
                 role: string;
@@ -3669,6 +3831,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
         timeoutMs?: number | undefined;
         pauseForReview?: boolean | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+        runWhen?: "success" | "failure" | "always" | undefined;
     } | {
         kind: "action";
         actionId: string;
@@ -3786,6 +3949,15 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
+            permissionModeUpdatedAt?: number | undefined;
+            launchEnvironment?: {
+                values: Record<string, string>;
+                unset: string[];
+            } | undefined;
+            providerSessionResume?: {
+                kind: "provider_session.v1";
+                providerSessionId: string;
+            } | undefined;
             conversation?: {
                 kind: "shared_run";
             } | {
@@ -3850,6 +4022,8 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
                         };
                     };
                 };
+                displayName?: string | undefined;
+                baseRef?: string | null | undefined;
             } | undefined;
             engine?: {
                 role: string;
@@ -3883,6 +4057,7 @@ export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = In
             } | undefined;
         } | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+        runWhen?: "success" | "failure" | "always" | undefined;
     };
     history: "all" | "none" | "latest";
 }>;
@@ -4102,6 +4277,15 @@ export type PluginActionWorkflowStepExecutionSelectionV1 = {
             connectedServiceGroupId?: string | undefined;
         };
     } | null | undefined;
+    permissionModeUpdatedAt?: number | undefined;
+    launchEnvironment?: {
+        values: Record<string, string>;
+        unset: string[];
+    } | undefined;
+    providerSessionResume?: {
+        kind: 'provider_session.v1';
+        providerSessionId: string;
+    } | undefined;
     conversation?: {
         kind: 'shared_run';
     } | {
@@ -4166,13 +4350,14 @@ export type PluginActionWorkflowStepExecutionSelectionV1 = {
                 };
             };
         };
+        displayName?: string | undefined;
+        baseRef?: string | null | undefined;
     } | undefined;
 };
 export type PluginActionWorkflowStepV1 = {
     kind: 'step';
     id: string;
     document: {
-        text: string;
         references: {
             [x: string]: unknown;
             kind: string;
@@ -4193,10 +4378,12 @@ export type PluginActionWorkflowStepV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
+        text: string;
+        displayText?: string | undefined;
     };
     input: PluginActionWorkflowValueReferenceV1[];
     result: {
@@ -4209,6 +4396,7 @@ export type PluginActionWorkflowStepV1 = {
         schema: PluginJsonSchemaV2;
     };
     name?: string | undefined;
+    inputMode?: 'none' | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -4311,6 +4499,15 @@ export type PluginActionWorkflowStepV1 = {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -4375,6 +4572,8 @@ export type PluginActionWorkflowStepV1 = {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -4410,19 +4609,20 @@ export type PluginActionWorkflowStepV1 = {
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 };
 export type PluginActionWorkflowFailurePolicyV1 = 'fail_stop' | 'collect_outcomes';
 export type PluginActionWorkflowItemExecutionModeV1 = 'sequential' | 'parallel';
 export type PluginActionWorkflowEvaluatorHistoryModeV1 = 'all' | 'none' | 'latest';
 export type PluginActionWorkflowParallelBranchV1 = {
     readonly id: string;
+    readonly name?: string | undefined;
     readonly blocks: readonly PluginActionWorkflowBlockV1[];
 };
 export type PluginActionWorkflowIngressBlockV1 = string | {
     kind: 'step';
     id: string;
     document: {
-        text: string;
         references: {
             [x: string]: unknown;
             kind: string;
@@ -4443,10 +4643,12 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
+        text: string;
+        displayText?: string | undefined;
     };
     input: PluginActionWorkflowValueReferenceV1[];
     result: {
@@ -4459,6 +4661,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         schema: PluginJsonSchemaV2;
     };
     name?: string | undefined;
+    inputMode?: 'none' | undefined;
     execution?: {
         agentTarget?: {
             kind: 'agent';
@@ -4561,6 +4764,15 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -4625,6 +4837,8 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -4660,6 +4874,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 } | {
     kind: 'action';
     actionId: string;
@@ -4777,6 +4992,15 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -4841,6 +5065,8 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -4874,6 +5100,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 } | {
     kind: 'workflow';
     workflowRef: string;
@@ -4982,6 +5209,15 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -5046,6 +5282,8 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -5079,6 +5317,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 } | {
     kind: 'wait';
     document: {
@@ -5103,10 +5342,11 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
+        displayText?: string | undefined;
     };
     id: string;
     result?: {
@@ -5221,6 +5461,15 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
+        permissionModeUpdatedAt?: number | undefined;
+        launchEnvironment?: {
+            values: Record<string, string>;
+            unset: string[];
+        } | undefined;
+        providerSessionResume?: {
+            kind: 'provider_session.v1';
+            providerSessionId: string;
+        } | undefined;
         conversation?: {
             kind: 'shared_run';
         } | {
@@ -5285,6 +5534,8 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                     };
                 };
             };
+            displayName?: string | undefined;
+            baseRef?: string | null | undefined;
         } | undefined;
         engine?: {
             role: string;
@@ -5318,20 +5569,24 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 } | (Omit<Readonly<{
     kind: 'parallel';
     id: string;
     name?: string | undefined;
     branches: readonly Readonly<{
         id: string;
+        name?: string | undefined;
         blocks: readonly PluginActionWorkflowBlockV1[];
     }>[];
     failurePolicy: 'fail_stop' | 'collect_outcomes';
     maxConcurrent?: number | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 }>, 'branches'> & Readonly<{
     branches: readonly (Omit<Readonly<{
         id: string;
+        name?: string | undefined;
         blocks: readonly PluginActionWorkflowBlockV1[];
     }>, 'blocks'> & Readonly<{
         blocks: readonly PluginActionWorkflowIngressBlockV1[];
@@ -5343,6 +5598,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
     body: readonly PluginActionWorkflowBlockV1[];
     repetition: PluginActionWorkflowRepetitionV1;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 }>, 'body'> & Readonly<{
     body: readonly PluginActionWorkflowIngressBlockV1[];
 }>) | (Omit<Readonly<{
@@ -5352,6 +5608,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
     when: PluginActionWorkflowConditionV1;
     then: readonly PluginActionWorkflowBlockV1[];
     otherwise: readonly PluginActionWorkflowBlockV1[];
+    runWhen?: 'success' | 'failure' | 'always' | undefined;
 }>, 'then' | 'otherwise'> & Readonly<{
     then: readonly PluginActionWorkflowIngressBlockV1[];
     otherwise: readonly PluginActionWorkflowIngressBlockV1[];
@@ -5462,138 +5719,66 @@ export type ActionSpec = {
         submitLabel?: string | undefined;
     } | undefined;
 };
-export type EntityDragItemV1 = Readonly<{
-    kind: 'session';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    address: {
-        serverId: string;
-        sessionId: string;
-    };
-}> | Readonly<{
-    kind: 'session-folder';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    folderId: string;
-}> | Readonly<{
-    kind: 'session-workspace';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    workspaceId: string;
-}> | Readonly<{
-    kind: 'workspace-tab';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    tabId: string;
-}> | Readonly<{
-    kind: 'destination';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    href: string;
-}> | Readonly<{
-    kind: 'navigation-item';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    surfaceId: string;
-    itemId: string;
-}> | Readonly<{
-    kind: 'repository-file';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    machineId: string;
-    path: string;
-    workspaceId?: string | undefined;
-}> | Readonly<{
-    kind: 'session-board-item';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    address: {
-        serverId: string;
-        sessionId: string;
-    };
+export type ProviderCatalogParserV1<Input extends boolean = false> = Input extends true ? "openai-models" | "anthropic-models" | "ollama-tags" | "lmstudio-native-models" | (string & {}) : "openai-models" | "anthropic-models" | "ollama-tags" | "lmstudio-native-models" | (string & {});
+export type VoiceProviderSettingsJsonValueV1<Input extends boolean = false> = Input extends true ? string | number | boolean | readonly VoiceProviderSettingsJsonValueV1<true>[] | Readonly<{
+    [key: string]: VoiceProviderSettingsJsonValueV1<true>;
+}> | null : string | number | boolean | readonly VoiceProviderSettingsJsonValueV1[] | Readonly<{
+    [key: string]: VoiceProviderSettingsJsonValueV1;
+}> | null;
+export type SessionCompanionPresentationItem = {
+    kind: 'builtin';
+    id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+    frameStyle?: 'plain' | 'card' | undefined;
+} | {
+    kind: 'widget';
+    widgetId: string;
+    frameStyle?: 'plain' | 'card' | undefined;
+} | {
+    kind: 'pane';
+    paneId: string;
+    frameStyle?: 'plain' | 'card' | undefined;
+};
+export type CurrentSessionPresentationIntentV1 = {
+    kind: 'chat.return';
+} | {
+    kind: 'board.open';
+    mode: 'beside_chat' | 'focus';
+} | {
+    kind: 'board.view.select';
     viewId: string;
-    itemId: string;
-}> | Readonly<{
-    kind: 'work-board-item';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    boardId: string;
-    item: {
-        kind: 'machine' | 'session' | 'workflow' | 'workflow_run';
-        qualifiedId: {
-            serverId: string;
-            id: string;
-        };
-    };
-}> | Readonly<{
-    kind: 'work-board-widget';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    boardId: string;
-    instanceId: string;
-}> | Readonly<{
-    kind: 'widget-area-instance';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    ref: {
-        surface: {
-            serverId: string;
-            accountId: string;
-            owner: {
-                kind: 'home';
-            } | {
-                kind: 'sessionBoard';
-                sessionId: string;
-            } | {
-                kind: 'companion';
-                sessionId: string;
-            } | {
-                kind: 'workBoard';
-                boardId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'pluginArea';
-                pluginId: string;
-                pageId: string;
-                area: string;
-            };
-        };
-        instanceId: string;
-    };
-}> | Readonly<{
-    kind: 'companion-item';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    address: {
-        serverId: string;
-        sessionId: string;
-    };
+} | {
+    kind: 'board.item.reveal';
+    widgetId: string;
+    viewId?: string | undefined;
+} | {
+    kind: 'companion.show';
+} | {
+    kind: 'companion.hide';
+} | {
+    kind: 'companion.edge.set';
+    edge: 'leading' | 'trailing';
+} | {
+    kind: 'companion.collapse.set';
+    collapsed: boolean;
+} | {
+    kind: 'companion.density.set';
+    density: 'compact' | 'comfortable';
+} | {
+    kind: 'companion.open_full';
+} | {
+    kind: 'viewer.open';
+    source: 'browser' | 'computer';
+} | {
+    kind: 'viewer.close';
+} | {
+    kind: 'viewer.source.select';
+    source: 'browser' | 'computer';
+} | {
+    kind: 'viewer.expand';
+} | {
+    kind: 'viewer.restore';
+} | {
+    kind: 'companion.item.add';
     item: {
         kind: 'builtin';
         id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
@@ -5606,175 +5791,81 @@ export type EntityDragItemV1 = Readonly<{
         kind: 'pane';
         paneId: string;
         frameStyle?: 'plain' | 'card' | undefined;
+    };
+    index?: number | undefined;
+} | {
+    kind: 'companion.item.remove';
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
     } | {
-        kind: 'instance';
-        instance: {
-            v: 1;
-            id: string;
-            definition: {
-                kind: 'installed';
-                surface: {
-                    pluginId: string;
-                    localId: string;
-                };
-            } | {
-                kind: 'builtin';
-                id: string;
-            } | {
-                kind: 'artifact';
-                artifactId: string;
-            } | {
-                kind: 'inline';
-                definition: {
-                    provenance: {
-                        source: {
-                            kind: 'authored';
-                        } | {
-                            kind: 'session';
-                            serverId: string;
-                            sessionId: string;
-                            itemId: string;
-                        };
-                        authorAccountId?: string | undefined;
-                    };
-                    sizeDeclaration: {
-                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                    };
-                    name: string;
-                    body: {
-                        kind: 'declarative';
-                        document: Readonly<{
-                            version: 1;
-                            root: PluginDeclarativeNodeV2;
-                        }>;
-                    } | {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    };
-                    inputs: {
-                        fields: readonly {
-                            path: string;
-                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                            title: string;
-                            inputType?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            required?: boolean | undefined;
-                            requireExplicitSelection?: boolean | undefined;
-                            listSeparator?: 'comma' | 'newline' | undefined;
-                            maxSelections?: number | undefined;
-                            visibleWhen?: InputPredicate | undefined;
-                            requiredWhen?: InputPredicate | undefined;
-                            disabledWhen?: InputPredicate | undefined;
-                            optionsSourceId?: string | undefined;
-                            connectedAccountOptions?: true | undefined;
-                            resolvedEmptyConnectedAccountOptions?: true | undefined;
-                            description?: string | undefined;
-                            placeholder?: string | undefined;
-                            options?: readonly {
-                                value: JsonValue;
-                                label: string;
-                                description?: string | undefined;
-                                disabled?: boolean | undefined;
-                            }[] | undefined;
-                        }[];
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        submitLabel?: string | undefined;
-                    };
-                    inputSchema: PluginJsonSchemaV2;
-                    v: 1;
-                    id: string;
-                    description?: string | undefined;
-                    sessionInputPath?: string | undefined;
-                    connectedAccountPurposeBindings?: {
-                        path: string;
-                        purpose: string;
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        nativeServicePath?: string | undefined;
-                    }[] | undefined;
-                };
-            };
-            bindings: Record<string, {
-                kind: 'value';
-                value: string | number | boolean | readonly JsonValue[] | {
-                    readonly [key: string]: JsonValue;
-                } | null;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }>;
-            displayName?: string | undefined;
-        };
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
         frameStyle?: 'plain' | 'card' | undefined;
     };
+} | {
+    kind: 'companion.item.move';
+    toIndex: number;
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+} | {
+    kind: 'companion.item.frameStyle.set';
+    frameStyle: 'plain' | 'card' | null;
+    item: {
+        kind: 'builtin';
+        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'widget';
+        widgetId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    } | {
+        kind: 'pane';
+        paneId: string;
+        frameStyle?: 'plain' | 'card' | undefined;
+    };
+};
+export type JSONType = string | number | boolean | JSONType[] | {
+    [key: string]: JSONType;
+} | null;
+export type SessionTerminalLayoutV1 = {
+    kind: 'leaf';
+    terminalId: string;
+} | {
+    kind: 'split';
+    id: string;
+    ratio: number;
+    first: SessionTerminalLayoutV1;
+    second: SessionTerminalLayoutV1;
+};
+export type QualifiedAudienceSelection = Readonly<{
+    serverId: string;
+}> & SessionAudienceSelectionV1;
+export type SessionAudienceSelectionV1 = Readonly<{
+    kind: 'outside_teams';
 }> | Readonly<{
-    kind: 'home-section';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    sectionId: string;
+    kind: 'team';
+    teamId: string;
 }> | Readonly<{
-    kind: 'pool-member';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    pool: {
-        service: {
-            pluginId: string;
-            localId: string;
-        };
-        groupId: string;
-    };
-    member: {
-        service: {
-            pluginId: string;
-            localId: string;
-        };
-        accountId: string;
-    };
-}> | Readonly<{
-    kind: 'pending-input';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    address: {
-        serverId: string;
-        sessionId: string;
-    };
-    localId: string;
-}> | Readonly<{
-    kind: 'todo';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    todoId: string;
-}> | Readonly<{
-    kind: 'plugin';
-    scope: {
-        serverId: string;
-        accountId: string;
-    };
-    contribution: {
-        pluginId: string;
-        localId: string;
-    };
-    reference: JsonValue;
+    kind: 'group';
+    teamId: string;
+    groupId: string;
 }>;
 export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
     kind: 'dragSource';
@@ -5931,7 +6022,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -5963,7 +6054,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -5989,7 +6080,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -6007,7 +6098,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
 } | {
     kind: 'section';
     children: ({
@@ -6024,7 +6115,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6042,7 +6133,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -6068,7 +6159,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6086,7 +6177,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -6103,7 +6194,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+            icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -6121,7 +6212,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+            icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -6165,7 +6256,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     } | undefined;
 } | {
     kind: 'metadata';
@@ -6247,7 +6338,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -6279,7 +6370,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -6530,1337 +6621,8 @@ export type PluginDeclarativeDataNodeV1 = {
         type: 'string' | 'number' | 'boolean';
     };
 };
-export type EntityDragScopeV1 = {
-    readonly serverId: string;
-    readonly accountId: string;
-};
-export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'navigation-item' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'widget-area-instance' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
-export type EntityDropAdmissionV1 = Readonly<{
-    status: 'allowed';
-    effect: {
-        actionId: string;
-        input: JsonValue;
-        preview: {
-            verb: string;
-            target: string;
-            consequence?: string | undefined;
-            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-        };
-    };
-}> | Readonly<{
-    status: 'refused';
-    reason: {
-        code: string;
-        message: string;
-    };
-    preview?: {
-        verb: string;
-        target: string;
-        consequence?: string | undefined;
-        glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-    } | undefined;
-}>;
-export type EntityDropEffectV1 = {
-    readonly actionId: string;
-    readonly input: JsonValue;
-    readonly preview: {
-        verb: string;
-        target: string;
-        consequence?: string | undefined;
-        glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-    };
-};
-export type EntityDropPreviewV1 = {
-    readonly verb: string;
-    readonly target: string;
-    readonly consequence?: string | undefined;
-    readonly glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-};
-export type EntityDropReasonV1 = {
-    readonly code: string;
-    readonly message: string;
-};
-export type EntityDropOutcomeV1 = Readonly<{
-    status: 'applied';
-}> | Readonly<{
-    status: 'refused';
-    reason: {
-        code: string;
-        message: string;
-    };
-}> | Readonly<{
-    status: 'unknown';
-    reason: {
-        code: string;
-        message: string;
-    };
-}>;
-export type PluginUiReadEntityDragItemRequestV1 = {
-    kind: 'session';
-};
-export type PluginUiUpdateEntityDragDropRequestV1 = {
-    kind: 'mountSource';
-    mountId: string;
-    sourceId: string;
-    reference: JsonValue;
-} | {
-    kind: 'mountTarget';
-    mountId: string;
-    targetId: string;
-    bounds: {
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-    };
-    viewport: {
-        width: number;
-        height: number;
-    };
-    input?: JsonValue | undefined;
-    parentId?: string | undefined;
-} | {
-    kind: 'layout';
-    mountId: string;
-    bounds: {
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-    };
-    viewport: {
-        width: number;
-        height: number;
-    };
-} | {
-    kind: 'unmount';
-    mountId: string;
-} | {
-    kind: 'begin';
-    mountId: string;
-    pointer: {
-        x: number;
-        y: number;
-    };
-    viewport: {
-        width: number;
-        height: number;
-    };
-    input?: 'pointer' | 'keyboard' | undefined;
-} | {
-    kind: 'destinations';
-    mountId: string;
-} | {
-    kind: 'choose';
-    mountId: string;
-    targetId: string;
-    destination?: JsonValue | undefined;
-} | {
-    kind: 'commit';
-    mountId: string;
-} | {
-    kind: 'perform';
-    mountId: string;
-    targetId: string;
-    destination?: JsonValue | undefined;
-} | {
-    kind: 'move';
-    pointer: {
-        x: number;
-        y: number;
-    };
-    viewport: {
-        width: number;
-        height: number;
-    };
-} | {
-    kind: 'release';
-    pointer: {
-        x: number;
-        y: number;
-    };
-    viewport: {
-        width: number;
-        height: number;
-    };
-} | {
-    kind: 'cancel';
-    mountId?: string | undefined;
-    reason?: 'gesture-end' | undefined;
-};
-export type PluginUiUpdateEntityDragDropResultV1 = {
-    accepted: boolean;
-    outcome?: {
-        status: 'applied';
-    } | {
-        status: 'refused';
-        reason: {
-            code: string;
-            message: string;
-        };
-    } | {
-        status: 'unknown';
-        reason: {
-            code: string;
-            message: string;
-        };
-    } | null | undefined;
-    destinations?: {
-        targetId: string;
-        admission: {
-            status: 'allowed';
-            effect: {
-                actionId: string;
-                input: JsonValue;
-                preview: {
-                    verb: string;
-                    target: string;
-                    consequence?: string | undefined;
-                    glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-                };
-            };
-        } | {
-            status: 'refused';
-            reason: {
-                code: string;
-                message: string;
-            };
-            preview?: {
-                verb: string;
-                target: string;
-                consequence?: string | undefined;
-                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-            } | undefined;
-        };
-        destination?: JsonValue | undefined;
-        label?: string | undefined;
-        group?: string | undefined;
-    }[] | undefined;
-    description?: {
-        title: string;
-        subtitle?: string | undefined;
-    } | null | undefined;
-};
-export type PluginUiWatchEntityDragDropRequestV1 = {
-    mountId: string;
-};
-export type PluginUiEntityDragDropStateV1 = {
-    current: boolean;
-    phase: 'idle' | 'carrying' | 'pending' | 'settled';
-    admission: {
-        status: 'allowed';
-        effect: {
-            actionId: string;
-            input: JsonValue;
-            preview: {
-                verb: string;
-                target: string;
-                consequence?: string | undefined;
-                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-            };
-        };
-    } | {
-        status: 'refused';
-        reason: {
-            code: string;
-            message: string;
-        };
-        preview?: {
-            verb: string;
-            target: string;
-            consequence?: string | undefined;
-            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-        } | undefined;
-    } | null;
-    outcome: {
-        status: 'applied';
-    } | {
-        status: 'refused';
-        reason: {
-            code: string;
-            message: string;
-        };
-    } | {
-        status: 'unknown';
-        reason: {
-            code: string;
-            message: string;
-        };
-    } | null;
-    destinations: {
-        targetId: string;
-        admission: {
-            status: 'allowed';
-            effect: {
-                actionId: string;
-                input: JsonValue;
-                preview: {
-                    verb: string;
-                    target: string;
-                    consequence?: string | undefined;
-                    glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-                };
-            };
-        } | {
-            status: 'refused';
-            reason: {
-                code: string;
-                message: string;
-            };
-            preview?: {
-                verb: string;
-                target: string;
-                consequence?: string | undefined;
-                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-            } | undefined;
-        };
-        destination?: JsonValue | undefined;
-        label?: string | undefined;
-        group?: string | undefined;
-    }[];
-};
-export type PluginUiEntityDropDestinationV1 = {
-    targetId: string;
-    admission: {
-        status: 'allowed';
-        effect: {
-            actionId: string;
-            input: JsonValue;
-            preview: {
-                verb: string;
-                target: string;
-                consequence?: string | undefined;
-                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-            };
-        };
-    } | {
-        status: 'refused';
-        reason: {
-            code: string;
-            message: string;
-        };
-        preview?: {
-            verb: string;
-            target: string;
-            consequence?: string | undefined;
-            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
-        } | undefined;
-    };
-    destination?: JsonValue | undefined;
-    label?: string | undefined;
-    group?: string | undefined;
-};
-export type PluginUiWidgetAreaRequestV1 = {
-    area: string;
-    operation: {
-        actionId: 'widgets.catalog.list';
-        boundSession?: {
-            serverId: string;
-            sessionId: string;
-        } | undefined;
-    } | {
-        actionId: 'widgets.instance.list';
-    } | {
-        instance: {
-            v: 1;
-            id: string;
-            definition: {
-                kind: 'installed';
-                surface: {
-                    pluginId: string;
-                    localId: string;
-                };
-            } | {
-                kind: 'builtin';
-                id: string;
-            } | {
-                kind: 'artifact';
-                artifactId: string;
-            } | {
-                kind: 'inline';
-                definition: {
-                    provenance: {
-                        source: {
-                            kind: 'authored';
-                        } | {
-                            kind: 'session';
-                            serverId: string;
-                            sessionId: string;
-                            itemId: string;
-                        };
-                        authorAccountId?: string | undefined;
-                    };
-                    sizeDeclaration: {
-                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                    };
-                    name: string;
-                    body: {
-                        kind: 'declarative';
-                        document: Readonly<{
-                            version: 1;
-                            root: PluginDeclarativeNodeV2;
-                        }>;
-                    } | {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    };
-                    inputs: {
-                        fields: readonly {
-                            path: string;
-                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                            title: string;
-                            inputType?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            required?: boolean | undefined;
-                            requireExplicitSelection?: boolean | undefined;
-                            listSeparator?: 'comma' | 'newline' | undefined;
-                            maxSelections?: number | undefined;
-                            visibleWhen?: InputPredicate | undefined;
-                            requiredWhen?: InputPredicate | undefined;
-                            disabledWhen?: InputPredicate | undefined;
-                            optionsSourceId?: string | undefined;
-                            connectedAccountOptions?: true | undefined;
-                            resolvedEmptyConnectedAccountOptions?: true | undefined;
-                            description?: string | undefined;
-                            placeholder?: string | undefined;
-                            options?: readonly {
-                                value: JsonValue;
-                                label: string;
-                                description?: string | undefined;
-                                disabled?: boolean | undefined;
-                            }[] | undefined;
-                        }[];
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        submitLabel?: string | undefined;
-                    };
-                    inputSchema: PluginJsonSchemaV2;
-                    v: 1;
-                    id: string;
-                    description?: string | undefined;
-                    sessionInputPath?: string | undefined;
-                    connectedAccountPurposeBindings?: {
-                        path: string;
-                        purpose: string;
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        nativeServicePath?: string | undefined;
-                    }[] | undefined;
-                };
-            };
-            bindings: Record<string, {
-                kind: 'value';
-                value: string | number | boolean | readonly JsonValue[] | {
-                    readonly [key: string]: JsonValue;
-                } | null;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }>;
-            displayName?: string | undefined;
-        };
-        actionId: 'widgets.instance.add';
-        toIndex?: number | undefined;
-        size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-    } | {
-        actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
-        instanceId: string;
-    } | {
-        actionId: 'widgets.instance.move';
-        instanceId: string;
-        toIndex: number;
-    } | {
-        displayName: string | null;
-        actionId: 'widgets.instance.rename';
-        instanceId: string;
-    } | {
-        size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-        actionId: 'widgets.instance.size.set';
-        instanceId: string;
-    } | {
-        frameStyle: 'plain' | 'card' | null;
-        actionId: 'widgets.instance.frame.set';
-        instanceId: string;
-    } | {
-        bindings: Record<string, {
-            kind: 'value';
-            value: string | number | boolean | readonly JsonValue[] | {
-                readonly [key: string]: JsonValue;
-            } | null;
-        } | {
-            kind: 'context';
-            slot: string;
-        } | {
-            kind: 'viewer';
-            purpose: string;
-        }>;
-        actionId: 'widgets.instance.inputs.validate';
-        instanceId: string;
-    } | {
-        bindings: Record<string, {
-            kind: 'value';
-            value: string | number | boolean | readonly JsonValue[] | {
-                readonly [key: string]: JsonValue;
-            } | null;
-        } | {
-            kind: 'context';
-            slot: string;
-        } | {
-            kind: 'viewer';
-            purpose: string;
-        }>;
-        actionId: 'widgets.instance.inputs.set';
-        instanceId: string;
-    };
-    context?: Record<string, string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null> | undefined;
-};
-export type PluginUiWidgetAreaResultV1 = {
-    ok: false;
-    errorCode: string;
-    error: string;
-    details?: unknown;
-} | {
-    ok: true;
-    result: {
-        kind: 'approval_request_created';
-        artifactId: string;
-        actionId: string;
-    } | {
-        status: 'ready';
-        input: Record<string, string | number | boolean | readonly JsonValue[] | {
-            readonly [key: string]: JsonValue;
-        } | null>;
-    } | {
-        status: 'unavailable' | 'denied' | 'selection_required' | 'invalid';
-        fields: {
-            path: string;
-            status: 'unavailable' | 'denied' | 'selection_required' | 'invalid';
-            reasonCode: string;
-        }[];
-    } | {
-        surface: {
-            serverId: string;
-            accountId: string;
-            owner: {
-                kind: 'home';
-            } | {
-                kind: 'sessionBoard';
-                sessionId: string;
-            } | {
-                kind: 'companion';
-                sessionId: string;
-            } | {
-                kind: 'workBoard';
-                boardId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'pluginArea';
-                pluginId: string;
-                pageId: string;
-                area: string;
-            };
-        };
-        instances: {
-            instance: {
-                v: 1;
-                id: string;
-                definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'builtin';
-                    id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
-                } | {
-                    kind: 'inline';
-                    definition: {
-                        provenance: {
-                            source: {
-                                kind: 'authored';
-                            } | {
-                                kind: 'session';
-                                serverId: string;
-                                sessionId: string;
-                                itemId: string;
-                            };
-                            authorAccountId?: string | undefined;
-                        };
-                        sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                        };
-                        name: string;
-                        body: {
-                            kind: 'declarative';
-                            document: Readonly<{
-                                version: 1;
-                                root: PluginDeclarativeNodeV2;
-                            }>;
-                        } | {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                        };
-                        inputs: {
-                            fields: readonly {
-                                path: string;
-                                widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                required?: boolean | undefined;
-                                requireExplicitSelection?: boolean | undefined;
-                                listSeparator?: 'comma' | 'newline' | undefined;
-                                maxSelections?: number | undefined;
-                                visibleWhen?: InputPredicate | undefined;
-                                requiredWhen?: InputPredicate | undefined;
-                                disabledWhen?: InputPredicate | undefined;
-                                optionsSourceId?: string | undefined;
-                                connectedAccountOptions?: true | undefined;
-                                resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                description?: string | undefined;
-                                placeholder?: string | undefined;
-                                options?: readonly {
-                                    value: JsonValue;
-                                    label: string;
-                                    description?: string | undefined;
-                                    disabled?: boolean | undefined;
-                                }[] | undefined;
-                            }[];
-                            title?: string | undefined;
-                            description?: string | undefined;
-                            submitLabel?: string | undefined;
-                        };
-                        inputSchema: PluginJsonSchemaV2;
-                        v: 1;
-                        id: string;
-                        description?: string | undefined;
-                        sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
-                            path: string;
-                            purpose: string;
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                    };
-                };
-                bindings: Record<string, {
-                    kind: 'value';
-                    value: string | number | boolean | readonly JsonValue[] | {
-                        readonly [key: string]: JsonValue;
-                    } | null;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }>;
-                displayName?: string | undefined;
-            };
-            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-            frameStyle?: 'plain' | 'card' | undefined;
-        }[];
-        canEdit: boolean;
-    } | {
-        ref: {
-            surface: {
-                serverId: string;
-                accountId: string;
-                owner: {
-                    kind: 'home';
-                } | {
-                    kind: 'sessionBoard';
-                    sessionId: string;
-                } | {
-                    kind: 'companion';
-                    sessionId: string;
-                } | {
-                    kind: 'workBoard';
-                    boardId: string;
-                } | {
-                    kind: 'project';
-                    projectId: string;
-                } | {
-                    kind: 'pluginArea';
-                    pluginId: string;
-                    pageId: string;
-                    area: string;
-                };
-            };
-            instanceId: string;
-        };
-        instance: {
-            v: 1;
-            id: string;
-            definition: {
-                kind: 'installed';
-                surface: {
-                    pluginId: string;
-                    localId: string;
-                };
-            } | {
-                kind: 'builtin';
-                id: string;
-            } | {
-                kind: 'artifact';
-                artifactId: string;
-            } | {
-                kind: 'inline';
-                definition: {
-                    provenance: {
-                        source: {
-                            kind: 'authored';
-                        } | {
-                            kind: 'session';
-                            serverId: string;
-                            sessionId: string;
-                            itemId: string;
-                        };
-                        authorAccountId?: string | undefined;
-                    };
-                    sizeDeclaration: {
-                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                    };
-                    name: string;
-                    body: {
-                        kind: 'declarative';
-                        document: Readonly<{
-                            version: 1;
-                            root: PluginDeclarativeNodeV2;
-                        }>;
-                    } | {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    };
-                    inputs: {
-                        fields: readonly {
-                            path: string;
-                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                            title: string;
-                            inputType?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            required?: boolean | undefined;
-                            requireExplicitSelection?: boolean | undefined;
-                            listSeparator?: 'comma' | 'newline' | undefined;
-                            maxSelections?: number | undefined;
-                            visibleWhen?: InputPredicate | undefined;
-                            requiredWhen?: InputPredicate | undefined;
-                            disabledWhen?: InputPredicate | undefined;
-                            optionsSourceId?: string | undefined;
-                            connectedAccountOptions?: true | undefined;
-                            resolvedEmptyConnectedAccountOptions?: true | undefined;
-                            description?: string | undefined;
-                            placeholder?: string | undefined;
-                            options?: readonly {
-                                value: JsonValue;
-                                label: string;
-                                description?: string | undefined;
-                                disabled?: boolean | undefined;
-                            }[] | undefined;
-                        }[];
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        submitLabel?: string | undefined;
-                    };
-                    inputSchema: PluginJsonSchemaV2;
-                    v: 1;
-                    id: string;
-                    description?: string | undefined;
-                    sessionInputPath?: string | undefined;
-                    connectedAccountPurposeBindings?: {
-                        path: string;
-                        purpose: string;
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        nativeServicePath?: string | undefined;
-                    }[] | undefined;
-                };
-            };
-            bindings: Record<string, {
-                kind: 'value';
-                value: string | number | boolean | readonly JsonValue[] | {
-                    readonly [key: string]: JsonValue;
-                } | null;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }>;
-            displayName?: string | undefined;
-        } | null;
-    } | {
-        surface: {
-            serverId: string;
-            accountId: string;
-            owner: {
-                kind: 'home';
-            } | {
-                kind: 'sessionBoard';
-                sessionId: string;
-            } | {
-                kind: 'companion';
-                sessionId: string;
-            } | {
-                kind: 'workBoard';
-                boardId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'pluginArea';
-                pluginId: string;
-                pageId: string;
-                area: string;
-            };
-        };
-        entries: {
-            sizeDeclaration: {
-                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-            };
-            presentation: {
-                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-            };
-            definition: {
-                kind: 'installed';
-                surface: {
-                    pluginId: string;
-                    localId: string;
-                };
-            } | {
-                kind: 'builtin';
-                id: string;
-            } | {
-                kind: 'artifact';
-                artifactId: string;
-            } | {
-                kind: 'inline';
-                definition: {
-                    provenance: {
-                        source: {
-                            kind: 'authored';
-                        } | {
-                            kind: 'session';
-                            serverId: string;
-                            sessionId: string;
-                            itemId: string;
-                        };
-                        authorAccountId?: string | undefined;
-                    };
-                    sizeDeclaration: {
-                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                    };
-                    name: string;
-                    body: {
-                        kind: 'declarative';
-                        document: Readonly<{
-                            version: 1;
-                            root: PluginDeclarativeNodeV2;
-                        }>;
-                    } | {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    };
-                    inputs: {
-                        fields: readonly {
-                            path: string;
-                            widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                            title: string;
-                            inputType?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            required?: boolean | undefined;
-                            requireExplicitSelection?: boolean | undefined;
-                            listSeparator?: 'comma' | 'newline' | undefined;
-                            maxSelections?: number | undefined;
-                            visibleWhen?: InputPredicate | undefined;
-                            requiredWhen?: InputPredicate | undefined;
-                            disabledWhen?: InputPredicate | undefined;
-                            optionsSourceId?: string | undefined;
-                            connectedAccountOptions?: true | undefined;
-                            resolvedEmptyConnectedAccountOptions?: true | undefined;
-                            description?: string | undefined;
-                            placeholder?: string | undefined;
-                            options?: readonly {
-                                value: JsonValue;
-                                label: string;
-                                description?: string | undefined;
-                                disabled?: boolean | undefined;
-                            }[] | undefined;
-                        }[];
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        submitLabel?: string | undefined;
-                    };
-                    inputSchema: PluginJsonSchemaV2;
-                    v: 1;
-                    id: string;
-                    description?: string | undefined;
-                    sessionInputPath?: string | undefined;
-                    connectedAccountPurposeBindings?: {
-                        path: string;
-                        purpose: string;
-                        consumer: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        nativeServicePath?: string | undefined;
-                    }[] | undefined;
-                };
-            };
-            title: string;
-            fields: {
-                path: string;
-                widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                title: string;
-                inputType?: {
-                    pluginId: string;
-                    localId: string;
-                } | undefined;
-                required?: boolean | undefined;
-                requireExplicitSelection?: boolean | undefined;
-                listSeparator?: 'comma' | 'newline' | undefined;
-                maxSelections?: number | undefined;
-                visibleWhen?: InputPredicate | undefined;
-                requiredWhen?: InputPredicate | undefined;
-                disabledWhen?: InputPredicate | undefined;
-                optionsSourceId?: string | undefined;
-                connectedAccountOptions?: true | undefined;
-                resolvedEmptyConnectedAccountOptions?: true | undefined;
-                description?: string | undefined;
-                placeholder?: string | undefined;
-                options?: readonly {
-                    value: JsonValue;
-                    label: string;
-                    description?: string | undefined;
-                    disabled?: boolean | undefined;
-                }[] | undefined;
-            }[];
-            availability: 'unavailable' | 'denied' | 'available';
-            instanceCount: number;
-        }[];
-        presentation: {
-            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-            defaultSize?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-        };
-    } | {
-        ref: {
-            surface: {
-                serverId: string;
-                accountId: string;
-                owner: {
-                    kind: 'home';
-                } | {
-                    kind: 'sessionBoard';
-                    sessionId: string;
-                } | {
-                    kind: 'companion';
-                    sessionId: string;
-                } | {
-                    kind: 'workBoard';
-                    boardId: string;
-                } | {
-                    kind: 'project';
-                    projectId: string;
-                } | {
-                    kind: 'pluginArea';
-                    pluginId: string;
-                    pageId: string;
-                    area: string;
-                };
-            };
-            instanceId: string;
-        };
-        bindings: Record<string, {
-            kind: 'value';
-            value: string | number | boolean | readonly JsonValue[] | {
-                readonly [key: string]: JsonValue;
-            } | null;
-        } | {
-            kind: 'context';
-            slot: string;
-        } | {
-            kind: 'viewer';
-            purpose: string;
-        }>;
-    } | {
-        ref: {
-            surface: {
-                serverId: string;
-                accountId: string;
-                owner: {
-                    kind: 'home';
-                } | {
-                    kind: 'sessionBoard';
-                    sessionId: string;
-                } | {
-                    kind: 'companion';
-                    sessionId: string;
-                } | {
-                    kind: 'workBoard';
-                    boardId: string;
-                } | {
-                    kind: 'project';
-                    projectId: string;
-                } | {
-                    kind: 'pluginArea';
-                    pluginId: string;
-                    pageId: string;
-                    area: string;
-                };
-            };
-            instanceId: string;
-        };
-        status: 'refreshed';
-    };
-};
-export type PluginUiWidgetAreaOperationV1 = {
-    actionId: 'widgets.catalog.list';
-    boundSession?: {
-        serverId: string;
-        sessionId: string;
-    } | undefined;
-} | {
-    actionId: 'widgets.instance.list';
-} | {
-    instance: {
-        v: 1;
-        id: string;
-        definition: {
-            kind: 'installed';
-            surface: {
-                pluginId: string;
-                localId: string;
-            };
-        } | {
-            kind: 'builtin';
-            id: string;
-        } | {
-            kind: 'artifact';
-            artifactId: string;
-        } | {
-            kind: 'inline';
-            definition: {
-                provenance: {
-                    source: {
-                        kind: 'authored';
-                    } | {
-                        kind: 'session';
-                        serverId: string;
-                        sessionId: string;
-                        itemId: string;
-                    };
-                    authorAccountId?: string | undefined;
-                };
-                sizeDeclaration: {
-                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                };
-                name: string;
-                body: {
-                    kind: 'declarative';
-                    document: Readonly<{
-                        version: 1;
-                        root: PluginDeclarativeNodeV2;
-                    }>;
-                } | {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                };
-                inputs: {
-                    fields: readonly {
-                        path: string;
-                        widget: 'number' | 'boolean' | 'integer' | 'url' | 'text' | 'secret' | 'textarea' | 'text_list' | 'select' | 'multiselect' | 'json';
-                        title: string;
-                        inputType?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        required?: boolean | undefined;
-                        requireExplicitSelection?: boolean | undefined;
-                        listSeparator?: 'comma' | 'newline' | undefined;
-                        maxSelections?: number | undefined;
-                        visibleWhen?: InputPredicate | undefined;
-                        requiredWhen?: InputPredicate | undefined;
-                        disabledWhen?: InputPredicate | undefined;
-                        optionsSourceId?: string | undefined;
-                        connectedAccountOptions?: true | undefined;
-                        resolvedEmptyConnectedAccountOptions?: true | undefined;
-                        description?: string | undefined;
-                        placeholder?: string | undefined;
-                        options?: readonly {
-                            value: JsonValue;
-                            label: string;
-                            description?: string | undefined;
-                            disabled?: boolean | undefined;
-                        }[] | undefined;
-                    }[];
-                    title?: string | undefined;
-                    description?: string | undefined;
-                    submitLabel?: string | undefined;
-                };
-                inputSchema: PluginJsonSchemaV2;
-                v: 1;
-                id: string;
-                description?: string | undefined;
-                sessionInputPath?: string | undefined;
-                connectedAccountPurposeBindings?: {
-                    path: string;
-                    purpose: string;
-                    consumer: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    nativeServicePath?: string | undefined;
-                }[] | undefined;
-            };
-        };
-        bindings: Record<string, {
-            kind: 'value';
-            value: string | number | boolean | readonly JsonValue[] | {
-                readonly [key: string]: JsonValue;
-            } | null;
-        } | {
-            kind: 'context';
-            slot: string;
-        } | {
-            kind: 'viewer';
-            purpose: string;
-        }>;
-        displayName?: string | undefined;
-    };
-    actionId: 'widgets.instance.add';
-    toIndex?: number | undefined;
-    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-} | {
-    actionId: 'widgets.instance.remove' | 'widgets.instance.inputs.get' | 'widgets.instance.inputs.reset' | 'widgets.instance.refresh';
-    instanceId: string;
-} | {
-    actionId: 'widgets.instance.move';
-    instanceId: string;
-    toIndex: number;
-} | {
-    displayName: string | null;
-    actionId: 'widgets.instance.rename';
-    instanceId: string;
-} | {
-    size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-    actionId: 'widgets.instance.size.set';
-    instanceId: string;
-} | {
-    frameStyle: 'plain' | 'card' | null;
-    actionId: 'widgets.instance.frame.set';
-    instanceId: string;
-} | {
-    bindings: Record<string, {
-        kind: 'value';
-        value: string | number | boolean | readonly JsonValue[] | {
-            readonly [key: string]: JsonValue;
-        } | null;
-    } | {
-        kind: 'context';
-        slot: string;
-    } | {
-        kind: 'viewer';
-        purpose: string;
-    }>;
-    actionId: 'widgets.instance.inputs.validate';
-    instanceId: string;
-} | {
-    bindings: Record<string, {
-        kind: 'value';
-        value: string | number | boolean | readonly JsonValue[] | {
-            readonly [key: string]: JsonValue;
-        } | null;
-    } | {
-        kind: 'context';
-        slot: string;
-    } | {
-        kind: 'viewer';
-        purpose: string;
-    }>;
-    actionId: 'widgets.instance.inputs.set';
-    instanceId: string;
-};
-export type SessionCompanionPresentationItem = {
-    kind: 'builtin';
-    id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
-    frameStyle?: 'plain' | 'card' | undefined;
-} | {
-    kind: 'widget';
-    widgetId: string;
-    frameStyle?: 'plain' | 'card' | undefined;
-} | {
-    kind: 'pane';
-    paneId: string;
-    frameStyle?: 'plain' | 'card' | undefined;
-};
-export type CurrentSessionPresentationIntentV1 = {
-    kind: 'chat.return';
-} | {
-    kind: 'board.open';
-    mode: 'beside_chat' | 'focus';
-} | {
-    kind: 'board.view.select';
-    viewId: string;
-} | {
-    kind: 'board.item.reveal';
-    widgetId: string;
-    viewId?: string | undefined;
-} | {
-    kind: 'companion.show';
-} | {
-    kind: 'companion.hide';
-} | {
-    kind: 'companion.edge.set';
-    edge: 'leading' | 'trailing';
-} | {
-    kind: 'companion.collapse.set';
-    collapsed: boolean;
-} | {
-    kind: 'companion.density.set';
-    density: 'compact' | 'comfortable';
-} | {
-    kind: 'companion.open_full';
-} | {
-    kind: 'companion.item.add';
-    item: {
-        kind: 'builtin';
-        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'widget';
-        widgetId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'pane';
-        paneId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    };
-    index?: number | undefined;
-} | {
-    kind: 'companion.item.remove';
-    item: {
-        kind: 'builtin';
-        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'widget';
-        widgetId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'pane';
-        paneId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    };
-} | {
-    kind: 'companion.item.move';
-    toIndex: number;
-    item: {
-        kind: 'builtin';
-        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'widget';
-        widgetId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'pane';
-        paneId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    };
-} | {
-    kind: 'companion.item.frameStyle.set';
-    frameStyle: 'plain' | 'card' | null;
-    item: {
-        kind: 'builtin';
-        id: 'changes' | 'session_summary' | 'agent_plan' | 'local_services';
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'widget';
-        widgetId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    } | {
-        kind: 'pane';
-        paneId: string;
-        frameStyle?: 'plain' | 'card' | undefined;
-    };
-};
-export type JSONType = string | number | boolean | JSONType[] | {
-    [key: string]: JSONType;
-} | null;
-export type SessionTerminalLayoutV1 = {
-    kind: 'leaf';
-    terminalId: string;
-} | {
-    kind: 'split';
-    id: string;
-    ratio: number;
-    first: SessionTerminalLayoutV1;
-    second: SessionTerminalLayoutV1;
-};
-export type QualifiedAudienceSelection = Readonly<{
-    serverId: string;
-}> & SessionAudienceSelectionV1;
-export type SessionAudienceSelectionV1 = Readonly<{
-    kind: 'outside_teams';
-}> | Readonly<{
-    kind: 'team';
-    teamId: string;
-}> | Readonly<{
-    kind: 'group';
-    teamId: string;
-    groupId: string;
-}>;
 export type PluginUiToneV1 = 'success' | 'danger' | 'info' | 'warning' | 'neutral' | 'accent';
-export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting';
+export type PluginUiIconTokenV1 = 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board';
 export type PluginDeclarativeControlV2 = {
     kind: 'text';
     settingId: string;
@@ -7948,7 +6710,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         };
@@ -7980,7 +6742,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation?: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             } | undefined;
         };
@@ -8051,7 +6813,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -8083,7 +6845,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -8110,7 +6872,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -8128,7 +6890,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceReferenceV1 = {
     point: {
@@ -8160,7 +6922,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -8178,7 +6940,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -8195,7 +6957,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+            icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -8213,7 +6975,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+            icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -8245,7 +7007,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -8263,7 +7025,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -8288,7 +7050,7 @@ export type PluginDeclarativeItemNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -8307,7 +7069,7 @@ export type PluginDeclarativeStateNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceNodeV2 = {
     kind: 'targetedSurface';
@@ -8338,7 +7100,7 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     } | undefined;
 };
 export type PluginDeclarativeMetadataNodeV2 = {
@@ -8422,7 +7184,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -8454,7 +7216,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+                        icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -8554,7 +7316,7 @@ export type ComposerContentMimeTypeV1 = 'image/png' | 'image/jpeg' | 'image/webp
 export type ComposerAttachmentAuthorPresentationV1 = {
     readonly label: string;
     readonly description?: string | undefined;
-    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | undefined;
+    readonly icon?: 'file' | 'external' | 'search' | 'error' | 'check' | 'settings' | 'action' | 'terminal' | 'review' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | undefined;
     readonly tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
 };
 export type PluginLocalizedStringV2 = string | {

@@ -11,6 +11,13 @@ import {
 } from './actionIds.js';
 
 describe('ActionIdSchema', () => {
+  it('admits the managed Machine creation and recovery family through the host Action vocabulary', () => {
+    for (const actionId of ['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
+      'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.inspect',
+      'machines.managed.bootstrap.retry', 'machines.managed.cancel']) {
+      expect(ActionIdSchema.safeParse(actionId).success).toBe(true);
+    }
+  });
   it('publishes controller transitions through the existing browser control Action family', () => {
     for (const id of ['browser.control.takeControl', 'browser.control.handBack']) {
       expect(ActionIdSchema.safeParse(id).success).toBe(true);
@@ -80,7 +87,10 @@ describe('ActionIdSchema', () => {
    */
   it('registers the Account Security family and the single API-token create intent', () => {
     expect(ACTION_ID_FAMILIES_V1.account_security).toEqual([
+      'account.encryption.historicalKey.forget',
+      'account.encryption.automationTemplates.recover',
       'account.security.get',
+      'account.security.terminalPresentUser.set',
       'account.password.enroll',
       'account.password.change',
       'account.password.remove',
@@ -89,6 +99,7 @@ describe('ActionIdSchema', () => {
     expect(ACTION_ID_FAMILIES_V1.account_api_tokens).toEqual([
       'account.apiTokens.create',
       'account.apiTokens.list',
+      'account.apiTokens.update',
       'account.apiTokens.revoke',
       'account.apiTokens.revokeAll',
     ]);

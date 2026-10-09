@@ -81,6 +81,48 @@ export type ComputerControlActionInputById = {
         } | undefined;
         sourceId?: string | undefined;
     };
+    readonly "computer.secret.fill": {
+        serverId: string;
+        sessionId: string;
+        machineId: string;
+        purpose: string;
+        sourceId: string;
+        target: {
+            kind: 'window';
+            displayId: string;
+            pid: number;
+            windowId: number;
+        } | {
+            kind: 'display';
+            displayId: string;
+        };
+        captureId: string;
+        geometry: {
+            captureWidth: number;
+            captureHeight: number;
+            nativeWidth: number;
+            nativeHeight: number;
+            originX: number;
+            originY: number;
+            scaleX: number;
+            scaleY: number;
+            crop: {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        field: {
+            fieldId: string;
+            focusId: string;
+        };
+        submit?: {
+            controlId: string;
+            label: string;
+            consequence: string;
+        } | undefined;
+    };
     readonly "computer.control.status": {
         machineId: string;
         target?: {
@@ -484,6 +526,29 @@ export type ComputerControlActionResultById = {
         };
         sourceId: string;
         targetLabel?: string | undefined;
+    };
+    readonly "computer.secret.fill": {
+        status: 'filled';
+        code: 'filled';
+        submit?: {
+            status: 'submitted';
+            code: 'submitted';
+        } | {
+            status: 'refused';
+            code: 'submit_refused';
+        } | {
+            status: 'unknown';
+            code: 'submit_unknown';
+        } | undefined;
+    } | {
+        status: 'refused';
+        code: 'saved_secret_missing' | 'saved_secret_unavailable' | 'saved_secret_forbidden' | 'saved_secret_repair_required' | 'saved_secret_deleted' | 'saved_secret_mode_incompatible' | 'saved_secret_corrupt' | 'saved_secret_changed' | 'target_changed' | 'field_verification_unsupported' | 'observation_unavailable' | 'approval_required' | 'approval_changed' | 'target_unavailable';
+    } | {
+        status: 'canceled';
+        code: 'canceled';
+    } | {
+        status: 'unknown';
+        code: 'delivery_unknown';
     };
     readonly "computer.control.status": {
         controller: 'agent' | 'human' | 'idle';

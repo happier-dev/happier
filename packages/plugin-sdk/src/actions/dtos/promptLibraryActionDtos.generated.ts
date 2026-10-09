@@ -23,10 +23,13 @@ export type PromptLibraryActionInputById = {
         includeBundles?: false | undefined;
     };
     readonly "prompt_doc.update": {
-        [x: string]: unknown;
         artifactId: string;
         title: string;
         markdown: string;
+        expectedRevision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
         folderId?: string | null | undefined;
         tags?: string[] | undefined;
     };
@@ -77,6 +80,10 @@ export type PromptLibraryActionResultById = {
         artifactId: string;
         title: string;
         markdown: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
     };
     readonly "prompt_doc.create": {
         ok: true;
@@ -97,9 +104,14 @@ export type PromptLibraryActionResultById = {
             updatedAtMs: number;
         }[];
     };
-    readonly "prompt_doc.update": string | number | boolean | readonly JsonValue[] | {
-        readonly [key: string]: JsonValue;
-    } | null;
+    readonly "prompt_doc.update": {
+        ok: true;
+        artifactId: string;
+        revision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
+    };
     readonly "prompt_bundle.update": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;

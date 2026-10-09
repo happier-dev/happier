@@ -1,5 +1,6 @@
 export * from './invocationAuthority.js';
 export * from './clientDispatchV1.js';
+export { isSessionStateFieldActionId } from './sessionStateFieldActions.js';
 export * from './anchoredListOrderV1.js';
 export { ComposerTransactionApplyInputV1Schema, ComposerAttachmentsPickInputV1Schema, ComposerAttachmentsPickResultV1Schema,
   RepositoryUploadPickInputV1Schema, RepositoryUploadPickResultV1Schema,
@@ -7,13 +8,18 @@ export { ComposerTransactionApplyInputV1Schema, ComposerAttachmentsPickInputV1Sc
   type RepositoryUploadPickInputV1, type RepositoryUploadPickResultV1 } from './composerIngressAction.js';
 export { WorkflowConversationBindInputV1Schema, WorkflowConversationBindResultV1Schema,
   type WorkflowConversationBindInputV1, type WorkflowConversationBindResultV1 } from './workflowAuthoringAction.js';
-export { SessionOrganizationMoveInputSchema, SessionOrganizationMoveOutputSchema,
-  type SessionOrganizationMoveInput, type SessionOrganizationMoveOutput } from './sessionOrganizationMoveAction.js';
+export { SessionOrganizationMoveInputSchema, SessionOrganizationMoveOutputSchema, SessionOrganizationPinSetInputSchema,
+  type SessionOrganizationMoveInput, type SessionOrganizationMoveOutput, type SessionOrganizationPinSetInput } from './sessionOrganizationMoveAction.js';
 export { UiFindInputSchema } from './findActionSpecs.js';
 export { WORKSPACE_ACTION_IDS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, isWorkspaceActionId, type WorkspaceActionId, type WorkspaceTabsListOutput, type WorkspaceClosedTabsListOutput } from './workspaceActionFamily.js';
 export { SESSION_CANVAS_ACTION_IDS, SESSION_CANVAS_ACTION_INPUT_SCHEMAS, SESSION_CANVAS_ACTION_OUTPUT_SCHEMAS, isSessionCanvasActionId, type SessionCanvasActionId, type SessionCanvasActionOutcome } from './sessionCanvasActionFamily.js';
 export * from './scopeActionFamily.js';
 export * from './specs/homeHub.js';
+export * from './specs/projectWorkers.js';
+export * from './projectDefinitionActionFamily.js';
+export * from './specs/projectServicePlacement.js';
+export * from './specs/actionOperations.js';
+export * from './executor/actionOperationActions.js';
 export * from '../connect/configurationActionsV1.js';
 export * from '../connect/executeConfigurationActionV1.js';
 export * from './settingsDeclarationActionFamily.js';
@@ -29,11 +35,15 @@ export {
   ActionCompletionContractV1Schema, ActionCompletionStateV1Schema,
   freezeActionCompletionContractV1, prepareActionCompletionV1, resumeActionCompletionV1,
   readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1,
+  projectCommandActionCompletionV1, createProjectCommandActionCompletionV1, ProjectCommandActionOutputV1Schema,
   type ActionCompletionDeclaration, type ActionCompletionContractV1, type ActionCompletionStateV1,
   type ActionCompletionRun, type ActionCompletionLaunchFailure, type ActionCompletionResult,
+  type ActionCompletionOperation, type ActionCompletionContextV1,
   type ExecutionRunTerminalObservation, type ReviewRunMaterialization,
 } from './actionCompletion.js';
 export { createWorkflowActionExecutor, normalizeWorkflowActionThrownError, type WorkflowRunActionOwner } from './executor/workflowAccountActions.js';
+export { bindMachineAccessActionHttpRequestV1 } from './machineAccessActionFamily.js';
+export { MACHINE_ACCESS_ACTION_IDS, MachineAccessActionIdSchema, machineAccessTrustedOsDisclosure, type MachineAccessActionId } from './specs/machineAccess.js';
 export { createWorkflowTriggerActions, removeWorkflowTriggersForDefinition, type WorkflowTriggerActions, type WorkflowTriggerActionsDependencies, type WorkflowTriggerAutomationOperations } from './executor/workflowTriggerActions.js';
 export { createAccountWorkflowTriggerActions, type WorkflowTriggerAccountHostParams } from './executor/workflowTriggerAccountHost.js';
 export { assertControllerDominates, createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps, type WorkflowAccountRunEncryption } from './executor/workflowRunActions.js';
@@ -53,6 +63,16 @@ export {
 } from './externalActionExecutionAuthorization.js';
 export {
   ExternalActionExecutionAuthorizationBindingV1Schema,
+  ExternalActionAccountAuthenticationV1Schema,
+  ExternalActionAccountServerPrincipalV1Schema,
+  ExternalActionSessionAccountServerPrincipalV1Schema,
+  ExternalActionApiTokenServerPrincipalV1Schema,
+  ExternalActionManagedAdmissionV1Schema,
+  ExternalActionManagedAdmissionReceiptV1Schema,
+  ExternalActionManagedContinuationV1Schema,
+  type ExternalActionManagedContinuationV1,
+  type ExternalActionManagedAdmissionReceiptV1,
+  type ExternalActionManagedAdmissionV1,
   ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionMachineRpcExecutionV1Schema,
   type ExternalActionMachineRpcExecutionV1,
@@ -70,6 +90,8 @@ export {
   type ExternalActionExecutionAuthorizationRequestV1,
   type ExternalActionExecutionAuthorizationBindingV1,
   type ExternalActionExecutionAuthorizationV1,
+  type ExternalActionRequesterAccountProjectionV1,
+  type ExternalActionRequesterHttpProjectionV1,
 } from './externalActionApi.js';
 export {
   ACTION_ID_FAMILIES_V1,
@@ -151,6 +173,7 @@ export {
   createExternalActionDaemonDispatchResponse,
   parseExternalActionDaemonDispatchResult,
   isExternalActionRequestWithinLimit,
+  isExternalActionRequestVersionAllowedForAccountModeV1,
   projectExternalActionHttpError,
   readExternalActionProtectedRequestId,
   type ExternalActionRequestEnvelope,
@@ -589,3 +612,5 @@ export * from './sessionTerminalActionFamily.js';
 export * from '../todos/todoSessionLinkV1.js';
 export { PendingReorderInputV1Schema, TodoReorderInputV1Schema, ListReorderOutputV1Schema,
   type PendingReorderInputV1, type TodoReorderInputV1, type ListReorderOutputV1 } from './listReorderAction.js';
+export { MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS, MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS, isMachineTerminalActionId } from './specs/machineTerminal.js';
+export type { MachineTerminalActionId, MachineTerminalActionInput } from './specs/machineTerminal.js';

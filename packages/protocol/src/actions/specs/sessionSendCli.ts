@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
@@ -27,7 +28,7 @@ const SESSION_SEND_MAX_TIMEOUT_SECONDS = 3600;
  * its canonical name, and the canonical schema still validates what the binder
  * below emits.
  */
-export const SessionSendCliInputSchema = z.object({
+export const SessionSendCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   /**
    * Authored content. It is deliberately not trimmed: the caller's exact argv
@@ -63,7 +64,7 @@ export const SessionSendCliInputSchema = z.object({
       message: '--provider-connection requires --model <model-id>',
     });
   }
-});
+}));
 
 export type SessionSendCliInput = z.infer<typeof SessionSendCliInputSchema>;
 

@@ -10,6 +10,20 @@ import {
 } from './actionInputJsonSchema.js';
 
 describe('actionInputJsonSchema', () => {
+  it('projects genuine Mini lazy children without losing their input constraints', () => {
+    const schema = z.object({
+      name: m.lazy(() => m.string().check(m.minLength(2))),
+    }).strict();
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(schema, { target })).toMatchObject({
+        type: 'object',
+        additionalProperties: false,
+        required: ['name'],
+        properties: { name: { type: 'string', minLength: 2 } },
+      });
+    }
+  });
+
   it('preserves the canonical JSON Schema constraints and descriptions that Action inputs advertise', () => {
     const schema = z.object({
       name: z.string().min(2).max(12).regex(/^[a-z]+$/).describe('Lowercase action name'),

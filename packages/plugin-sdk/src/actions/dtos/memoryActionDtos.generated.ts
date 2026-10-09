@@ -20,6 +20,7 @@ export type MemoryActionInputById = {
                 sessionId: string;
             };
             mode: 'hints' | 'deep' | 'auto';
+            corpora?: ('sessions' | 'documents')[] | undefined;
             eligibleSessionIds?: string[] | undefined;
             maxResults?: number | undefined;
             minScore?: number | undefined;
@@ -37,13 +38,88 @@ export type MemoryActionInputById = {
         machineId: string;
         sessionId?: string | undefined;
     };
+    readonly "memory.remember": {
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        text: string;
+        topic?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        sessionRef: {
+            serverId: string;
+            sessionId: string;
+        };
+        expectedMetadataRevision: number;
+        text: string;
+        expiresAtMs?: number | undefined;
+        topic?: string | undefined;
+        reviewedTarget?: {
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId?: string | undefined;
+            };
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | null | undefined;
+    };
+    readonly "memory.update": {
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        factId: string;
+        text: string;
+        topic?: string | undefined;
+        expiresAtMs?: number | null | undefined;
+    };
+    readonly "memory.forget": {
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        factId: string;
+        topic?: string | undefined;
+    };
+    readonly "memory.read": {
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        topic?: string | undefined;
+    };
+    readonly "memory.list": {
+        serverId?: string | undefined;
+        cursor?: string | undefined;
+        limit?: number | undefined;
+    };
 };
 export type MemoryActionResultById = {
     readonly "memory.search": {
         [x: string]: unknown;
         v: 1;
         ok: true;
-        hits: {
+        hits: ({
             [x: string]: unknown;
             sessionId: string;
             seqFrom: number;
@@ -52,7 +128,29 @@ export type MemoryActionResultById = {
             createdAtToMs: number;
             summary: string;
             score: number;
-        }[];
+            type?: undefined;
+        } | {
+            type: 'artifact';
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId: string;
+            };
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            location: 'facts' | 'archive' | 'document' | {
+                type: 'topic';
+                title: string;
+            };
+            summary: string;
+            score: number;
+            factId?: string | undefined;
+        })[];
+        documents?: {
+            state: 'ready' | 'pending' | 'unavailable';
+        } | undefined;
     } | {
         [x: string]: unknown;
         v: 1;
@@ -82,5 +180,105 @@ export type MemoryActionResultById = {
     readonly "memory.ensure_up_to_date": {
         [x: string]: unknown;
         ok: boolean;
+    };
+    readonly "memory.remember": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+    };
+    readonly "memory.update": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+    };
+    readonly "memory.forget": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+    };
+    readonly "memory.read": {
+        body: {
+            v: 1;
+            index: {
+                id: string;
+                text: string;
+                createdAtMs: number;
+                sourceSessionRef: {
+                    serverId: string;
+                    sessionId: string;
+                } | null;
+                expiresAtMs?: number | undefined;
+                supersedes?: string | undefined;
+            }[];
+            topics: {
+                title: string;
+                summary: string;
+            }[];
+        };
+        ok: true;
+        artifactId: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        header: {
+            v: 1;
+            kind: 'memory_doc.v1';
+            title: string;
+        };
+    } | {
+        topic: {
+            title: string;
+            summary: string;
+            facts: {
+                id: string;
+                text: string;
+                createdAtMs: number;
+                sourceSessionRef: {
+                    serverId: string;
+                    sessionId: string;
+                } | null;
+                expiresAtMs?: number | undefined;
+                supersedes?: string | undefined;
+            }[];
+        };
+        ok: true;
+        artifactId: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        header: {
+            v: 1;
+            kind: 'memory_doc.v1';
+            title: string;
+        };
+    };
+    readonly "memory.list": {
+        items: {
+            artifactId: string;
+            title: string;
+            updatedAtMs: number;
+        }[];
+        coverage: 'unavailable' | 'complete' | 'partial';
+        nextCursor?: string | undefined;
     };
 };

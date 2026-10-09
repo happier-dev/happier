@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { HomeHubLayoutV1Schema, HomeHubLayoutIntentSchema } from '../../home/homeHubLayoutV1.js';
 import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
@@ -11,16 +12,16 @@ const sectionId = z.string().min(1);
 export { HomeHubLayoutIntentSchema };
 export type { HomeHubLayoutIntent } from '../../home/homeHubLayoutV1.js';
 
-export const HomeHubLayoutGetInputSchema = z.object({}).strict();
-export const HomeHubLayoutUpdateInputSchema = z.object({ intent: HomeHubLayoutIntentSchema }).strict();
-export const HomeReachNudgeDismissInputSchema = z.object({ homeServerId: z.string().trim().min(1) }).strict();
-export const HomeReachNudgeDismissResultSchema = z.object({ homeIdentityId: z.string().min(1), dismissed: z.literal(true) }).strict();
-export const HomeHubLayoutResultSchema = z.object({
+export const HomeHubLayoutGetInputSchema = lazyZodSchema(() => z.object({}).strict());
+export const HomeHubLayoutUpdateInputSchema = lazyZodSchema(() => z.object({ intent: HomeHubLayoutIntentSchema }).strict());
+export const HomeReachNudgeDismissInputSchema = lazyZodSchema(() => z.object({ homeServerId: z.string().trim().min(1) }).strict());
+export const HomeReachNudgeDismissResultSchema = lazyZodSchema(() => z.object({ homeIdentityId: z.string().min(1), dismissed: z.literal(true) }).strict());
+export const HomeHubLayoutResultSchema = lazyZodSchema(() => z.object({
   layout: HomeHubLayoutV1Schema,
   sections: z.array(z.object({ id: sectionId, kind: z.enum(['builtin', 'widget']), hidden: z.boolean(), hideable: z.boolean(), frameStyle: z.enum(['card', 'plain']).optional(), instance: WidgetInstanceV1Schema.optional(), size: WidgetSizeV1Schema.optional() }).strict()),
   availableWidgetIds: z.array(sectionId),
   hiddenSetupStepIds: z.array(sectionId),
-}).strict();
+}).strict());
 
 export const HOME_HUB_LAYOUT_ACTION_SPECS = [
   {

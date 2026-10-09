@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -77,6 +78,7 @@ export {
   ExecutionRunInputTurnV1Schema,
   ExecutionRunTurnResultV1Schema,
   ExecutionRunPublicStateSchema,
+  isExecutionRunActive,
   ExecutionRunListResponseSchema,
   ExecutionRunGetRequestSchema,
   ExecutionRunGetResponseSchema,
@@ -216,7 +218,7 @@ export {
   type ExecutionRunResultObservation,
 } from './resultContract.js';
 
-export const ExecutionRunSendRequestSchema = z.object({
+export const ExecutionRunSendRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
   localInputId: z.string().trim().min(1).optional(),
@@ -233,10 +235,10 @@ export const ExecutionRunSendRequestSchema = z.object({
       message: 'resultContract requires exact localInputId correspondence',
     });
   }
-});
+}));
 export type ExecutionRunSendRequest = z.infer<typeof ExecutionRunSendRequestSchema>;
 
-export const ExecutionRunStopRequestSchema = z.object({ runId: z.string().min(1) }).passthrough();
+export const ExecutionRunStopRequestSchema = lazyZodSchema(() => z.object({ runId: z.string().min(1) }).passthrough());
 export type ExecutionRunStopRequest = z.infer<typeof ExecutionRunStopRequestSchema>;
 
 export {
@@ -246,19 +248,19 @@ export {
   type ExecutionRunCancelTurnResponse,
 } from './cancelTurn.js';
 
-export const ExecutionRunEnsureRequestSchema = z.object({
+export const ExecutionRunEnsureRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunEnsureRequest = z.infer<typeof ExecutionRunEnsureRequestSchema>;
 
-export const ExecutionRunEnsureResponseSchema = z.union([
+export const ExecutionRunEnsureResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   z.object({ ok: z.literal(false), error: z.string().min(1), errorCode: z.string().min(1).optional() }).passthrough(),
-]);
+]));
 export type ExecutionRunEnsureResponse = z.infer<typeof ExecutionRunEnsureResponseSchema>;
 
-export const ExecutionRunEnsureOrStartRequestSchema = z.object({
+export const ExecutionRunEnsureOrStartRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1).nullable().optional(),
   start: ExecutionRunStartRequestSchema.optional(),
   resume: z.boolean().optional(),
@@ -269,37 +271,37 @@ export const ExecutionRunEnsureOrStartRequestSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'start is required when runId is missing' });
     }
   }
-});
+}));
 export type ExecutionRunEnsureOrStartRequest = z.infer<typeof ExecutionRunEnsureOrStartRequestSchema>;
 
-export const ExecutionRunEnsureOrStartResponseSchema = z.union([
+export const ExecutionRunEnsureOrStartResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), runId: z.string().min(1), created: z.boolean() }).passthrough(),
   z.object({ ok: z.literal(false), error: z.string().min(1), errorCode: z.string().min(1).optional() }).passthrough(),
-]);
+]));
 export type ExecutionRunEnsureOrStartResponse = z.infer<typeof ExecutionRunEnsureOrStartResponseSchema>;
 
-export const ExecutionRunActionRequestSchema = z.object({
+export const ExecutionRunActionRequestSchema = lazyZodSchema(() => z.object({
   runId: z.string().min(1),
   actionId: z.string().min(1),
   input: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunActionRequest = z.infer<typeof ExecutionRunActionRequestSchema>;
 
 /** Runtime admission reasons for asking a retained reviewer a follow-up question. */
-export const ReviewFollowUpFailureCodeSchema = z.enum([
+export const ReviewFollowUpFailureCodeSchema = lazyZodSchema(() => z.enum([
   'review_follow_up_not_resumable',
   'review_follow_up_ended',
   'review_follow_up_resume_unavailable',
   'execution_run_busy',
   // Older runtimes used this generic refusal for non-resumable reviews.
   'execution_run_action_not_supported',
-]);
+]));
 export type ReviewFollowUpFailureCode = z.infer<typeof ReviewFollowUpFailureCodeSchema>;
 
-export const ExecutionRunActionResponseSchema = z.object({
+export const ExecutionRunActionResponseSchema = lazyZodSchema(() => z.object({
   ok: z.boolean(),
   updatedToolResult: z.unknown().optional(),
-}).passthrough();
+}).passthrough());
 export type ExecutionRunActionResponse = z.infer<typeof ExecutionRunActionResponseSchema>;
 
 export * from './streaming.js';

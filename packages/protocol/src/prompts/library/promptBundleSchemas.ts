@@ -1,29 +1,35 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { decodeBase64 } from '../../crypto/base64.js';
 
-const PromptBundleSchemaIdV1Schema = z.enum(['skills.skill_md_v1', 'bundle.generic_v1']);
+const PromptBundleSchemaIdV1Schema = lazyZodSchema(() => z.enum(['skills.skill_md_v1', 'bundle.generic_v1']));
 export type PromptBundleSchemaIdV1 = z.infer<typeof PromptBundleSchemaIdV1Schema>;
 export { PromptBundleSchemaIdV1Schema };
 
-export const PromptBundleEntryV1Schema = z
+export const PromptBundleArtifactHeaderV1Schema = lazyZodSchema(() => z.object({
+  v: z.literal(1), kind: z.literal('prompt_bundle.v2'), title: z.string().min(1),
+  bundleSchemaId: PromptBundleSchemaIdV1Schema,
+}).passthrough());
+
+export const PromptBundleEntryV1Schema = lazyZodSchema(() => z
   .object({
     path: z.string().min(1),
     contentBase64: z.string().min(1),
     contentKind: z.enum(['utf8', 'binary']),
     unixMode: z.number().int().min(0).max(0o7777).nullable().optional(),
   })
-  .passthrough();
+  .passthrough());
 
 export type PromptBundleEntryV1 = z.infer<typeof PromptBundleEntryV1Schema>;
 
-export const PromptBundleBodyV1Schema = z
+export const PromptBundleBodyV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     entries: z.array(PromptBundleEntryV1Schema),
     createdAtMs: z.number().int().min(0),
     updatedAtMs: z.number().int().min(0),
   })
-  .passthrough();
+  .passthrough());
 
 export type PromptBundleBodyV1 = z.infer<typeof PromptBundleBodyV1Schema>;
 

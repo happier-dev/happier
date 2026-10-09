@@ -38,6 +38,39 @@ import {
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('uses the same Session memory availability for direct and discoverable writes without changing Account surfaces', () => {
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      'memory.remember': { toolExposureModes: { agent: 'direct' } },
+      'memory.update': { toolExposureModes: { agent: 'direct' } },
+      'memory.forget': { toolExposureModes: { agent: 'direct' } },
+    } });
+    for (const id of ['memory.remember', 'memory.update', 'memory.forget'] as const) {
+      const spec = getActionSpec(id);
+      expect(isActionDirectToolExposedOn(spec, 'agent', { settings, sessionMemoryEnabled: true }), id).toBe(true);
+      expect(isActionDirectToolExposedOn(spec, 'agent', { settings, sessionMemoryEnabled: false }), id).toBe(false);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent', { settings, sessionMemoryEnabled: false }), id).toBe(false);
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'agent', sessionMemoryEnabled: false }), id)
+        .toMatchObject({ available: false, reason: 'disabled_by_policy' });
+      expect(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
+      expect(isActionDiscoverableOnToolSurface(spec, 'cli'), id).toBe(true);
+    }
+    expect(isActionDiscoverableOnToolSurface(getActionSpec('memory.search'), 'agent', { sessionMemoryEnabled: false })).toBe(true);
+  });
+
+  it('directly exposes goal recovery through the canonical Agent action policy', () => {
+    for (const id of ['session.goal.get', 'session.goal.set', 'session.goal.clear'] as const) {
+      const spec = getActionSpec(id);
+      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+      expect(spec.contextualDefaults).toEqual({ sessionId: 'current_session' });
+      const settings = ActionsSettingsV1Schema.parse({
+        v: 1, actions: { [id]: { toolExposureModes: { agent: 'discoverable_only' } } },
+      });
+      expect(isActionDirectToolExposedOn(spec, 'agent', { settings })).toBe(false);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent', { settings })).toBe(true);
+    }
+    expect(getActionSpec('session.goal.clear').approval).toEqual({ result: 'required' });
+  });
+
   it('narrows unbound MCP hosts without removing the bound Agent Session presentation tool', () => {
     const spec = getActionSpec('session.presentation.apply');
     expect(isActionDirectToolExposedOn(spec, 'mcp')).toBe(true);
@@ -437,7 +470,7 @@ describe('actionToolExposure', () => {
   it('stamps action execution placement at the registry owner', () => {
     expect(getActionSpec('machines.list').executionPlacement).toBe('account');
     expect(getActionSpec('servers.list').executionPlacement).toBe('client');
-    expect(getActionSpec('projects.list').executionPlacement).toBe('client');
+    expect(getActionSpec('projects.list').executionPlacement).toBe('account');
     expect(getActionSpec('session.spawn_new').executionPlacement).toBe('machine');
     expect(getActionSpec('approval.request.decide').executionPlacement).toBe('account');
     expect(getActionSpec('session.activity.get').executionPlacement).toBe('session');

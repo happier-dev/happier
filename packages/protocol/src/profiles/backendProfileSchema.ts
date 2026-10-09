@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
@@ -16,14 +17,14 @@ export {
   type EnvVarRequirement,
 } from './environmentVariables.js';
 
-const RequiresMachineLoginSchema = z.string().min(1);
+const RequiresMachineLoginSchema = lazyZodSchema(() => z.string().min(1));
 const RequiresMachineLoginTargetKeySchema = BackendTargetKeyV2InputSchema;
 
-const ProfileCompatibilitySchema = z.record(z.string(), z.boolean()).default({});
-const ProfileCompatibilityByTargetKeySchema = z.record(BackendTargetKeyV2InputSchema, z.boolean()).default({});
-const SessionTranscriptStorageModeSchema = z.enum(['persisted', 'direct']);
+const ProfileCompatibilitySchema = lazyZodSchema(() => z.record(z.string(), z.boolean()).default({}));
+const ProfileCompatibilityByTargetKeySchema = lazyZodSchema(() => z.record(BackendTargetKeyV2InputSchema, z.boolean()).default({}));
+const SessionTranscriptStorageModeSchema = lazyZodSchema(() => z.enum(['persisted', 'direct']));
 
-export const AIBackendProfileSchema = z.object({
+export const AIBackendProfileSchema = lazyZodSchema(() => z.object({
   // Accept both UUIDs (user profiles) and simple strings (built-in profiles like 'anthropic').
   // The isBuiltIn field distinguishes profile types.
   id: z.string().min(1),
@@ -99,11 +100,11 @@ export const AIBackendProfileSchema = z.object({
   }, {
     path: ['requiresMachineLogin'],
     message: 'requiresMachineLogin may only be set when authMode=machineLogin',
-  });
+  }));
 
 export type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
 
-export const SavedSecretSchema = z.object({
+export const SavedSecretSchema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(100),
   kind: z.enum(['apiKey', 'token', 'password', 'other']).default('apiKey'),
@@ -124,7 +125,7 @@ export const SavedSecretSchema = z.object({
 }, {
   path: ['encryptedValue'],
   message: 'Secret must include a value or encrypted value',
-});
+}));
 
 export type SavedSecret = z.infer<typeof SavedSecretSchema>;
 

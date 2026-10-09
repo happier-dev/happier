@@ -8,6 +8,7 @@ import {
   HomeAccountSearchInputV1Schema,
   HomeAccountSearchResultV1Schema,
   HomeAccountTargetInputV1Schema,
+  HomeAccountDeleteInputV1Schema,
 } from '../../home/governance/accounts.js';
 import {
   HomeGovernanceEligibilityGetInputV1Schema,
@@ -195,7 +196,7 @@ export const HOME_GOVERNANCE_ACTION_SPECS = Object.freeze([
     sideEffectClass: 'danger',
     cliPath: ['home', 'accounts', 'delete'],
     path: '/v1/home/accounts/delete',
-    inputSchema: HomeAccountTargetInputV1Schema,
+    inputSchema: HomeAccountDeleteInputV1Schema,
     outputSchema: HomeAccountDeleteResultV1Schema,
     inputHints: { fields: [ACCOUNT_ID_FIELD] },
   }),

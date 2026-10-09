@@ -205,6 +205,7 @@ export type ProtocolNumberOptions = Readonly<{
   integer?: boolean;
   minimum?: number;
   maximum?: number;
+  multipleOf?: number;
 }>;
 
 export type ProtocolArrayOptions = Readonly<{
@@ -537,6 +538,10 @@ export function defineProtocolNumber(
 ): ProtocolComposableSchema<number, number> {
   const minimum = assertFiniteProtocolNumber(options.minimum, 'number minimum');
   const maximum = assertFiniteProtocolNumber(options.maximum, 'number maximum');
+  const multipleOf = assertFiniteProtocolNumber(options.multipleOf, 'number multiple');
+  if (multipleOf !== undefined && multipleOf <= 0) {
+    throw new TypeError('Protocol number multiple must be positive');
+  }
   const integer = options.integer === true;
   if (minimum !== undefined && maximum !== undefined && minimum > maximum) {
     throw new TypeError('Protocol number maximum must not be less than minimum');
@@ -548,6 +553,7 @@ export function defineProtocolNumber(
     }
   }
   const projection: PluginJsonSchemaV2 = { type: integer ? 'integer' : 'number' };
+  if (multipleOf !== undefined) projection.multipleOf = multipleOf;
   if (integer) {
     projection.minimum = Math.max(minimum ?? Number.MIN_SAFE_INTEGER, Number.MIN_SAFE_INTEGER);
     projection.maximum = Math.min(maximum ?? Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
@@ -561,6 +567,7 @@ export function defineProtocolNumber(
       && (minimum === undefined || input >= minimum)
       && (maximum === undefined || input <= maximum)
       && (!integer || Number.isSafeInteger(input))
+      && (multipleOf === undefined || Number.isInteger(input / multipleOf))
   )
     ? { success: true, data: input }
     : createProtocolSingleFailure('invalid_number', 'Value does not satisfy the protocol number constraint'));
@@ -1012,16 +1019,19 @@ function readCanonicalComposableSchemaProjection(
     }
 
     if (value.type === 'number' || value.type === 'integer') {
-      if (!hasOnlyCanonicalSchemaKeys(value, ['type', 'minimum', 'maximum'])) return null;
+      if (!hasOnlyCanonicalSchemaKeys(value, ['type', 'minimum', 'maximum', 'multipleOf'])) return null;
       const minimum = value.minimum;
       const maximum = value.maximum;
+      const multipleOf = value.multipleOf;
       if ((minimum !== undefined && typeof minimum !== 'number')
-        || (maximum !== undefined && typeof maximum !== 'number')) return null;
+        || (maximum !== undefined && typeof maximum !== 'number')
+        || (multipleOf !== undefined && typeof multipleOf !== 'number')) return null;
       if (value.type === 'integer' && (minimum === undefined || maximum === undefined)) return null;
       return defineProtocolNumber({
         ...(value.type === 'integer' ? { integer: true } : {}),
         ...(minimum === undefined ? {} : { minimum }),
         ...(maximum === undefined ? {} : { maximum }),
+        ...(multipleOf === undefined ? {} : { multipleOf }),
       });
     }
 

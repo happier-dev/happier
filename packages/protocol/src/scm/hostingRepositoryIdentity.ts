@@ -2,6 +2,14 @@ import {
   ScmHostingProviderKindSchema,
   type ScmHostingProviderRef,
 } from './pullRequests.js';
+import { z } from 'zod';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+
+export const ScmHostingRepositoryIdentityV1Schema = lazyZodSchema(() => z.object({
+  kind: ScmHostingProviderKindSchema,
+  deployment: z.string().min(1),
+  repository: z.string().min(1),
+}).strict().refine(value => normalizeScmHostingRepositoryIdentity(value) !== null));
 
 /**
  * The joinable identity of one repository on one forge deployment.

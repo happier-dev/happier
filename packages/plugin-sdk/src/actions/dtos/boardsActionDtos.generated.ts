@@ -28,12 +28,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -69,6 +71,10 @@ export type BoardsActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -164,12 +170,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -202,12 +210,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -239,6 +249,10 @@ export type BoardsActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
+                            author?: {
+                                kind: 'person' | 'agent' | 'plugin';
+                            } | undefined;
+                            createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
                             sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -318,6 +332,7 @@ export type BoardsActionInputById = {
             expectedPresentation?: {
                 frameStyle: 'card' | 'plain' | null;
                 nativeIndex: number;
+                area?: 'main' | 'aside' | undefined;
                 size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
                 tabId?: string | undefined;
                 hidden?: boolean | undefined;
@@ -348,12 +363,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -379,12 +396,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -410,12 +429,14 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
@@ -450,15 +471,51 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
+                        dashboardId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
                     };
+                    artifactId?: string | undefined;
                 };
                 instanceId: string;
             };
+            paths?: string[] | undefined;
+        } | {
+            kind: 'widget_inputs_reset';
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'home';
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        dashboardId?: string | undefined;
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+            paths?: string[] | undefined;
         } | {
             kind: 'create';
             board: {
@@ -502,6 +559,7 @@ export type BoardsActionInputById = {
                             tagId: string;
                         }[];
                         source: 'all' | 'persisted' | 'direct';
+                        bot?: 'bot' | 'ordinary' | undefined;
                     } | null | undefined;
                     picked?: {
                         kind: 'session' | 'workflow_run' | 'workflow' | 'machine';
@@ -567,6 +625,7 @@ export type BoardsActionResultById = {
                     startedBy: readonly ('you' | 'triggers' | 'agents')[];
                     scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
                     attention: 'any' | 'needs_my_attention';
+                    bot?: 'bot' | 'ordinary' | undefined;
                     homeServerIds: readonly string[];
                     audiences: readonly QualifiedAudienceSelection[];
                     tagIds: readonly Readonly<{
@@ -614,12 +673,14 @@ export type BoardsActionResultById = {
                         } | {
                             kind: 'project';
                             projectId: string;
+                            dashboardId?: string | undefined;
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
                             pageId: string;
                             area: string;
                         };
+                        artifactId?: string | undefined;
                     };
                     instanceId: string;
                 };
@@ -651,6 +712,10 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
+                                author?: {
+                                    kind: 'person' | 'agent' | 'plugin';
+                                } | undefined;
+                                createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
                                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
@@ -750,6 +815,7 @@ export type BoardsActionResultById = {
                     startedBy: readonly ('you' | 'triggers' | 'agents')[];
                     scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
                     attention: 'any' | 'needs_my_attention';
+                    bot?: 'bot' | 'ordinary' | undefined;
                     homeServerIds: readonly string[];
                     audiences: readonly QualifiedAudienceSelection[];
                     tagIds: readonly Readonly<{
@@ -797,12 +863,14 @@ export type BoardsActionResultById = {
                         } | {
                             kind: 'project';
                             projectId: string;
+                            dashboardId?: string | undefined;
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
                             pageId: string;
                             area: string;
                         };
+                        artifactId?: string | undefined;
                     };
                     instanceId: string;
                 };
@@ -834,6 +902,10 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
+                                author?: {
+                                    kind: 'person' | 'agent' | 'plugin';
+                                } | undefined;
+                                createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
                                 sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];

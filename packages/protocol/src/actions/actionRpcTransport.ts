@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -11,7 +12,7 @@ import {
  * is opened only by the generic RPC ingress and is never passed to an Action
  * input schema.
  */
-export const TargetedActionRpcRequestV1Schema = z.object({
+export const TargetedActionRpcRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('targeted_action_rpc'),
   input: z.unknown(),
@@ -26,7 +27,7 @@ export const TargetedActionRpcRequestV1Schema = z.object({
       message: 'input is required',
     });
   }
-});
+}));
 
 export type TargetedActionRpcRequestV1 = z.infer<typeof TargetedActionRpcRequestV1Schema>;
 

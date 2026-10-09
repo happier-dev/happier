@@ -28,10 +28,12 @@ export function resolveBackendProfile(params: Readonly<{
   query: string;
   customProfiles: ReadonlyArray<AIBackendProfile>;
 }>): ResolveBackendProfileResult {
+  const customProfiles = params.customProfiles ?? [];
+  const exactCustomById = customProfiles.find((profile) => profile.id === params.query);
+  if (exactCustomById) return { ok: true, profile: exactCustomById, resolvedBy: 'id' };
+
   const query = normalizeQuery(params.query);
   if (!query) return { ok: false, reason: 'not_found', query: '' };
-
-  const customProfiles = params.customProfiles ?? [];
 
   const customById = customProfiles.find((p) => p.id === query) ?? null;
   if (customById) return { ok: true, profile: customById, resolvedBy: 'id' };
@@ -69,4 +71,3 @@ export function resolveBackendProfile(params: Readonly<{
 
   return { ok: false, reason: 'not_found', query };
 }
-

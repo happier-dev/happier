@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { VoiceProviderSettingsJsonValueV1 } from './pluginActionDtoSupport.generated.js';
 
 export type VoiceControlsActionInputById = {
     readonly "ui.voice_global.get": {
@@ -111,6 +112,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -150,6 +157,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.start": {
@@ -189,6 +202,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -228,6 +247,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.end": {
@@ -267,6 +292,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -306,6 +337,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.set_muted": {
@@ -345,6 +382,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -384,6 +427,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.recover": {
@@ -423,6 +472,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -462,6 +517,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.dismiss": {
@@ -501,6 +562,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -540,6 +607,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.turn_control": {
@@ -579,6 +652,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -618,6 +697,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.hold_begin": {
@@ -657,6 +742,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -696,6 +787,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.hold_release": {
@@ -735,6 +832,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -774,6 +877,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.hold_cancel": {
@@ -813,6 +922,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     } | {
         status: 'unavailable';
@@ -852,6 +967,12 @@ export type VoiceControlsActionResultById = {
             canDismissEnded: boolean;
             recoveryAction: string | null;
             availability: 'ready' | 'recoverable' | 'setup' | 'unavailable';
+            inUseVoice: {
+                providerContributionId: string;
+                settingFieldPath: string;
+                value: VoiceProviderSettingsJsonValueV1;
+                displayName: string;
+            } | null;
         };
     };
     readonly "ui.voice_global.brief.request": {

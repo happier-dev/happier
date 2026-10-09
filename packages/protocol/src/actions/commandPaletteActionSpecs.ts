@@ -1,17 +1,18 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
-export const CommandPaletteListInputSchema = z.object({}).strict();
-export const CommandPaletteInvokeInputSchema = z.object({ commandId: z.string().trim().min(1) }).strict();
-export const CommandPaletteListOutputSchema = z.object({
+export const CommandPaletteListInputSchema = lazyZodSchema(() => z.object({}).strict());
+export const CommandPaletteInvokeInputSchema = lazyZodSchema(() => z.object({ commandId: z.string().trim().min(1) }).strict());
+export const CommandPaletteListOutputSchema = lazyZodSchema(() => z.object({
   commands: z.array(z.object({
     id: z.string().min(1),
     title: z.string(),
     subtitle: z.string().optional(),
     category: z.string().optional(),
   }).strict()),
-}).strict();
-export const CommandPaletteInvokeOutputSchema = z.object({ invoked: z.literal(true) }).strict();
+}).strict());
+export const CommandPaletteInvokeOutputSchema = lazyZodSchema(() => z.object({ invoked: z.literal(true) }).strict());
 
 const surfaces = { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false } as const;
 

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { redactObservationInputPaths } from './specs/observationRedaction.js';
@@ -12,16 +13,16 @@ export function isNotificationConfigurationActionId(value: string): value is Not
   return (NOTIFICATION_CONFIGURATION_ACTION_IDS as readonly string[]).includes(value);
 }
 
-const ChannelIdSchema = z.string().trim().min(1);
-const WebhookUrlSchema = z.string().trim().pipe(WebhookNotificationChannelV1Schema.shape.url);
-const TopicsPatchSchema = z.object({
+const ChannelIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+const WebhookUrlSchema = lazyZodSchema(() => z.string().trim().pipe(WebhookNotificationChannelV1Schema.shape.url));
+const TopicsPatchSchema = lazyZodSchema(() => z.object({
   ready: z.boolean().optional(), permissionRequest: z.boolean().optional(), userActionRequest: z.boolean().optional(),
-}).strict();
-const PatchSchema = z.object({
+}).strict());
+const PatchSchema = lazyZodSchema(() => z.object({
   url: WebhookUrlSchema.optional(), enabled: z.boolean().optional(), topics: TopicsPatchSchema.optional(),
   readyIncludeMessageText: z.boolean().optional(), requestIncludeMessageText: z.boolean().optional(),
-}).strict().refine(value => Object.keys(value).length > 0);
-const ChannelTargetSchema = z.object({ channelId: ChannelIdSchema }).strict();
+}).strict().refine(value => Object.keys(value).length > 0));
+const ChannelTargetSchema = lazyZodSchema(() => z.object({ channelId: ChannelIdSchema }).strict());
 export const NotificationConfigurationActionInputSchemas = {
   'notifications.webhooks.list': z.object({}).strict(),
   'notifications.webhooks.add': z.object({ url: WebhookUrlSchema }).strict(),
@@ -30,7 +31,7 @@ export const NotificationConfigurationActionInputSchemas = {
   'notifications.webhooks.signingSecret.set': ChannelTargetSchema.extend({ secret: z.string().trim().min(1) }).strict(),
   'notifications.webhooks.signingSecret.clear': ChannelTargetSchema,
 } as const;
-const MutationOutputSchema = z.object({ channelId: ChannelIdSchema }).strict();
+const MutationOutputSchema = lazyZodSchema(() => z.object({ channelId: ChannelIdSchema }).strict());
 export const NotificationConfigurationActionOutputSchemas = {
   'notifications.webhooks.list': z.object({ items: z.array(z.object({
     channelId: ChannelIdSchema, url: WebhookUrlSchema, enabled: z.boolean(), signingSecretConfigured: z.boolean(),

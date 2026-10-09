@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { projectSessionSpawnNewApiRequest } from '../actions/actionSpecs.js';
 import {
   API_TOKEN_FULL_GRANT_V1 as full, ApiTokenGrantV1Schema,
   evaluateApiTokenGrantV1 as evaluate, isApiTokenGrantWithinV1 as within,
@@ -7,6 +8,7 @@ import {
   resolveEffectiveApiTokenModelRefV1,
   resolveEffectiveApiTokenPermissionModeV1,
   type ApiTokenGrantV1,
+  projectApiTokenSessionSpawnAdmissionV1,
 } from './apiTokenGrant.js';
 
 const modelA = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'a' };
@@ -22,6 +24,45 @@ const spawn = {
 const grant = (patch: Partial<ApiTokenGrantV1> = {}): ApiTokenGrantV1 => ApiTokenGrantV1Schema.parse({ ...full, ...patch });
 
 describe('API token grant admission', () => {
+  it('projects only canonical creation admission facts without prompt or startup custody', () => {
+    const authored = { ...spawn, creationKey: 'start', initialInput: { text: 'private prompt' },
+      agentSessionStartupInstructionsV1: { v: 1, id: 'managed.start', revision: 1, instructions: 'Private startup instructions' } };
+    // Canonical spawn parsing remains the owner of the authored input; no new
+    // parser or policy engine is introduced by the public projection.
+    expect(projectApiTokenSessionSpawnAdmissionV1(authored))
+      .toEqual(spawn);
+    const facts = projectApiTokenSessionSpawnAdmissionV1(authored);
+    expect(evaluate({ grant: grant({ create }), actionId: 'session.spawn_new', target: machine, spawnInput: facts }))
+      .toEqual(evaluate({ grant: grant({ create }), actionId: 'session.spawn_new', target: machine, spawnInput: spawn }));
+    expect(facts).not.toHaveProperty('initialInput');
+    expect(facts).not.toHaveProperty('agentSessionStartupInstructionsV1');
+  });
+  it('admits projected API creation against the verified pre-open Machine target without weakening execution checks', () => {
+    const projected = projectSessionSpawnNewApiRequest(spawn);
+    const creationGrant = grant({ create });
+    const request = {
+      grant: creationGrant, actionId: 'session.spawn_new',
+      target: projected.target, spawnInput: projected.input,
+    };
+    expect(evaluate({ ...request, contributedActionAdmission: 'pre_open' })).toEqual({ ok: true });
+    expect(evaluate(request)).toEqual({ ok: false, reason: 'create_not_granted' });
+    expect(evaluate({ ...request, target: { kind: 'machine', machineId: 'm2' },
+      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+    expect(evaluate({ ...request, spawnInput: { ...projected.input,
+      organizationPlacement: { folderId: 'other', tagIds: [] } },
+      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+    expect(evaluate({ ...request, spawnInput: { ...spawn,
+      executionTarget: { serverId: 'home', machineId: 'm2' } },
+      contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+    for (const deniedInput of [
+      { ...projected.input, executionTarget: null },
+      { ...projected.input, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      { ...projected.input, directory: { kind: 'path', path: '/other' } },
+    ]) {
+      expect(evaluate({ ...request, spawnInput: deniedInput,
+        contributedActionAdmission: 'pre_open' })).toEqual({ ok: false, reason: 'create_not_granted' });
+    }
+  });
   it('chooses only models for the requested agent and refuses an empty agent-specific grant', () => {
     const other = { ...modelA, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'codex-model' };
     expect(resolveEffectiveApiTokenModelRefV1({ models: [modelA, other] }, undefined, other.agentTargetKey)).toEqual(other);

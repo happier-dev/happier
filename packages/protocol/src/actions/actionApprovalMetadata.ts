@@ -1,12 +1,13 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const ActionApprovalFlowSchema = z.enum(['blocking', 'deferred']);
+export const ActionApprovalFlowSchema = lazyZodSchema(() => z.enum(['blocking', 'deferred']));
 export type ActionApprovalFlow = z.infer<typeof ActionApprovalFlowSchema>;
 
-export const ActionApprovalResultSchema = z.enum(['required', 'optional', 'none']);
+export const ActionApprovalResultSchema = lazyZodSchema(() => z.enum(['required', 'optional', 'none']));
 export type ActionApprovalResult = z.infer<typeof ActionApprovalResultSchema>;
 
-export const ActionApprovalSchema = z
+export const ActionApprovalSchema = lazyZodSchema(() => z
   .object({
     flow: ActionApprovalFlowSchema.optional(),
     result: ActionApprovalResultSchema,
@@ -20,7 +21,7 @@ export const ActionApprovalSchema = z
         message: 'optional approval results require an explicit flow',
       });
     }
-  });
+  }));
 export type ActionApproval = z.infer<typeof ActionApprovalSchema>;
 
 export function resolveActionApprovalFlow(approval: ActionApproval): ActionApprovalFlow {

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
@@ -17,18 +18,35 @@ import { SessionOrganizationPlacementV1Schema, type SessionOrganizationPlacement
 import type { SessionPermissionMode } from '../sessions/metadata/sessionPermissionModes.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
+import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 
-export const ApiTokenGrantOriginV1Schema = CanonicalHttpOriginSchema.refine((value) => {
+/** Prompt-free admission projection; ordinary Session input retains private custody. */
+export const ApiTokenSessionSpawnAdmissionV1Schema = lazyZodSchema(() => SessionSpawnNewInputV2BaseSchema.pick({
+  executionTarget: true, agentTarget: true, directory: true, organizationPlacement: true,
+  modelSelection: true, permissionMode: true,
+}).strict());
+export type ApiTokenSessionSpawnAdmissionV1 = z.infer<typeof ApiTokenSessionSpawnAdmissionV1Schema>;
+export function projectApiTokenSessionSpawnAdmissionV1(input: unknown): ApiTokenSessionSpawnAdmissionV1 {
+  const canonical = SessionSpawnNewInputV2Schema.parse(input);
+  return ApiTokenSessionSpawnAdmissionV1Schema.parse({
+    executionTarget: canonical.executionTarget, agentTarget: canonical.agentTarget, directory: canonical.directory,
+    ...(canonical.organizationPlacement !== undefined ? { organizationPlacement: canonical.organizationPlacement } : {}),
+    ...(canonical.modelSelection !== undefined ? { modelSelection: canonical.modelSelection } : {}),
+    ...(canonical.permissionMode !== undefined ? { permissionMode: canonical.permissionMode } : {}),
+  });
+}
+
+export const ApiTokenGrantOriginV1Schema = lazyZodSchema(() => CanonicalHttpOriginSchema.refine((value) => {
   // Zod runs refinements after a dirty superRefine; invalid input must stay a typed refusal.
   if (!CanonicalHttpOriginSchema.safeParse(value).success) return false;
   const url = new URL(value);
   return url.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-}, 'Grant origins require HTTPS, except HTTP on loopback.');
+}, 'Grant origins require HTTPS, except HTTP on loopback.'));
 
-const GrantIdSchema = z.string().min(1);
+const GrantIdSchema = lazyZodSchema(() => z.string().min(1));
 const modelKey = (ref: ProviderBoundModelRef) => JSON.stringify([ref.agentTargetKey, ref.providerConnectionId, ref.modelId]);
 
-export const ApiTokenGrantV1Schema = z.object({
+export const ApiTokenGrantV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   actions: z.object({ families: z.array(ActionIdFamilyV1Schema), ids: z.array(GrantIdSchema) }).strict().nullable(),
   targets: z.object({ sessions: z.array(GrantIdSchema), machines: z.array(GrantIdSchema) }).strict().nullable(),
@@ -56,7 +74,7 @@ export const ApiTokenGrantV1Schema = z.object({
   if (value.create && value.targets && !value.targets.machines.includes(value.create.machineId)) {
     context.addIssue({ code: 'custom', path: ['create', 'machineId'], message: 'The creation machine must belong to the grant targets.' });
   }
-});
+}));
 export type ApiTokenGrantV1 = z.infer<typeof ApiTokenGrantV1Schema>;
 export const StoredApiTokenGrantV1Schema = createStoredReadSchema(ApiTokenGrantV1Schema);
 
@@ -117,10 +135,14 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'create_not_granted' };
       const fields = raw as Record<string, unknown>;
       const execution = SessionExecutionTargetV1Schema.safeParse(fields.executionTarget);
+      // API projection puts Machine identity in the verified envelope target;
+      // the host binds executionTarget before the strict execution-stage check.
+      const projectedApiTarget = input.contributedActionAdmission === 'pre_open'
+        && fields.executionTarget === undefined;
       const agent = AgentExecutionTargetV1Schema.safeParse(fields.agentTarget);
       const directory = SessionDirectoryIntentV1Schema.safeParse(fields.directory);
       const placement = SessionOrganizationPlacementV1Schema.safeParse(fields.organizationPlacement);
-      if (!execution.success || execution.data.machineId !== binding.machineId
+      if ((!projectedApiTarget && (!execution.success || execution.data.machineId !== binding.machineId))
         || !agent.success || buildBackendTargetKeyV2(agent.data) !== binding.agentTargetKey
         || !directory.success || directory.data.kind !== 'managed'
         || !placement.success || !placementsEqual(placement.data, binding.placement)) return { ok: false, reason: 'create_not_granted' };

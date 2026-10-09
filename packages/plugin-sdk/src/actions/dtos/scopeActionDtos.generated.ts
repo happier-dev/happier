@@ -28,6 +28,7 @@ export type ScopeActionInputById = {
             startedBy?: ('you' | 'triggers' | 'agents')[] | undefined;
             scope?: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible' | undefined;
             attention?: 'any' | 'needs_my_attention' | undefined;
+            bot?: 'bot' | 'ordinary' | undefined;
             homeServerIds?: string[] | undefined;
             audiences?: ({
                 kind: 'outside_teams';
@@ -101,6 +102,7 @@ export type ScopeActionResultById = {
             }[];
             source: 'all' | 'persisted' | 'direct';
             searchQuery: string;
+            bot?: 'bot' | 'ordinary' | undefined;
         };
         includeInactive: boolean;
         queryEnabled: boolean;

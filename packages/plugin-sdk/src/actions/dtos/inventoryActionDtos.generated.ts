@@ -9,10 +9,178 @@ export type InventoryActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
     };
+    readonly "projects.context.update": {
+        target: {
+            serverId: string;
+            projectKey: string;
+        };
+        expectedRevision: number | 'absent';
+        intent: {
+            kind: 'attach';
+            entry: {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                placement?: 'system_append' | undefined;
+            };
+        } | {
+            kind: 'detach';
+            entryId: string;
+        } | {
+            kind: 'reorder';
+            entryId: string;
+            siblingId: string;
+            position: 'before' | 'after';
+        } | {
+            kind: 'set_budget';
+            entryId: string;
+            maxChars: number | null;
+        };
+    };
+    readonly "projects.visibility.set": {
+        target: {
+            serverId: string;
+            projectKey: string;
+        };
+        expectedRevision: number | 'absent';
+        hidden: boolean;
+    };
+    readonly "projects.workspace.update": {
+        serverId: string;
+        workspaceId: string;
+        label?: string | null | undefined;
+        pinned?: boolean | undefined;
+    };
+    readonly "projects.workspace.forget": {
+        serverId: string;
+        workspaceId: string;
+    };
     readonly "projects.list": {
-        [x: string]: unknown;
+        serverId?: string | undefined;
         machineId?: string | undefined;
         limit?: number | undefined;
+        includeHidden?: boolean | undefined;
+    };
+    readonly "projects.open": {
+        serverId: string;
+        machineId: string;
+        source: {
+            kind: 'workspace';
+            workspaceId: string;
+            checkout?: {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            } | undefined;
+        } | {
+            kind: 'folder';
+            path: string;
+        } | {
+            kind: 'source';
+            id: string;
+            revision: number;
+            selector: {
+                provider: {
+                    id: string;
+                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: string | null | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                };
+                protocol: 'auto' | 'ssh' | 'https';
+            };
+            defaultRef?: string | undefined;
+            subdir?: string | undefined;
+            checkout?: {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            } | undefined;
+        } | {
+            kind: 'repository';
+            selector: {
+                provider: {
+                    id: string;
+                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: string | null | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                };
+                protocol: 'auto' | 'ssh' | 'https';
+            };
+        };
+        materialization: {
+            kind: 'attach';
+        } | {
+            kind: 'worktree';
+            checkout: {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: string | null;
+                branchMode?: 'new' | 'existing' | undefined;
+            };
+            targetPath?: string | undefined;
+        } | {
+            destinationParentPath: string;
+            destinationDirectoryName: string;
+            kind: 'clone';
+        } | {
+            kind: 'sync';
+            targetPath: string;
+            workspaceAction: {
+                kind: 'none';
+            } | {
+                kind: 'copy_once';
+                contentPolicy: {
+                    v: 1;
+                    selection: 'git_worktree' | 'all_files';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                };
+            } | {
+                kind: 'create_relationship';
+                mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+                contentPolicy: {
+                    v: 1;
+                    selection: 'git_worktree' | 'all_files';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                };
+                flushBeforeCommit: true;
+            } | {
+                kind: 'relationship';
+                relationshipId: string;
+                flushBeforeCommit: boolean;
+            } | {
+                kind: 'linked_workspace';
+            };
+        };
+        ref?: string | undefined;
+        subdir?: string | undefined;
     };
     readonly "prompts.invocations.list": {
         [x: string]: unknown;
@@ -24,7 +192,7 @@ export type InventoryActionInputById = {
         argsText?: string | undefined;
     };
     readonly "machines.list": {
-        [x: string]: unknown;
+        serverId?: string | undefined;
         limit?: number | undefined;
     };
     readonly "servers.list": {
@@ -105,9 +273,159 @@ export type InventoryActionResultById = {
     readonly "paths.list_recent": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "projects.context.update": {
+        ok: true;
+        row: {
+            hidden?: boolean | undefined;
+            pinned?: boolean | undefined;
+            promptStack?: {
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                id: string;
+                enabled: boolean;
+                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            }[] | undefined;
+        };
+        revision: number;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'entry_conflict' | 'entry_not_found' | 'project_context_conflict' | 'project_context_unavailable' | 'project_context_access_denied' | 'artifact_unavailable' | 'artifact_wrong_kind';
+        currentRevision?: number | 'absent' | undefined;
+    };
+    readonly "projects.visibility.set": {
+        ok: true;
+        row: {
+            hidden?: boolean | undefined;
+            pinned?: boolean | undefined;
+            promptStack?: {
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                id: string;
+                enabled: boolean;
+                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            }[] | undefined;
+        };
+        revision: number;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'project_visibility_conflict' | 'project_visibility_access_denied' | 'project_visibility_unavailable';
+        currentRevision?: number | 'absent' | undefined;
+    };
+    readonly "projects.workspace.update": {
+        ok: true;
+        workspaceRef: {
+            id: string;
+            serverId: string;
+            machineId: string;
+            rootPath: string;
+            createdAtMs: number;
+            label?: string | null | undefined;
+            lastOpenedAtMs?: number | null | undefined;
+            projectKey?: string | undefined;
+            repositoryIdentity?: {
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                deployment: string;
+                repository: string;
+            } | undefined;
+            source?: {
+                sourceId: string;
+                revision: number;
+            } | undefined;
+        };
+        organization?: {
+            hidden?: boolean | undefined;
+            pinned?: boolean | undefined;
+            promptStack?: {
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                id: string;
+                enabled: boolean;
+                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            }[] | undefined;
+        } | undefined;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+        details?: unknown;
+    };
+    readonly "projects.workspace.forget": {
+        ok: false;
+        errorCode: string;
+        error: string;
+        details?: unknown;
+    } | {
+        ok: true;
+        workspaceId: string;
+    };
     readonly "projects.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "projects.open": {
+        kind: 'opened';
+        workspace: {
+            serverId: string;
+            workspaceId: string;
+            machineId: string;
+            rootPath: string;
+        };
+        directory: string;
+        setup: 'notRequired' | 'approvalRequired' | 'prepared' | 'failed';
+        facts?: {
+            projectKey?: string | undefined;
+            repositoryIdentity?: {
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                deployment: string;
+                repository: string;
+            } | undefined;
+            source?: {
+                sourceId: string;
+                revision: number;
+            } | undefined;
+        } | undefined;
+    } | {
+        kind: 'ambiguous';
+        candidates: {
+            id: string;
+            serverId: string;
+            machineId: string;
+            rootPath: string;
+            createdAtMs: number;
+            projectKey?: string | undefined;
+            repositoryIdentity?: {
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                deployment: string;
+                repository: string;
+            } | undefined;
+            source?: {
+                sourceId: string;
+                revision: number;
+            } | undefined;
+            label?: string | null | undefined;
+            lastOpenedAtMs?: number | null | undefined;
+        }[];
+    } | {
+        kind: 'refused';
+        code: string;
+    } | {
+        kind: 'outcomeUnknown';
+        operationId?: string | undefined;
+    };
     readonly "prompts.invocations.list": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
@@ -159,7 +477,7 @@ export type InventoryActionResultById = {
             };
             install: {
                 available: boolean;
-                mode: 'managed' | 'vendor_recipe' | 'manual' | 'none';
+                mode: 'none' | 'managed' | 'vendor_recipe' | 'manual';
                 sizeBytes: number | null;
                 guideUrl: string | null;
             };

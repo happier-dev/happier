@@ -21,6 +21,10 @@ import { VoiceProviderContributionSchema } from '../../plugins/contributions/voi
 import { SAVED_SECRET_COLLECTION_MAX_ENTRIES } from '../../profiles/backendProfileSchema.js';
 import { accountSettingsParse } from './accountSettings.js';
 import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
+import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
+import * as savedSecretOwner from './savedSecretMutationOwner.js';
+import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
+import { ProfileTransferControlV1Schema } from '../../profiles/profileTransferV1.js';
 
 const voiceContribution = Object.freeze({
   pluginId: 'happier.voice.openai',
@@ -127,6 +131,192 @@ const unrelatedSecret = {
     encryptedValue: { t: 'enc-v1' as const, c: 'ciphertext-unrelated' },
   },
 };
+
+describe('classified legacy credential import', () => {
+  it('classifies inference credentials separately from personal SavedSecret objects and preserves unknown material', () => {
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ inferenceOpenAIKey: ' exact-private-inference-fixture ' }))
+      .toEqual({ secrets: [], complete: true, inferenceCredential: {
+        source: { kind: 'legacy-inference-openai-key' }, value: ' exact-private-inference-fixture ',
+        displayName: expect.any(String), kind: 'apiKey',
+      } });
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ inferenceOpenAIKey: { futureCredential: 'retain-fixture' } }))
+      .toEqual({ secrets: [], complete: false });
+  });
+
+  it('preserves the exact bare inference credential through a distinct Account/source resource identity', () => {
+    const source = { kind: 'legacy-inference-openai-key' };
+    const identify = (accountId: string, importSource: unknown = source) => Reflect.apply(
+      savedSecretOwner.deriveSavedSecretImportResourceIdV1, undefined, [{ accountId, source: importSource }]);
+    const id = identify('account-a');
+    expect(identify('account-a')).toBe(id);
+    expect(identify('account-b')).not.toBe(id);
+    expect(identify('account-a', { kind: 'personal-saved-secret', secretId: 'inferenceOpenAIKey' })).not.toBe(id);
+    expect(() => identify('account-a', { ...source, secretId: 'invented' })).toThrow();
+    const rewrite = Reflect.get(savedSecretOwner, 'promoteLegacyInferenceSavedSecretReferenceV1');
+    expect(typeof rewrite).toBe('function');
+    if (typeof rewrite !== 'function') throw new Error('missing_inference_credential_import');
+    const raw = { inferenceOpenAIKey: ' exact-private-inference-fixture ', preferredLanguage: 'de',
+      voice: { untouched: true }, futurePreference: { opaque: true } };
+    const input = { source, sharedSecretRef: `happier:shared-secret:v1:${id}` };
+    expect(rewrite(raw, input)).toEqual({ value: raw.inferenceOpenAIKey,
+      settings: { preferredLanguage: 'de', voice: raw.voice, futurePreference: raw.futurePreference } });
+    expect(raw.inferenceOpenAIKey).toBe(' exact-private-inference-fixture ');
+    for (const value of [undefined, null, '', { futureCredential: 'retain-fixture' }]) {
+      expect(() => rewrite({ ...raw, inferenceOpenAIKey: value }, input)).toThrow();
+    }
+    expect(() => rewrite(raw, { ...input, source: { kind: 'personal-saved-secret', secretId: 'inferenceOpenAIKey' } })).toThrow();
+  });
+
+  it('rewrites only the exact classified Profile environment carrier and preserves private unrelated bytes', () => {
+    const rewrite = 'promoteProfileEnvironmentVariableSavedSecretReferenceV1' in savedSecretOwner
+      ? savedSecretOwner.promoteProfileEnvironmentVariableSavedSecretReferenceV1 : undefined;
+    expect(typeof rewrite).toBe('function');
+    if (typeof rewrite !== 'function') throw new Error('missing_classified_credential_import');
+    const sibling = { id: 'untouched', name: 'Untouched', environmentVariables: [], createdAt: 1, updatedAt: 1 };
+    const raw = { profiles: [{ id: 'legacy', name: 'Legacy', createdAt: 1, updatedAt: 2,
+      environmentVariables: [{ name: 'TOKEN', value: 'private-literal', isSecret: true },
+        { name: 'MODE', value: 'dev' }], opaque: { retained: true } }, sibling],
+      machineLogin: { untouched: true }, unknown: { nested: 'private-unrelated' } };
+    const result = rewrite(raw, { source: { kind: 'profile-environment-variable', profileId: 'legacy', envName: 'TOKEN' },
+      sharedSecretRef: 'happier:shared-secret:v1:imported' });
+    expect(result.value).toBe('private-literal');
+    expect(result.settings.profiles[0]).toEqual({ ...raw.profiles[0], environmentVariables: [
+      { name: 'TOKEN', value: '${TOKEN}', isSecret: true }, { name: 'MODE', value: 'dev' }] });
+    expect(result.settings.profiles[1]).toBe(sibling);
+    expect(result.settings.machineLogin).toBe(raw.machineLogin);
+    expect(result.settings.unknown).toBe(raw.unknown);
+    expect(result.settings.secretBindingsByProfileId).toEqual({ legacy: { TOKEN: 'happier:shared-secret:v1:imported' } });
+    expect(raw.profiles[0].environmentVariables[0].value).toBe('private-literal');
+    expect(() => rewrite({ ...raw, profiles: [raw.profiles[0], raw.profiles[0]] }, {
+      source: { kind: 'profile-environment-variable', profileId: 'legacy', envName: 'TOKEN' },
+      sharedSecretRef: 'happier:shared-secret:v1:imported' })).toThrow();
+    expect(() => rewrite(result.settings, { source: { kind: 'profile-environment-variable', profileId: 'legacy', envName: 'TOKEN' },
+      sharedSecretRef: 'happier:shared-secret:v1:other' })).toThrow();
+  });
+  it('synchronizes the exact staged source carrier without overwriting divergent rows or private attachments', () => {
+    const rawProfile = { id: 'legacy', name: 'Legacy', createdAt: 1, updatedAt: 2,
+      environmentVariables: [{ name: 'TOKEN', value: 'private-literal', isSecret: true }] };
+    const staged = { record: ProfileRecordV1Schema.parse({ v: 1, id: 'legacy',
+      definition: { kind: 'legacy', profile: rawProfile }, enabled: false, promptStack: [],
+      secretBindings: { OTHER: 'other-personal' } }), revision: 4 };
+    const sibling = { record: ProfileRecordV1Schema.parse({ v: 1, id: 'sibling',
+      definition: { kind: 'legacy', profile: { id: 'sibling', name: 'Sibling', environmentVariables: [], createdAt: 1, updatedAt: 1 } },
+      enabled: true, promptStack: [], secretBindings: {} }), revision: 2 };
+    const input = { source: { kind: 'profile-environment-variable' as const, profileId: 'legacy', envName: 'TOKEN' },
+      sharedSecretRef: 'happier:shared-secret:v1:imported' };
+    const rewrite = savedSecretOwner.promoteProfileEnvironmentVariableSavedSecretReferenceV1;
+    const sourceCatalog = { profileRecords: [staged.record, sibling.record], profileRows: [staged, sibling] };
+    const result = rewrite({ profiles: [rawProfile] }, input, sourceCatalog);
+    expect(result.profileRows?.[0]).toMatchObject({ revision: 4, record: { enabled: false,
+      definition: { profile: { environmentVariables: [{ name: 'TOKEN', value: '${TOKEN}', isSecret: true }] } },
+      secretBindings: { OTHER: 'other-personal', TOKEN: input.sharedSecretRef } } });
+    expect(result.profileRows?.[1]).toBe(sibling);
+    expect(staged.record.secretBindings).toEqual({ OTHER: 'other-personal' });
+    if (staged.record.definition.kind !== 'legacy') throw new Error('wrong_fixture_definition');
+    expect(staged.record.definition.profile.environmentVariables[0]?.value).toBe('private-literal');
+    const divergent = { ...staged, record: ProfileRecordV1Schema.parse({ ...staged.record,
+      definition: { kind: 'legacy', profile: { ...rawProfile,
+        environmentVariables: [{ name: 'TOKEN', value: 'newer-private-literal', isSecret: true }] } } }) };
+    expect(() => rewrite({ profiles: [rawProfile] }, input, { ...sourceCatalog,
+      profileRecords: [divergent.record], profileRows: [divergent] })).toThrow();
+    expect(() => rewrite({ profiles: [rawProfile] }, input, { ...sourceCatalog,
+      profileRecords: [staged.record, staged.record], profileRows: [staged, staged] })).toThrow();
+    expect(() => rewrite(result.settings, input, sourceCatalog)).toThrow();
+  });
+  it('derives import identity from Account and encoded stable source identity, never labels or credential values', () => {
+    const identify = 'deriveSavedSecretImportResourceIdV1' in savedSecretOwner ? savedSecretOwner.deriveSavedSecretImportResourceIdV1 : undefined;
+    expect(typeof identify).toBe('function');
+    if (typeof identify !== 'function') throw new Error('missing_saved_secret_import_identity');
+    const source = { kind: 'profile-environment-variable', profileId: 'a:b', envName: 'TOKEN' };
+    expect(identify({ accountId: 'account-a', source })).toBe(identify({ accountId: 'account-a', source }));
+    expect(identify({ accountId: 'account-b', source })).not.toBe(identify({ accountId: 'account-a', source }));
+    expect(identify({ accountId: 'account-a', source: { kind: 'profile-environment-variable', profileId: 'a', envName: 'b:TOKEN' } }))
+      .not.toBe(identify({ accountId: 'account-a', source }));
+    expect(identify({ accountId: 'account-a', source: { kind: 'personal-saved-secret', secretId: 'a:b' } }))
+      .not.toBe(identify({ accountId: 'account-a', source }));
+  });
+});
+
+describe('explicit reached Artifact SavedSecret reference census', () => {
+  it('counts effective Artifact defaults and promotes with an Account-private override without editing foreign content', () => {
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: 'p', definition: { kind: 'artifact', artifactId: 'selected' },
+      enabled: true, promptStack: [], secretBindings: {} });
+    const artifact = { artifactId: 'selected', ownerAccountId: 'foreign-account', access: 'view',
+      revision: { headerVersion: 2, bodyVersion: 4 },
+      header: { kind: 'launch-profile.v1', profileId: 'p', name: 'Selected' }, body: JSON.stringify({
+        kind: 'launch-profile.v1', profile: { id: 'p', name: 'Selected', environmentVariables: [],
+          envVarRequirements: [{ name: 'TOKEN', kind: 'secret' }], createdAt: 1, updatedAt: 1 },
+        secretBindings: { TOKEN: secret.id },
+      }) } satisfies ArtifactSharingResourceV1;
+    const unselected = { ...artifact, artifactId: 'unselected' } satisfies ArtifactSharingResourceV1;
+    const catalogs = { profileRecords: [record], artifactsById: new Map([['selected', artifact], ['unselected', unselected]]) };
+    const raw = { secrets: [secret], opaque: { retained: true } };
+    expect(listAccountSettingsSavedSecretReferences(raw, secret.id, catalogs)).toEqual([
+      { owner: 'profile', path: 'profileRows.p.secretBindings.TOKEN' },
+    ]);
+    const promoted = promotePersonalSavedSecretReference(raw, { secretId: secret.id, expectedUpdatedAt: 1,
+      sharedSecretRef: 'happier:shared-secret:v1:imported' }, catalogs);
+    expect(promoted.profileRecords?.[0]?.secretBindings).toEqual({ TOKEN: 'happier:shared-secret:v1:imported' });
+    expect(artifact.body).toContain(secret.id);
+    expect(promoted.settings.opaque).toBe(raw.opaque);
+    const overridden = { ...catalogs, profileRecords: [{ ...record, secretBindings: { TOKEN: unrelatedSecret.id } }] };
+    expect(listAccountSettingsSavedSecretReferences(raw, secret.id, overridden)).toEqual([]);
+    expect(() => listAccountSettingsSavedSecretReferences(raw, secret.id,
+      { ...catalogs, artifactsById: new Map() })).toThrow();
+    const unknown = { ...artifact, body: JSON.stringify({ ...JSON.parse(artifact.body),
+      futureSource: { bootstrapCredentialRef: secret.id } }) };
+    expect(() => listAccountSettingsSavedSecretReferences(raw, secret.id,
+      { ...catalogs, artifactsById: new Map([['selected', unknown]]) })).toThrow();
+  });
+});
+
+describe('legacy SavedSecret per-item transfer', () => {
+  it('moves a recognized source while preserving an unrelated future material entry byte-for-byte', () => {
+    const future = { ...secret, id: 'future-secret', encryptedValue: {
+      _isSecretValue: true, encryptedValue: { t: 'future-secret-envelope', c: 'opaque-future-material' },
+    } };
+    const raw = { secrets: [secret, future], secretBindingsByProfileId: { builtin: { TOKEN: secret.id } },
+      futurePreference: { retained: true } };
+    const promoted = promotePersonalSavedSecretReference(raw, { secretId: secret.id, expectedUpdatedAt: 1,
+      sharedSecretRef: 'happier:shared-secret:v1:imported' });
+    expect(promoted.settings.secrets).toEqual([future]);
+    expect((promoted.settings.secrets as readonly unknown[])[0]).toBe(future);
+    expect(promoted.settings.secretBindingsByProfileId).toEqual({ builtin: { TOKEN: 'happier:shared-secret:v1:imported' } });
+    expect(promoted.settings.futurePreference).toBe(raw.futurePreference);
+    expect(raw.secrets).toEqual([secret, future]);
+  });
+});
+
+describe('SavedSecret census respects the opened Profile transfer authority', () => {
+  it('ignores only superseded Profile source roots after activation and preserves their bytes during a personal promotion', () => {
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: 'p', definition: { kind: 'legacy', profile: {
+      id: 'p', name: 'Current', environmentVariables: [], createdAt: 1, updatedAt: 1 } },
+      enabled: true, promptStack: [], secretBindings: {} });
+    const profileControl = ProfileTransferControlV1Schema.parse({ v: 1, phase: 'active', sourceSettingsVersion: 4,
+      migratedLogicalRevision: 4, inventory: [{ kind: 'account_row', id: 'p', revision: 2 }] });
+    const raw = { secrets: [secret], profiles: [{ id: 'p', futureSource: { bootstrapCredentialRef: secret.id } }],
+      secretBindingsByProfileId: { p: { TOKEN: secret.id } }, providerSettingsV1: { v: 1,
+        secretBindingsByConnectionId: { pc_a: { account: { api_key: secret.id }, byMachineId: {} } } } };
+    const catalogs = { profileRecords: [record], profileControl };
+    expect(listAccountSettingsSavedSecretReferences(raw, secret.id, catalogs)).toEqual([
+      { owner: 'provider', path: 'providerSettingsV1.secretBindingsByConnectionId.pc_a.account.api_key' },
+    ]);
+    const promoted = promotePersonalSavedSecretReference(raw, { secretId: secret.id, expectedUpdatedAt: 1,
+      sharedSecretRef: 'happier:shared-secret:v1:imported' }, catalogs);
+    expect(promoted.settings.profiles).toBe(raw.profiles);
+    expect(promoted.settings.secretBindingsByProfileId).toBe(raw.secretBindingsByProfileId);
+    expect(promoted.settings.providerSettingsV1).toMatchObject({ secretBindingsByConnectionId: {
+      pc_a: { account: { api_key: 'happier:shared-secret:v1:imported' } } } });
+    const prepared = { ...catalogs, profileControl: { ...profileControl, phase: 'prepared' as const } };
+    expect(listAccountSettingsSavedSecretReferences(raw, secret.id, prepared)).toContainEqual({
+      owner: 'unknown', path: 'profiles[0].futureSource.bootstrapCredentialRef' });
+    expect(() => promotePersonalSavedSecretReference(raw, { secretId: secret.id, expectedUpdatedAt: 1,
+      sharedSecretRef: 'happier:shared-secret:v1:imported' }, prepared)).toThrow();
+    const knownRaw = { ...raw, profiles: [] };
+    expect(listAccountSettingsSavedSecretReferences(knownRaw, secret.id, prepared)).toContainEqual({
+      owner: 'profile', path: 'secretBindingsByProfileId.p.TOKEN' });
+  });
+});
 
 function referencedSettings(): Record<string, unknown> {
   return {
@@ -2175,6 +2365,81 @@ describe('Account Settings SavedSecret mutation owner', () => {
     expect(settings).toEqual(before);
   });
 
+});
+
+describe('SavedSecret complete reference census', () => {
+  const secret = {
+    id: 'secret-inline', name: 'Inline', kind: 'token' as const,
+    encryptedValue: { _isSecretValue: true as const, value: 'private-value' },
+    createdAt: 1, updatedAt: 2,
+  };
+
+  it('keeps historical built-in bindings in the promotion transaction', () => {
+    const settings = {
+      secrets: [secret],
+      secretBindingsByProfileId: { openai: { API_KEY: secret.id } },
+    };
+    expect(() => applyAccountSettingsSavedSecretMutation(settings, {
+      kind: 'delete', secretId: secret.id, expectedUpdatedAt: 2,
+    })).toThrowError(expect.objectContaining({ code: 'saved_secret_in_use' }));
+    expect(listAccountSettingsSavedSecretReferences(settings, secret.id)).toEqual([
+      { owner: 'profile', path: 'secretBindingsByProfileId.openai.API_KEY' },
+    ]);
+    const target = formatSharedSavedSecretRefV1('resource-inline');
+    const result = promotePersonalSavedSecretReference(settings, {
+      secretId: secret.id, expectedUpdatedAt: 2, sharedSecretRef: target,
+    });
+    expect(result.settings).toEqual({
+      secrets: [],
+      secretBindingsByProfileId: { openai: { API_KEY: target } },
+    });
+  });
+
+  it('censuses the complete opened Profile row inventory through the same reference owner', () => {
+    const record = ProfileRecordV1Schema.parse({
+      v: 1, id: 'profile-private', definition: { kind: 'artifact', artifactId: 'artifact-profile' },
+      enabled: true, promptStack: [], secretBindings: { TOKEN: secret.id },
+    });
+    const artifactsById = new Map([['artifact-profile', { artifactId: 'artifact-profile', access: 'owner' as const,
+      revision: { headerVersion: 1, bodyVersion: 1 }, header: { kind: 'launch-profile.v1', profileId: 'profile-private', name: 'Private' },
+      body: JSON.stringify({ kind: 'launch-profile.v1', profile: { id: 'profile-private', name: 'Private', environmentVariables: [],
+        createdAt: 1, updatedAt: 1 }, secretBindings: {} }),
+    }]]);
+    expect(listAccountSettingsSavedSecretReferences({ secrets: [secret] }, secret.id, {
+      profileRecords: [record], artifactsById,
+    })).toEqual([{ owner: 'profile', path: 'profileRows["profile-private"].secretBindings.TOKEN' }]);
+    const other = ProfileRecordV1Schema.parse({ ...record, id: 'other-profile', secretBindings: {},
+      definition: { kind: 'legacy', profile: { id: 'other-profile', name: 'Other', environmentVariables: [], createdAt: 1, updatedAt: 1 } } });
+    const promoted = promotePersonalSavedSecretReference({
+      secrets: [secret], secretBindingsByProfileId: { 'openai': { API_KEY: secret.id } },
+    }, { secretId: secret.id, expectedUpdatedAt: 2, sharedSecretRef: formatSharedSavedSecretRefV1('resource') }, {
+      profileRecords: [record, other], artifactsById,
+    });
+    expect(promoted.profileRecords?.[0]?.secretBindings.TOKEN).toBe(formatSharedSavedSecretRefV1('resource'));
+    expect(promoted.profileRecords?.[1]).toBe(other);
+    expect(listAccountSettingsSavedSecretReferences(promoted.settings, secret.id, {
+      profileRecords: promoted.profileRecords ?? [], artifactsById,
+    })).toEqual([]);
+    expect(record.secretBindings.TOKEN).toBe(secret.id);
+  });
+
+  it.each([
+    { futureCatalog: { value: { t: 'savedSecret', secretId: secret.id } } },
+    { futureCatalog: { secretRefs: { credential: secret.id } } },
+    { providerSettingsV1: { futureCredential: { savedSecretId: secret.id } } },
+    { profiles: [{ id: 'future-profile', secretBindings: { TOKEN: secret.id } }] },
+  ])('refuses deleting or promoting material with an unknown reference owner', (carrier) => {
+    const settings = {
+      secrets: [secret], secretBindingsByProfileId: { openai: { TOKEN: secret.id } }, ...carrier,
+    };
+    expect(() => applyAccountSettingsSavedSecretMutation(settings, {
+      kind: 'delete', secretId: secret.id, expectedUpdatedAt: 2,
+    })).toThrowError(expect.objectContaining({ code: 'saved_secret_in_use' }));
+    expect(() => promotePersonalSavedSecretReference(settings, {
+      secretId: secret.id, expectedUpdatedAt: 2, sharedSecretRef: formatSharedSavedSecretRefV1('resource'),
+    })).toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+    expect(settings.secrets).toEqual([secret]);
+  });
 });
 
 describe('SavedSecret collection capacity', () => {

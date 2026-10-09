@@ -29,6 +29,7 @@ import {
   PluginUiReplacePageLocationResultV1Schema,
   PluginUiSelectActionInputRequestV1Schema,
   PluginUiSelectActionInputResultV1Schema,
+  PluginUiSessionStateV1Schema,
   normalizePluginUiMountedContributedActionReferenceV1,
 } from './hostApiRequests.js';
 import type {
@@ -47,6 +48,19 @@ const surface = {
   platform: 'web',
   channel: 'internal',
 } as const;
+
+describe('linked Session catalog identity', () => {
+  it('accepts absent identity and strict catalog identity but rejects undeclared identity fields', () => {
+    const state = { sessionId: 'session-1', lifecycle: 'active', runtime: 'waiting',
+      operational: 'permission_required', workStatus: { bucket: 'needs_you', tone: 'attention', word: 'Permission required' },
+      pendingPermissions: [] };
+    const agent = { agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' } };
+    expect(PluginUiSessionStateV1Schema.safeParse(state).success).toBe(true);
+    expect(PluginUiSessionStateV1Schema.parse({ ...state, agent }).agent).toEqual(agent);
+    expect(PluginUiSessionStateV1Schema.safeParse({ ...state, agent: { ...agent, secret: 'not-public' } }).success).toBe(false);
+    expect(PluginUiSessionStateV1Schema.safeParse({ ...state, agent: { ...agent, brand: { ...agent.brand, bytes: [] } } }).success).toBe(false);
+  });
+});
 
 describe('mounted entity drag host methods', () => {
   it('negotiates hosted adapters through the canonical Host API vocabulary', () => {

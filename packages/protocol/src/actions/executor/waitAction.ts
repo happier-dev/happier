@@ -2,6 +2,8 @@ import { WaitActionResultV1Schema, WaitOwnerResultV1Schema, type WaitActionInput
 import { ExecutionRunWaitResultSchema } from '../../execution/runs/responseSchemas.js';
 import { WorkflowRunWaitResultV1Schema } from '../../workflows/actionsV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
+import { ActionOperationSnapshotV1Schema } from '../operations/v1.js';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 export type WaitOwnerOptionsV1 = Readonly<{
   condition: WaitActionInputV1['condition'];
@@ -14,6 +16,7 @@ export type WaitActionPortsV1 = Readonly<{
   execution?: (target: Extract<WaitTargetV1, { kind: 'execution_run' }>, options: WaitOwnerOptionsV1) => Promise<unknown>;
   session?: (request: WaitActionInputV1, options: WaitOwnerOptionsV1) => Promise<WaitOwnerResultV1>;
   workflow?: (target: Extract<WaitTargetV1, { kind: 'workflow_run' }>, options: WaitOwnerOptionsV1) => Promise<unknown>;
+  operation?: (target: Extract<WaitTargetV1, { kind: 'action_operation' }>, options: WaitOwnerOptionsV1) => Promise<unknown>;
   plugin?: (request: WaitActionInputV1, options: WaitOwnerOptionsV1) => Promise<unknown>;
 }>;
 
@@ -48,6 +51,24 @@ export async function executeWaitActionV1(
   };
   try {
     armDeadline();
+    if (input.target.kind === 'action_operation') {
+      if (input.condition.kind !== 'terminal') return complete({ disposition: 'unsupported_condition' });
+      if (!ports.operation) return complete({ disposition: 'target_unavailable' });
+      const raw = await ports.operation(input.target, ownerOptions);
+      const waited = WaitOwnerResultV1Schema.safeParse(raw);
+      if (!waited.success) {
+        const failure = waitFailureDispositionV1(raw);
+        return complete({ disposition: failure ?? 'outcome_uncertain' });
+      }
+      if (waited.data.disposition !== 'matched') return complete(waited.data);
+      const operation = ActionOperationSnapshotV1Schema.safeParse(waited.data.snapshot);
+      if (!operation.success || operation.data.operationId !== input.target.operationId
+        || operation.data.scope.machineId !== input.target.machineId
+        || operation.data.state === 'accepted' || operation.data.state === 'running') {
+        return complete({ disposition: 'outcome_uncertain', ...(operation.success ? { snapshot: normalizeStrictJsonValue(operation.data) } : {}) });
+      }
+      return complete({ disposition: 'matched', snapshot: normalizeStrictJsonValue(operation.data) });
+    }
     if (input.target.kind === 'session') {
       if (!ports.session) return complete({ disposition: 'target_unavailable' });
       return complete(await ports.session(input, ownerOptions));
@@ -99,6 +120,7 @@ export async function executeWaitActionV1(
     if (deadlineReached) return complete({ disposition: 'observation_timeout' });
     const disposition = waitFailureDispositionV1(error);
     if (disposition) return complete({ disposition });
+    if (input.target.kind === 'action_operation') return complete({ disposition: 'outcome_uncertain' });
     throw error;
   } finally { if (timer !== undefined) clearTimeout(timer); }
 }
@@ -107,12 +129,12 @@ export async function executeWaitActionV1(
 export function waitFailureDispositionV1(value: unknown): WaitActionResultV1['disposition'] | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Readonly<Record<string, unknown>>;
-  const code = record.errorCode ?? record.code;
+  const code = record.errorCode ?? record.code ?? readRpcErrorCode(value);
   const response = record.response;
   const status = response && typeof response === 'object' && 'status' in response ? response.status : undefined;
   if (status === 401 || status === 403 || code === 'permission_denied' || code === 'not_authenticated'
     || code === 'execution_run_not_allowed' || code === 'server_target_mismatch'
-    || code === 'action_disabled' || code === 'session_scope_denied') return 'permission_denied';
+    || code === 'action_disabled' || code === 'session_scope_denied' || code === RPC_ERROR_CODES.FORBIDDEN) return 'permission_denied';
   if (code === 'credential_scope_denied') return 'permission_denied';
   if (code === 'cancelled') return 'cancelled';
   if (code === 'timeout' || code === 'observation_timeout') return 'observation_timeout';

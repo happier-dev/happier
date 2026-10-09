@@ -582,6 +582,25 @@ export type SessionLifecycleActionInputById = {
             branchMode?: 'new' | 'existing' | undefined;
         } | null | undefined;
         title?: string | undefined;
+        identity?: {
+            bot?: {
+                kind: 'bot';
+            } | undefined;
+            createdAsBot?: true | undefined;
+        } | undefined;
+        memoryEnabled?: boolean | undefined;
+        promptStack?: {
+            id: string;
+            ref: {
+                kind: 'doc' | 'bundle';
+                artifactId: string;
+                serverId?: string | undefined;
+            };
+            enabled?: boolean | undefined;
+            placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+            maxChars?: number | undefined;
+            required?: boolean | undefined;
+        }[] | undefined;
         initialInput?: {
             text?: string | undefined;
             attachments?: {
@@ -592,7 +611,7 @@ export type SessionLifecycleActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                 };
@@ -927,7 +946,7 @@ export type SessionLifecycleActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'new' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                     content?: {
@@ -1335,6 +1354,15 @@ export type SessionLifecycleActionInputById = {
                                 connectedServiceGroupId?: string | undefined;
                             };
                         } | null | undefined;
+                        permissionModeUpdatedAt?: number | undefined;
+                        launchEnvironment?: {
+                            values: Record<string, string>;
+                            unset: string[];
+                        } | undefined;
+                        providerSessionResume?: {
+                            kind: 'provider_session.v1';
+                            providerSessionId: string;
+                        } | undefined;
                         conversation?: {
                             kind: 'shared_run';
                         } | {
@@ -1399,6 +1427,8 @@ export type SessionLifecycleActionInputById = {
                                     };
                                 };
                             };
+                            displayName?: string | undefined;
+                            baseRef?: string | null | undefined;
                         } | undefined;
                         engine?: {
                             role: string;

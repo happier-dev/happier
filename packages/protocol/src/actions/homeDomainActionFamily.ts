@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ACTION_ID_FAMILIES_V1 } from './actionIds.js';
 
@@ -64,7 +65,7 @@ export type HomeDomainActionIdV1 =
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
   | 'session.delete' | 'session.folder.set' | 'session.tags.set';
 
-export const HomeDomainActionIdV1Schema = z.enum(HOME_DOMAIN_ACTION_IDS_V1);
+export const HomeDomainActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_DOMAIN_ACTION_IDS_V1));
 
 const HOME_DOMAIN_ACTION_ID_SET: ReadonlySet<string> = new Set(HOME_DOMAIN_ACTION_IDS_V1);
 

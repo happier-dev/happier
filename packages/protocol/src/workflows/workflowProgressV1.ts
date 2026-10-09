@@ -285,6 +285,10 @@ export function areWorkflowRetainedRuntimeSelectionsEqualV1(
 }
 
 export const WorkflowExecutionCorrespondenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('session_ready'),
+    sessionId: preservedBoundedNfcString(191, 'Session ids'),
+  }).strict(),
   WorkflowExecutionCorrespondenceBaseV1Schema.extend({
     kind: z.literal('action'),
     actionId: z.string().min(1),
@@ -292,6 +296,7 @@ export const WorkflowExecutionCorrespondenceV1Schema = lazyZodSchema(() => z.dis
     input: z.record(z.string(), StrictJsonValueSchema),
     output: ActionCompletionStateV1Schema.shape.output.optional(),
     awaitedRuns: ActionCompletionStateV1Schema.shape.awaitedRuns.optional(),
+    awaitedOperations: ActionCompletionStateV1Schema.shape.awaitedOperations.optional(),
   }).strict(),
   WorkflowExecutionCorrespondenceBaseV1Schema.extend({
     kind: z.literal('session'),
@@ -464,6 +469,30 @@ export type WorkflowReviewV1 = z.infer<typeof WorkflowReviewV1Schema>;
 
 const WorkflowResultValidationIssuesV1Schema = lazyZodSchema(() => z.array(z.object({ pointer: z.string(), message: z.string() }).strict()));
 
+/** Condition outcome, not delivery success. Absence means it has not been observed. */
+export const WorkflowNotificationConditionV1Schema = lazyZodSchema(() => z.enum(['matched', 'suppressed']));
+export type WorkflowNotificationConditionV1 = z.infer<typeof WorkflowNotificationConditionV1Schema>;
+export const WorkflowResultProvenanceV1Schema = lazyZodSchema(() => z.record(WorkflowInvocationRecordIdSchema,
+  z.object({ notificationCondition: WorkflowNotificationConditionV1Schema }).strict()));
+export type WorkflowResultProvenanceV1 = z.infer<typeof WorkflowResultProvenanceV1Schema>;
+
+export function mergeWorkflowNotificationConditionV1(
+  current: WorkflowNotificationConditionV1 | undefined, incoming: WorkflowNotificationConditionV1 | undefined,
+): WorkflowNotificationConditionV1 | undefined {
+  return current === 'matched' || incoming === 'matched' ? 'matched' : current ?? incoming;
+}
+
+/** Several Notify me consumers may bind one physical result; a matched condition prevents quiet collapse. */
+export function mergeWorkflowResultProvenanceV1(
+  current: WorkflowResultProvenanceV1 | undefined, incoming: WorkflowResultProvenanceV1,
+): WorkflowResultProvenanceV1 {
+  const next = { ...current };
+  for (const [id, fact] of Object.entries(incoming)) {
+    next[id] = { notificationCondition: mergeWorkflowNotificationConditionV1(current?.[id]?.notificationCondition, fact.notificationCondition)! };
+  }
+  return next;
+}
+
 export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('happier.workflow-progress.v1'),
   invocationPath: WorkflowInvocationPathV1Schema,
@@ -471,6 +500,8 @@ export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.object({
   blockKind: z.enum(['root', 'step', 'action', 'wait', 'workflow', 'parallel', 'loop', 'if']),
   /** Executing worker's private authored-step projection, retained on the root row only. */
   stepProgress: WorkflowRunStepProgressV1Schema.optional(),
+  /** Evaluated Notify me conditions keyed by the exact physical result, retained only on the mutable root. */
+  resultProvenance: WorkflowResultProvenanceV1Schema.optional(),
   container: WorkflowContainerProgressV1Schema.optional(),
   attempt: WorkflowDecimalV1Schema,
   input: StrictJsonValueSchema.optional(),
@@ -501,6 +532,10 @@ export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.object({
   logicalInvocationRecordId: WorkflowInvocationRecordIdSchema,
 }).strict().superRefine((value, context) => {
   const isRoot = value.blockKind === 'root';
+  if (value.resultProvenance !== undefined && !isRoot) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['resultProvenance'],
+      message: 'Result condition provenance belongs only to the root frame' });
+  }
   if (value.stepProgress !== undefined && !isRoot) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['stepProgress'],
       message: 'Authored Run progress belongs only to the root frame' });
@@ -570,6 +605,7 @@ export function classifyWorkflowReviewEntryV1(params: Readonly<{
 
 /** Observation-owned fields only. Review transitions exclusively replace existing result/reason. */
 export const WorkflowInvocationFactV1Schema = lazyZodSchema(() => z.object({
+  resultProvenance: WorkflowResultProvenanceV1Schema.optional(),
   validationIssues: WorkflowResultValidationIssuesV1Schema.optional(),
   result: StrictJsonValueSchema.optional(),
   resultContract: StrictJsonValueSchema.optional(),
@@ -594,10 +630,11 @@ export function applyWorkflowInvocationFactV1(
   fact: WorkflowInvocationFactV1,
 ): WorkflowProgressEnvelopeV1 {
   const owned = WorkflowInvocationFactV1Schema.parse(fact);
-  const { result, reason, reasonMessage, sharedConversationInvocationRecordId, workspace, ...fields } = owned;
+  const { result, reason, reasonMessage, sharedConversationInvocationRecordId, workspace, resultProvenance, ...fields } = owned;
   const definedFields = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
   return WorkflowProgressEnvelopeV1Schema.parse({
     ...currentProgress, ...definedFields,
+    ...(resultProvenance !== undefined ? { resultProvenance: mergeWorkflowResultProvenanceV1(currentProgress.resultProvenance, resultProvenance) } : {}),
     ...(currentProgress.result === undefined && result !== undefined ? { result } : {}),
     ...(currentProgress.reason === undefined && reason !== undefined
       ? { reason: { code: reason, ...(reasonMessage !== undefined ? { message: reasonMessage } : {}) } } : {}),
@@ -690,6 +727,7 @@ export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
   'workflow_wait_self_dependency',
   'ineligible_state', 'custody_pending', 'content_unavailable', 'source_unavailable', 'legacy_conversion_unsupported',
+  'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started',
 ] as const;
 export const WorkflowOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_OPERATION_ERROR_CODES_V1));
@@ -704,6 +742,7 @@ const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
   'ineligible_state', 'custody_pending',
   'source_unavailable',
+  'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started',
 ] as const;
 

@@ -197,6 +197,16 @@ export type RolesActionResultById = {
                 bodyVersion: number;
             } | undefined;
         }[];
+        diagnostics: ({
+            source: 'legacy-guidance';
+            reason: 'unavailable' | 'invalid_root' | 'invalid_entry' | 'duplicate_id';
+            index?: number | undefined;
+            entryId?: string | undefined;
+        } | {
+            source: 'artifact';
+            artifactId: string;
+            reason: 'unavailable' | 'invalid_stored_content';
+        })[];
     };
     readonly "roles.get": {
         roleId: string;

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { ProjectManifestV1Schema } from '../../../workspaces/projectSetup/projectManifestV1.js';
+import { WorkspaceRefV1WriteSchema } from '../../../workspaces/workspaceRefV1.js';
+import { DaemonLocalServiceLauncherStartRequestV1Schema } from '../launcher/v1.js';
 
 import {
   createLocalServiceActionConfirmationNonceV1,
@@ -11,6 +14,75 @@ import {
 } from './v1.js';
 
 describe('LocalServiceActionTargetV1Schema', () => {
+  it('binds confirmation to the exact accepted workspace identity without a narrower consumer limit', () => {
+    const workspace = WorkspaceRefV1WriteSchema.parse({
+      id: ` ${'accepted-workspace'.repeat(20)} `, serverId: 'home-a', machineId: 'machine-a',
+      rootPath: `/repo/${'nested/'.repeat(320)}service `, createdAtMs: 1,
+    });
+    const request = {
+      requestId: 'reviewed-operation', action: 'stop_managed', confirmationNonce: 'placeholder',
+      target: { kind: 'managed_service', managedServiceId: 'service-a', machineId: workspace.machineId,
+        workspaceId: workspace.id, cwd: workspace.rootPath,
+        declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'web' } } },
+    };
+    const parsed = LocalServiceActionRequestV1Schema.parse(request);
+    expect(parsed.target).toEqual(request.target);
+    expect(DaemonLocalServiceLauncherStartRequestV1Schema.parse({ machineId: workspace.machineId,
+      targetId: 'project-service:web', workspaceId: workspace.id,
+      workspace: { serverId: workspace.serverId, machineId: workspace.machineId, workspaceId: workspace.id, rootPath: workspace.rootPath },
+      declaration: request.target.declaration,
+    }).workspaceId).toBe(workspace.id);
+    const other = LocalServiceActionRequestV1Schema.parse({ ...request, target: { ...request.target,
+      declaration: { ...request.target.declaration, workspaceRefId: workspace.id.trim() },
+    } });
+    expect(createLocalServiceActionConfirmationNonceV1(parsed)).not.toBe(createLocalServiceActionConfirmationNonceV1(other));
+  });
+  it('preserves exact manifest service identities through the actual target and confirmation boundary', () => {
+    const services = {
+      web: { source: { kind: 'command', command: 'run-web' } },
+      ' web ': { source: { kind: 'command', command: 'run-other-web' } },
+      ['service'.repeat(50)]: { source: { kind: 'command', command: 'run-long-name' } },
+    };
+    const manifest = ProjectManifestV1Schema.parse({ version: 1, services });
+    const nonces = new Set<string>();
+    for (const name of Object.keys(manifest.services ?? {})) {
+      const target = {
+        kind: 'managed_service', managedServiceId: 'service-a', machineId: 'machine-a',
+        declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name } },
+      };
+      expect(LocalServiceActionTargetV1Schema.parse(target)).toEqual(target);
+      const request = LocalServiceActionRequestV1Schema.parse({
+        requestId: 'same-reviewed-operation', action: 'stop_managed', target, confirmationNonce: 'placeholder',
+      });
+      nonces.add(createLocalServiceActionConfirmationNonceV1(request));
+    }
+    expect(nonces.size).toBe(Object.keys(services).length);
+    expect(LocalServiceActionTargetV1Schema.safeParse({
+      kind: 'managed_service', managedServiceId: 'service-a', machineId: 'machine-a',
+      declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: '' } },
+    }).success).toBe(false);
+  });
+
+  it('retains exact Project declaration provenance and actual cwd without granting target authority', () => {
+    const target = {
+      kind: 'managed_service', managedServiceId: 'service-a', machineId: 'machine-a', cwd: '/repo/app',
+      declaration: {
+        workspaceRefId: 'workspace-a',
+        selection: { kind: 'native', source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web' } },
+      },
+    };
+    expect(LocalServiceActionTargetV1Schema.parse(target)).toEqual(target);
+    expect(LocalServiceActionTargetV1Schema.safeParse({
+      ...target,
+      declaration: { ...target.declaration, selection: { ...target.declaration.selection,
+        source: { ...target.declaration.selection.source, file: '../another/compose.yaml' },
+      } },
+    }).success).toBe(false);
+    expect(LocalServiceActionTargetV1Schema.safeParse({
+      ...target, declaration: { ...target.declaration, starterAccountId: 'forged-owner' },
+    }).success).toBe(false);
+  });
+
   it('requires action authority to reference a canonical inventory or managed service target', () => {
     expect(LocalServiceActionTargetV1Schema.parse({
       kind: 'inventory_entry',
@@ -81,6 +153,27 @@ describe('LocalServiceActionRequestV1Schema', () => {
 });
 
 describe('Local Service action confirmation nonce helpers', () => {
+  it('binds confirmation to reviewed declaration identity and actual cwd', () => {
+    const request = {
+      requestId: 'request-project-service', action: 'stop_managed', confirmationNonce: 'placeholder',
+      target: {
+        kind: 'managed_service', managedServiceId: 'service-a', machineId: 'machine-a', cwd: '/repo/app',
+        declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: 'web' } },
+      },
+    };
+    const parsed = LocalServiceActionRequestV1Schema.parse(request);
+    const nonce = createLocalServiceActionConfirmationNonceV1(parsed);
+    for (const target of [
+      { ...request.target, cwd: '/repo/another' },
+      { ...request.target, declaration: { ...request.target.declaration, workspaceRefId: 'workspace-b' } },
+      { ...request.target, declaration: { ...request.target.declaration, selection: { kind: 'manifest', name: 'worker' } } },
+    ]) {
+      expect(isLocalServiceActionConfirmationNonceV1(LocalServiceActionRequestV1Schema.parse({
+        ...request, target, confirmationNonce: nonce,
+      }))).toBe(false);
+    }
+  });
+
   const request: LocalServiceActionRequestV1 = {
     requestId: 'request-a',
     target: {

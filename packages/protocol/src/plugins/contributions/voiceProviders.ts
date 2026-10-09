@@ -42,7 +42,7 @@ import {
   type PluginClientExecutionPlatformV1,
 } from './clientExecution.js';
 
-const VoiceJsonScalarSchema = z.union([z.null(), z.boolean(), z.number().finite(), z.string()]);
+const VoiceJsonScalarSchema = lazyZodSchema(() => z.union([z.null(), z.boolean(), z.number().finite(), z.string()]));
 
 /** Decorative service identity; it grants no Agent, credential or Connected Account access. */
 export const VoiceServiceMarkSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -102,12 +102,12 @@ const uniqueBoundedArray = <TSchema extends z.ZodTypeAny>(
 const VoiceCredentialHeaderNameSchema = lazyZodSchema(() => z.string().trim().min(1).max(128)
   .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)
   .transform((value) => value.toLowerCase()));
-const VoiceCredentialHeaderNamesSchema = z.array(VoiceCredentialHeaderNameSchema).min(1).max(32)
+const VoiceCredentialHeaderNamesSchema = lazyZodSchema(() => z.array(VoiceCredentialHeaderNameSchema).min(1).max(32)
   .superRefine((values, context) => {
     if (new Set(values).size !== values.length) {
       context.addIssue({ code: 'custom', message: 'Voice credential header names must be unique.' });
     }
-  });
+  }));
 export const VoiceCredentialAccessPhaseSchema = lazyZodSchema(() => z.enum([
   'settings',
   'prepare',
@@ -116,7 +116,7 @@ export const VoiceCredentialAccessPhaseSchema = lazyZodSchema(() => z.enum([
 ]));
 export type VoiceCredentialAccessPhase = z.infer<typeof VoiceCredentialAccessPhaseSchema>;
 
-export const VoiceCredentialOperationProjectionSchema = z.discriminatedUnion('kind', [
+export const VoiceCredentialOperationProjectionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('recipientCredential'),
     operation: asProtocolZod(PluginContributionLocalIdSchema),
@@ -145,7 +145,7 @@ export const VoiceCredentialOperationProjectionSchema = z.discriminatedUnion('ki
       });
     }
   }
-});
+}));
 export type VoiceCredentialOperationProjection = z.infer<
   typeof VoiceCredentialOperationProjectionSchema
 >;
@@ -334,7 +334,7 @@ function validateVoiceJsonBounds(value: unknown, context: z.RefinementCtx): void
   }
 }
 
-export const VoiceProviderSettingFieldSchema = PluginSettingFieldV2Schema.superRefine((field, context) => {
+export const VoiceProviderSettingFieldSchema = lazyZodSchema(() => PluginSettingFieldV2Schema.superRefine((field, context) => {
   if (field.secret === true || field.availability !== undefined || field.analytics !== undefined) {
     context.addIssue({ code: 'custom', message: 'Voice settings are bounded non-secret fields without gates or analytics.' });
   }
@@ -422,11 +422,11 @@ export const VoiceProviderSettingFieldSchema = PluginSettingFieldV2Schema.superR
   } else {
     validateVoiceJsonBounds(field.default, context);
   }
-});
+}));
 export type VoiceProviderSettingField = z.infer<typeof VoiceProviderSettingFieldSchema>;
 
 const VoiceProviderSettingsPresentationTextSchema = PluginLocalizedStringV2Schema;
-const VoiceProviderSettingsPresentationPathSchema = z.string().min(1).max(256).refine((value) => {
+export const VoiceProviderSettingsPresentationPathSchema = lazyZodSchema(() => z.string().min(1).max(256).refine((value) => {
   const segments = value.split('.');
   return segments.length <= 12 && segments.every((segment) => (
     /^[A-Za-z][A-Za-z0-9_]*$/u.test(segment)
@@ -434,7 +434,7 @@ const VoiceProviderSettingsPresentationPathSchema = z.string().min(1).max(256).r
     && segment !== 'prototype'
     && segment !== 'constructor'
   ));
-}, 'Voice settings presentation paths must be bounded safe dotted paths.');
+}, 'Voice settings presentation paths must be bounded safe dotted paths.'));
 
 const VoiceProviderSettingsPresentationOptionSchema = lazyZodSchema(() => z.union([
   z.string().max(512),
@@ -488,7 +488,7 @@ const VoiceProviderSettingsPresentationSubfieldSchema = lazyZodSchema(() => z.ob
   requiresOptIn: z.boolean().optional(),
 }).strict());
 
-export const VoiceProviderSettingsPresentationFieldSchema = z.object({
+export const VoiceProviderSettingsPresentationFieldSchema = lazyZodSchema(() => z.object({
   kind: z.enum([
     'welcome',
     'text',
@@ -566,7 +566,7 @@ export const VoiceProviderSettingsPresentationFieldSchema = z.object({
   if (field.kind === 'privacy_opt_in' && field.titleKey === undefined) {
     context.addIssue({ code: 'custom', path: ['titleKey'], message: 'Voice privacy controls require a title.' });
   }
-});
+}));
 export type VoiceProviderSettingsPresentationField = z.infer<
   typeof VoiceProviderSettingsPresentationFieldSchema
 >;
@@ -659,7 +659,7 @@ export type VoiceProviderSettingsPresentation = z.infer<
   typeof VoiceProviderSettingsPresentationSchema
 >;
 
-export const VoiceProviderSettingsSchema = z.object({
+export const VoiceProviderSettingsSchema = lazyZodSchema(() => z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   fields: z.array(VoiceProviderSettingFieldSchema).max(16),
   privacyDisclosure: PluginLocalizedStringV2Schema.optional(),
@@ -770,7 +770,7 @@ export const VoiceProviderSettingsSchema = z.object({
       }
     });
   });
-});
+}));
 export type VoiceProviderSettings = z.infer<typeof VoiceProviderSettingsSchema>;
 
 export const VoiceSpeechCatalogDeclarationSchema = lazyZodSchema(() => z.object({
@@ -827,10 +827,10 @@ export const VoiceConversationCapabilitiesSchema = lazyZodSchema(() => z.object(
 }).strict());
 export type VoiceConversationCapabilities = z.infer<typeof VoiceConversationCapabilitiesSchema>;
 
-const VoiceAgentRuntimeVersionSchema = z.string().min(1).max(64).refine(
+const VoiceAgentRuntimeVersionSchema = lazyZodSchema(() => z.string().min(1).max(64).refine(
   (value) => value.trim() === value && semver.valid(value) === value,
   'Voice Agent runtime versions must be exact canonical semver versions.',
-);
+));
 
 const VoiceConversationProviderContributionSchema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
@@ -880,7 +880,7 @@ const VoiceSpeechProviderContributionSchema = lazyZodSchema(() => z.object({
   limits: VoiceSpeechProviderLimitsSchema.optional(),
 }).strict());
 
-export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
+export const VoiceProviderContributionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   VoiceConversationProviderContributionSchema,
   VoiceSpeechProviderContributionSchema,
 ]).superRefine((contribution, context) => {
@@ -1010,7 +1010,7 @@ export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
       }
     }
   }
-});
+}));
 export type VoiceProviderContribution = z.infer<typeof VoiceProviderContributionSchema>;
 
 /**

@@ -629,6 +629,7 @@ export type ScmDiffSummaryActionResultById = {
                 error: string;
             }[] | undefined;
         } | undefined;
+        inputId?: string | undefined;
         summaryMarkdown?: string | undefined;
         checkpointReceiptId?: string | undefined;
         truncation?: {
@@ -1096,6 +1097,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -1601,6 +1603,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -2106,6 +2109,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -2611,6 +2615,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -3116,6 +3121,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -3659,6 +3665,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -4164,6 +4171,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -4669,6 +4677,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -5189,6 +5198,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -5694,6 +5704,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {
@@ -6199,6 +6210,7 @@ export type ScmDiffSummaryActionResultById = {
                         error: string;
                     }[] | undefined;
                 } | undefined;
+                inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
                 truncation?: {

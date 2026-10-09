@@ -7,7 +7,6 @@ import {
 import { AutomationSourceSelectorIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import {
-  projectLegacyAutomationTemplateToWorkflowDefinitionV1,
   convertLegacyAutomationRecipeToInlineWorkflowV1,
 } from '../../automations/automationLegacyWorkflowV1.js';
 import { openAutomationTemplateStoredV1, readAutomationTemplateStoredEnvelopeV1,
@@ -31,6 +30,7 @@ import {
   AutomationStoredWorkflowDefinitionV2Schema,
 } from '../../automations/automationWorkflowRecipeV2.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
+import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
 import {
   createWorkflowTriggerActions,
   type WorkflowTriggerActionsDependencies,
@@ -50,10 +50,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
-  /** Channels-owned Account-scoped observation; eligibility/listing is not association evidence. */
-  observeLegacyChannelAssociation?: (input: Readonly<{ automationId: string; expectedTemplateVersion: number }>, caller?: Parameters<NonNullable<WorkflowTriggerActionsDependencies['resolveSession']>>[1]) => Promise<
-    Readonly<{ kind: 'absent' | 'bound' | 'unknown' }>>;
-}> & Pick<WorkflowTriggerActionsDependencies, 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveMaterializer' | 'pullRequests'>;
+}> & Pick<WorkflowTriggerActionsDependencies, 'sessionList' | 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests'>;
 
 /**
  * Every Account host (CLI/daemon and the UI front door) composes the one trigger owner through
@@ -73,16 +70,16 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
       accountMode: current.witness.mode, ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
         ? { material: current.material.material } : {}) });
     if (!opened.ok) unavailable(opened.code);
-    if ((row.targetType === 'existingSession') !== Boolean(opened.template.existingSessionId?.trim())) unavailable('invalid_template');
     const targetType = row.targetType === 'newSession' ? 'new_session' as const : 'existing_session' as const;
     return { template: opened.template, targetType, machineId: row.assignments.length === 1 ? row.assignments[0]!.machineId : null };
   };
-  const legacyContext = (definition: ReturnType<typeof projectLegacyAutomationTemplateToWorkflowDefinitionV1>,
+  const legacyContext = (definition: WorkflowDefinitionV1,
     project: { directory: string; workspaceRefId?: string; machineId?: string }) => {
     const { machineId: _machineId, ...workspace } = project;
     const context = AutomationStoredWorkflowDefinitionV2Schema.parse({ workspace,
       executionTarget: { kind: 'session' }, inlineDefinition: definition });
-    return { target: { kind: 'inline' as const, definition }, context };
+    return { target: { kind: 'inline' as const, definition }, context,
+      ...(project.machineId === undefined ? {} : { project: { machineId: project.machineId, ...workspace } }) };
   };
   const open = async (raw: unknown) => {
     const envelope = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema).parse(raw);
@@ -180,13 +177,14 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     automations: {
       list: (input) => params.automations.list(input),
       get: (automationId) => params.automations.get(automationId),
-      create: async (input) => {
+      create: async (input, beforeWrite) => {
         const current = input.triggers.some((item) => isPrivateTrigger(item.trigger)) ? await params.resolveEncryption() : null;
         const triggers = input.triggers.map((item) => current ? { ...item,
           trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current) } : item);
+        if (beforeWrite) await beforeWrite();
         return params.automations.create({ ...input, triggers });
       },
-      reconcile: async (automationId, input, row) => {
+      reconcile: async (automationId, input, row, beforeWrite) => {
         if (!row || row.id !== automationId || row.templateVersion !== input.expectedTemplateVersion) unavailable('currentness_conflict');
         const needsPrivateWrite = input.triggers.some((item) => item.kind === 'new'
           ? isPrivateTrigger(item.trigger)
@@ -211,14 +209,17 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
               randomBytes: params.randomBytes, binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 },
               definition: previous.definition })) };
         });
+        if (beforeWrite) await beforeWrite();
         return params.automations.reconcile(automationId, { ...input, triggers }, row);
       },
       delete: (automationId) => params.automations.delete(automationId),
     },
     newId: () => params.newId(),
+    ...(params.sessionList ? { sessionList: params.sessionList } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),
+    ...(params.resolveManagedMachine ? { resolveManagedMachine: params.resolveManagedMachine } : {}),
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
     openPullRequestTrigger: async (row, trigger) => storedPullRequest(row, trigger.id, await params.resolveEncryption()).definition,
@@ -237,31 +238,16 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
         : { t: 'plain' as const, v: payload };
       return AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion, workflow, triggerEvidence: null });
     },
-    readLegacyContext: async (row) => {
-      if (row.templateCiphertext !== undefined) {
-        const legacy = await readStoredLegacy(row);
-        // Existing Session identity comes from its owner, never an arbitrary multi-placement assignment.
-        const machineId = legacy.targetType === 'existing_session' && legacy.machineId === null
-          ? (await params.resolveSession?.(legacy.template.existingSessionId!))?.project.machineId ?? null : legacy.machineId;
-        if (legacy.targetType === 'existing_session' && machineId === null) unavailable('source_unavailable');
-        return { ...legacyContext(projectLegacyAutomationTemplateToWorkflowDefinitionV1({ ...legacy, machineId }),
-          { directory: legacy.template.directory }),
-          placements: row.assignments.filter((assignment) => assignment.enabled)
-            .map(({ machineId }) => ({ machineId, directory: legacy.template.directory })) };
-      }
-      unavailable('source_unavailable');
-    },
-    convertLegacy: async (row, caller) => {
+    requiresLegacyReview: async (row) => {
       const current = await params.resolveEncryption();
       const stored = row.templateCiphertext ? readAutomationTemplateStoredEnvelopeV1(row.templateCiphertext) : null;
-      if (current.witness.mode === 'plain' && stored?.legacyExistingSessionId
-        && stored.envelope.kind !== 'happier_automation_template_plain_v1') {
-        unavailable('legacy_conversion_unsupported', { reason: 'spawn_unrepresentable' });
-      }
-      const association = await params.observeLegacyChannelAssociation?.({ automationId: row.id, expectedTemplateVersion: row.templateVersion }, caller);
-      if (!association || association.kind === 'unknown') unavailable('legacy_conversion_unsupported', { reason: 'channel_association_unknown' });
+      return current.witness.mode === 'plain' && Boolean(stored?.legacyExistingSessionId)
+        && stored?.envelope.kind !== 'happier_automation_template_plain_v1';
+    },
+    convertLegacy: async (row, caller) => {
       const legacy = await readStoredLegacy(row);
-      if (association.kind === 'bound') unavailable('legacy_conversion_unsupported', { reason: 'channel_reply_handoff' });
+      // Channel bindings address the Automation id. The canonical same-id recipe CAS
+      // keeps that association and every trigger identity intact.
       const session = legacy.targetType === 'existing_session'
         ? await params.resolveSession?.(legacy.template.existingSessionId!, caller) : undefined;
       const converted = convertLegacyAutomationRecipeToInlineWorkflowV1({ legacyTemplate: legacy,

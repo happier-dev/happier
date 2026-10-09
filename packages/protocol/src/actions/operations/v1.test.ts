@@ -9,6 +9,7 @@ import {
   ActionOperationProgressV1Schema,
   ActionOperationDomainRefV1Schema,
   ActionOperationSnapshotV1Schema,
+  ActionOperationFailureV1Schema,
   ActionOperationCancelV1RequestSchema,
   ActionOperationCancelV1ResponseSchema,
   ActionOperationGetV1RequestSchema,
@@ -16,6 +17,7 @@ import {
   ActionOperationListV1RequestSchema,
   ActionOperationListV1ResponseSchema,
   ActionOperationSnapshotPushV1Schema,
+  projectActionOperationSnapshotForV1Reader,
 } from './v1.js';
 
 const baseSnapshot = {
@@ -31,6 +33,155 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('publishes numeric FIFO ahead as a queue phase while retaining the closed predecessor progress shape', () => {
+    const progress = { kind: 'phase', phase: 'queued', label: 'Queued', queueAhead: 2 } as const;
+    const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, progress });
+    expect(current.progress).toEqual(progress);
+    // ../0.2 at 37a6541578749067b49d4579be8c752c9591b8c8 accepts
+    // exactly kind/phase/label on its closed phase arm, not current queue facts.
+    expect(projectActionOperationSnapshotForV1Reader(current).progress)
+      .toEqual({ kind: 'phase', phase: 'queued', label: 'Queued' });
+    for (const invalid of [
+      { ...progress, queueAhead: -1 },
+      { ...progress, queueAhead: 0.5 },
+      { ...progress, queueAhead: Number.MAX_SAFE_INTEGER + 1 },
+      { ...progress, phase: 'preparing' },
+      { ...progress, queuedAccountId: 'private-requester' },
+    ]) expect(ActionOperationProgressV1Schema.safeParse(invalid).success).toBe(false);
+  });
+
+  it('retains qualified source Script identity separately from its actual execution target and observed exit', () => {
+    const sourceWorkspace = { serverId: 'source-home', machineId: 'source-machine', workspaceId: 'shared-id', rootPath: '/source' };
+    const attachment = { kind: 'projectCommand', purpose: 'script', serverId: 'target-home', machineId: 'worker',
+      workspaceRefId: 'shared-id', cwd: '/copy/packages/web', terminalId: 'actual-terminal', sourceWorkspace };
+    const sources = [
+      { name: 'test', source: { kind: 'command', command: 'run tests', cwd: 'packages/web' } },
+      { source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } },
+      { source: { kind: 'pluginNative', adapter: { pluginId: 'acme.tools', localId: 'runner' }, file: 'tasks.json', target: 'test' } },
+    ];
+    for (const script of sources) {
+      const domainRef = { ...attachment, script, exitCode: 17 };
+      expect(ActionOperationDomainRefV1Schema.parse(domainRef)).toEqual(domainRef);
+      expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'projects.script.run', state: 'failed',
+        startedAt: 110, settledAt: 140, domainRef, error: { errorCode: 'project_command_step_failed', error: 'Process failed' },
+      }).domainRef).toEqual(domainRef);
+      expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, sourceWorkspace: undefined }).success).toBe(false);
+      expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, script: { ...script, credentials: 'private' } }).success).toBe(false);
+      expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, exitCode: 1.5 }).success).toBe(false);
+      expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, terminalId: undefined }).success).toBe(false);
+    }
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...attachment,
+      script: { name: '', source: sources[0]!.source } }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...attachment, sourceWorkspace: { ...sourceWorkspace, accountId: 'caller' } }).success).toBe(false);
+  });
+  it('keeps a managed row associated while its actual bootstrap task is attached', () => {
+    const domainRef = { kind: 'managedMachine', id: 'managed-row',
+      bootstrapTask: { id: 'real-task', taskKind: 'remote.ssh.bootstrapMachine.v1' } };
+    expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire', domainRef }).domainRef)
+      .toEqual(domainRef);
+    expect(ActionOperationDomainRefV1Schema.parse({ kind: 'managedMachine', id: 'waiting-row' }))
+      .toEqual({ kind: 'managedMachine', id: 'waiting-row' });
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
+      bootstrapTask: { ...domainRef.bootstrapTask, taskKind: 'arbitrary.task' } }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, intentRevision: 0 }).success).toBe(false);
+  });
+  it('retains only the qualified service relocation attempt without claiming a native lifetime', () => {
+    const domainRef = { kind: 'projectService', purpose: 'relocation',
+      workspace: { serverId: 'home', machineId: 'selected-worker', workspaceId: 'selected-ref', rootPath: '/selected' },
+      declaration: { workspaceRefId: 'selected-ref', selection: { kind: 'manifest', name: 'web' } } };
+    const operation = { ...baseSnapshot, actionId: 'projects.service.relocate', state: 'running', startedAt: 110,
+      domainRef, observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } };
+    expect(ActionOperationSnapshotV1Schema.parse(operation).domainRef).toEqual(domainRef);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
+      declaration: { ...domainRef.declaration, workspaceRefId: 'source-ref' } }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, managedServiceId: 'unobserved-native' }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, running: true }).success).toBe(false);
+  });
+  it('retains observed native Stop identity only on its qualified declaration and workspace scope', () => {
+    const declaration = { workspaceRefId: 'old-ref', selection: { kind: 'manifest', name: 'web' } };
+    const currentTarget = { kind: 'managed_service', managedServiceId: 'observed-native', machineId: 'old-worker',
+      workspaceId: 'old-ref', declaration, cwd: 'c:/Work/Project/packages/web' };
+    const domainRef = { kind: 'projectService', purpose: 'relocation',
+      workspace: { serverId: 'home', machineId: 'old-worker', workspaceId: 'old-ref', rootPath: 'C:\\Work\\Project' },
+      declaration, currentTarget };
+    expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'projects.service.relocate',
+      state: 'running', startedAt: 110, domainRef, observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' },
+    }).domainRef).toEqual(domainRef);
+    const mismatches = [
+      { ...currentTarget, machineId: 'other-worker' },
+      { ...currentTarget, workspaceId: 'other-ref' },
+      { ...currentTarget, declaration: { ...declaration, selection: { kind: 'manifest', name: 'other-service' } } },
+      { ...currentTarget, declaration: undefined },
+      { ...currentTarget, cwd: undefined },
+      { ...currentTarget, sessionId: 'unrelated-session' },
+    ];
+    for (const target of mismatches) {
+      expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, currentTarget: target }).success).toBe(false);
+    }
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, currentTarget: { ...currentTarget, running: true } }).success).toBe(false);
+  });
+  it('keeps strict no-effect setup review live without exposing unsafe plans or terminal review state', () => {
+    const setupReview = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup',
+      reviewedEffect: { commands: [] } };
+    const held = { ...baseSnapshot, actionId: 'projects.script.run', setupReview,
+      domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home', machineId: 'machine',
+        workspaceRefId: 'workspace', cwd: '/project' } };
+    expect(ActionOperationSnapshotV1Schema.safeParse(held).success).toBe(true);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, setupReview: { ...setupReview, plan: { credentials: 'secret' } } }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, setupReview: { ...setupReview, code: 'project_script_effect_changed' } }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, actionId: 'session.spawn_new' }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, state: 'succeeded', startedAt: 110, settledAt: 120 }).success).toBe(false);
+  });
+  it('accepts only strict producer setup-consent facts bound to the terminal failure code', () => {
+    const failure = { errorCode: 'project_setup_consent_required', error: 'Consent required', details: {
+      kind: 'pendingApproval', code: 'project_setup_consent_required',
+      reviewedEffect: { commands: ['install'] }, reviewedEffectDigest: 'reviewed-effect',
+    } };
+    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, errorCode: 'different' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, credential: 'private' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { arbitrary: 'private' } }).success).toBe(false);
+  });
+  it('links only the existing remote enrollment task without granting another routing identity', () => {
+    const domainRef = { kind: 'systemTask', id: 'bootstrap-task', taskKind: 'remote.ssh.bootstrapMachine.v1' };
+    expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire', domainRef }).domainRef)
+      .toEqual(domainRef);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, taskKind: 'arbitrary.task' }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, token: 'secret' }).success).toBe(false);
+  });
+  it('keeps unknown launch or stop evidence distinct from terminal process outcomes', () => {
+    const observation = { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' };
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...baseSnapshot, observation }).success).toBe(true);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...baseSnapshot, observation: { ...observation, success: true } }).success).toBe(false);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...baseSnapshot, state: 'cancelled', startedAt: 110,
+      settledAt: 120, observation }).success).toBe(false);
+  });
+  it('accepts terminal observation only at get, never as an implicit stop request', () => {
+    expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: true }).success).toBe(true);
+    expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: true, includeSetupReview: true }).success).toBe(true);
+    expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', includeSetupReview: true }).success).toBe(false);
+    expect(ActionOperationGetV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: false }).success).toBe(false);
+    expect(ActionOperationCancelV1RequestSchema.safeParse({ operationId: 'operation', waitForTerminal: true }).success).toBe(false);
+  });
+  it('retains a strict qualified project command before launch and after failure or cancellation', () => {
+    const domainRef = { kind: 'projectCommand', purpose: 'script', serverId: 'home-1',
+      machineId: 'worker-1', workspaceRefId: 'workspace-1', cwd: '/project',
+      originRun: { kind: 'workflow_run', serverId: 'home-1', runId: 'workflow-1' } };
+    const accepted = { ...baseSnapshot, actionId: 'projects.script.run', domainRef };
+    expect(ActionOperationSnapshotV1Schema.safeParse(accepted).success).toBe(true);
+    expect(ActionOperationDomainRefV1Schema.parse({ ...domainRef, cwd: '/project with trailing space ' }))
+      .toMatchObject({ cwd: '/project with trailing space ' });
+    for (const state of ['failed', 'cancelled']) {
+      const terminal = { ...accepted, state, startedAt: 110, settledAt: 120,
+        domainRef: { ...domainRef, terminalId: 'terminal-1' },
+        ...(state === 'failed' ? { error: { errorCode: 'process_exit_nonzero', error: 'Process failed' } } : {}) };
+      expect(ActionOperationSnapshotV1Schema.safeParse(terminal).success).toBe(true);
+      expect(ActionOperationSnapshotV1Schema.safeParse({ ...terminal, result: { exitCode: 1 } }).success).toBe(false);
+    }
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, actorAccountId: 'caller-minted' }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
+      originRun: { ...domainRef.originRun, authority: 'caller-minted' } }).success).toBe(false);
+  });
   it('owns the exact additive machine RPC method names', () => {
     expect(ACTION_OPERATION_RPC_METHODS_V1).toEqual({
       list: 'actionOperation.list.v1',

@@ -36,6 +36,7 @@ export type SessionTargetingActionInputById = {
                 groupId: string;
             })[];
             tagIds: string[];
+            bot?: 'bot' | 'ordinary' | undefined;
             folderIds?: string[] | undefined;
             underSessionId?: string | undefined;
             cursor?: string | undefined;
@@ -195,6 +196,7 @@ export type SessionTargetingActionResultById = {
         attentionNextCursor?: string | null | undefined;
         attentionHasNext?: boolean | undefined;
         metadataUpgradeRequiredCount?: number | undefined;
+        botFilterUnavailableCount?: number | undefined;
     } | (({
         [x: string]: unknown;
         sessions: {
@@ -366,16 +368,111 @@ export type SessionTargetingActionResultById = {
                 requestId: string;
                 requestedAt: number;
                 status: 'waiting';
+                managedWakeTargetV1?: {
+                    homeId: string;
+                    managedId: string;
+                    enrolledMachineId: string;
+                    expectedIntentRevision: number;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    origin: {
+                        kind: 'session-input';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        pendingRequestId: string;
+                        requestedAt: number;
+                    } | {
+                        kind: 'finite-command';
+                        actionRequestId: string;
+                    } | {
+                        kind: 'workflow-assignment';
+                        runId: string;
+                        revision: number;
+                        assignment: {
+                            machineId: string;
+                        };
+                    } | {
+                        kind: 'context-delivery';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        delivery: {
+                            runId: string;
+                            revision: number;
+                        };
+                    };
+                    reason: 'admitted-work';
+                } | undefined;
+                admittedTarget?: {
+                    homeId: string;
+                    accountId: string;
+                    sessionId: string;
+                    machineId: string;
+                    installationId: string;
+                } | undefined;
             } | {
                 requestId: string;
                 requestedAt: number;
                 status: 'failed';
                 failureCode: 'runtime_start_failed';
+                managedWakeTargetV1?: {
+                    homeId: string;
+                    managedId: string;
+                    enrolledMachineId: string;
+                    expectedIntentRevision: number;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    origin: {
+                        kind: 'session-input';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        pendingRequestId: string;
+                        requestedAt: number;
+                    } | {
+                        kind: 'finite-command';
+                        actionRequestId: string;
+                    } | {
+                        kind: 'workflow-assignment';
+                        runId: string;
+                        revision: number;
+                        assignment: {
+                            machineId: string;
+                        };
+                    } | {
+                        kind: 'context-delivery';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        delivery: {
+                            runId: string;
+                            revision: number;
+                        };
+                    };
+                    reason: 'admitted-work';
+                } | undefined;
+                admittedTarget?: {
+                    homeId: string;
+                    accountId: string;
+                    sessionId: string;
+                    machineId: string;
+                    installationId: string;
+                } | undefined;
             } | undefined;
         }[];
         nextCursor?: string | null | undefined;
         hasNext?: boolean | undefined;
         metadataUpgradeRequiredCount?: number | undefined;
+        botFilterUnavailableCount?: number | undefined;
     } | {
         [x: string]: unknown;
         sessions: {
@@ -402,6 +499,7 @@ export type SessionTargetingActionResultById = {
         attentionHasNext?: boolean | undefined;
         queryVersion?: 1 | undefined;
         metadataUpgradeRequiredCount?: number | undefined;
+        botFilterUnavailableCount?: number | undefined;
     });
     readonly "session.activity.get": {
         v: 1;

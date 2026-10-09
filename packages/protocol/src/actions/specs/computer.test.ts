@@ -16,6 +16,46 @@ function nativeSpec(id: string) {
 }
 
 describe('native computer Action contracts', () => {
+  it('admits only exact, value-free credential entry and bounded settlement', () => {
+    const requests = {
+      'computer.secret.fill': {
+        serverId: 'home_1', sessionId: 'session_1', machineId: 'machine_1', purpose: 'Sign in',
+        sourceId: 'source_1', target, captureId: 'capture_1',
+        geometry: { captureWidth: 100, captureHeight: 80, nativeWidth: 100, nativeHeight: 80,
+          originX: 0, originY: 0, scaleX: 1, scaleY: 1, crop: { x: 0, y: 0, width: 100, height: 80 } },
+        field: { fieldId: 'field_1', focusId: 'focus_1' },
+      },
+      'browser.automation.secret.fill': {
+        serverId: 'home_1', sessionId: 'session_1', machineId: 'machine_1', purpose: 'Sign in',
+        browserSessionId: 'browser_1', viewId: 'view_1', tabId: 'tab_1', frameId: 'frame_1',
+        documentId: 'document_1', navigationGeneration: 3, origin: 'https://example.test',
+        field: { fieldId: 'field_1', focusId: 'focus_1', locator: '#password' },
+      },
+    };
+    for (const [id, request] of Object.entries(requests)) {
+      expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
+      const spec = nativeSpec(id);
+      expect(spec.inputSchema.safeParse(request).success, id).toBe(true);
+      for (const extra of ['value', 'text', 'clipboard', 'secretRef', 'credentialRead']) {
+        expect(spec.inputSchema.safeParse({ ...request, [extra]: 'recognizable-private-value' }).success, extra).toBe(false);
+        expect(spec.inputSchema.safeParse({ ...request, field: { ...request.field, [extra]: 'recognizable-private-value' } }).success, extra).toBe(false);
+      }
+      const { focusId: _focusId, ...unprovedField } = request.field;
+      expect(spec.inputSchema.safeParse({ ...request, field: unprovedField }).success).toBe(false);
+      expect(spec.outputSchema.safeParse({ status: 'filled', code: 'filled' }).success).toBe(true);
+      expect(spec.outputSchema.safeParse({ status: 'refused', code: 'field_verification_unsupported' }).success).toBe(true);
+      expect(spec.outputSchema.safeParse({ status: 'unknown', code: 'delivery_unknown' }).success).toBe(true);
+      for (const extra of ['value', 'valueHash', 'length', 'resultSummary', 'readback']) {
+        expect(spec.outputSchema.safeParse({ status: 'filled', code: 'filled', [extra]: 'recognizable-private-value' }).success, extra).toBe(false);
+      }
+      expect(spec.outputSchema.safeParse({ status: 'refused', code: 'recognizable-private-value' }).success).toBe(false);
+      expect(spec.safety).toBe('danger');
+      expect(spec.executionPlacement).toBe('machine');
+    }
+    const browser = nativeSpec('browser.automation.secret.fill').inputSchema;
+    expect(browser.safeParse({ ...requests['browser.automation.secret.fill'], origin: 'https://example.test/login?secret=value' }).success).toBe(false);
+    expect(browser.safeParse({ ...requests['browser.automation.secret.fill'], origin: 'invalid-origin' }).success).toBe(false);
+  });
   it('admits agent discovery, selection and approved Privacy launch', () => {
     for (const id of ['computer.targets.list', 'computer.target.select', 'computer.permissions.openSettings']) {
       expect(nativeSpec(id).requiredAuthority, id).toBe('account_automation');

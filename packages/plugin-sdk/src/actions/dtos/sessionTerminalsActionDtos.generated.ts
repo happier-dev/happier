@@ -26,6 +26,12 @@ export type SessionTerminalsActionInputById = {
                 kind: 'happier_cli';
                 args: string[];
             } | undefined;
+            workspace?: {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            } | undefined;
         } | {
             kind: 'session_attach';
         } | {
@@ -75,6 +81,12 @@ export type SessionTerminalsActionInputById = {
             } | {
                 kind: 'happier_cli';
                 args: string[];
+            } | undefined;
+            workspace?: {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
             } | undefined;
         } | {
             kind: 'session_attach';
@@ -190,6 +202,12 @@ export type SessionTerminalsActionResultById = {
                             kind: 'happier_cli';
                             args: string[];
                         } | undefined;
+                        workspace?: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                        } | undefined;
                     } | {
                         kind: 'session_attach';
                     } | {
@@ -220,12 +238,24 @@ export type SessionTerminalsActionResultById = {
                         sessionId?: string | undefined;
                     };
                     title?: string | undefined;
+                    pendingActionApproval?: {
+                        scope: {
+                            serverId: string;
+                            accountId: string;
+                        };
+                        artifactId: string;
+                        actionId: 'machines.terminal.open' | 'machines.terminal.restart';
+                    } | undefined;
                 }[];
                 focusedTerminalId: string;
                 root: SessionTerminalLayoutV1;
             }[];
             activeTabId: string | null;
             showList: boolean;
+            ownerScope?: {
+                serverId: string;
+                accountId: string;
+            } | undefined;
         };
     };
     readonly "session.terminals.open": {

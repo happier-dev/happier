@@ -1,9 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
   SESSION_LIST_PAGE_MAX_LIMIT,
   SessionListQueryV1Schema,
   SessionListScopeV1Schema,
+  SessionBotFilterV1Schema,
   type SessionAudienceSelectionV1,
 } from '../../sessions/listing/query.js';
 import {
@@ -13,18 +15,18 @@ import {
 } from '../../sessions/awareness/action.js';
 import { actionCliDerivedDefault, type ActionCliBindContext, type ActionCliProjection } from '../actionCliProjection.js';
 
-const SelectorSchema = z.string().trim().min(1);
-const GroupSelectorSchema = SelectorSchema.refine((value) => {
+const SelectorSchema = lazyZodSchema(() => z.string().trim().min(1));
+const GroupSelectorSchema = lazyZodSchema(() => SelectorSchema.refine((value) => {
   const parts = value.split('/');
   return parts.length === 2 && parts.every((part) => part.trim().length > 0);
-}, { message: 'Expected <teamId>/<groupId>' });
+}, { message: 'Expected <teamId>/<groupId>' }));
 
 /**
  * The established friendly `session list` grammar. Canonical fields stay
  * available, while scalar audience flags are projected into the one Lane 07
  * query instead of teaching the CLI how to filter Session rows itself.
  */
-export const SessionListCliInputSchema = z.object({
+export const SessionListCliInputSchema = lazyZodSchema(() => z.object({
   query: SessionListQueryV1Schema.optional(),
   underSessionId: SelectorSchema.optional(),
   view: SessionListViewV1Schema.optional(),
@@ -37,6 +39,7 @@ export const SessionListCliInputSchema = z.object({
   includeSystem: z.boolean().optional(),
   resumableOnly: z.boolean().optional(),
   scope: SessionListScopeV1Schema.optional(),
+  bot: SessionBotFilterV1Schema.optional(),
   team: z.array(SelectorSchema).optional(),
   group: z.array(GroupSelectorSchema).optional(),
   outsideTeams: z.boolean().optional(),
@@ -59,6 +62,7 @@ export const SessionListCliInputSchema = z.object({
   const querySelectors = [
     value.underSessionId,
     value.scope,
+    value.bot,
     value.team,
     value.group,
     value.outsideTeams,
@@ -92,7 +96,7 @@ export const SessionListCliInputSchema = z.object({
   if ((value.query !== undefined || querySelectors) && (value.activeOnly || value.resumableOnly)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['activeOnly'], message: 'active/resumable cannot be combined with a canonical query' });
   }
-});
+}));
 export type SessionListCliInput = z.infer<typeof SessionListCliInputSchema>;
 
 function parseGroupSelector(value: string): SessionAudienceSelectionV1 {
@@ -107,6 +111,7 @@ export function bindSessionListCliInput(
   const hasFriendlyQuery = [
     value.underSessionId,
     value.scope,
+    value.bot,
     value.team,
     value.group,
     value.outsideTeams,
@@ -127,6 +132,7 @@ export function bindSessionListCliInput(
         includeInactive: value.includeInactive ?? (value.underSessionId !== undefined),
         scope: value.scope ?? (audiences.length > 0 || value.underSessionId ? 'all_accessible' : 'my_work'),
         attention: value.attention ? 'needs_my_attention' : 'any',
+        ...(value.bot === undefined ? {} : { bot: value.bot }),
         audiences,
         tagIds: value.tag ?? [],
         ...(value.underSessionId === undefined ? {} : { underSessionId: value.underSessionId }),
@@ -173,6 +179,7 @@ export const SESSION_LIST_CLI_PROJECTION: ActionCliProjection = {
       { path: 'cursor', title: 'Ordinary continuation cursor', widget: 'text' },
       { path: 'attentionCursor', title: 'Attention continuation cursor', widget: 'text' },
       { path: 'scope', title: 'Session scope', widget: 'select', options: SessionListScopeV1Schema.options.map((option) => ({ value: option, label: option })) },
+      { path: 'bot', title: 'Session identity', widget: 'select', options: [{ value: 'bot', label: 'Bot' }, { value: 'ordinary', label: 'Ordinary Session' }] },
       { path: 'team', title: 'Team selector', widget: 'text_list', listSeparator: 'comma' },
       { path: 'group', title: 'Group selector as team/group', widget: 'text_list', listSeparator: 'comma' },
       { path: 'tag', title: 'Tag selector', widget: 'text_list', listSeparator: 'comma' },

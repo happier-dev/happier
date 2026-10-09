@@ -22,8 +22,10 @@ import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecr
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
 import { WORKFLOW_ACTION_IDS_V1 } from '../workflows/actionsV1.js';
 import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
+import { MEMORY_DOCUMENT_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { resolveRuntimeActionSurfaces } from './surfaces.js';
+import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from './specs/localServices.js';
 import type { ActionSpec } from './actionSpecs.js';
 import {
   ActionIdSchema,
@@ -40,6 +42,63 @@ const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
   'devices.simulator.stream.open',
   'devices.simulator.stream.close',
 ] as const;
+
+describe('Profile entity operation parity', () => {
+  it('admits typed row edits and requires consent for deletion and secret selection', () => {
+    const edit = listActionSpecs().find((spec) => spec.id === 'launch_profiles.save');
+    expect(edit).toBeDefined();
+    expect(edit?.inputSchema.safeParse({ id: 'profile-a', expectedRevision: 4,
+      profile: { v: 2, id: 'profile-a', name: 'Edited', createdAt: 1, updatedAt: 2 } }).success).toBe(true);
+    expect(edit?.inputSchema.safeParse({ operation: 'save', payload: {} }).success).toBe(false);
+    expect(listActionSpecs().find((spec) => spec.id === 'launch_profiles.delete')?.safety).toBe('danger');
+    expect(listActionSpecs().find((spec) => spec.id === 'launch_profiles.secrets.select')?.safety).toBe('danger');
+  });
+});
+
+describe('reviewed Prompt Library Action contract', () => {
+  it('admits the closed reviewed revision while refusing unknown mutation authority', () => {
+    const input = { artifactId: 'doc', title: 'Edited', markdown: '', expectedRevision: { headerVersion: 2, bodyVersion: 3 } };
+    const spec = getActionSpec('prompt_doc.update');
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    expect(spec.inputSchema.safeParse({ ...input, expectedRevision: { ...input.expectedRevision, approval: true } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, approved: true }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ artifactId: 'doc', title: 'Edited', markdown: '' }).success).toBe(true);
+    expect(getActionSpec('prompt_doc.get').outputSchema.safeParse({ ok: true, artifactId: 'doc', title: 'Prompt', markdown: '',
+      revision: input.expectedRevision }).success).toBe(true);
+  });
+
+  it('projects the existing eligible prompt operations to Voice without losing dangerous edit policy', () => {
+    const voiceIds = listActionSpecsForSurface('voice').map(spec => spec.id);
+    for (const id of ['prompt_doc.get', 'prompt_doc.create', 'prompt_doc.favorite.set', 'prompts.library.list', 'prompt_doc.update', 'prompt_asset.export'] as const) {
+      expect(voiceIds).toContain(id);
+    }
+    expect(getActionSpec('prompt_doc.update').safety).toBe('danger');
+    expect(getActionSpec('prompt_asset.export').safety).toBe('danger');
+  });
+});
+
+describe('Action execution placement owner', () => {
+  it.each(['daemon.filesystem.copy', 'daemon.filesystem.upload', 'daemon.filesystem.download'] as const)(
+    'withholds live transfer endpoint capabilities from %s observations', actionId => {
+      const spec = getActionSpec(actionId);
+      expect(spec.approvalResultCustody).toBe('live_only');
+      expect(spec.projectObservationOutput?.({
+        prepared: { endpointCandidates: [{ url: 'https://home.example/transfer/private-capability', authorizationToken: 'private-bearer' }] },
+      })).toEqual({ redacted: true });
+    },
+  );
+  it('keeps memory documents Account-owned and live memory observations Machine-owned', () => {
+    for (const id of MEMORY_DOCUMENT_ACTION_IDS_V1) {
+      expect(getActionSpec(id).executionPlacement).toBe('account');
+    }
+    for (const id of ['memory.search', 'memory.get_window', 'memory.ensure_up_to_date'] as const) {
+      expect(getActionSpec(id).executionPlacement).toBe('machine');
+    }
+    for (const id of ['session.bot.set', 'session.title.set'] as const) {
+      expect(getActionSpec(id).executionPlacement).toBe('account');
+    }
+  });
+});
 
 const RUNTIME_ACTION_IDS = [
   'browser.view.open',
@@ -244,6 +303,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'session.status.get',
   'session.work_state.get',
   'session.goal.get',
+  'session.goal.clear',
   'session.usageLimit.checkNow',
   'session.usageLimit.consumeResetCredit',
   'session.terminalComposer.clear',
@@ -345,7 +405,6 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'session.archive',
   'session.unarchive',
   'session.goal.set',
-  'session.goal.clear',
   'session.usageLimit.waitResume.enable',
   'session.usageLimit.waitResume.cancel',
   'transcript.unfollow',
@@ -2704,13 +2763,26 @@ describe('Action Spec Registry', () => {
       const spec = getActionSpec(id as ActionId);
       expect(spec.id).toBe(id);
       const publicProjection = !isInternalActionId(id);
+      const controlRpcMethod = Object.hasOwn(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, id)
+        ? LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS[id as keyof typeof LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS] : undefined;
+      const answeringClient = id === 'localServices.actions.copyUrl' || id === 'localServices.actions.openPreview';
+      const serviceFrontDoor = id === 'localServices.launcher.start' || controlRpcMethod !== undefined;
       expect(spec.surfaces, id).toEqual({
         ...resolveRuntimeActionSurfaces(id as RuntimeActionIdV1),
+        // The family now declares actual native-control ingress separately
+        // from the generic runtime UI/Agent backing default.
+        ...(serviceFrontDoor ? { rpc: true, cli: !answeringClient, voice: !answeringClient } : {}),
+        ...(serviceFrontDoor && !answeringClient ? { mcp: true } : {}),
         ...(publicProjection && spec.requiredAuthority === 'present_user' ? { agent: true, mcp: true } : {}),
         api: publicProjection && spec.requiredAuthority === 'account_automation',
         plugin: publicProjection,
       });
-      expect(spec.bindings).toBeUndefined();
+      if (serviceFrontDoor) {
+        expect(spec.bindings?.rpcMethod).toBe(id === 'localServices.launcher.start'
+          ? RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START : controlRpcMethod);
+      } else {
+        expect(spec.bindings).toBeUndefined();
+      }
     }
 
     // Spot-check the only remaining fail-closed leaf stays disabled on every surface.

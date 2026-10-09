@@ -1,25 +1,36 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import type { RoleActionIdV1 } from './roleActionIdsV1.js';
 import { RoleArtifactV1Schema } from './roleArtifactV1.js';
 import { RoleInstructionsOverrideV1Schema, RoleOverrideV1Schema } from './rolesV1.js';
 
-const SessionRoleIdentityV1Schema = z.object({
+const SessionRoleIdentityV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1), roleId: z.string().min(1),
-}).strict();
-const RoleIdentityV1Schema = z.object({ roleId: z.string().min(1) }).strict();
-const RoleArtifactRevisionV1Schema = z.object({
+}).strict());
+const RoleIdentityV1Schema = lazyZodSchema(() => z.object({ roleId: z.string().min(1) }).strict());
+const RoleArtifactRevisionV1Schema = lazyZodSchema(() => z.object({
   headerVersion: z.number().int().nonnegative(),
   bodyVersion: z.number().int().nonnegative(),
-}).strict();
-export const RoleActionEntryV1Schema = z.object({
+}).strict());
+export const RoleActionEntryV1Schema = lazyZodSchema(() => z.object({
   roleId: z.string().min(1), role: RoleArtifactV1Schema,
   revision: RoleArtifactRevisionV1Schema.optional(),
   shared: z.boolean(),
   viewOnly: z.boolean(),
   migratedFromV0_2: z.boolean(),
-}).strict();
+}).strict());
 export type RoleActionEntryV1 = z.infer<typeof RoleActionEntryV1Schema>;
-const RoleActionUpdatedV1Schema = z.object({ updated: z.literal(true) }).strict();
+export const RoleSourceDiagnosticV1Schema = lazyZodSchema(() => z.union([
+  z.object({ source: z.literal('legacy-guidance'),
+    reason: z.enum(['unavailable', 'invalid_root', 'invalid_entry', 'duplicate_id']),
+    index: z.number().int().nonnegative().optional(), entryId: z.string().optional(),
+  }).strict(),
+  z.object({ source: z.literal('artifact'), artifactId: z.string().min(1),
+    reason: z.enum(['unavailable', 'invalid_stored_content']),
+  }).strict(),
+]));
+export type RoleSourceDiagnosticV1 = z.infer<typeof RoleSourceDiagnosticV1Schema>;
+const RoleActionUpdatedV1Schema = lazyZodSchema(() => z.object({ updated: z.literal(true) }).strict());
 
 /** V1 role mutations are executable declarations; all nested object boundaries are closed. */
 export const RoleActionInputSchemasV1 = {
@@ -47,7 +58,7 @@ export const RoleActionOutputSchemasV1 = {
   'session.roles.remove': RoleActionUpdatedV1Schema,
   'session.notes.set': RoleActionUpdatedV1Schema,
   'session.roles.apply_to_reports': z.object({ updatedSessionIds: z.array(z.string().min(1)) }).strict(),
-  'roles.list': z.object({ items: z.array(RoleActionEntryV1Schema) }).strict(),
+  'roles.list': z.object({ items: z.array(RoleActionEntryV1Schema), diagnostics: z.array(RoleSourceDiagnosticV1Schema) }).strict(),
   'roles.get': RoleActionEntryV1Schema,
   'roles.create': z.object({ roleId: z.string().min(1), revision: RoleArtifactRevisionV1Schema }).strict(),
   'roles.update': z.object({ roleId: z.string().min(1), revision: RoleArtifactRevisionV1Schema }).strict(),

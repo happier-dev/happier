@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 
@@ -10,20 +11,21 @@ export function isSettingsDeclarationActionIdV1(value: string): value is Setting
 
 /** Values are strict JSON; the declaration's canonical owner admits each setting's shape. */
 export const SettingsDeclarationValueV1Schema = StrictJsonValueSchema;
-const SettingsDeclarationScalarChoiceV1Schema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
-const AnchorSchema = z.string().trim().min(1);
-const OperationIdSchema = z.string().trim().min(1);
+const SettingsDeclarationScalarChoiceV1Schema = lazyZodSchema(() => z.union([z.string(), z.number().finite(), z.boolean(), z.null()]));
+const AnchorSchema = lazyZodSchema(() => z.string().trim().min(1));
+const OperationIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 /** Exact operation targets, never a settings path, credential value or caller confirmation. */
-export const SettingsDeclarationOperationInputV1Schema = z.discriminatedUnion('kind', [
+export const SettingsDeclarationOperationInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('account_settings_history_purge'), versions: z.array(z.number().int().nonnegative().safe()).nonempty() }).strict(),
   z.object({ kind: z.literal('model_pack'), packId: OperationIdSchema, machineId: OperationIdSchema.optional() }).strict(),
   z.object({ kind: z.literal('voice_preview'), voiceId: OperationIdSchema }).strict(),
   z.object({ kind: z.literal('diagnostics_enabled'), enabled: z.boolean() }).strict(),
   z.object({ kind: z.literal('diagnostics_export'), artifactId: OperationIdSchema, machineId: OperationIdSchema.optional() }).strict(),
   z.object({ kind: z.literal('diagnostics_session'), sessionId: OperationIdSchema, machineId: OperationIdSchema }).strict(),
   z.object({ kind: z.literal('diagnostics_revocation'), key: OperationIdSchema, revision: z.number().int().positive().safe() }).strict(),
-]);
+]));
 export type SettingsDeclarationOperationInputV1 = z.infer<typeof SettingsDeclarationOperationInputV1Schema>;
-export const SettingsDeclarationDescriptorV1Schema = z.object({
+export const SettingsDeclarationDescriptorV1Schema = lazyZodSchema(() => z.object({
   anchor: AnchorSchema,
   pageId: z.string().min(1),
   title: z.string(),
@@ -35,8 +37,8 @@ export const SettingsDeclarationDescriptorV1Schema = z.object({
   allowedValues: z.array(SettingsDeclarationScalarChoiceV1Schema).optional(),
   operation: z.object({ actionId: z.literal('settings.invoke'), requiresHumanInteraction: z.boolean(), requiresApproval: z.boolean().optional() }).strict().optional(),
   unavailableReason: z.enum(['not_bound', 'sensitive', 'read_only', 'unsupported_host', 'feature_disabled']).optional(),
-}).strict();
-const ValueResultSchema = z.object({ anchor: AnchorSchema, value: SettingsDeclarationValueV1Schema }).strict();
+}).strict());
+const ValueResultSchema = lazyZodSchema(() => z.object({ anchor: AnchorSchema, value: SettingsDeclarationValueV1Schema }).strict());
 
 export const SettingsDeclarationActionInputSchemasV1 = {
   'settings.list': z.object({ pageId: z.string().trim().min(1).optional() }).strict(),

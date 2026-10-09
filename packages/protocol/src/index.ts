@@ -1,4 +1,15 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export * from './sessions/context/sessionContextV1.js';
+export * from './scm/entriesHistoryV1.js';
+export * from './sessions/identity/sessionBotV1.js';
+export * from './machines/managed/providerFactsV1.js';
+export * from './machines/managed/managedMachineV1.js';
+export * from './machines/managed/managedDependencyV1.js';
+export { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from './connect/qualifiedConnectedAccountsV4.js';
+export * from './machines/managed/actionsV1.js';
+export * from './machines/managed/managedPolicyV1.js';
+export * from './sessions/control/pendingWithdrawV1.js';
+export { createStoredReadSchema } from './json/storedReadSchema.js';
 export { resolveConnectedServiceQuotaMeterLabel } from './connect/connectedServiceQuotaMeterLabel.js';
 export * from './plugins/actions/clientInvocationV1.js';
 export * from './home/index.js';
@@ -196,14 +207,26 @@ export {
 export {
   MachineUpdateMetadataRequestSchema,
   MachineUpdateMetadataResponseSchema,
+  MachineUpdateStateRequestSchema,
+  MachineUpdateStateResponseSchema,
   type MachineUpdateMetadataRequest,
   type MachineUpdateMetadataResponse,
+  type MachineUpdateStateRequest,
+  type MachineUpdateStateResponse,
 } from './machines/metadataUpdate.js';
 
 export {
 } from './daemon/contributionRegistryProjection.js';
 
 export * from './plugins/events/index.js';
+export { ARTIFACT_FOLDER_ACTION_IDS_V1, isArtifactFolderActionIdV1 } from './prompts/library/artifactFolderActionIdsV1.js';
+export type { ArtifactFolderActionIdV1 } from './prompts/library/artifactFolderActionIdsV1.js';
+export { ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1, ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1, ArtifactFolderMutationResultV1Schema,
+  ArtifactOrganizationMutationFailureDetailsV1Schema, ArtifactOrganizationMutationFailureV1,
+  readArtifactFolderCatalogV1, readArtifactOrganizationV1, mutateArtifactOrganizationV1, executeArtifactFolderActionV1 } from './prompts/library/promptFolderActionsV1.js';
+export type { ArtifactFolderActionPortV1, ArtifactFolderHeaderV1, ArtifactFolderMutationResultV1,
+  ArtifactOrganizationMutationFailureDetailsV1 } from './prompts/library/promptFolderActionsV1.js';
+
 export type {
   HostEventEnvelope,
   HostEventId,
@@ -2240,7 +2263,6 @@ export {
 } from './transfers/relay/v2/index.js';
 
 export {
-  assertAccountWorkspaceSettingsTransition,
   isExpoPushNotificationChannelEnabled,
   NEW_SESSION_DRAFT_ENTRY_MODES,
   SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES,
@@ -3096,6 +3118,7 @@ export {
   type PublishedMachineDataEncryptionKeyResolutionV1,
   type PublishedMachineDataEncryptionKeyV1,
 } from './machines/machineStoredContent.js';
+export { isMachinePublishedContentSafeV1 } from './machines/machinePublishedContentV1.js';
 
 export {
   isSessionEncryptionModeAllowedByStoragePolicy,
@@ -4539,6 +4562,7 @@ export {
   PluginSessionInputIdempotencyKeyV1Schema,
   PluginSessionInputRequestV1Schema,
   PluginSessionInputSourceV1Schema,
+  SessionInputMachineTargetV1Schema,
   SessionInputAdmissionReceiptV1Schema,
   SessionInputAdmissionRejectionCodeV1Schema,
   SessionInputAdmissionResultV1Schema,
@@ -4597,6 +4621,7 @@ export {
   type PluginSessionInputRequestV1,
   type PluginSessionInputSourceV1,
   type SessionInputAdmissionReceiptV1,
+  type SessionInputMachineTargetV1,
   type SessionInputAdmissionRejectionCodeV1,
   type SessionInputAdmissionResultV1,
   type SessionMessageSendResultV1,
@@ -5617,6 +5642,7 @@ export {
   projectExecutionRunRequestedConfiguration,
   ExecutionRunDraftCorrelationIdSchema,
   ExecutionRunPublicStateSchema,
+  isExecutionRunActive,
   ExecutionRunInteractionV1Schema,
   NO_EXECUTION_RUN_INTERACTION,
   resolveExecutionRunInteractionAffordances,
@@ -7244,6 +7270,12 @@ export {
   MemoryCitationV1Schema,
   MemorySearchErrorCodeSchema,
   MemorySearchHitV1Schema,
+  MemoryDocumentSearchHitV1Schema,
+  MemorySearchResultHitV1Schema,
+  MemorySearchCorpusV1Schema,
+  MemoryDocumentSearchCoverageV1Schema,
+  isMemoryDocumentSearchHitV1,
+  negotiateMemorySearchV1,
   MemorySearchModeSchema,
   MemorySearchQueryV1Schema,
   MemorySearchResultV1Schema,
@@ -7251,6 +7283,10 @@ export {
   type MemoryCitationV1,
   type MemorySearchErrorCode,
   type MemorySearchHitV1,
+  type MemoryDocumentSearchHitV1,
+  type MemorySearchResultHitV1,
+  type MemorySearchCorpusV1,
+  type MemoryDocumentSearchCoverageV1,
   type MemorySearchMode,
   type MemorySearchQueryV1,
   type MemorySearchResultV1,
@@ -7392,9 +7428,21 @@ export {
 export {
   PromptFolderEntryV1Schema,
   PromptFoldersV1Schema,
+  PromptFoldersV1WriteSchema,
+  PromptFoldersV1RecordSchema,
+  StoredPromptFoldersV1Schema,
+  normalizePromptFolderNameV1,
+  findPromptFolderByNameV1,
+  createPromptFolderV1,
+  renamePromptFolderV1,
+  movePromptFolderV1,
+  removePromptFolderV1,
+  placeArtifactInPromptFolderV1,
   type PromptFolderEntryV1,
   type PromptFoldersV1,
 } from './prompts/library/promptFoldersV1.js';
+
+export * from './artifacts/artifactOrganizationV1.js';
 
 export {
   ContextSelectionV1Schema,
@@ -7406,9 +7454,16 @@ export {
 export {
   PromptDocArtifactHeaderV1Schema,
   PromptDocBodyV1Schema,
+  PromptDocRevisionV1Schema,
   type PromptDocArtifactHeaderV1,
   type PromptDocBodyV1,
+  type PromptDocRevisionV1,
 } from './prompts/library/promptDocV2.js';
+export { MemoryFactV1Schema, MemoryDocBodyV1Schema, MemoryDocBodyV1StoredSchema,
+  MemoryDocArtifactHeaderV1Schema, MemoryDocArtifactHeaderV1StoredSchema, renderMemoryDocV1,
+  type MemoryFactV1, type MemoryDocBodyV1 } from './prompts/library/memoryDocV1.js';
+export { MEMORY_DOCUMENT_ACTION_IDS_V1, MEMORY_WRITE_ACTION_IDS_V1, isMemoryWriteActionV1,
+  MemoryActionInputSchemasV1, MemoryActionOutputSchemasV1 } from './prompts/library/memoryActionsV1.js';
 
 export {
   PROMPT_BUNDLE_SCHEMA_LIMITS_V1,
@@ -7429,7 +7484,10 @@ export {
 
 export {
   exportPromptLibraryArtifact,
+  readMemoryDocInLibrary, listMemoryDocsInLibrary, rememberMemoryFactInLibrary, updateMemoryFactInLibrary, forgetMemoryFactInLibrary,
+  type MemoryDocMutationTargetV1, type MemoryDocReadResultV1,
   createPromptDocInLibrary,
+  createPromptBundleInLibrary,
   setPromptDocFavorite,
   listPromptLibrary,
   normalizePromptTags,
@@ -7561,11 +7619,9 @@ export {
 } from './prompts/library/promptArtifactRefsV1.js';
 
 export {
-  PromptStackEditPolicyV1Schema,
   PromptStackEntryV1Schema,
   PromptStackRefV1Schema,
   PromptStacksV1Schema,
-  type PromptStackEditPolicyV1,
   type PromptStackEntryV1,
   type PromptStackRefV1,
   type PromptStacksV1,
@@ -7642,13 +7698,14 @@ export {
 export { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from './prompts/memoryRecallGuidanceV1.js';
 export * from './prompts/roles/index.js';
 export { RolesV1Schema, type RolesV1 } from './account/settings/rolesV1.js';
-export { readLegacyRolesV1, saveRolesV1WithLegacyMigration, type LegacyRoleArtifactV1 } from './account/settings/rolesV1Migration.js';
+export { readLegacyRolesV1, type LegacyRoleArtifactV1 } from './account/settings/rolesV1Migration.js';
 export {
   isMemoryRecallGuidanceSupported,
   MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
   type MemoryRecallGuidanceSurface,
 } from './prompts/isMemoryRecallGuidanceSupported.js';
-export { resolvePromptStackSystemAppendBlocksV1 } from './prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
+export { resolvePromptStackSystemAppendBlocksV1, type PromptStackScopeV1, type PromptStackLayerV1,
+  type PromptStackAdmittedEntryV1, type PromptStackSystemAppendResultV1 } from './prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
 
 export * from './actions/index.js';
 
@@ -8025,6 +8082,9 @@ export {
   AccountEncryptionMigrateSessionDraftItemSchema,
   AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   AccountEncryptionMigrateAuthoringMemoryDirectiveSchema,
+  AccountEncryptionMigrateProjectTrustDirectiveSchema,
+  AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema,
+  AccountEncryptionMigrateProjectRowsDirectiveSchema,
   ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
   ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_STAGE_BATCH_MAX_UTF8_BYTES,
   AccountEncryptionMigrateConnectedServicesDirectiveSchema,
@@ -8091,6 +8151,9 @@ export {
   type AccountEncryptionMigrateSessionDraftItem,
   type AccountEncryptionMigrateSessionDraftsDirective,
   type AccountEncryptionMigrateAuthoringMemoryDirective,
+  type AccountEncryptionMigrateProjectTrustDirective,
+  type AccountEncryptionMigrateWorkspaceExecutionConfigDirective,
+  type AccountEncryptionMigrateProjectRowsDirective,
   type AccountEncryptionMigrateConnectedServicesDirective,
   type AccountEncryptionMigrateAutomationsDirective,
   type AccountEncryptionMigrateAutomationsDirectiveInput,
@@ -9510,7 +9573,9 @@ export { SessionTerminalTargetV1Schema, SessionTerminalMemberV1Schema, SessionTe
 export { SessionTerminalLayoutV1Schema } from './terminal/workspace.js';
 export type { SessionTerminalTargetV1, SessionTerminalLayoutV1, SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from './terminal/workspace.js';
 export * from './account/authoringMemory.js';
+export * from './workspaces/workspaceExecutionConfigRowV1.js';
 export * from './account/authoringMemoryImport.js';
+export * from './workspaces/projectSetup/projectTrustRowV1.js';
 export * from './daemon/pluginCaptureSources.js';
 export * from './voice/recognitionLanguage.js';
 export * from './sessions/encryption/sessionDataKeyPreparationPass.js';
@@ -9522,6 +9587,8 @@ export {
   type SessionProviderCliAttachPrepareResultV1,
 } from './sessions/control/sessionProviderCliAttachPrepareV1.js';
 export * from './reviews/reviewPublicationEvidence.js';
+export * from './projects/openProjectV1.js';
+export * from './projects/openProjectDraftV1.js';
 export {
   GlassSurfaceMaterialSchema,
   GlassSurfaceMaterialsSchema,
@@ -9530,3 +9597,9 @@ export {
   type GlassSurfaceGroup,
   type GlassBlurStep,
 } from './account/settings/glassSurfaceMaterials.js';
+export * from './account/settings/machineRetentionDefaultsV1.js';
+export * from './machines/managed/resolveMachineRetentionPolicyV1.js';
+export * from './machines/managed/managedIntentV1.js';
+export * from './workspaces/projectSetup/projectManifestV1.js';
+export * from './workspaces/projectSetup/projectManifestDocument.js';
+export { parseOauthAuthorizationResponse, type OauthAuthorizationResponse } from './connect/oauthAuthorizationResponse.js';

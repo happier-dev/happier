@@ -13,6 +13,22 @@ export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 &
 }>;
 export type ArtifactPublicLinkRequestV1 = Readonly<{ method: 'GET' | 'POST' | 'DELETE'; path: string; body?: unknown; signal?: AbortSignal }>;
 
+/** The authenticated publication-list transport shared by management and audience admission. */
+export async function readArtifactPublicLinksV1(params: Readonly<{
+  artifactId: string;
+  request: (request: ArtifactPublicLinkRequestV1) => Promise<unknown>;
+  signal?: AbortSignal;
+}>) {
+  params.signal?.throwIfAborted();
+  const path = `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: params.artifactId })}`;
+  const result = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path, signal: params.signal }));
+  params.signal?.throwIfAborted();
+  if (result.publicShares.some(row => row.subject.kind !== 'artifact' || row.subject.id !== params.artifactId)) {
+    throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
+  }
+  return result;
+}
+
 /** One logical owner; host adapters supply authenticated HTTP and already-opened Artifact keys. */
 export function createArtifactPublicLinkActionsV1(params: Readonly<{
   read: (artifactId: string, signal?: AbortSignal) => Promise<ArtifactPublicLinkKeyholdingResourceV1 | null>;
@@ -31,15 +47,12 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
     if (args.actionId === 'artifact.public_link.create' && !getArtifactUseTargetV1(resource).publicLinkAllowed) {
       throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
     }
-    const listPath = `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: input.artifactId })}`;
     if (args.actionId === 'artifact.public_link.list') {
-      const result = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path: listPath, signal: args.signal }));
-      if (result.publicShares.some(row => row.subject.kind !== 'artifact' || row.subject.id !== input.artifactId)) throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
-      return result;
+      return readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, signal: args.signal });
     }
     if (args.actionId === 'artifact.public_link.revoke' || args.actionId === 'artifact.public_link.audit') {
       const revoke = ArtifactActionInputSchemasV1[args.actionId].parse(input);
-      const owned = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path: listPath, signal: args.signal }));
+      const owned = await readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, signal: args.signal });
       if (!owned.publicShares.some(row => row.id === revoke.shareId && row.subject.kind === 'artifact' && row.subject.id === input.artifactId)) throw Object.assign(new Error('public_share_not_found'), { code: 'public_share_not_found' });
       if (args.actionId === 'artifact.public_link.audit') {
         const result = await params.request({ method: 'GET', path: `/v1/public-shares/${encodeURIComponent(revoke.shareId)}/access-log`, signal: args.signal });

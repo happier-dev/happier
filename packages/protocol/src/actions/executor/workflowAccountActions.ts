@@ -7,15 +7,21 @@ import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../
 
 /** One closed failure projection for both the family and host preparation. */
 export function normalizeWorkflowActionThrownError(error: unknown): WorkflowActionFailureV1 {
-  const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-    ? error.code : 'content_unavailable';
+  const rawCode = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code : 'storage_unavailable';
+  // The template codec's reasons also drive locked-row listing inside the
+  // trigger owner. At the Action boundary they describe unreadable content,
+  // not a failure to reach storage.
+  const code = rawCode === 'session_key_required' || rawCode === 'encryption_material_unavailable'
+    || rawCode === 'encryption_mode_mismatch' || rawCode === 'invalid_template'
+    ? 'content_unavailable' : rawCode;
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,
     error: error instanceof Error ? error.message : code,
     ...(error !== null && typeof error === 'object' && 'details' in error ? { details: error.details } : {}),
   });
-  return failure.success ? failure.data : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+  return failure.success ? failure.data : { ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' };
 }
 
 /** Request validation is not a failure to read private persisted content. */
@@ -130,7 +136,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       return await deps.definitions.delete(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input));
     }
     if (actionId === 'workflow.trigger.list') {
-      return deps.triggers ? deps.triggers.list(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input))
+      return deps.triggers ? deps.triggers.list(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
         : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
     }
     if (actionId === 'workflow.trigger.add') {

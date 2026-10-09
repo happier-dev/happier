@@ -14,6 +14,13 @@ import {
 const protocol = { ...sessionInputAdmission, SessionMessageMetaSchema };
 
 describe('session input admission metadata', () => {
+  it('preserves a strict server-admitted exact Machine target without admitting content or credentials', () => {
+    const target = { homeId: 'home', accountId: 'requester', sessionId: 'session', machineId: 'machine', installationId: 'installation' };
+    const receipt = { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'requester', sessionRelationship: 'owner', admittedTarget: target };
+    expect(protocol.SessionInputAdmissionReceiptV1Schema.parse(receipt)).toEqual(receipt);
+    expect(protocol.SessionInputAdmissionReceiptV1Schema.safeParse({ ...receipt, admittedTarget: { ...target, prompt: 'private' } }).success).toBe(false);
+    expect(protocol.SessionInputAdmissionReceiptV1Schema.safeParse({ ...receipt, admittedTarget: { ...target, installationId: '' } }).success).toBe(false);
+  });
   it('preserves supported context envelopes for a Run whose destination is the canonical Pending target', () => {
     const recipient = { kind: 'execution_run' as const, runId: 'writer' };
     const comments = { happier: { kind: 'review_comments.v1', payload: { sessionId: 'session-1', comments: [] } } };

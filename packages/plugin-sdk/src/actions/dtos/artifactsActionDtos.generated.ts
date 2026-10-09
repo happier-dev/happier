@@ -103,6 +103,7 @@ export type ArtifactsActionResultById = {
             artifactId: string;
             ownerAccountId: string;
             access: 'owner' | 'view' | 'edit' | 'admin';
+            publicAudience: 'unknown' | 'retained' | 'none';
             seq: number;
             createdAt: number;
             updatedAt: number;
@@ -134,6 +135,7 @@ export type ArtifactsActionResultById = {
                 } | undefined;
                 restoredFromBodyVersion?: number | undefined;
             } | undefined;
+            shared?: boolean | undefined;
         } | null;
         previewUrl?: string | undefined;
         previewError?: 'artifact_html_preview_unavailable' | undefined;
@@ -143,6 +145,7 @@ export type ArtifactsActionResultById = {
             artifactId: string;
             ownerAccountId: string;
             access: 'owner' | 'view' | 'edit' | 'admin';
+            publicAudience: 'unknown' | 'retained' | 'none';
             header: Record<string, string | number | boolean | readonly JsonValue[] | {
                 readonly [key: string]: JsonValue;
             } | null>;

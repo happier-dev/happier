@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeBase64 } from '../crypto/base64.js';
 import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '../crypto/accountScopedCipher.js';
+import { createMachineDataEncryptionKeyV1, isMachineDataEncryptionKeyTransferableV1 } from './machineStoredContent.js';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelopeV1.js';
+import { decodeBase64 } from '../crypto/base64.js';
 import {
   computeRunnerMachineContentKeyFingerprintV1,
   sealRunnerMachineContentKeyVerifierFactV1,
@@ -27,6 +31,46 @@ function encodeJson(value: unknown): string {
 }
 
 describe('machineStoredContent', () => {
+  it('distinguishes standalone owner material from both historical Account key forms', () => {
+    const secret = new Uint8Array(32).fill(17);
+    const standalone = new Uint8Array(32).fill(19);
+    const legacy = { type: 'legacy' as const, secret };
+    const dataKey = { type: 'dataKey' as const, machineKey: secret };
+    const envelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: standalone,
+      recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(secret).publicKey, randomBytes: tweetnacl.randomBytes }));
+    const predicate = (openedDataEncryptionKey: Uint8Array | null, accountScopedMaterial: typeof legacy | typeof dataKey, publishedDataEncryptionKey: string | null = envelope) =>
+      isMachineDataEncryptionKeyTransferableV1({ openedDataEncryptionKey, accountScopedMaterial, publishedDataEncryptionKey });
+    expect(predicate(secret, legacy)).toBe(false);
+    expect(predicate(deriveAccountMachineKeyFromRecoverySecret(secret), legacy)).toBe(false);
+    expect(predicate(secret, dataKey)).toBe(false);
+    expect(predicate(standalone, legacy)).toBe(true);
+    expect(predicate(standalone, dataKey)).toBe(true);
+    expect(predicate(standalone, legacy, null)).toBe(false);
+    expect(predicate(null, legacy)).toBe(false);
+    const produced = createMachineDataEncryptionKeyV1({ material: dataKey,
+      dataKeyPublicKey: tweetnacl.box.keyPair.fromSecretKey(secret).publicKey, randomBytes: tweetnacl.randomBytes });
+    const opened = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(encodeBase64(produced.dataEncryptionKey)), recipientSecretKeyOrSeed: secret });
+    expect(opened).toEqual(produced.encryptionKey);
+    expect(predicate(opened, dataKey, encodeBase64(produced.dataEncryptionKey))).toBe(true);
+  });
+  it('selects authenticated resource mode and refuses foreign legacy or unready access', () => {
+    const dataKey = new Uint8Array(32).fill(9);
+    const access = { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'e2ee', accessState: 'ready' };
+    const resolve = (overrides: Record<string, unknown> = {}) => resolvePublishedMachineDataEncryptionKeyV1({
+      machine: { id: 'machine', access, dataEncryptionKey: 'sealed', ...overrides },
+      viewerAccountId: 'viewer', expectedAccountMode: 'plain', openedDataEncryptionKey: dataKey,
+    });
+    expect(resolve()).toEqual({ status: 'e2ee', dataKey });
+    expect(resolve({ dataEncryptionKey: null })).toEqual({ status: 'unavailable' });
+    expect(resolve({ access: { ...access, accessState: 'key_pending' } })).toEqual({ status: 'unavailable' });
+    expect(resolve({ access: { ...access, resourceMode: 'plain' }, dataEncryptionKey: null })).toEqual({ status: 'plain' });
+    expect(resolve({ access: { ...access, resourceMode: 'invalid' } })).toEqual({ status: 'unavailable' });
+    expect(resolve({ access: null, dataEncryptionKey: null })).toEqual({ status: 'unavailable' });
+    expect(resolvePublishedMachineDataEncryptionKeyV1({ machine: { id: 'owned', dataEncryptionKey: null },
+      openedDataEncryptionKey: null, expectedAccountMode: 'plain' })).toEqual({ status: 'plain' });
+    expect(resolvePublishedMachineDataEncryptionKeyV1({ machine: { id: 'owned', dataEncryptionKey: 'sealed' },
+      openedDataEncryptionKey: dataKey, expectedAccountMode: 'plain' })).toEqual({ status: 'unavailable' });
+  });
   it('preserves the existing plain marker and round-trips strict plain content', () => {
     const value = { host: 'machine-a', nested: { ready: true } };
 
@@ -60,12 +104,29 @@ describe('machineStoredContent', () => {
     });
   });
 
-  it('rejects malformed, non-plain, and non-strict Machine envelopes', () => {
+  it('reads additive stored envelope fields and writes back only canonical content', () => {
+    const value = { host: 'machine-a', nested: { ready: true } };
+    const stored = encodeJson({ t: 'plain', v: value, future: { authority: 'ignored' } });
+    const opened = decodePlainMachineStoredContent(stored);
+    expect(opened).toEqual(value);
+    expect(encodePlainMachineStoredContent(opened)).toBe(encodeJson({ t: 'plain', v: value }));
+    expect(isPlainMachineDataKeyMarker(encodeJson({ t: 'plain', v: null, extra: true }))).toBe(true);
+    expect(machineStoredContentMatchesAccountMode({
+      mode: 'e2ee', metadata: stored, dataEncryptionKey: 'wrapped-key',
+    })).toBe(false);
+    expect(machineStoredContentMatchesAccountMode({
+      mode: 'plain', metadata: stored, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    })).toBe(false);
+    expect(machineStoredContentMatchesAccountMode({
+      mode: 'plain', metadata: stored, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storedRead: true,
+    })).toBe(true);
+  });
+
+  it('rejects malformed and non-plain Machine envelopes', () => {
     const invalidValues = [
       'not-base64',
       encodeJson({ t: 'encrypted', c: 'ciphertext' }),
       encodeJson({ t: 'plain' }),
-      encodeJson({ t: 'plain', v: null, extra: true }),
     ];
 
     for (const value of invalidValues) {
@@ -74,7 +135,6 @@ describe('machineStoredContent', () => {
       );
     }
     expect(isPlainMachineDataKeyMarker(encodeJson({ t: 'plain', v: 'not-null' }))).toBe(false);
-    expect(isPlainMachineDataKeyMarker(encodeJson({ t: 'plain', v: null, extra: true }))).toBe(false);
     expect(() => encodePlainMachineStoredContent(undefined)).toThrow(
       'Invalid plaintext machine content',
     );

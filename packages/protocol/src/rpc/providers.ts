@@ -46,6 +46,8 @@ import { ProviderHttpsUrlSchema } from '../providers/httpsUrlSchema.js';
 import { ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema } from '../providers/contributions/v1.js';
 import { LegacyProfileReviewedMappingV1Schema } from '../providers/migrations/legacyProfilesV1.js';
 import { LegacyProfileMigrationConflictResolutionV1Schema } from '../providers/migrations/conflictsV1.js';
+import { ProfileRecordV1Schema } from '../profiles/profileRecordSchemaV1.js';
+import { LegacyProfileRecordPreparationDiagnosticV1Schema } from '../profiles/read.js';
 import { ProviderMigrationSourceProfileIdSchema } from '../providers/settings/v1.js';
 import { ConnectedServiceIdSchema } from '../connect/connectedServiceBindings.js';
 import {
@@ -1084,6 +1086,19 @@ export const DaemonProviderBindingStatusResponseV1Schema = lazyZodSchema(() => z
     .map((status) => z.object({ status: z.literal(status), error: ProviderErrorV1Schema }).strict()),
 ]));
 export type DaemonProviderBindingStatusResponseV1 = z.infer<typeof DaemonProviderBindingStatusResponseV1Schema>;
+
+export const DaemonProviderProfileMigrationPrepareSourceRequestV1Schema = lazyZodSchema(() => z.object({
+  machineId: ProviderMachineIdSchema,
+  expectedSettingsVersion: z.number().int().nonnegative(),
+}).strict());
+export type DaemonProviderProfileMigrationPrepareSourceRequestV1 = z.infer<typeof DaemonProviderProfileMigrationPrepareSourceRequestV1Schema>;
+
+export const DaemonProviderProfileMigrationPrepareSourceResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), settingsVersion: z.number().int().nonnegative(), records: z.array(ProfileRecordV1Schema) }).strict(),
+  z.object({ status: z.literal('partial'), settingsVersion: z.number().int().nonnegative(), diagnostics: z.array(LegacyProfileRecordPreparationDiagnosticV1Schema) }).strict(),
+  z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
+]));
+export type DaemonProviderProfileMigrationPrepareSourceResponseV1 = z.infer<typeof DaemonProviderProfileMigrationPrepareSourceResponseV1Schema>;
 
 const ProviderProfileMigrationSourceFingerprintV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256)
   .startsWith('legacy-profile-migration-source:v1:'));

@@ -1,14 +1,17 @@
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
+import { ZodError } from 'zod';
 
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { deriveWorkflowDestinationsV1 } from '../../workflows/workflowDestinationsV1.js';
+import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
+import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { type WorkflowActionIdV1 } from '../actionIds.js';
-import { type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
+import { type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import { type WorkflowWorkspaceProgressV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
@@ -33,6 +36,7 @@ import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPlugi
 import { resolveInputTypeOptions, validateInputTypeValue } from '../../inputs/inputTypeRuntime.js';
 import type { InputOption } from '../../inputs/inputFields.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
+import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
 
 export type WorkflowAccountRunEncryption = AvailableAutomationAccountEncryptionV1;
 
@@ -438,13 +442,17 @@ async function assertAcceptedAuthorizationCurrent(
 }
 
 function translateStorageError(error: unknown): never {
-  const responseError = (error as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
-  if (typeof responseError === 'string' && responseError.length > 0) throw workflowError(responseError);
+  if (error instanceof ZodError) throw workflowError('content_unavailable');
   const code = (error as { code?: unknown })?.code;
-  if (typeof code === 'string' && code.length > 0 && !code.startsWith('ERR_') && !code.startsWith('ECONN') && code !== 'AxiosError') {
-    throw workflowError(code);
-  }
-  throw workflowError('content_unavailable');
+  if (code === 'ERR_CANCELED' || (error instanceof Error && error.name === 'AbortError')) throw error;
+  const response = (error as { response?: { data?: { error?: unknown } } })?.response;
+  const responseError = response?.data?.error;
+  const typedCode = WorkflowOperationErrorCodeV1Schema.safeParse(responseError ?? code);
+  if (typedCode.success && code === typedCode.data) throw error;
+  // A received HTTP response must stay distinguishable from a lost write
+  // response; review/recovery use that fact to decide whether to rejoin.
+  throw Object.assign(workflowError(typedCode.success ? typedCode.data : 'storage_unavailable'),
+    response === undefined ? {} : { response });
 }
 
 export type WorkflowAccountRunActionDeps = Readonly<{
@@ -490,7 +498,15 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...storage,
       execute: async (operation, options) => {
         deps.assertCurrent?.();
-        const result = await storage.execute(operation, options);
+        let result: unknown;
+        try {
+          result = await storage.execute(operation, options);
+        } catch (error) {
+          // Exact Run reads own their not-found projection; all other transport
+          // failures are classified here before any private content is opened.
+          if (isNotFound(error)) throw error;
+          translateStorageError(error);
+        }
         deps.assertCurrent?.();
         return result;
       },
@@ -531,7 +547,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const snapshot = await getSnapshot(runId, signal, publisherMachineId);
     const accountId = snapshot.keyCensus.ownerAccountId;
     const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(signal), census: snapshot.keyCensus });
-    if (resolved.kind !== 'available') throw workflowError('content_unavailable');
+    if (resolved.kind !== 'available') throw workflowError(resolved.reason);
     const enc = resolved.encryption;
     await prepareRunRecipients(runId, enc, snapshot.keyCensus, signal);
     const envelope = parseWorkflowStoredContentEnvelopeV1(snapshot.acceptedEnvelope);
@@ -1993,6 +2009,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           const keyCensusByRunId = record(storagePage.keyCensusByRunId);
           const rootProgressByRunId = record(storagePage.rootProgressByRunId ?? {});
           const metadataByRunId: Record<string, WorkflowRunPrivateMetadataV1> = {};
+          const invocationProvenance: NonNullable<ReturnType<typeof WorkflowRunListResultV1Schema.parse>['invocationProvenance']> = [];
           const runs: WorkflowRunSummaryV1[] = [];
           for (const run of page.runs) {
             let matchesDestination = args.input.targetSessionId === undefined;
@@ -2000,6 +2017,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let where: WorkflowRunSummaryV1['where'] = null;
             let startedBy: WorkflowRunSummaryV1['startedBy'] = null;
             let stepProgress: WorkflowRunSummaryV1['stepProgress'] = null;
+            let resultProvenance: WorkflowProgressEnvelopeV1['resultProvenance'];
             let stepProgressCurrentness: WorkflowRunSummaryV1['stepProgressCurrentness'] = null;
             let rootIndex: WorkflowRunInvocationIndexV1 | undefined;
             const root = record(rootProgressByRunId[run.id] ?? {});
@@ -2016,7 +2034,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             try {
               const census = WorkflowRunRecipientCensusResponseV1Schema.parse(keyCensusByRunId[run.id]);
               const resolved = resolveWorkflowRunDataKeyV1({ encryption: callerEncryption, census });
-              if (resolved.kind !== 'available') throw workflowError('content_unavailable');
+              if (resolved.kind !== 'available') throw workflowError(resolved.reason);
               await prepareRunRecipients(run.id, resolved.encryption, census, args.context.signal);
               if (rootIndex) {
                 const index = rootIndex;
@@ -2032,6 +2050,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                   stepProgressCurrentness = null;
                 } else if (openedProgress.kind === 'available') {
                   stepProgress = openedProgress.content.stepProgress ?? null;
+                  resultProvenance = openedProgress.content.resultProvenance;
                 }
               }
               const rawEnvelope = acceptedEnvelopesByRunId[run.id];
@@ -2045,6 +2064,33 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               });
               if (opened.kind !== 'available') throw workflowError('content_unavailable');
               const accepted = WorkflowAcceptedSnapshotV1Schema.parse(opened.content);
+              const requested = args.input.invocationProvenance?.find(ref => ref.runId === run.id);
+              const rawFacts = record(storagePage.invocationProgressByRunId ?? {})[run.id];
+              if (requested && Array.isArray(rawFacts)) {
+                for (const rawFact of rawFacts) {
+                  const fact = record(rawFact);
+                  const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(fact.index);
+                  if (!parsed.success || parsed.data.runId !== run.id || !requested.invocationRecordIds.includes(parsed.data.id)) continue;
+                  const index = parsed.data;
+                  const progress = openWorkflowProgressStoredEnvelopeV1({ ...openMode(resolved.encryption),
+                    binding: { v: 1, purpose: 'invocation_progress', accountId: census.ownerAccountId, runId: run.id,
+                      recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
+                      memberOrdinal: index.memberOrdinal, attempt: index.attempt },
+                    envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
+                  if (progress.kind !== 'available') continue;
+                  // Nested workflows number their own frozen definitions. Branch/iteration scope does
+                  // not alter the authored ordinal, and neither sequence nor sibling position labels it.
+                  let definition: WorkflowDefinitionV1 | undefined = accepted.definition;
+                  for (const scope of progress.content.invocationPath.scope) {
+                    if (scope.kind !== 'workflow' || !definition) continue;
+                    const block: WorkflowBlock | undefined = walkWorkflowBlocks(definition.blocks).find(block => block.id === scope.blockId);
+                    definition = block?.kind === 'workflow' ? accepted.frozenChildren[block.workflowRef] : undefined;
+                  }
+                  const stepOrdinal = definition ? workflowBlockOrdinalV1(definition.blocks, progress.content.invocationPath.blockId) : null;
+                  if (stepOrdinal) invocationProvenance.push({ index, stepOrdinal,
+                    ...(resultProvenance?.[index.id] ? { notificationCondition: resultProvenance[index.id]!.notificationCondition } : {}) });
+                }
+              }
               matchesDestination = args.input.targetSessionId === undefined || (accepted.targetSessionIds
                 ?? deriveWorkflowDestinationsV1({ definition: accepted.definition, materializedLeaves: accepted.materializedLeaves,
                   originSessionId: accepted.origin?.originSessionId }).targetSessionIds).includes(args.input.targetSessionId);
@@ -2059,10 +2105,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               projected = accepted.metadata
                 ? { kind: 'available', value: accepted.metadata }
                 : null;
-            } catch {
+            } catch (error) {
               // The public row remains useful even when this Account cannot
               // open its private accepted content on the current host.
-              projected = { kind: 'unavailable' };
+              args.context.signal?.throwIfAborted();
+              const code = (error as { code?: unknown })?.code;
+              if (code === 'ERR_CANCELED' || (error instanceof Error && error.name === 'AbortError')) throw error;
+              const reason = WorkflowOperationErrorCodeV1Schema.safeParse(code);
+              projected = { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
             }
             if (!matchesDestination) continue;
             runs.push({ ...run, where, startedBy, stepProgress, stepProgressCurrentness });
@@ -2071,6 +2121,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           return WorkflowActionOutputSchemasV1[args.actionId].parse({
             runs,
             metadataByRunId,
+            ...(args.input.invocationProvenance ? { invocationProvenance: invocationProvenance.filter(fact => runs.some(run => run.id === fact.index.runId)) } : {}),
             ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
           });
         };
@@ -2262,7 +2313,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (typeof raw.resultEnvelope !== 'string') return WorkflowActionOutputSchemasV1[args.actionId].parse(base);
       const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);
       const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census });
-      if (resolved.kind !== 'available') throw workflowError('content_unavailable');
+      if (resolved.kind !== 'available') throw workflowError(resolved.reason);
       await prepareRunRecipients(args.input.runId, resolved.encryption, census, args.context.signal);
       const envelope = parseWorkflowStoredContentEnvelopeV1(raw.resultEnvelope);
       const opened = envelope && openWorkflowFinalResultStoredEnvelopeV1({ ...openMode(resolved.encryption), binding: { v: 1, purpose: 'final_result', accountId: census.ownerAccountId, runId: args.input.runId }, envelope });
@@ -2271,11 +2322,30 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.invocations.list') {
       try {
-        const page = record(await deps.storage.execute({ operation: 'invocations.list', ...args.input, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, args.context.signal ? { signal: args.context.signal } : {}));
-        return WorkflowActionOutputSchemasV1[args.actionId].parse({
+        const { includeContent, ...input } = args.input;
+        const page = record(await deps.storage.execute({ operation: 'invocations.list', ...input,
+          ...(includeContent === true ? { progressEnvelopes: true } : {}),
+          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, args.context.signal ? { signal: args.context.signal } : {}));
+        const result = WorkflowActionOutputSchemasV1[args.actionId].parse({
           invocations: page.invocations,
           parentRevision: page.parentRevision,
           ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+        });
+        if (includeContent !== true) return result;
+        const census = WorkflowRunRecipientCensusResponseV1Schema.parse(page.keyCensus);
+        if (census.runId !== input.runId) throw workflowError('content_unavailable');
+        const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census });
+        if (resolved.kind !== 'available') throw workflowError(resolved.reason);
+        await prepareRunRecipients(input.runId, resolved.encryption, census, args.context.signal);
+        const envelopes = record(page.progressEnvelopesByInvocationId);
+        return WorkflowActionOutputSchemasV1[args.actionId].parse({ ...result,
+          invocationDetails: result.invocations.map(index => {
+            if (index.runId !== input.runId) throw workflowError('content_unavailable');
+            return { index, parentRevision: result.parentRevision,
+              progress: openProgress(input.runId, index, envelopes[index.id], {
+                accountId: census.ownerAccountId, enc: resolved.encryption,
+              }) };
+          }),
         });
       } catch (error) {
         translateStorageError(error);

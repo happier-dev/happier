@@ -1,7 +1,13 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import * as mini from 'zod/mini';
+import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
+import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginCollectionContractRefV1Schema } from '../data/collectionContractRefV1.js';
+import { PluginAccountCollectionContributionV1Schema } from '../data/collectionContributionV1.js';
+import { PluginCollectionCandidatePreparationBindingV1Schema } from '../data/collectionsV1.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
 import {
@@ -19,9 +25,9 @@ import {
   PluginUiReleaseSlotV1Schema,
 } from './v1.js';
 
-const ArtifactIdSchema = z.string().uuid();
-const Base64BytesSchema = z.string().min(1);
-const IntentRevisionSchema = z.string().trim().min(1).max(128);
+const ArtifactIdSchema = lazyZodSchema(() => z.string().uuid());
+const Base64BytesSchema = lazyZodSchema(() => z.string().min(1));
+const IntentRevisionSchema = lazyZodSchema(() => z.string().trim().min(1).max(128));
 
 /**
  * These are Account control-plane operation names, not plugin-contributed
@@ -45,7 +51,7 @@ export const PLUGIN_AVAILABILITY_ACTION_IDS_V1 = Object.freeze([
   'account.plugins.availability.packageAsset.read',
   'account.plugins.availability.packageAsset.remove',
 ] as const);
-export const PluginAvailabilityActionIdV1Schema = z.enum(PLUGIN_AVAILABILITY_ACTION_IDS_V1);
+export const PluginAvailabilityActionIdV1Schema = lazyZodSchema(() => z.enum(PLUGIN_AVAILABILITY_ACTION_IDS_V1));
 export type PluginAvailabilityActionIdV1 = z.infer<typeof PluginAvailabilityActionIdV1Schema>;
 
 /**
@@ -73,9 +79,20 @@ export const PluginAvailabilityActionHttpPathsV1 = Object.freeze({
 export type PluginAvailabilityActionHttpPathV1 =
   (typeof PluginAvailabilityActionHttpPathsV1)[PluginAvailabilityActionIdV1];
 
-export const PluginAvailabilityIntentReadActionInputV1Schema = z.object({
+export const PluginAvailabilityIntentReadActionInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
-}).strict();
+  includeManagedResources: z.literal(true).optional(),
+  controller: mini.optional(ManagedControllerV1Schema),
+  homeId: z.string().trim().min(1).optional(),
+  managedResourceDispositions: z.array(ManagedResourceDispositionV1Schema).optional(),
+}).strict().superRefine((input, context) => {
+  if ((input.managedResourceDispositions !== undefined || input.controller !== undefined || input.homeId !== undefined) && input.includeManagedResources !== true) {
+    context.addIssue({ code: 'custom', path: ['managedResourceDispositions'], message: 'Resource review requires the current dependency census.' });
+  }
+  if (input.homeId !== undefined && input.controller === undefined) {
+    context.addIssue({ code: 'custom', path: ['homeId'], message: 'Local resource review requires its controller installation.' });
+  }
+}));
 export type PluginAvailabilityIntentReadActionInputV1 = z.infer<typeof PluginAvailabilityIntentReadActionInputV1Schema>;
 
 export const PluginAvailabilityIntentReadActionOutputV1Schema: typeof PluginAccountAvailabilityIntentReadResponseV1Schema =
@@ -86,8 +103,8 @@ export type PluginAvailabilityIntentReadActionOutputV1 = z.infer<typeof PluginAv
  * Lists every Account intent id (release-selected or release-less claim) for Availability bootstrap. Exact intent
  * details stay on the incumbent per-plugin read operation.
  */
-export const PluginAvailabilityIntentsListActionInputV1Schema = z.object({
-}).strict();
+export const PluginAvailabilityIntentsListActionInputV1Schema = lazyZodSchema(() => z.object({
+}).strict());
 export type PluginAvailabilityIntentsListActionInputV1 = z.infer<typeof PluginAvailabilityIntentsListActionInputV1Schema>;
 
 export const PluginAvailabilityIntentsListActionOutputV1Schema =
@@ -99,19 +116,20 @@ export type PluginAvailabilityIntentsListActionOutputV1 = z.infer<typeof PluginA
  * supplied writable contract current and writable. The Data readiness proof
  * deliberately is not copied into this wire shape or persisted here.
  */
-export const PluginAvailabilityIntentSetActionInputV1Schema = z.object({
+export const PluginAvailabilityIntentSetActionInputV1Schema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   desiredVersion: PluginReleaseRefV1Schema.shape.version.nullable(),
   enabled: z.boolean(),
   offlineUiHosting: z.enum(['disabled', 'enabled']),
   writableCollections: z.array(PluginCollectionContractRefV1Schema),
   expectedRevision: IntentRevisionSchema.nullable(),
-}).strict();
+  managedResourceDispositions: z.array(ManagedResourceDispositionV1Schema).optional(),
+}).strict());
 export type PluginAvailabilityIntentSetActionInputV1 = z.infer<typeof PluginAvailabilityIntentSetActionInputV1Schema>;
 
-export const PluginAvailabilityIntentSetActionOutputV1Schema = z.object({
+export const PluginAvailabilityIntentSetActionOutputV1Schema = lazyZodSchema(() => z.object({
   intent: PluginAccountPluginIntentV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityIntentSetActionOutputV1 = z.infer<typeof PluginAvailabilityIntentSetActionOutputV1Schema>;
 
 /**
@@ -124,39 +142,46 @@ export type PluginAvailabilityIntentSetActionOutputV1 = z.infer<typeof PluginAva
  * `intent.set`, never overrides a present-user release selection, and never
  * lowers a collection's schemaVersion or the declaration version.
  */
-export const PluginAvailabilityCollectionWritersClaimActionInputV1Schema = z.object({
+export const PluginAvailabilityCollectionWritersClaimActionInputV1Schema = lazyZodSchema(() => z.object({
   manifest: PluginPortableReleaseManifestV1Schema,
-}).strict();
+  /** Read exact incumbent declarations/bindings without moving the writer. */
+  prepare: z.literal(true).optional(),
+}).strict());
 export type PluginAvailabilityCollectionWritersClaimActionInputV1 =
   z.infer<typeof PluginAvailabilityCollectionWritersClaimActionInputV1Schema>;
 
 export const PluginAvailabilityCollectionWritersClaimActionOutputV1Schema =
-  PluginAvailabilityIntentSetActionOutputV1Schema;
+  lazyZodSchema(() => PluginAvailabilityIntentSetActionOutputV1Schema.extend({
+    preparation: z.array(z.object({
+      source: PluginAccountCollectionContributionV1Schema,
+      binding: PluginCollectionCandidatePreparationBindingV1Schema,
+    }).strict()).optional(),
+  }));
 export type PluginAvailabilityCollectionWritersClaimActionOutputV1 =
   z.infer<typeof PluginAvailabilityCollectionWritersClaimActionOutputV1Schema>;
 
 /** The only source kinds eligible to bind a portable Account release. */
-export const PluginAvailabilityPortableReleaseSourceClassV1Schema = z.enum([
+export const PluginAvailabilityPortableReleaseSourceClassV1Schema = lazyZodSchema(() => z.enum([
   'registryPackage',
   'versionedArchive',
-]);
+]));
 export type PluginAvailabilityPortableReleaseSourceClassV1 =
   z.infer<typeof PluginAvailabilityPortableReleaseSourceClassV1Schema>;
 
-export const PluginAvailabilityReleasePublishActionInputV1Schema = z.object({
+export const PluginAvailabilityReleasePublishActionInputV1Schema = lazyZodSchema(() => z.object({
   facts: PluginReleaseFactsV1Schema,
   /**
    * Existing acquisition supplies this only after it has verified the exact
    * archive. It is admission evidence, never a stored release identity.
    */
   sourceClass: PluginAvailabilityPortableReleaseSourceClassV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityReleasePublishActionInputV1 = z.infer<typeof PluginAvailabilityReleasePublishActionInputV1Schema>;
 
-export const PluginAvailabilityReleasePublishActionOutputV1Schema = z.object({
+export const PluginAvailabilityReleasePublishActionOutputV1Schema = lazyZodSchema(() => z.object({
   facts: PluginReleaseFactsV1Schema,
   outcome: z.enum(['created', 'rejoined']),
-}).strict();
+}).strict());
 export type PluginAvailabilityReleasePublishActionOutputV1 = z.infer<typeof PluginAvailabilityReleasePublishActionOutputV1Schema>;
 
 /**
@@ -164,9 +189,9 @@ export type PluginAvailabilityReleasePublishActionOutputV1 = z.infer<typeof Plug
  * consult or expose Account selection intent, acquisition state, or catalog
  * ranking.
  */
-export const PluginAvailabilityReleaseReadActionInputV1Schema = z.object({
+export const PluginAvailabilityReleaseReadActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityReleaseReadActionInputV1 =
   z.infer<typeof PluginAvailabilityReleaseReadActionInputV1Schema>;
 
@@ -175,20 +200,20 @@ export const PluginAvailabilityReleaseReadActionOutputV1Schema: typeof PluginAcc
 export type PluginAvailabilityReleaseReadActionOutputV1 =
   z.infer<typeof PluginAvailabilityReleaseReadActionOutputV1Schema>;
 
-export const PluginAvailabilityMaterializationsReportActionInputV1Schema = z.object({
+export const PluginAvailabilityMaterializationsReportActionInputV1Schema = lazyZodSchema(() => z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   snapshot: PluginMachineMaterializationSnapshotV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityMaterializationsReportActionInputV1 = z.infer<typeof PluginAvailabilityMaterializationsReportActionInputV1Schema>;
 
-export const PluginAvailabilityMaterializationsReportActionOutputV1Schema = z.object({
+export const PluginAvailabilityMaterializationsReportActionOutputV1Schema = lazyZodSchema(() => z.object({
   revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   outcome: z.enum(['replaced', 'rejoined', 'conflict']),
-}).strict();
+}).strict());
 export type PluginAvailabilityMaterializationsReportActionOutputV1 = z.infer<typeof PluginAvailabilityMaterializationsReportActionOutputV1Schema>;
 
-export const PluginAvailabilityMaterializationsReadActionInputV1Schema = z.object({
-}).strict();
+export const PluginAvailabilityMaterializationsReadActionInputV1Schema = lazyZodSchema(() => z.object({
+}).strict());
 export type PluginAvailabilityMaterializationsReadActionInputV1 = z.infer<typeof PluginAvailabilityMaterializationsReadActionInputV1Schema>;
 
 export const PluginAvailabilityMaterializationsReadActionOutputV1Schema =
@@ -200,34 +225,34 @@ export type PluginAvailabilityMaterializationsReadActionOutputV1 = z.infer<typeo
  * Availability composes it with one classification-link transaction; it does
  * not define an archive/blob/upload protocol.
  */
-export const PluginAvailabilityArtifactCreateEnvelopeV1Schema = z.object({
+export const PluginAvailabilityArtifactCreateEnvelopeV1Schema = lazyZodSchema(() => z.object({
   header: Base64BytesSchema,
   body: Base64BytesSchema,
   dataEncryptionKey: Base64BytesSchema,
-}).strict();
+}).strict());
 export type PluginAvailabilityArtifactCreateEnvelopeV1 = z.infer<typeof PluginAvailabilityArtifactCreateEnvelopeV1Schema>;
 
-export const PluginAvailabilityUiArtifactPublishActionInputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactPublishActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   slot: PluginUiReleaseSlotV1Schema,
   accountArtifactId: ArtifactIdSchema,
   artifact: PluginAvailabilityArtifactCreateEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactPublishActionInputV1 = z.infer<typeof PluginAvailabilityUiArtifactPublishActionInputV1Schema>;
 
-export const PluginAvailabilityUiArtifactPublishActionOutputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactPublishActionOutputV1Schema = lazyZodSchema(() => z.object({
   link: PluginAccountPluginUiArtifactLinkV1Schema,
   outcome: z.enum(['created', 'rejoined']),
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactPublishActionOutputV1 = z.infer<typeof PluginAvailabilityUiArtifactPublishActionOutputV1Schema>;
 
-const PluginAvailabilityUiArtifactTargetV1Schema = z.object({
+const PluginAvailabilityUiArtifactTargetV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   contributionId: PluginUiReleaseSlotV1Schema.shape.contributionId,
   artifactId: PluginUiReleaseSlotV1Schema.shape.artifactId,
   tier: PluginUiReleaseSlotV1Schema.shape.tier,
   platform: PluginUiReleaseSlotV1Schema.shape.platform,
-}).strict();
+}).strict());
 
 /**
  * Absence preserves the incumbent current-render policy. The sole explicit
@@ -235,38 +260,38 @@ const PluginAvailabilityUiArtifactTargetV1Schema = z.object({
  * immutable candidate without granting generic or current-render authority.
  */
 export const PluginAvailabilityUiArtifactReadPurposeV1Schema =
-  z.literal('candidatePreparation');
+  lazyZodSchema(() => z.literal('candidatePreparation'));
 export type PluginAvailabilityUiArtifactReadPurposeV1 =
   z.infer<typeof PluginAvailabilityUiArtifactReadPurposeV1Schema>;
 
 const PluginAvailabilityUiArtifactCandidatePreparationReadActionInputV1Schema =
-  PluginAvailabilityUiArtifactTargetV1Schema.extend({
+  lazyZodSchema(() => PluginAvailabilityUiArtifactTargetV1Schema.extend({
     purpose: PluginAvailabilityUiArtifactReadPurposeV1Schema,
     expectedArtifactDigest: PluginUiArtifactDigestV1Schema,
-  }).strict();
+  }).strict());
 
 export const PluginAvailabilityUiArtifactReadActionInputV1Schema =
-  z.union([
+  lazyZodSchema(() => z.union([
     PluginAvailabilityUiArtifactTargetV1Schema,
     PluginAvailabilityUiArtifactCandidatePreparationReadActionInputV1Schema,
-  ]);
+  ]));
 export type PluginAvailabilityUiArtifactReadActionInputV1 = z.infer<typeof PluginAvailabilityUiArtifactReadActionInputV1Schema>;
 
 /** Logical Artifact bytes are opened by the incumbent Artifact envelope owner. */
-export const PluginAvailabilityArtifactReadEnvelopeV1Schema = z.object({
+export const PluginAvailabilityArtifactReadEnvelopeV1Schema = lazyZodSchema(() => z.object({
   header: Base64BytesSchema,
   headerVersion: z.number().int().positive(),
   body: Base64BytesSchema,
   bodyVersion: z.number().int().positive(),
   dataEncryptionKey: Base64BytesSchema,
   seq: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type PluginAvailabilityArtifactReadEnvelopeV1 = z.infer<typeof PluginAvailabilityArtifactReadEnvelopeV1Schema>;
 
-export const PluginAvailabilityUiArtifactReadActionOutputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactReadActionOutputV1Schema = lazyZodSchema(() => z.object({
   link: PluginAccountPluginUiArtifactLinkV1Schema,
   artifact: PluginAvailabilityArtifactReadEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactReadActionOutputV1 = z.infer<typeof PluginAvailabilityUiArtifactReadActionOutputV1Schema>;
 
 /**
@@ -274,44 +299,44 @@ export type PluginAvailabilityUiArtifactReadActionOutputV1 = z.infer<typeof Plug
  * bytes. Callers name only a release coordinate: no path, archive content,
  * URL, or local filesystem authority crosses the Availability boundary.
  */
-export const PluginAvailabilityPackageAssetPublishActionInputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetPublishActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   artifactId: ArtifactIdSchema,
   artifact: PluginAvailabilityArtifactCreateEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetPublishActionInputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetPublishActionInputV1Schema>;
 
-export const PluginAvailabilityPackageAssetPublishActionOutputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetPublishActionOutputV1Schema = lazyZodSchema(() => z.object({
   link: PluginAccountPluginPackageAssetLinkV1Schema,
   outcome: z.enum(['created', 'rejoined']),
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetPublishActionOutputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetPublishActionOutputV1Schema>;
 
-export const PluginAvailabilityPackageAssetReadActionInputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetReadActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetReadActionInputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetReadActionInputV1Schema>;
 
-export const PluginAvailabilityPackageAssetReadActionOutputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetReadActionOutputV1Schema = lazyZodSchema(() => z.object({
   link: PluginAccountPluginPackageAssetLinkV1Schema,
   artifact: PluginAvailabilityArtifactReadEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetReadActionOutputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetReadActionOutputV1Schema>;
 
-export const PluginAvailabilityPackageAssetRemoveActionInputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetRemoveActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetRemoveActionInputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetRemoveActionInputV1Schema>;
 
-export const PluginAvailabilityPackageAssetRemoveActionOutputV1Schema = z.object({
+export const PluginAvailabilityPackageAssetRemoveActionOutputV1Schema = lazyZodSchema(() => z.object({
   removed: z.literal(true),
   link: PluginAccountPluginPackageAssetLinkV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityPackageAssetRemoveActionOutputV1 =
   z.infer<typeof PluginAvailabilityPackageAssetRemoveActionOutputV1Schema>;
 
@@ -322,14 +347,14 @@ export type PluginAvailabilityPackageAssetRemoveActionOutputV1 =
  * callers cannot widen either authority, nor provide URLs, credentials, bytes,
  * cache handles, or bridge authority.
  */
-export const PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema = lazyZodSchema(() => z.object({
   release: PluginReleaseRefV1Schema,
   contributionId: PluginUiReleaseSlotV1Schema.shape.contributionId,
   artifactId: PluginUiReleaseSlotV1Schema.shape.artifactId,
   tier: z.literal('hostedWeb'),
   platform: z.literal('web'),
   expectedArtifactDigest: PluginUiArtifactDigestV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1 = z.infer<typeof PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema>;
 
 function isHttpsCapabilityUrl(value: string): boolean {
@@ -345,23 +370,23 @@ function isHttpsCapabilityUrl(value: string): boolean {
   }
 }
 
-export const PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema = lazyZodSchema(() => z.object({
   url: z.string().trim().min(1).max(16 * 1024).refine(
     isHttpsCapabilityUrl,
     'Expected an HTTPS Artifact capability URL without credentials, query, or fragment',
   ),
   expiresAt: z.number().int().positive(),
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1 = z.infer<typeof PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema>;
 
 export const PluginAvailabilityUiArtifactRemoveActionInputV1Schema =
   PluginAvailabilityUiArtifactTargetV1Schema;
 export type PluginAvailabilityUiArtifactRemoveActionInputV1 = z.infer<typeof PluginAvailabilityUiArtifactRemoveActionInputV1Schema>;
 
-export const PluginAvailabilityUiArtifactRemoveActionOutputV1Schema = z.object({
+export const PluginAvailabilityUiArtifactRemoveActionOutputV1Schema = lazyZodSchema(() => z.object({
   removed: z.literal(true),
   link: PluginAccountPluginUiArtifactLinkV1Schema,
-}).strict();
+}).strict());
 export type PluginAvailabilityUiArtifactRemoveActionOutputV1 = z.infer<typeof PluginAvailabilityUiArtifactRemoveActionOutputV1Schema>;
 
 export const PluginAvailabilityActionInputSchemasV1: Readonly<

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { actionCliDerivedDefault, type ActionCliBindContext, type ActionCliProjection } from '../actionCliProjection.js';
@@ -11,10 +12,10 @@ import type { ActionInputHints } from '../metadata.js';
  * another read-state input model. `--unread` selects the deliberate CAS
  * lowering; omission marks read.
  */
-export const SessionReadStateSetCliInputSchema = z.object({
+export const SessionReadStateSetCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
   unread: z.boolean().optional(),
-}).strict();
+}).strict());
 export type SessionReadStateSetCliInput = z.infer<typeof SessionReadStateSetCliInputSchema>;
 
 export function bindSessionReadStateSetCliInput(

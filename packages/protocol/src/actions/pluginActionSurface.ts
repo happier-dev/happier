@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ACTION_IDS, type ActionId } from './actionIds.js';
@@ -111,7 +112,7 @@ export const PLUGIN_INVOCABLE_ACTION_IDS = Object.freeze(
 
 const PLUGIN_INVOCABLE_ACTION_ID_SET = new Set<string>(PLUGIN_INVOCABLE_ACTION_IDS);
 
-export const PluginInvocableActionIdSchema = z.custom<PluginInvocableActionId>(
+export const PluginInvocableActionIdSchema = lazyZodSchema(() => z.custom<PluginInvocableActionId>(
   (actionId) => typeof actionId === 'string' && PLUGIN_INVOCABLE_ACTION_ID_SET.has(actionId),
   { message: 'Action is not available on the Plugin surface' },
-);
+));

@@ -1,75 +1,61 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
-import { DaemonTerminalEnsureRequestSchema, DaemonTerminalEnsureResponseSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema } from '../../daemon/terminal.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+export { MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from './machineTerminal.js';
 
 const id = z.string().trim().min(1);
-export const HomeConnectInputSchema = z.object({
+export const HomeConnectInputSchema = lazyZodSchema(() => z.object({
   address: id,
   displayName: id.optional(),
   acceptInsecureHttp: z.boolean().default(false),
   acceptCanonicalUrl: z.boolean().default(false),
-}).strict();
-export const HomeConnectOutputSchema = z.discriminatedUnion('kind', [
+}).strict());
+export const HomeConnectOutputSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('connected'), serverId: id, serverUrl: id, name: z.string() }).strict(),
   z.object({ kind: z.literal('invalid_address') }).strict(),
   z.object({ kind: z.literal('declined') }).strict(),
   z.object({ kind: z.literal('mixed_content') }).strict(),
   z.object({ kind: z.literal('unreachable') }).strict(),
-]);
-export const MachineAddCommandInputSchema = z.discriminatedUnion('method', [
+]));
+export const MachineAddCommandInputSchema = lazyZodSchema(() => z.discriminatedUnion('method', [
   z.object({ method: z.literal('another_computer'), serverId: id, os: z.enum(['macos', 'linux', 'windows']) }).strict(),
   z.object({ method: z.literal('ssh'), serverId: id, os: z.enum(['macos', 'linux', 'windows']),
     host: id, username: z.string().optional(), port: z.number().int().min(1).max(65535).optional(),
     authMode: z.enum(['agent', 'keyfile', 'password']).default('agent'), identityFilePath: z.string().optional(),
   }).strict(),
-]);
-export const MachineAddCommandOutputSchema = z.object({ command: id, descriptorFileRequired: z.boolean() }).strict();
-export const MachinePairingCreateInputSchema = z.object({ serverId: id }).strict();
-export const MachinePairingCreateOutputSchema = z.object({ pairId: id, link: id, expiresAtMs: z.number().int().nonnegative() }).strict();
+]));
+export const MachineAddCommandOutputSchema = lazyZodSchema(() => z.object({ command: id, descriptorFileRequired: z.boolean() }).strict());
+export const MachinePairingCreateInputSchema = lazyZodSchema(() => z.object({ serverId: id }).strict());
+export const MachinePairingCreateOutputSchema = lazyZodSchema(() => z.object({ pairId: id, link: id, expiresAtMs: z.number().int().nonnegative() }).strict());
 export const MACHINE_ADD_SSH_ACTION_IDS = ['machines.add.ssh.start', 'machines.add.ssh.status', 'machines.add.ssh.respond', 'machines.add.ssh.cancel'] as const;
 export type MachineAddSshActionId = typeof MACHINE_ADD_SSH_ACTION_IDS[number];
-export const MachineAddSshStartInputSchema = z.object({ serverId: id, host: id, username: z.string().default(''),
+export const MachineAddSshStartInputSchema = lazyZodSchema(() => z.object({ serverId: id, host: id, username: z.string().default(''),
   port: z.number().int().min(1).max(65535).optional(), authMode: z.enum(['agent', 'keyfile', 'password']).default('agent'),
   identityFilePath: z.string().optional(),
-}).strict();
-export const MachineAddSshTaskInputSchema = z.object({ taskId: id }).strict();
-export const MachineAddSshAnswerSchema = z.discriminatedUnion('kind', [
+}).strict());
+export const MachineAddSshTaskInputSchema = lazyZodSchema(() => z.object({ taskId: id }).strict());
+export const MachineAddSshAnswerSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ssh.trustHost'), trusted: z.boolean() }).strict(),
   z.object({ kind: z.literal('ssh.replaceHostKey'), trusted: z.boolean() }).strict(),
   z.object({ kind: z.literal('auth.approveRemoteProvisioning'), approved: z.boolean() }).strict(),
   z.object({ kind: z.literal('daemon.replaceRemoteBackgroundServices'), replaceExistingServices: z.boolean() }).strict(),
   z.object({ kind: z.literal('releaseChannel.switchDefaultForSetup'), switchDefaultReleaseChannel: z.boolean() }).strict(),
-]);
-export const MachineAddSshRespondInputSchema = MachineAddSshTaskInputSchema.extend({ answer: MachineAddSshAnswerSchema }).strict();
-export const MachineAddSshTaskOutputSchema = z.object({ taskId: id }).strict();
-export const MachineAddSshStatusOutputSchema = z.object({ taskId: id, status: z.enum(['running', 'canceling', 'succeeded', 'failed', 'canceled']),
+]));
+export const MachineAddSshRespondInputSchema = lazyZodSchema(() => MachineAddSshTaskInputSchema.extend({ answer: MachineAddSshAnswerSchema }).strict());
+export const MachineAddSshTaskOutputSchema = lazyZodSchema(() => z.object({ taskId: id }).strict());
+export const MachineAddSshStatusOutputSchema = lazyZodSchema(() => z.object({ taskId: id, status: z.enum(['running', 'canceling', 'succeeded', 'failed', 'canceled']),
   currentStepId: z.string().nullable(), awaitingInput: z.boolean(),
   prompt: z.object({ kind: id, message: z.string(), fingerprint: z.string().optional(), existingFingerprint: z.string().nullable().optional(),
     target: z.string().optional(), publicKey: z.string().nullable().optional(), requiresPresentUser: z.boolean() }).strict().nullable(),
   machineId: z.string().nullable(), errorCode: z.string().nullable(),
-}).strict();
+}).strict());
 export const MACHINE_ADD_SSH_INPUT_SCHEMAS = {
   'machines.add.ssh.start': MachineAddSshStartInputSchema, 'machines.add.ssh.status': MachineAddSshTaskInputSchema,
   'machines.add.ssh.respond': MachineAddSshRespondInputSchema, 'machines.add.ssh.cancel': MachineAddSshTaskInputSchema,
 } as const;
 
-// Reuse the daemon's request fields and validation; only the Action's routing
-// envelope is new. Unknown author fields cannot gain meaning at this seam.
-export const MachineTerminalOpenInputSchema = DaemonTerminalEnsureRequestSchema
-  .safeExtend({ machineId: id, serverId: id.optional() }).strict();
-export const MachineTerminalListInputSchema = DaemonTerminalListRequestV1Schema
-  .extend({ machineId: id, serverId: id.optional() }).strict();
-
 const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false } as const;
 export const MACHINE_CONNECTION_ACTION_SPECS = [
-  {
-    id: 'machines.terminal.list', title: 'List machine terminals',
-    description: 'Read existing machine terminals and their Session attribution without opening or changing a process. Null means this daemon does not support listing.',
-    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    bindings: { mcpToolName: 'machines_terminal_list' }, inputSchema: MachineTerminalListInputSchema, outputSchema: DaemonTerminalListResponseV1Schema.nullable(),
-    inputHints: { fields: [{ path: 'machineId', title: 'Machine ID', widget: 'text', required: true }, { path: 'serverId', title: 'Home ID', widget: 'text' }] },
-  },
   {
     id: 'machines.add.ssh.start', title: 'Add machine over SSH',
     description: 'Start the existing client SSH setup task on the focused signed-in Home. Read status and answer non-secret prompts. Password and private-key entry stays with the present-user UI.',
@@ -126,16 +112,5 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
     projectObservationOutput: () => ({ redacted: true }),
     approvalResultCustody: 'live_only',
     inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }] },
-  },
-  {
-    id: 'machines.terminal.open', title: 'Open machine terminal',
-    description: 'Create or reuse a machine PTY shell through the daemon terminal owner.',
-    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'machine', placements: [],
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    bindings: { mcpToolName: 'machines_terminal_open' }, inputSchema: MachineTerminalOpenInputSchema, outputSchema: DaemonTerminalEnsureResponseSchema,
-    inputHints: { fields: [{ path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
-      { path: 'serverId', title: 'Home ID', widget: 'text' }, { path: 'terminalKey', title: 'Terminal key', widget: 'text', required: true },
-      { path: 'cwd', title: 'Working directory', widget: 'text' }, { path: 'cols', title: 'Columns', widget: 'text' }, { path: 'rows', title: 'Rows', widget: 'text' },
-      { path: 'initialCommand', title: 'Initial command', widget: 'text' }, { path: 'launch', title: 'Launch intent', widget: 'json' }, { path: 'sessionId', title: 'Owning Session ID', widget: 'text' }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PromptDocBodyV1Schema } from './promptDocV2.js';
+import { PromptDocBodyV1Schema, PromptDocArtifactHeaderV1Schema } from './promptDocV2.js';
 
 describe('PromptDocBodyV1Schema', () => {
-  it('preserves additive fields in prompt doc bodies', () => {
+  it('accepts stored additive fields while projecting only known prompt document content', () => {
     const parsed = PromptDocBodyV1Schema.parse({
       v: 1,
       markdown: '# Hello',
@@ -12,7 +12,9 @@ describe('PromptDocBodyV1Schema', () => {
       futureDocField: 'keep-me',
     });
 
-    expect((parsed as any).futureDocField).toBe('keep-me');
+    expect(parsed).not.toHaveProperty('futureDocField');
+    expect(PromptDocArtifactHeaderV1Schema.parse({ v: 1, kind: 'prompt_doc.v2', title: 'Prompt',
+      origin: 'imported', futureAuthority: true })).toEqual({ v: 1, kind: 'prompt_doc.v2', title: 'Prompt', origin: 'imported' });
   });
 
   it('parses a valid prompt doc body', () => {

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '../../account/encryptionKeyFingerprintV1.js';
 import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
-import { resolveWorkflowRunDataKeyV1 } from '../../workflows/workflowRunDataKeyV1.js';
+import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1 } from '../../workflows/workflowRunDataKeyV1.js';
 
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import { materializeWorkflowAcceptedSnapshotV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -13,8 +13,10 @@ import { WorkflowRunSummaryV1Schema } from '../../workflows/workflowProgressV1.j
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './workflowRunActions.js';
+import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopesV1Schema } from '../../workflows/workflowRunKeyV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinitionV1.js';
+import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definition = validateWorkflowDefinition({
@@ -71,6 +73,226 @@ function ownerDeps(storage: WorkflowAccountRunActionDeps['storage']): WorkflowAc
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each(['history_not_readable', 'encryption_setup_required', 'waiting_for_keys'] as const)(
+    'preserves %s through accepted detail, exact invocation, content list and result reads', async reason => {
+      const snapshot = runSnapshot();
+      const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+        material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
+      const encryption: AvailableAutomationAccountEncryptionV1 = { kind: 'available', material,
+        witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: material.contentPublicKeyFingerprint } };
+      const prepared = prepareWorkflowRunDataKeyV1({ accountId: 'account-1', encryption, randomBytes });
+      snapshot.keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ ...snapshot.keyCensus,
+        encryptionMode: 'e2ee', ownerAccountCurrentness: { mode: 'e2ee', version: 1,
+          contentKeyFingerprint: material.contentPublicKeyFingerprint },
+        dataEncryptionKey: reason === 'history_not_readable' ? null : prepared.recipientKeyEnvelopes[0]!.encryptedDataKey,
+        callerDataEncryptionKey: null,
+      });
+      const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') return snapshot;
+        if (operation.operation === 'list') return { runs: [snapshot.run],
+          acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+          keyCensusByRunId: { [runId]: snapshot.keyCensus } };
+        if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: 0,
+          keyCensus: snapshot.keyCensus, progressEnvelopesByInvocationId: {} };
+        if (operation.operation === 'wait') return { observation: 'terminal', run: { ...snapshot.run, state: 'succeeded' },
+          resultEnvelope: 'unopened-result', keyCensus: snapshot.keyCensus };
+        throw new Error(`unexpected_storage_operation:${String(operation.operation)}`);
+      } }), resolveEncryption: async () => reason === 'encryption_setup_required'
+        ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+        : encryption,
+      });
+      const reads = [
+        owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }),
+        owner.execute({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: 'held' }, context: {} }),
+        owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {} }),
+        owner.execute({ actionId: 'workflow.run.wait', input: { runId }, context: {} }),
+      ];
+      const failures = await Promise.all(reads.map(read => read.catch(normalizeWorkflowActionThrownError)));
+      for (const failure of failures) {
+        expect(failure).toMatchObject({ ok: false, errorCode: reason });
+      }
+      await expect(owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
+        .resolves.toMatchObject({ runs: [{ id: runId }], metadataByRunId: { [runId]: { kind: 'unavailable', reason } } });
+    },
+  );
+
+  it.each([
+    { error: Object.assign(new Error('HTTP 500'), { response: { status: 500, data: { error: 'internal_server_error' } } }), code: 'storage_unavailable' },
+    { error: Object.assign(new Error('HTTP 500'), { response: { status: 500, data: '<html>failure</html>' } }), code: 'storage_unavailable' },
+    { error: Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }), code: 'storage_unavailable' },
+    { error: new Error('transport failed'), code: 'storage_unavailable' },
+    { error: Object.assign(new Error('stale'), { code: 'currentness_conflict' }), code: 'currentness_conflict' },
+    { error: Object.assign(new Error('forbidden'), { response: { status: 403, data: { error: 'run_access_denied' } } }), code: 'run_access_denied' },
+  ])('distinguishes storage failure from typed currentness/access failure ($code)', async ({ error, code }) => {
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => { throw error; } }));
+    const failures = await Promise.all([
+      owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }),
+      owner.execute({ actionId: 'workflow.run.cancel', input: { runId, expectedRevision: 0 }, context: {} }),
+    ].map(result => result.catch(normalizeWorkflowActionThrownError)));
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ ok: false, errorCode: code });
+    }
+  });
+
+  it('keeps malformed storage projections distinct from transport failures', async () => {
+    const snapshot = runSnapshot();
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => ({ ...snapshot, run: { id: runId } }) }));
+    await expect(owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} })
+      .catch(normalizeWorkflowActionThrownError)).resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+
+  it.each([
+    Object.assign(new Error('cancelled'), { code: 'ERR_CANCELED' }),
+    new DOMException('cancelled', 'AbortError'),
+  ])('preserves native storage cancellation', async error => {
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => { throw error; } }));
+    await expect(owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} })).rejects.toBe(error);
+  });
+
+  it.each(['root', 'nested'] as const)('hydrates exact transcript references in the lean batch using authored %s step numbering', async placement => {
+    const snapshot = runSnapshot();
+    if (placement === 'nested') {
+      if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+      const parentDefinition = { ...definition, blocks: [
+        { ...definition.blocks[0]!, id: 'prelude' },
+        { kind: 'workflow' as const, id: 'nested', workflowRef: 'builtin:child', input: {} },
+      ] };
+      const nested = await materializeWorkflowAcceptedSnapshotV1({ definition: parentDefinition,
+        context: acceptedSnapshotResult.snapshot,
+        admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+          readWorkflowDefinition: async () => ({ sourceKey: 'builtin:child', definition }) } });
+      if (!nested.ok) throw new Error(`snapshot_fixture_failed: ${nested.error.code}`);
+      snapshot.acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+        acceptedSnapshot: nested.snapshot,
+      }));
+    }
+    const id = 'transcript-step';
+    const index = { id, runId, sequence: '87', parentRecordId: null, memberOrdinal: '8', attempt: '0',
+      contentRevision: '1', lifecycle: 'completed' as const,
+      createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt };
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: id, sequence: index.sequence, parentRecordId: null, memberOrdinal: index.memberOrdinal, attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+        invocationPath: { blockId: definition.blocks[0]!.id,
+          scope: placement === 'nested' ? [{ kind: 'workflow', blockId: 'nested' }] : [] }, attempt: '0', logicalInvocationRecordId: id },
+    }));
+    const rootIndex = { ...index, id: 'root', sequence: '0', memberOrdinal: '0', lifecycle: 'running' as const };
+    const rootEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: rootIndex.id, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
+        attempt: '0', logicalInvocationRecordId: 'root', resultProvenance: { [id]: { notificationCondition: 'suppressed' } } },
+    }));
+    const requests: unknown[] = [];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'list') throw new Error('transcript_must_not_read_detail_or_history');
+      requests.push(operation.request);
+      return { runs: [snapshot.run], acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+        keyCensusByRunId: { [runId]: snapshot.keyCensus },
+        rootProgressByRunId: { [runId]: { index: rootIndex, contentEnvelope: rootEnvelope } },
+        invocationProgressByRunId: { [runId]: [{ index, contentEnvelope },
+          { index: { ...index, id: 'unrequested' }, contentEnvelope },
+          { index: { ...index, runId: 'foreign-run' }, contentEnvelope }] } };
+    } }));
+    const input = { runIds: [runId], invocationProvenance: [{ runId, invocationRecordIds: [id] }] };
+    const result = await owner.execute({ actionId: 'workflow.run.list', input, context: {} });
+    expect(result).toMatchObject({ invocationProvenance: [{ index, stepOrdinal: '1', notificationCondition: 'suppressed' }] });
+    expect(result).toHaveProperty('invocationProvenance.length', 1);
+    expect(requests).toEqual([input]);
+  });
+
+  it('opens requested invocation content from the same paged storage response', async () => {
+    const ids = ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];
+    const rows = ids.map((id, ordinal) => {
+      const index = { id, runId, sequence: String(ordinal), parentRecordId: null, memberOrdinal: String(ordinal),
+        attempt: '0', contentRevision: '1', lifecycle: 'completed' as const,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:01.000Z' };
+      const progress = { kind: 'happier.workflow-progress.v1' as const, blockKind: 'step' as const,
+        invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: id,
+        result: { kind: 'value' as const, value: { output: `page-${ordinal}` } } };
+      const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+          recordId: id, sequence: index.sequence, parentRecordId: null, memberOrdinal: index.memberOrdinal, attempt: '0' }, progress,
+      }));
+      return { index, progress, contentEnvelope };
+    });
+    const operations: string[] = [];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      operations.push(String(operation.operation));
+      if (operation.operation !== 'invocations.list') throw new Error('Content list must not read individual details or accepted snapshots');
+      const row = operation.cursor ? rows[1]! : rows[0]!;
+      return { invocations: [row.index], parentRevision: 4, keyCensus: runSnapshot().keyCensus,
+        ...(operation.cursor ? {} : { nextCursor: 'page-2' }),
+        ...(operation.progressEnvelopes ? { progressEnvelopesByInvocationId: { [row.index.id]: row.contentEnvelope } } : {}) };
+    } }));
+    for (const ordinal of [0, 1]) {
+      const row = rows[ordinal]!;
+      await expect(owner.execute({ actionId: 'workflow.run.invocations.list',
+        input: { runId, includeContent: true, ...(ordinal === 1 ? { cursor: 'page-2' } : {}) }, context: {} }))
+        .resolves.toEqual({ invocations: [row.index], parentRevision: 4,
+          invocationDetails: [{ index: row.index, progress: row.progress, parentRevision: 4 }],
+          ...(ordinal === 0 ? { nextCursor: 'page-2' } : {}) });
+    }
+    expect(operations).toEqual(['invocations.list', 'invocations.list']);
+    await expect(owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId }, context: {} }))
+      .resolves.toEqual({ invocations: [rows[0]!.index], parentRevision: 4, nextCursor: 'page-2' });
+  });
+
+  it.each(['missing', 'malformed', 'rebound', 'mode_mismatch', 'foreign_run'] as const)('fails requested invocation content closed for %s envelopes', async failure => {
+    const id = '22222222-2222-4222-8222-222222222222';
+    const index = { id, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
+      contentRevision: '1', lifecycle: 'completed' as const,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:01.000Z' };
+    const envelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: failure === 'rebound' ? '33333333-3333-4333-8333-333333333333' : id,
+        sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+        invocationPath: { blockId: 'work', scope: [] }, attempt: '0',
+        logicalInvocationRecordId: failure === 'rebound' ? '33333333-3333-4333-8333-333333333333' : id },
+    }));
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'invocations.list') throw new Error('No per-row fallback');
+      return { invocations: [{ ...index, ...(failure === 'foreign_run' ? { runId: '33333333-3333-4333-8333-333333333333' } : {}) }], parentRevision: 4, keyCensus: runSnapshot().keyCensus,
+        progressEnvelopesByInvocationId: failure === 'missing' ? {} : {
+          [id]: failure === 'malformed' ? 'invalid' : failure === 'mode_mismatch' ? JSON.stringify({ t: 'encrypted', c: 'invalid' }) : envelope,
+        } };
+    } }));
+    await expect(owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {} }))
+      .rejects.toMatchObject({ code: 'content_unavailable' });
+  });
+
+  it('keeps opened invocation details within the stored page byte boundary', async () => {
+    const id = '22222222-2222-4222-8222-222222222222';
+    // The index duplicates in the opened projection. Maximal database decimal
+    // fields and revision, short private content and the smallest owner binding
+    // exercise the margin supplied by the existing serialized-envelope budget.
+    const decimal = '9223372036854775807';
+    const index = { id, runId, sequence: decimal, parentRecordId: null, memberOrdinal: decimal,
+      attempt: decimal, contentRevision: decimal, lifecycle: 'waiting_for_capacity' as const,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:01.000Z' };
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'a', runId,
+        recordId: id, sequence: decimal, parentRecordId: null, memberOrdinal: decimal, attempt: decimal },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root',
+        invocationPath: { blockId: '$root', scope: [] }, attempt: decimal,
+        logicalInvocationRecordId: id, previousAttemptRecordId: '33333333-3333-4333-8333-333333333333' },
+    }));
+    const page = { invocations: [index], parentRevision: Number.MAX_SAFE_INTEGER,
+      keyCensus: { ...runSnapshot().keyCensus, ownerAccountId: 'a' },
+      progressEnvelopesByInvocationId: { [id]: contentEnvelope } };
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'invocations.list') throw new Error('No per-row reads');
+      return page;
+    } }));
+    const opened = await owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {} });
+    expect(opened).toMatchObject({ invocationDetails: [{ index }] });
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(opened))
+      .toBeLessThanOrEqual(measureExternalActionResultResponseEnvelopeUtf8BytesV1(page));
+  });
+
   it('admits the reviewed inline draft with authorized Artifact lineage and rejoins its frozen Team choice', async () => {
     const reviewed = validateWorkflowDefinition({ ...definition, blocks: ['Reviewed unsaved work'] }).normalizedDefinition!;
     const metadata = { title: 'Reviewed title' };
@@ -1091,7 +1313,7 @@ describe('shared Account workflow run owner', () => {
       stepProgressCurrentness: { recordId: rootId, attempt: '0', contentRevision: '4' },
       stepProgress: { completed: 1, total: 3, currentLoop: { completed: 1, total: 4 } } },
       { id: unreadableId, where: null, startedBy: null, stepProgress: null, stepProgressCurrentness: null }],
-      metadataByRunId: { [unreadableId]: { kind: 'unavailable' } } });
+      metadataByRunId: { [unreadableId]: { kind: 'unavailable', reason: 'content_unavailable' } } });
     // The name may be absent on a readable snapshot; its Where remains available.
     expect(result.metadataByRunId).not.toHaveProperty(runId);
   });

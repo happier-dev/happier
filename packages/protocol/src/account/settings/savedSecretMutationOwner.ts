@@ -1,6 +1,7 @@
 import {
   SAVED_SECRET_COLLECTION_MAX_ENTRIES,
   SavedSecretSchema,
+  AIBackendProfileSchema,
   type SavedSecret,
 } from '../../profiles/backendProfileSchema.js';
 import type { SecretStringV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
@@ -42,6 +43,7 @@ import {
   SHARED_SAVED_SECRET_REF_V1_PREFIX,
   formatSharedSavedSecretRefV1,
   parseSavedSecretRefV1,
+  listSavedSecretReferenceCarrierPathsV1,
   type SavedSecretRefV1,
 } from './savedSecretReferenceV1.js';
 import {
@@ -49,6 +51,15 @@ import {
   parseConnectedAccountServiceConfigurationsV1,
   type ConnectedAccountServiceConfigurationEntryV1,
 } from './connectedAccountServiceConfigurationsV1.js';
+import { StoredProfileRecordV1Schema, type ProfileRecordV1 } from '../../profiles/profileRecordSchemaV1.js';
+import { resolveProfileCatalogAuthorityV1, removeTransferredProfileSourcesV1, listTransferredProfileIdsV1, readEffectiveProfileSecretBindingsV1 } from '../../profiles/read.js';
+import type { ProfileTransferControlV1 } from '../../profiles/profileTransferSchemaV1.js';
+import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
+import { readLaunchProfileArtifactForReferenceCensusV1, LaunchProfileArtifactReferenceV1Schema } from '../../launchProfiles/launchProfileArtifactV1.js';
+import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
+import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { ACCOUNT_SETTING_DEFINITIONS } from './accountSettings.js';
 
 export { CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY } from './connectedAccountServiceConfigurationsV1.js';
 
@@ -105,24 +116,155 @@ export type PromotePersonalSavedSecretReferenceInput = Readonly<{
   sharedSecretRef: string;
 }>;
 
+/** Opened complete inventories; their revisions/coverage are admitted by the transaction owner. */
+export type SavedSecretReferenceCatalogsV1 = Readonly<{
+  profileRecords: readonly ProfileRecordV1[];
+  artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+  profileControl?: ProfileTransferControlV1 | null;
+}>;
+
+export type SavedSecretClassifiedSourceCatalogsV1 = Readonly<{
+  profileRows: readonly ProfileCatalogRecordV1[];
+  artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+}>;
+
+export type SavedSecretReferenceRewriteResultV1 = Readonly<{
+  settings: Readonly<Record<string, unknown>>;
+  profileRecords?: readonly ProfileRecordV1[];
+}>;
+
+export type SavedSecretImportSourceV1 =
+  | Readonly<{ kind: 'personal-saved-secret'; secretId: string }>
+  | Readonly<{ kind: 'profile-environment-variable'; profileId: string; envName: string }>
+  | Readonly<{ kind: 'legacy-inference-openai-key' }>;
+
+export type SavedSecretLegacyInferenceCredentialV1 = Readonly<{
+  source: Extract<SavedSecretImportSourceV1, { kind: 'legacy-inference-openai-key' }>;
+  value: string; displayName: string; kind: 'apiKey';
+}>;
+
+/** Import retries identify the same Account/source, never mutable labels or secret bytes. */
+function readSavedSecretImportSourcePartsV1(value: SavedSecretImportSourceV1): readonly string[] {
+  const source = ownRecord(value);
+  const parts = source?.kind === 'personal-saved-secret'
+    && hasOnlyOwnKeys(source, ['kind', 'secretId']) && typeof source.secretId === 'string' && source.secretId.length > 0
+    ? [source.kind, source.secretId]
+    : source?.kind === 'profile-environment-variable' && hasOnlyOwnKeys(source, ['kind', 'profileId', 'envName'])
+      && typeof source.profileId === 'string' && source.profileId.length > 0 && typeof source.envName === 'string' && source.envName.length > 0
+      ? [source.kind, source.profileId, source.envName]
+      : source?.kind === 'legacy-inference-openai-key' && hasOnlyOwnKeys(source, ['kind']) ? [source.kind] : null;
+  if (!parts) {
+    invalidReferenceRoot('SavedSecret import source identity is invalid');
+  }
+  return parts;
+}
+
+export function deriveSavedSecretImportResourceIdV1(input: Readonly<{
+  accountId: string; source: SavedSecretImportSourceV1;
+}>): string {
+  if (typeof input.accountId !== 'string' || input.accountId.length === 0) invalidReferenceRoot('SavedSecret import Account identity is invalid');
+  const parts = readSavedSecretImportSourcePartsV1(input.source);
+  const hex = computeCanonicalDomainSeparatedHexDigest('happier.saved-secret.v1.import', [input.accountId, ...parts]);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** The retired bare root has no binding slot; preserve its material before removing only that source. */
+export function promoteLegacyInferenceSavedSecretReferenceV1(
+  settings: Readonly<Record<string, unknown>>,
+  input: Readonly<{ source: Extract<SavedSecretImportSourceV1, { kind: 'legacy-inference-openai-key' }>; sharedSecretRef: string }>,
+): SavedSecretReferenceRewriteResultV1 & Readonly<{ value: string }> {
+  if (input.source.kind !== 'legacy-inference-openai-key') invalidReferenceRoot('Legacy inference credential source identity is invalid');
+  readSavedSecretImportSourcePartsV1(input.source);
+  validateKnownSavedSecretReferenceRoots(settings);
+  parseSharedSavedSecretPromotionRef(input.sharedSecretRef);
+  const candidate = readSavedSecretTransferSourceV1(settings).inferenceCredential;
+  if (!candidate) invalidReferenceRoot('Legacy inference credential source is invalid');
+  const next = { ...settings };
+  delete next.inferenceOpenAIKey;
+  return Object.freeze({ value: candidate.value, settings: Object.freeze(next) });
+}
+
+/** Only the classified exact legacy carrier moves; raw unrelated config remains its owner. */
+export function promoteProfileEnvironmentVariableSavedSecretReferenceV1(
+  settings: Readonly<Record<string, unknown>>,
+  input: Readonly<{
+    source: Extract<SavedSecretImportSourceV1, { kind: 'profile-environment-variable' }>;
+    sharedSecretRef: string;
+  }>,
+  catalogs?: SavedSecretReferenceCatalogsV1 | SavedSecretClassifiedSourceCatalogsV1,
+): SavedSecretReferenceRewriteResultV1 & Readonly<{ value: string; profileRows?: readonly ProfileCatalogRecordV1[] }> {
+  // Validate the canonical source identity and complete reference roots before constructing a rewrite.
+  readSavedSecretImportSourcePartsV1(input.source);
+  validateKnownSavedSecretReferenceRoots(settings);
+  const targetRef = parseSharedSavedSecretPromotionRef(input.sharedSecretRef);
+  const profiles = settings.profiles;
+  if (!Array.isArray(profiles)) invalidReferenceRoot('Legacy Profile credential source is invalid');
+  const matches = profiles.flatMap((candidate, index) => ownRecord(candidate)?.id === input.source.profileId ? [{ candidate, index }] : []);
+  if (matches.length !== 1) invalidReferenceRoot('Legacy Profile credential source identity is ambiguous');
+  const selected = ownRecord(matches[0]!.candidate);
+  const profile = AIBackendProfileSchema.safeParse(selected);
+  if (!selected || !profile.success || !Array.isArray(selected.environmentVariables)) {
+    invalidReferenceRoot('Legacy Profile credential source is invalid');
+  }
+  const entries = selected.environmentVariables;
+  const variables = entries.flatMap((candidate, index) => ownRecord(candidate)?.name === input.source.envName ? [{ candidate, index }] : []);
+  const variable = variables.length === 1 ? ownRecord(variables[0]!.candidate) : null;
+  const value = variable?.value;
+  const bindings = ownRecord(settings[PROFILE_BINDINGS_KEY]) ?? {};
+  const profileBindings = ownRecord(bindings[input.source.profileId]) ?? {};
+  if (typeof value !== 'string' || value.length === 0 || value.includes('${') || profileBindings[input.source.envName] !== undefined) {
+    invalidReferenceRoot('Legacy Profile credential source is not an unbound literal');
+  }
+  const capturedRows = catalogs && 'profileRows' in catalogs ? catalogs.profileRows : undefined;
+  const referenceCatalogs = catalogs ? { profileRecords: capturedRows ? capturedRows.map(row => row.record)
+    : 'profileRecords' in catalogs ? catalogs.profileRecords : [], artifactsById: catalogs.artifactsById } : undefined;
+  if (readSavedSecrets(settings).some(secret => secret.id === targetRef)
+    || listAccountSettingsSavedSecretReferences(settings, targetRef, referenceCatalogs).length > 0) {
+    throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'SavedSecret import target is already referenced');
+  }
+  const nextProfiles = [...profiles];
+  nextProfiles[matches[0]!.index] = { ...selected, environmentVariables: entries.map((entry, index) => index === variables[0]!.index
+    ? { ...variable, value: `\${${input.source.envName}}` } : entry) };
+  const profileRows = capturedRows?.map(row => {
+    if (!Number.isSafeInteger(row.revision) || row.revision < 0) invalidReferenceRoot('Profile source revision is invalid');
+    const record = row.record;
+    if (record.id !== input.source.profileId) return row;
+    if (record.definition.kind !== 'legacy') invalidReferenceRoot('Staged Profile source carrier is not the captured legacy definition');
+    const matches = record.definition.profile.environmentVariables.filter(entry => entry.name === input.source.envName);
+    if (matches.length !== 1 || matches[0]!.value !== value || Object.hasOwn(record.secretBindings, input.source.envName)) {
+      invalidReferenceRoot('Staged Profile credential source changed or is ambiguous');
+    }
+    return { ...row, record: { ...record, definition: { ...record.definition, profile: { ...record.definition.profile,
+      environmentVariables: record.definition.profile.environmentVariables.map(entry => entry.name === input.source.envName
+        ? { ...entry, value: `\${${input.source.envName}}` } : entry),
+    } }, secretBindings: { ...record.secretBindings, [input.source.envName]: targetRef } } };
+  });
+  const profileRecords = profileRows?.map(row => row.record) ?? referenceCatalogs?.profileRecords;
+  return { settings: { ...settings, profiles: nextProfiles, [PROFILE_BINDINGS_KEY]: {
+    ...bindings, [input.source.profileId]: { ...profileBindings, [input.source.envName]: targetRef },
+  } }, value, ...(profileRecords ? { profileRecords } : {}), ...(profileRows ? { profileRows } : {}) };
+}
+
 export function rekeyPersonalSavedSecret(
   settings: Readonly<Record<string, unknown>>,
   input: RekeyPersonalSavedSecretInput,
-): Readonly<{ settings: Readonly<Record<string, unknown>> }> {
+  catalogs?: SavedSecretReferenceCatalogsV1,
+): SavedSecretReferenceRewriteResultV1 {
   return rewritePersonalSavedSecret(settings, input, {
     kind: 'personal',
     ref: input.newSecretId,
-  });
+  }, catalogs);
 }
 
 export function promotePersonalSavedSecretReference(
   settings: Readonly<Record<string, unknown>>,
   input: PromotePersonalSavedSecretReferenceInput,
-): Readonly<{ settings: Readonly<Record<string, unknown>> }> {
+  catalogs?: SavedSecretReferenceCatalogsV1,
+): SavedSecretReferenceRewriteResultV1 {
   return rewritePersonalSavedSecret(settings, input, {
     kind: 'shared_resource',
     ref: input.sharedSecretRef,
-  });
+  }, catalogs);
 }
 
 export type AccountSettingsSavedSecretMutation =
@@ -372,6 +514,32 @@ function readSavedSecrets(
       'Account Settings SavedSecret collection is invalid',
     );
   }
+}
+
+/** Transfer recognizes individual supported items; future items remain owned by their source. */
+export function readSavedSecretTransferSourceV1(settings: Readonly<Record<string, unknown>>): Readonly<{
+  secrets: readonly SavedSecret[]; complete: boolean; inferenceCredential?: SavedSecretLegacyInferenceCredentialV1;
+}> {
+  const inferenceValue = settings.inferenceOpenAIKey;
+  const inference = ACCOUNT_SETTING_DEFINITIONS.inferenceOpenAIKey.parseMutationValue(inferenceValue);
+  const inferenceCredential: SavedSecretLegacyInferenceCredentialV1 | undefined = inference.success
+    && typeof inference.data === 'string' && inference.data.length > 0
+    ? Object.freeze({ source: { kind: 'legacy-inference-openai-key' as const }, value: inference.data,
+      displayName: 'OpenAI API key for inference', kind: 'apiKey' as const }) : undefined;
+  const inferenceComplete = inference.success;
+  const source = { ...(inferenceCredential ? { inferenceCredential } : {}) };
+  const raw = settings[SECRETS_KEY];
+  if (raw === undefined) return { secrets: [], complete: inferenceComplete, ...source };
+  if (!Array.isArray(raw)) return { secrets: [], complete: false, ...source };
+  const secrets = raw.flatMap(value => {
+    const parsed = SavedSecretSchema.safeParse(value);
+    return parsed.success ? [value as SavedSecret] : [];
+  });
+  const identities = raw.flatMap(value => typeof ownRecord(value)?.id === 'string' ? [ownRecord(value)!.id] : []);
+  if (new Set(identities).size !== identities.length) {
+    throw new AccountSettingsSavedSecretMutationError('saved_secret_invalid', 'Account Settings SavedSecret identities are ambiguous');
+  }
+  return { secrets, complete: inferenceComplete && secrets.length === raw.length, ...source };
 }
 
 function pluginSecretBindingError(message: string): never {
@@ -1794,11 +1962,61 @@ function collectPluginSecretReferences(
   }
 }
 
+/** Preserve identifiable future bindings instead of treating their inventory as empty. */
+function collectUnknownSavedSecretReferences(
+  value: unknown,
+  secretId: string,
+  output: AccountSettingsSavedSecretReference[],
+  initialPath = '',
+): void {
+  const knownPaths = new Set(output.map((reference) => reference.path));
+  for (const path of listSavedSecretReferenceCarrierPathsV1(value, { secretId, initialPath })) {
+    if (knownPaths.has(path)) continue;
+    knownPaths.add(path);
+    output.push(Object.freeze({ owner: 'unknown', path }));
+  }
+}
+
+function readReachedProfileArtifact(artifactId: string, catalogs?: SavedSecretReferenceCatalogsV1) {
+  const resource = catalogs?.artifactsById?.get(artifactId);
+  const artifact = resource && resource.artifactId === artifactId
+    ? readLaunchProfileArtifactForReferenceCensusV1(resource) : null;
+  if (!artifact) invalidReferenceRoot('Reached Profile Artifact reference inventory is unavailable');
+  return artifact;
+}
+
+function readEffectiveProfileSavedSecretBindings(record: ProfileRecordV1, catalogs?: SavedSecretReferenceCatalogsV1): Readonly<Record<string, string>> {
+  const bindings = readEffectiveProfileSecretBindingsV1(record, { artifactsById: catalogs?.artifactsById ?? new Map() });
+  if (!bindings) invalidReferenceRoot('Reached Profile Artifact reference inventory is unavailable');
+  return bindings;
+}
+
+function readReferenceSourceSettings(settings: Readonly<Record<string, unknown>>, catalogs?: SavedSecretReferenceCatalogsV1) {
+  const control = catalogs?.profileControl;
+  return control && resolveProfileCatalogAuthorityV1({ rawSettings: settings, control }) === 'destination'
+    ? removeTransferredProfileSourcesV1(settings, listTransferredProfileIdsV1(control)) : settings;
+}
+
+function readRawProfileArtifactDefaults(settings: Readonly<Record<string, unknown>>, catalogs?: SavedSecretReferenceCatalogsV1) {
+  const output: Array<Readonly<{ profileId: string; bindings: Readonly<Record<string, string>> }>> = [];
+  if (!Array.isArray(settings.profiles)) return output;
+  const referenceSchema = createStoredReadSchema(LaunchProfileArtifactReferenceV1Schema);
+  for (const source of settings.profiles) {
+    const reference = referenceSchema.safeParse(source);
+    if (!reference.success) continue;
+    const artifact = readReachedProfileArtifact(reference.data.artifactId, catalogs);
+    output.push({ profileId: artifact.profile.id, bindings: artifact.secretBindings });
+  }
+  return output;
+}
+
 export function listAccountSettingsSavedSecretReferences(
   settings: Readonly<Record<string, unknown>>,
   secretId: string,
+  catalogs?: SavedSecretReferenceCatalogsV1,
 ): readonly AccountSettingsSavedSecretReference[] {
   if (!secretId) return Object.freeze([]);
+  settings = readReferenceSourceSettings(settings, catalogs);
   validateKnownSavedSecretReferenceRoots(settings);
   const output: AccountSettingsSavedSecretReference[] = [];
   const profiles = ownRecord(settings[PROFILE_BINDINGS_KEY]);
@@ -1816,15 +2034,51 @@ export function listAccountSettingsSavedSecretReferences(
       }
     }
   }
+  for (const artifact of readRawProfileArtifactDefaults(settings, catalogs)) {
+    const overrides = ownRecord(profiles?.[artifact.profileId]);
+    for (const [fieldId, reference] of Object.entries(artifact.bindings)) {
+      if (reference === secretId && !Object.hasOwn(overrides ?? {}, fieldId)) {
+        output.push(Object.freeze({ owner: 'profile', path: `${PROFILE_BINDINGS_KEY}${pathSegment(artifact.profileId)}${pathSegment(fieldId)}` }));
+      }
+    }
+  }
   collectProviderReferences(settings, secretId, output);
   collectVoiceReferences(settings, secretId, output);
   collectMcpReferences(settings, secretId, output);
   collectAcpReferences(settings, secretId, output);
   collectPluginSecretReferences(settings, secretId, output);
   collectConnectedAccountReferences(settings, secretId, output);
+  const profileIds = new Set<string>();
+  for (const record of catalogs?.profileRecords ?? []) {
+    if (!StoredProfileRecordV1Schema.safeParse(record).success || profileIds.has(record.id)) {
+      invalidReferenceRoot('Profile SavedSecret reference inventory is invalid');
+    }
+    profileIds.add(record.id);
+    for (const [fieldId, reference] of Object.entries(readEffectiveProfileSavedSecretBindings(record, catalogs))) {
+      if (reference === secretId) {
+        output.push(Object.freeze({
+          owner: 'profile',
+          path: `profileRows${pathSegment(record.id)}.secretBindings${pathSegment(fieldId)}`,
+        }));
+      }
+    }
+  }
+  collectUnknownSavedSecretReferences(settings, secretId, output);
+  for (const record of catalogs?.profileRecords ?? []) {
+    collectUnknownSavedSecretReferences(record, secretId, output, `profileRows${pathSegment(record.id)}`);
+  }
   return Object.freeze(output);
 }
 
+function rewriteStringMapReferences(
+  value: Readonly<Record<string, string>>,
+  sourceRef: string,
+  targetRef: string,
+): Readonly<Record<string, string>>;
+function rewriteStringMapReferences(
+  value: Readonly<Record<string, string | null>>, sourceRef: string, targetRef: string,
+): Readonly<Record<string, string | null>>;
+function rewriteStringMapReferences(value: unknown, sourceRef: string, targetRef: string): unknown;
 function rewriteStringMapReferences(
   value: unknown,
   sourceRef: string,
@@ -2088,7 +2342,8 @@ function rewritePersonalSavedSecret(
   settings: Readonly<Record<string, unknown>>,
   input: RekeyPersonalSavedSecretInput | PromotePersonalSavedSecretReferenceInput,
   target: Readonly<{ kind: 'personal' | 'shared_resource'; ref: string }>,
-): Readonly<{ settings: Readonly<Record<string, unknown>> }> {
+  catalogs?: SavedSecretReferenceCatalogsV1,
+): SavedSecretReferenceRewriteResultV1 {
   const rawInput = ownRecord(input);
   const allowedKeys = target.kind === 'personal'
     ? ['secretId', 'expectedUpdatedAt', 'newSecretId']
@@ -2107,13 +2362,15 @@ function rewritePersonalSavedSecret(
     );
   }
 
-  const secrets = readSavedSecrets(settings);
+  const transferSource = target.kind === 'shared_resource' ? readSavedSecretTransferSourceV1(settings) : null;
+  const secrets = transferSource?.secrets ?? readSavedSecrets(settings);
   // The census validates every known root before any replacement object is
   // constructed. This keeps malformed or unknown owner representations from
   // producing a partially rewritten Settings document.
   const sourceReferences = listAccountSettingsSavedSecretReferences(
     settings,
     rawInput.secretId,
+    catalogs,
   );
   const current = findSecret(
     secrets,
@@ -2126,7 +2383,7 @@ function rewritePersonalSavedSecret(
     assertCanonicalNewPersonalSavedSecretId(target.ref);
     if (
       secrets.some((candidate) => candidate.id === target.ref)
-      || listAccountSettingsSavedSecretReferences(settings, target.ref).length > 0
+      || listAccountSettingsSavedSecretReferences(settings, target.ref, catalogs).length > 0
     ) {
       throw new AccountSettingsSavedSecretMutationError(
         'saved_secret_conflict',
@@ -2153,30 +2410,59 @@ function rewritePersonalSavedSecret(
   const targetReferencesBefore = listAccountSettingsSavedSecretReferences(
     settings,
     targetRef,
+    catalogs,
   ).length;
-  const withRewrittenReferences = rewriteKnownSavedSecretReferences(
-    settings,
+  const referenceSource = readReferenceSourceSettings(settings, catalogs);
+  let withRewrittenReferences = rewriteKnownSavedSecretReferences(
+    referenceSource,
     current.secret.id,
     targetRef,
   );
+  for (const artifact of readRawProfileArtifactDefaults(referenceSource, catalogs)) {
+    const currentBindings = ownRecord(ownRecord(settings[PROFILE_BINDINGS_KEY])?.[artifact.profileId]);
+    const inherited = Object.entries(artifact.bindings).filter(([fieldId, reference]) => reference === current.secret.id
+      && !Object.hasOwn(currentBindings ?? {}, fieldId));
+    if (inherited.length === 0) continue;
+    const allBindings = ownRecord(withRewrittenReferences[PROFILE_BINDINGS_KEY]);
+    withRewrittenReferences = { ...withRewrittenReferences, [PROFILE_BINDINGS_KEY]: { ...allBindings,
+      [artifact.profileId]: { ...ownRecord(allBindings?.[artifact.profileId]), ...Object.fromEntries(inherited.map(([fieldId]) => [fieldId, targetRef])) },
+    } };
+  }
   const nextSecrets = target.kind === 'personal'
     ? secrets.map((candidate, index) => (
         index === current.index ? { ...candidate, id: targetRef } : candidate
       ))
-    : secrets.filter((_candidate, index) => index !== current.index);
+    : (settings[SECRETS_KEY] as readonly unknown[]).filter(candidate => candidate !== current.secret);
+  // Inactive source bytes that the opened Profile control superseded are not
+  // rebound or reactivated by a SavedSecret transfer.
+  for (const key of Object.keys(settings)) {
+    if (settings[key] !== referenceSource[key]) withRewrittenReferences = { ...withRewrittenReferences, [key]: settings[key] };
+  }
   const nextSettings = Object.freeze({
     ...withRewrittenReferences,
     secrets: Object.freeze(nextSecrets),
   });
+  const profileRecords = catalogs?.profileRecords.map((record) => {
+    let secretBindings = rewriteStringMapReferences(record.secretBindings, current.secret.id, targetRef);
+    for (const [fieldId, reference] of Object.entries(readEffectiveProfileSavedSecretBindings(record, catalogs))) {
+      if (reference !== current.secret.id || secretBindings[fieldId] === targetRef) continue;
+      secretBindings = { ...secretBindings, [fieldId]: targetRef };
+    }
+    return secretBindings === record.secretBindings ? record : Object.freeze({ ...record, secretBindings });
+  });
+  const nextCatalogs = profileRecords ? { ...catalogs, profileRecords } : undefined;
 
-  readSavedSecrets(nextSettings);
+  if (target.kind === 'personal') readSavedSecrets(nextSettings);
+  else readSavedSecretTransferSourceV1(nextSettings);
   const remainingSourceReferences = listAccountSettingsSavedSecretReferences(
     nextSettings,
     current.secret.id,
+    nextCatalogs,
   );
   const targetReferencesAfter = listAccountSettingsSavedSecretReferences(
     nextSettings,
     targetRef,
+    nextCatalogs,
   ).length;
   if (
     remainingSourceReferences.length > 0
@@ -2188,7 +2474,7 @@ function rewritePersonalSavedSecret(
       remainingSourceReferences,
     );
   }
-  return Object.freeze({ settings: nextSettings });
+  return Object.freeze({ settings: nextSettings, ...(profileRecords ? { profileRecords: Object.freeze(profileRecords) } : {}) });
 }
 
 function findSecret(

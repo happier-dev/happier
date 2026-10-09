@@ -9,6 +9,91 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('admits real managed-acquire continuations before spend while bare compute has no Agent request', () => {
+    const baseline = { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget } };
+    const resolve = (input: Readonly<Record<string, unknown>>) => resolveActionAgentStartRequestsV1({
+      actionId: 'machines.managed.acquire', input, context: {}, baseline,
+    });
+    expect(resolve({})).toMatchObject({ ok: true, requests: [] });
+    const result = resolve({ agentStart: { creationKey: 'continuation-1', directory: { kind: 'path', path: '/repo' },
+      agentTarget: nativeTarget, initialInput: { text: 'Continue my work' } } });
+    expect(result).toMatchObject({ ok: true, requests: [{ kind: 'spawn_new', facts: {
+      machineId: { kind: 'new_machine' }, directory: '/repo', agentTarget: nativeTarget,
+    } }] });
+    if (!result.ok || !result.requests[0]) throw new Error('expected_managed_agent_start');
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 }, baseline,
+      roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    };
+    expect(admitActionAgentStartV1({}, result.requests[0], context)).toMatchObject({ ok: true, stamped: { workDepth: 1 } });
+    expect(admitActionAgentStartV1({ sessionAgentSpawnPolicyV1: {
+      ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowCrossMachine: false,
+    } }, result.requests[0], context)).toMatchObject({ ok: false, refusal: {
+      code: 'policy_denied_field', field: 'executionTarget.machineId',
+    } });
+    expect(admitActionAgentStartV1({}, result.requests[0], { ...context,
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 4, turnDepth: 0 },
+    })).toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+    const actualStart = resolveActionAgentStartRequestsV1({ actionId: 'session.spawn_new', input: {
+      executionTarget: { serverId: 'home', machineId: 'enrolled-machine' },
+      directory: { kind: 'path', path: '/repo' }, agentTarget: nativeTarget,
+    }, context: {}, baseline });
+    if (!actualStart.ok || !actualStart.requests[0]) throw new Error('expected_enrolled_agent_start');
+    expect(admitActionAgentStartV1({ sessionAgentSpawnPolicyV1: {
+      ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowCrossMachine: false,
+    } }, actualStart.requests[0], context)).toMatchObject({ ok: false, refusal: {
+      code: 'policy_denied_field', field: 'executionTarget.machineId',
+    } });
+    expect(resolve({ agentStart: { directory: { kind: 'path', path: '/repo' }, agentTarget: nativeTarget,
+      executionTarget: { serverId: 'home', machineId: 'forged' } } }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(resolve({ agentStart: { directory: { kind: 'path', path: '/repo' }, agentTarget: nativeTarget,
+      environmentVariables: { TOKEN: 'not-public' } } }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it.each(['session.spawn_new', 'machines.managed.acquire'] as const)(
+    'admits the target-owned managed directory intent through %s without waiving custom-directory policy', actionId => {
+      const context: AgentStartContextV1 = {
+        caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
+        baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget } },
+        roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+      };
+      const authoring = { directory: { kind: 'managed' }, agentTarget: nativeTarget };
+      const resolved = resolveActionAgentStartRequestsV1({ actionId,
+        input: actionId === 'session.spawn_new'
+          ? { ...authoring, executionTarget: { serverId: 'home', machineId: 'guest' } }
+          : { agentStart: authoring },
+        context: {}, baseline: context.baseline,
+      });
+      if (!resolved.ok || !resolved.requests[0]) throw new Error('expected_managed_directory_start');
+      expect(admitActionAgentStartV1({}, resolved.requests[0], context))
+        .toMatchObject({ ok: true, stamped: { workDepth: 3 } });
+      expect(admitActionAgentStartV1({ sessionAgentSpawnPolicyV1: {
+        ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowCustomDirectory: false,
+      } }, resolved.requests[0], context)).toMatchObject({ ok: false, refusal: {
+        code: 'policy_denied_field', field: 'directory',
+      } });
+      expect(admitActionAgentStartV1({}, resolved.requests[0], { ...context, workDepthLimit: 2 }))
+        .toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+    },
+  );
+
+  it('keeps an unresolved directory unavailable instead of treating it as a managed allocation', () => {
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget } },
+      roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    };
+    const resolved = resolveActionAgentStartRequestsV1({ actionId: 'session.spawn_new', input: {
+      executionTarget: { serverId: 'home', machineId: 'guest' },
+      directory: { kind: 'unresolved' }, agentTarget: nativeTarget,
+    }, context: {}, baseline: context.baseline });
+    if (!resolved.ok || !resolved.requests[0]) throw new Error('expected_unresolved_directory_start');
+    expect(admitActionAgentStartV1({}, resolved.requests[0], context))
+      .toMatchObject({ ok: false, refusal: { code: 'target_unavailable' } });
+  });
+
   it('binds a task role engine and Launch Profile through real execution-run admission', () => {
     const context: AgentStartContextV1 = {
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
@@ -116,6 +201,22 @@ describe('canonical Action agent-start adapter', () => {
     }, context: {},
       baseline: { machineId: 'run-machine', directory: '/repo' }, effectiveSelection: { selection: { agentTarget: roleTarget } } });
     expect(result).toMatchObject({ ok: true, requests: [{ kind: 'spawn_new', facts: { agentTarget: roleTarget } }] });
+  });
+
+  it('uses authored targets for keyed connections even when the Action target is inherited', () => {
+    const request = { backendTarget: nativeTarget, instructions: 'Review the changes', connectedServices: 'openai:profile-root' };
+    const resolve = (input: Readonly<Record<string, unknown>>) => resolveActionAgentStartRequestsV1({
+      actionId: 'review.start', input, context: {}, baseline: { machineId: 'run-machine', directory: '/repo' },
+      effectiveSelection: { selection: { agentTarget: roleTarget } },
+    });
+    const baseline = resolve(request);
+    const keyed = resolve({ ...request, connectedServicesByBackendTargetKey: { 'agent:role.agent/agent': 'anthropic:profile-keyed' } });
+    expect(baseline.ok).toBe(true);
+    expect(keyed.ok).toBe(true);
+    if (!baseline.ok || !keyed.ok) throw new Error('expected_inherited_review_target');
+    expect(keyed.requests).toEqual(baseline.requests);
+    expect(keyed.effectiveInput).toMatchObject({ engineIds: ['agent:role.agent/agent'] });
+    expect(keyed.effectiveInput).not.toHaveProperty('backendTarget');
   });
 
   it('admits known spawn policy facts while its nonauthority initial input remains dynamic', () => {

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ActionInputHintsSchema } from './metadata.js';
@@ -12,15 +13,15 @@ import type { ActionId } from './actionIds.js';
  * not a cross-version wire contract, and remote discovery already publishes the
  * canonical JSON schema plus input hints that a third-party generator needs.
  */
-const ActionCliCommandSegmentSchema = z
+const ActionCliCommandSegmentSchema = lazyZodSchema(() => z
   .string()
-  .regex(/^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/, 'Command segments are lowercase kebab-case or snake_case');
+  .regex(/^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/, 'Command segments are lowercase kebab-case or snake_case'));
 
-const ActionCliFlagNameSchema = z
+const ActionCliFlagNameSchema = lazyZodSchema(() => z
   .string()
-  .regex(/^(?:--[a-z][a-z0-9]*(?:-[a-z0-9]+)*|-[a-z])$/, 'Flags are lowercase kebab-case starting with -- or one lowercase short alias');
+  .regex(/^(?:--[a-z][a-z0-9]*(?:-[a-z0-9]+)*|-[a-z])$/, 'Flags are lowercase kebab-case starting with -- or one lowercase short alias'));
 
-export const ActionCliCommandBindingSchema = z.object({
+export const ActionCliCommandBindingSchema = lazyZodSchema(() => z.object({
   path: z.array(ActionCliCommandSegmentSchema).min(1),
   /** Passive observation uses the same Action and its owner's change source. */
   observation: z.enum(['condition', 'changes']).optional(),
@@ -41,7 +42,7 @@ export const ActionCliCommandBindingSchema = z.object({
     replacement: z.string().min(1),
     removalCondition: z.string().min(1),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type ActionCliCommandBinding = z.infer<typeof ActionCliCommandBindingSchema>;
 
 export type ActionCliBindContext = Readonly<{
@@ -89,20 +90,22 @@ export function readActionCliDerivedDefault(value: unknown): Readonly<{ value: u
     : null;
 }
 
-const ActionCliBindInputSchema = z.custom<ActionCliBindInput>(
+const ActionCliBindInputSchema = lazyZodSchema(() => z.custom<ActionCliBindInput>(
   (value) => typeof value === 'function',
   { message: 'Expected an Action CLI input binder' },
-);
+));
 
-const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
+const ZodSchemaLike = lazyZodSchema(() => z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as { safeParse?: unknown; parse?: unknown };
   return typeof candidate.safeParse === 'function' && typeof candidate.parse === 'function';
-}, { message: 'Expected a Zod schema' });
+}, { message: 'Expected a Zod schema' }));
 
-export const ActionCliProjectionSchema = z.object({
+export const ActionCliProjectionSchema = lazyZodSchema(() => z.object({
   // Generic `actions invoke <id>` may own CLI policy without a friendly path.
   commands: z.array(ActionCliCommandBindingSchema),
+  /** Friendly spellings of the same CLI-only exact Machine transport selector. */
+  transportMachineIdAliases: z.array(ActionCliFlagNameSchema).optional(),
   /** Accept the established CLI-only `--server-id` exact-Home selector. */
   acceptsServerId: z.literal(true).optional(),
   /** Refuse ambient active-Home selection; the caller must name an exact saved Home. */
@@ -181,7 +184,7 @@ export const ActionCliProjectionSchema = z.object({
       seenAliases.add(alias);
     }
   }
-});
+}));
 export type ActionCliProjection = z.infer<typeof ActionCliProjectionSchema>;
 
 /**

@@ -1,16 +1,17 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { encodeBase64 } from '../crypto/base64.js';
 import { SessionStoredMessageContentSchema } from '../sessions/messages/sessionStoredMessageContent.js';
 import { ArtifactBlobReadResponseV1Schema } from '../artifacts/artifactBinaryV1.js';
 
 /** Closed authority-bearing HTTP objects; no fragment secret is a transport field. */
-export const StoredContentPublicShareSubjectV1Schema = z.object({
+export const StoredContentPublicShareSubjectV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum(['session', 'artifact']), id: z.string().min(1),
-}).strict();
+}).strict());
 export type StoredContentPublicShareSubjectV1 = z.infer<typeof StoredContentPublicShareSubjectV1Schema>;
 
-export const StoredContentPublicShareKeyDerivationV1Schema = z.enum(['fragment_v1', 'legacy_token_v1']);
-export const StoredContentPublicShareCreateRequestV1Schema = z.object({
+export const StoredContentPublicShareKeyDerivationV1Schema = lazyZodSchema(() => z.enum(['fragment_v1', 'legacy_token_v1']));
+export const StoredContentPublicShareCreateRequestV1Schema = lazyZodSchema(() => z.object({
   subject: StoredContentPublicShareSubjectV1Schema,
   lookupId: z.string().min(1),
   encryptedDataKey: z.string().min(1).nullable().optional(),
@@ -18,34 +19,39 @@ export const StoredContentPublicShareCreateRequestV1Schema = z.object({
   expiresAt: z.number().int().nonnegative().optional(),
   maxUses: z.number().int().positive().optional(),
   isConsentRequired: z.boolean().optional(),
-}).strict();
+}).strict());
 export type StoredContentPublicShareCreateRequestV1 = z.infer<typeof StoredContentPublicShareCreateRequestV1Schema>;
 
-export const StoredContentPublicShareV1Schema = z.object({
+export const StoredContentPublicShareV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1), subject: StoredContentPublicShareSubjectV1Schema,
   expiresAt: z.number().int().nonnegative().nullable(), maxUses: z.number().int().positive().nullable(),
   useCount: z.number().int().nonnegative(), isConsentRequired: z.boolean(),
   createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative(),
   keyDerivation: StoredContentPublicShareKeyDerivationV1Schema,
-}).strict();
+}).strict());
 export type StoredContentPublicShareV1 = z.infer<typeof StoredContentPublicShareV1Schema>;
-export const StoredContentPublicSharesListResponseV1Schema = z.object({
+/** Use limits govern new viewers; expiry or deletion ends the publication itself. */
+export function isStoredContentPublicShareActiveV1(publication: Readonly<{ expiresAt: number | null }> | null, nowMs: number): boolean {
+  return publication !== null && !(publication.expiresAt !== null && publication.expiresAt <= nowMs);
+}
+export const StoredContentPublicSharesListResponseV1Schema = lazyZodSchema(() => z.object({
   publicShares: z.array(StoredContentPublicShareV1Schema),
-}).strict();
-export const StoredContentPublicShareCreateResponseV1Schema = z.object({
+}).strict());
+export type StoredContentPublicSharesListResponseV1 = z.infer<typeof StoredContentPublicSharesListResponseV1Schema>;
+export const StoredContentPublicShareCreateResponseV1Schema = lazyZodSchema(() => z.object({
   publicShare: StoredContentPublicShareV1Schema,
   isolatedOrigin: z.string().url(),
-}).strict();
+}).strict());
 
-export const StoredContentPublicShareAccessLogV1Schema = z.object({
+export const StoredContentPublicShareAccessLogV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1), accessedAt: z.number().int().nonnegative(),
   ipAddress: z.string().nullable(), userAgent: z.string().nullable(),
-}).strict();
-export const StoredContentPublicShareAccessLogResponseV1Schema = z.object({
+}).strict());
+export const StoredContentPublicShareAccessLogResponseV1Schema = lazyZodSchema(() => z.object({
   accessLog: z.array(StoredContentPublicShareAccessLogV1Schema),
-}).strict();
+}).strict());
 
-export const StoredContentPublicShareReadResponseV1Schema = z.object({
+export const StoredContentPublicShareReadResponseV1Schema = lazyZodSchema(() => z.object({
   subject: StoredContentPublicShareSubjectV1Schema,
   encryptionMode: z.enum(['e2ee', 'plain']),
   encryptedDataKey: z.string().min(1).nullable(),
@@ -73,7 +79,7 @@ export const StoredContentPublicShareReadResponseV1Schema = z.object({
   if ((value.encryptionMode === 'e2ee') !== (value.encryptedDataKey !== null)) {
     context.addIssue({ code: 'custom', message: 'Public-share mode/key mismatch' });
   }
-});
+}));
 export type StoredContentPublicShareReadResponseV1 = z.infer<typeof StoredContentPublicShareReadResponseV1Schema>;
 
 /** Independent cryptographic capabilities: the lookup is HTTP-visible, the secret is local. */

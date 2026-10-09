@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { RuntimeActionIdV1 } from '../actionIds.js';
@@ -8,27 +9,27 @@ import {
 } from '../../machines/peer/mediation/observability/v1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
 
-const RuntimePeerMediationObservabilitySnapshotInputSchema = z
+const RuntimePeerMediationObservabilitySnapshotInputSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().trim().min(1).max(256).optional(),
     machineId: z.string().trim().min(1).max(256).optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const PeerMediationObservabilitySnapshotActionResultV1Schema = z.object({
+const PeerMediationObservabilitySnapshotActionResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   snapshot: PeerMediationObservabilitySnapshotV1Schema,
-}).strict();
+}).strict());
 
-const PeerMediationObservabilitySubscribeActionResultV1Schema = z.object({
+const PeerMediationObservabilitySubscribeActionResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   snapshot: PeerMediationObservabilitySnapshotV1Schema,
   sequence: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-const PeerMediationObservabilityUnsubscribeActionResultV1Schema = z.object({
+const PeerMediationObservabilityUnsubscribeActionResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
-}).strict();
+}).strict());
 
 type PeerMediationRuntimeActionId = Extract<RuntimeActionIdV1, `peerMediation.${string}`>;
 

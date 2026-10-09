@@ -1,14 +1,18 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { AIBackendProfileSchema, type AIBackendProfile } from '../../profiles/backendProfileSchema.js';
-import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, LaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
+import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, StoredLaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '../selection/v1.js';
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderConnectionV1Schema } from '../connections/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderLocalIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { isCanonicalProviderSavedSecretIdV1 } from '../settings/v1.js';
 import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
+import type { ProviderContributionV1 } from '../contributions/v1.js';
+import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
+import { projectHistoricalCodingPromptBehaviorProfileOverrideV1 } from '../../prompts/codingPromptBehaviorV1.js';
 import {
   classifyProviderSettingsSubtreeV1,
   migrateProviderAccountSettingsV1,
@@ -25,6 +29,50 @@ function isRecord(value: unknown): value is RecordValue {
 
 export function isLegacyAiLaunchEndpointLikeEnvironmentNameV1(name: string): boolean {
   return /(?:^|_)(?:BASE_URL|ENDPOINT|API_URL)$/u.test(name);
+}
+
+/** Credential facts come from the accepted contribution descriptors, never the reserved routing-name set. */
+export function listLegacyAiLaunchProfileCredentialEnvironmentVariableNamesV1(
+  profile: Pick<AIBackendProfile, 'environmentVariables' | 'envVarRequirements'>,
+  contributions: readonly Pick<ProviderContributionV1, 'legacyProfileMigrations'>[],
+): readonly string[] {
+  const names = new Set(profile.environmentVariables.filter((entry) => entry.isSecret === true).map((entry) => entry.name));
+  for (const requirement of profile.envVarRequirements) if (requirement.kind === 'secret') names.add(requirement.name);
+  for (const contribution of contributions) {
+    for (const descriptor of contribution.legacyProfileMigrations ?? []) {
+      const credential = descriptor.credentialBinding;
+      if (!credential) continue;
+      names.add(credential.legacyEnvVarName);
+      for (const environment of descriptor.migratedEnvironmentVariables) {
+        if (environment.value === '${' + credential.legacyEnvVarName + '}') names.add(environment.name);
+      }
+    }
+  }
+  return [...names];
+}
+
+/** Only an exact template backed by an admitted SavedSecret reference contains no inline material. */
+export function listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1(
+  profile: Pick<AIBackendProfile, 'environmentVariables' | 'envVarRequirements'>,
+  contributions: readonly Pick<ProviderContributionV1, 'legacyProfileMigrations'>[],
+  bindings: Readonly<Record<string, string | null>>,
+): readonly string[] {
+  const credentialNames = new Set(listLegacyAiLaunchProfileCredentialEnvironmentVariableNamesV1(profile, contributions));
+  const boundTemplates = new Set(Object.entries(bindings)
+    .filter(([, secretId]) => isCanonicalProviderSavedSecretIdV1(secretId))
+    .map(([name]) => '${' + name + '}'));
+  return profile.environmentVariables.filter((entry) => credentialNames.has(entry.name)
+    && entry.value.length > 0 && !boundTemplates.has(entry.value)).map((entry) => entry.name);
+}
+
+/** Public environment rows do not need Machine-only Provider descriptors. */
+export function requiresLegacyAiLaunchProfileProviderSourcePreparationV1(
+  profile: Pick<AIBackendProfile, 'environmentVariables' | 'envVarRequirements'>,
+  bindings: Readonly<Record<string, string | null>>,
+): boolean {
+  return profile.environmentVariables.some((entry) => LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1.has(entry.name))
+    || profile.envVarRequirements.some((entry) => LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1.has(entry.name))
+    || listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1(profile, [], bindings).length > 0;
 }
 
 function candidateContributionKey(candidate: ProviderAccountSettingsMigrationCandidateV1): string | null {
@@ -143,7 +191,8 @@ function slimLegacyProfile(
   profile: AIBackendProfile,
   preferredModelSelection: SessionModelSelectionV1 | null,
   additionallyRemovedEnvironmentVariableNames: readonly string[] = [],
-): LaunchProfileV2 | null {
+  preserveIdentity = false,
+): LaunchProfileV2 | AIBackendProfile | null {
   const removed = new Set([...LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1, ...additionallyRemovedEnvironmentVariableNames]);
   const extraEnvironmentVariables = profile.environmentVariables.filter(
     (entry) => !removed.has(entry.name),
@@ -151,14 +200,21 @@ function slimLegacyProfile(
   const envVarRequirements = profile.envVarRequirements.filter(
     (entry) => !removed.has(entry.name),
   );
+  const codingPromptBehaviorOverrides = projectHistoricalCodingPromptBehaviorProfileOverrideV1(profile.codingPromptBehaviorV1);
+  if (profile.authMode === 'machineLogin' || profile.requiresMachineLoginTargetKey !== undefined || profile.requiresMachineLogin !== undefined) {
+    // V2 has no machine-login prerequisite representation. A successful
+    // Provider move updates this existing compatibility definition in place.
+    return AIBackendProfileSchema.parse({ ...profile, environmentVariables: extraEnvironmentVariables, envVarRequirements });
+  }
   const hasPreferences = extraEnvironmentVariables.length > 0
     || envVarRequirements.length > 0
     || Object.keys(profile.defaultPermissionModeByTargetKey).length > 0
     || Object.keys(profile.defaultPersistenceModeByTargetKey).length > 0
     || Object.keys(profile.compatibilityByTargetKey).length > 0
+    || codingPromptBehaviorOverrides !== undefined
     || Boolean(profile.description);
-  if (!hasPreferences) return null;
-  return LaunchProfileV2Schema.parse({
+  if (!hasPreferences && !preserveIdentity) return null;
+  return StoredLaunchProfileV2Schema.parse({
     v: 2,
     id: profile.id,
     name: profile.name,
@@ -168,6 +224,7 @@ function slimLegacyProfile(
     defaultPermissionModeByTargetKey: profile.defaultPermissionModeByTargetKey,
     defaultPersistenceModeByTargetKey: profile.defaultPersistenceModeByTargetKey,
     compatibilityByTargetKey: profile.compatibilityByTargetKey,
+    ...(codingPromptBehaviorOverrides ? { codingPromptBehaviorOverrides } : {}),
     ...(preferredModelSelection ? { preferredModelSelection } : {}),
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
@@ -176,6 +233,11 @@ function slimLegacyProfile(
 
 export type LegacyProfileAuthoringMemoryV1 = Readonly<{ lastUsedProfile: string | null }>;
 export type LegacyProfileAuthoringMemoryClearV1 = Readonly<{ base: string; proposed: null }>;
+/** Private records keep their identity and attachments even when routing was their only preference. */
+export type LegacyProfileRecordMigrationContextV1 = Readonly<{
+  profileRecordIds: readonly string[];
+  records?: readonly ProfileCatalogRecordV1[];
+}>;
 export type LegacyAiLaunchProfilesMigrationResultV1 =
   | (Extract<ProviderAccountSettingsMigrationResultV1, { ok: true }> & Readonly<{
       lastUsedProfileClear?: LegacyProfileAuthoringMemoryClearV1;
@@ -206,7 +268,9 @@ export function migrateLegacyAiLaunchProfilesV1(
   raw: unknown,
   context: ProviderAccountSettingsMigrationContextV1,
   authoringMemory: LegacyProfileAuthoringMemoryV1,
+  recordContext?: LegacyProfileRecordMigrationContextV1,
 ): LegacyAiLaunchProfilesMigrationResultV1 {
+  const profileRecordIds = new Set(recordContext?.profileRecordIds ?? []);
   if (!isRecord(raw)) return migrateProviderAccountSettingsV1(raw, context);
   if (context.candidates.length === 0
     && context.pendingCustomProfileIds.length === 0
@@ -246,14 +310,14 @@ export function migrateLegacyAiLaunchProfilesV1(
       if (id) retainedProfileIds.add(id);
       continue;
     }
-    const parsedSlim = LaunchProfileV2Schema.safeParse(entry);
+    const parsedSlim = StoredLaunchProfileV2Schema.safeParse(entry);
     if (parsedSlim.success) {
       const canonical = selectionsBySource.get(id) ?? null;
       const repairedSelection = canonical
         ? repairSelectionForKnownMigration(parsedSlim.data.preferredModelSelection, canonical)
         : null;
       retainedProfiles.push(repairedSelection
-        ? LaunchProfileV2Schema.parse({
+        ? StoredLaunchProfileV2Schema.parse({
             ...parsedSlim.data,
             preferredAgentTargetKey: undefined,
             preferredModelSelection: repairedSelection,
@@ -279,11 +343,17 @@ export function migrateLegacyAiLaunchProfilesV1(
         parsedLegacy.data,
         selectionsBySource.get(id) ?? null,
         candidate?.kind === 'connection' ? candidate.removedEnvironmentVariableNames ?? [] : [],
+        profileRecordIds.has(id),
       );
       if (slim) {
         retainedProfiles.push(slim);
         retainedProfileIds.add(id);
       }
+    } else if (profileRecordIds.has(id)) {
+      // Machine-login prerequisites have no V2 equivalent. Retain the genuine
+      // compatibility definition at the same record rather than dropping it.
+      retainedProfiles.push(parsedLegacy.data);
+      retainedProfileIds.add(id);
     }
   }
   for (const outcome of migrated.outcomes) {
@@ -292,7 +362,7 @@ export function migrateLegacyAiLaunchProfilesV1(
     const candidate = candidateBySource.get(outcome.sourceProfileId);
     if (candidate?.kind !== 'connection' || !candidate.retainedLaunchProfile) continue;
     const selection = selectionsBySource.get(outcome.sourceProfileId);
-    const retained = LaunchProfileV2Schema.parse({
+    const retained = StoredLaunchProfileV2Schema.parse({
       ...candidate.retainedLaunchProfile,
       ...(selection ? { preferredModelSelection: selection } : {}),
     });
@@ -328,6 +398,7 @@ export function migrateLegacyAiLaunchProfilesV1(
     for (const [profileId, bindings] of Object.entries(raw.secretBindingsByProfileId)) {
       const outcome = outcomeBySource.get(profileId);
       if (!outcome
+        || (profileRecordIds.has(profileId) && outcome.kind === 'default_environment')
         || dispositionBySource.get(profileId) !== 'migrate_legacy_state'
         || outcome.kind === 'skipped_disabled') {
         nextBindings[profileId] = bindings;
@@ -351,6 +422,7 @@ export function migrateLegacyAiLaunchProfilesV1(
   if (isRecord(raw.profileEnabledById)) {
     for (const [profileId, value] of Object.entries(raw.profileEnabledById)) {
       if (!outcomeBySource.has(profileId)
+        || profileRecordIds.has(profileId)
         || dispositionBySource.get(profileId) !== 'migrate_legacy_state'
         || outcomeBySource.get(profileId)?.kind === 'skipped_disabled') {
         nextEnabled[profileId] = value;
@@ -368,6 +440,7 @@ export function migrateLegacyAiLaunchProfilesV1(
           favoriteProfiles: favoriteProfiles.filter((id) => {
             const outcome = outcomeBySource.get(id);
             return outcome === undefined
+              || profileRecordIds.has(id)
               || dispositionBySource.get(id) !== 'migrate_legacy_state'
               || outcome.kind === 'skipped_disabled';
           }),
@@ -378,10 +451,10 @@ export function migrateLegacyAiLaunchProfilesV1(
   return withAuthoringMemoryClear({ ...migrated, settings }, authoringMemory);
 }
 
-export const LegacyProfileCredentialStyleV1Schema = z.enum(['bearer', 'x-api-key', 'api-key']);
+export const LegacyProfileCredentialStyleV1Schema = lazyZodSchema(() => z.enum(['bearer', 'x-api-key', 'api-key']));
 export type LegacyProfileCredentialStyleV1 = z.infer<typeof LegacyProfileCredentialStyleV1Schema>;
 
-export const LegacyProfileReviewedMappingV1Schema = z.object({
+export const LegacyProfileReviewedMappingV1Schema = lazyZodSchema(() => z.object({
   connection: ProviderConnectionV1Schema.refine(
     (connection) => connection.source.kind === 'custom' && connection.role === 'named',
     'Guided legacy migration creates a named custom connection',
@@ -422,7 +495,7 @@ export const LegacyProfileReviewedMappingV1Schema = z.object({
       ctx.addIssue({ code: 'custom', path: ['credentialMoves', index, 'credentialStyle'], message: 'Authentication token variables require bearer style' });
     }
   }
-});
+}));
 export type LegacyProfileReviewedMappingV1 = z.infer<typeof LegacyProfileReviewedMappingV1Schema>;
 
 function findRawProfile(rawSettings: Readonly<Record<string, unknown>>, sourceProfileId: string): unknown {
@@ -457,6 +530,7 @@ export function createLegacyProfileMigrationSourceFingerprintV1(input: Readonly<
   authoringMemory: LegacyProfileAuthoringMemoryV1;
   sourceProfileId: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
+  recordContext?: LegacyProfileRecordMigrationContextV1;
 }>): string {
   const mapping = LegacyProfileReviewedMappingV1Schema.parse(input.reviewedMapping);
   const rawProfile = findRawProfile(input.rawSettings, input.sourceProfileId);
@@ -479,6 +553,8 @@ export function createLegacyProfileMigrationSourceFingerprintV1(input: Readonly<
       enabled: typeof enabled === 'boolean' ? enabled : null,
     },
     reviewedMapping: mapping,
+    ...(input.recordContext?.records ? { privateProfileSource:
+      input.recordContext.records.find(({ record }) => record.id === input.sourceProfileId) ?? null } : {}),
   });
 }
 
@@ -489,6 +565,7 @@ export function confirmLegacyAiLaunchProfileMigrationV1(input: Readonly<{
   expectedSourceFingerprint: string;
   reviewedMapping: LegacyProfileReviewedMappingV1;
   migratedAt: number;
+  recordContext?: LegacyProfileRecordMigrationContextV1;
 }>): LegacyAiLaunchProfilesMigrationResultV1 | Readonly<{
   ok: false;
   changed: false;
@@ -531,5 +608,5 @@ export function confirmLegacyAiLaunchProfileMigrationV1(input: Readonly<{
       ],
       movedSecretBindingEnvironmentVariableNames: mapping.credentialMoves.map((move) => move.legacyEnvVarName),
     }],
-  }, input.authoringMemory);
+  }, input.authoringMemory, input.recordContext);
 }

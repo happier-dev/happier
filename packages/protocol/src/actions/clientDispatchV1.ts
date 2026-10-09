@@ -1,11 +1,14 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult } from './executor/types.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
+import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
+import { RPC_METHODS } from '../rpc/methods.js';
 
 /** Private continuation of an Action admitted by the authenticated Machine host. */
-export const UiActionDispatchRequestV1Schema = z.object({
+export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   actionId: ActionIdSchema,
   input: z.unknown(),
@@ -22,23 +25,29 @@ export const UiActionDispatchRequestV1Schema = z.object({
   if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data) !== 'client') {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
-});
+}));
 export type UiActionDispatchRequestV1 = z.infer<typeof UiActionDispatchRequestV1Schema>;
 
-export const UiActionDispatchResultV1Schema = z.object({
+export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   execution: z.discriminatedUnion('ok', [
     z.object({ ok: z.literal(true), result: z.unknown() }).strict(),
     ActionExecuteFailureSchema,
   ]),
-}).strict();
+}).strict());
 
 /** Absence is a declared domain result where the Action has one, otherwise a typed failure. */
 export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult {
+  if (actionId === 'session.authoring.open') {
+    return { ok: true, result: { kind: 'unavailable', reason: 'client_unavailable' } };
+  }
   if (actionId === 'ui.find' || actionId === 'ui.prompts.picker.open') {
     return { ok: true, result: { status: 'unavailable', reason: 'noClient' } };
   }
   if (actionId === 'session.pending.next') return { ok: true, result: { status: 'unavailable' } };
+  if (isSettingsDeclarationActionIdV1(actionId)) return { ok: false, errorCode: 'unavailable', error: 'noClient',
+    details: { reason: 'client_unavailable', recovery: { kind: 'connect_client', rpcMethod: RPC_METHODS.UI_ACTION_EXECUTE,
+      instruction: 'Open a signed-in Happier client connected to the target Machine, then retry this setting Action.' } } };
   return { ok: false, errorCode: 'unavailable', error: 'noClient' };
 }
 

@@ -17,6 +17,9 @@ export type SettingsDeclarationsActionInputById = {
     readonly "settings.invoke": {
         anchor: string;
         input?: {
+            kind: 'account_settings_history_purge';
+            versions: number[];
+        } | {
             kind: 'model_pack';
             packId: string;
             machineId?: string | undefined;

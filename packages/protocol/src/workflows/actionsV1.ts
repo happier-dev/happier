@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import {
@@ -53,6 +54,8 @@ import {
   WorkflowRunStateV1Schema,
   WorkflowRunSummaryV1Schema,
   WorkflowUsageV1Schema,
+  WorkflowNotificationConditionV1Schema,
+  WorkflowOperationErrorCodeV1Schema,
 } from './workflowProgressV1.js';
 import {
   WorkflowDefinitionIdV1Schema,
@@ -65,22 +68,29 @@ import { WorkflowPluginSourceV1Schema } from './workflowPluginSourceContractV1.j
 export { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
 
 const CursorSchema = OPAQUE_CURSOR_SCHEMA;
-const PositivePagePreferenceSchema = z.number().int().positive().safe();
-const RevisionSchema = z.number().int().nonnegative().safe();
+// Artifact cursors encode a JSON object as base64url (starting `ey`). The
+// reserved phase belongs to the same list, after its Account Artifact pages.
+export const WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1 = 'plugin-workflows_';
+export function workflowDefinitionListCursorPhaseV1(cursor: string | null | undefined): 'artifacts' | 'plugins-start' | 'plugins-more' {
+  if (cursor === `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0`) return 'plugins-start';
+  return cursor?.startsWith(WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1) ? 'plugins-more' : 'artifacts';
+}
+const PositivePagePreferenceSchema = lazyZodSchema(() => z.number().int().positive().safe());
+const RevisionSchema = lazyZodSchema(() => z.number().int().nonnegative().safe());
 /**
  * Action transport carries authored ingress to the one workflow normalizer.
  * Keeping the carrier non-recursive prevents the generic Zod boundary from
  * overflowing before that owner can return path-addressed typed issues.
  */
-const WorkflowIngressCarrierV1Schema = z.object({
+const WorkflowIngressCarrierV1Schema = lazyZodSchema(() => z.object({
   version: z.literal(1).optional(),
   inputs: z.array(z.unknown()).optional(),
   defaults: z.unknown().optional(),
   roles: z.unknown().optional(),
   blocks: z.array(z.unknown()).min(1),
   finalOutput: z.unknown().optional(),
-}).strict();
-const WorkflowInputsV1Schema = z.record(z.string(), StrictJsonValueSchema).superRefine(
+}).strict());
+const WorkflowInputsV1Schema = lazyZodSchema(() => z.record(z.string(), StrictJsonValueSchema).superRefine(
   (inputs, context) => {
     for (const inputName of Object.keys(inputs)) {
       if (!WorkflowInputNameSchema.safeParse(inputName).success) {
@@ -92,20 +102,20 @@ const WorkflowInputsV1Schema = z.record(z.string(), StrictJsonValueSchema).super
       }
     }
   },
-);
+));
 
-export const WorkflowValidateRequestV1Schema = z.object({
+export const WorkflowValidateRequestV1Schema = lazyZodSchema(() => z.object({
   definition: WorkflowIngressCarrierV1Schema,
   inputs: WorkflowInputsV1Schema.optional(),
   target: z.object({ machineId: WorkflowMachineIdV1Schema }).strict().optional(),
-}).strict();
-export const WorkflowValidateResultV1Schema = z.object({
+}).strict());
+export const WorkflowValidateResultV1Schema = lazyZodSchema(() => z.object({
   valid: z.boolean(), normalizedDefinition: WorkflowDefinitionV1Schema.optional(),
   issues: z.array(WorkflowValidationIssueV1Schema),
   targetValidation: z.enum(['not_requested', 'checked', 'unavailable']),
-}).strict();
+}).strict());
 
-export const WorkflowRunSourceV1Schema = z.discriminatedUnion('kind', [
+export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   WorkflowAcceptedInlineSourceV1Schema.extend({ definition: WorkflowIngressCarrierV1Schema,
     visibleTeamId: preservedBoundedNfcString(191, 'Team ids').optional(),
     /** Replay reopens this Run at the owner; the reviewed carrier cannot replace its frozen graph. */
@@ -124,8 +134,8 @@ export const WorkflowRunSourceV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('catalog'), workflow: WorkflowDefinitionRefV1StringSchema.refine(
     (ref) => parseWorkflowDefinitionRefV1(ref)?.kind !== 'artifact', 'Catalog sources must name a built-in or plugin workflow',
   ), pluginVersion: z.string().min(1).optional() }).strict(),
-]);
-export const WorkflowRunStartRequestV1Schema = z.object({
+]));
+export const WorkflowRunStartRequestV1Schema = lazyZodSchema(() => z.object({
   runId: WorkflowDirectRunAdmissionIdV1Schema,
   source: WorkflowRunSourceV1Schema,
   /** Optional authored display metadata; admission freezes its absence as null. */
@@ -134,20 +144,20 @@ export const WorkflowRunStartRequestV1Schema = z.object({
   executionTarget: WorkflowRunExecutionTargetV1Schema.optional(),
   roleOverrides: WorkflowRoleOverridesV1Schema.optional(),
   onComplete: z.object({ kind: z.literal('originating_session') }).strict().optional(),
-}).strict();
-export const WorkflowRunStartResultV1Schema = z.object({
+}).strict());
+export const WorkflowRunStartResultV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema,
   admission: z.enum(['created', 'existing']),
-}).strict();
-export const WorkflowRunActionResultReferenceV1Schema = z.object({
+}).strict());
+export const WorkflowRunActionResultReferenceV1Schema = lazyZodSchema(() => z.object({
   runId: WorkflowRunIdV1Schema,
   origin: WorkflowRunOriginV1Schema,
-}).strict();
+}).strict());
 
-const WorkflowRunStartActionSuccessEnvelopeV1Schema = z.object({
+const WorkflowRunStartActionSuccessEnvelopeV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   result: WorkflowRunStartResultV1Schema,
-}).strict();
+}).strict());
 
 export function parseWorkflowRunStartActionResultReferenceV1(
   value: unknown,
@@ -161,8 +171,8 @@ export function parseWorkflowRunStartActionResultReferenceV1(
     : null;
 }
 
-export const WorkflowRunAttentionFilterV1Schema = z.literal('required');
-export const WorkflowRunListRequestV1Schema = z.object({
+export const WorkflowRunAttentionFilterV1Schema = lazyZodSchema(() => z.literal('required'));
+export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.object({
   cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional(),
   /**
    * Exact-Run selection for background refresh and transcript initial
@@ -172,6 +182,11 @@ export const WorkflowRunListRequestV1Schema = z.object({
    * keeps `workflow.run.get`.
    */
   runId: WorkflowRunIdV1Schema.optional(),
+  /** Exact transcript references, batched at the Run-list owner rather than read by each message. */
+  runIds: z.array(WorkflowRunIdV1Schema).optional(),
+  invocationProvenance: z.array(z.object({ runId: WorkflowRunIdV1Schema,
+    invocationRecordIds: z.array(WorkflowInvocationRecordIdSchema),
+  }).strict()).optional(),
   sourceArtifactId: WorkflowDefinitionIdV1Schema.optional(),
   origin: z.enum(['automation', 'direct']).optional(),
   states: z.array(WorkflowRunStateV1Schema).min(1).optional(),
@@ -180,19 +195,28 @@ export const WorkflowRunListRequestV1Schema = z.object({
   targetSessionId: preservedBoundedNfcString(191, 'Session ids').optional(),
   automationId: preservedBoundedNfcString(191, 'Automation ids').optional(),
   machineId: WorkflowMachineIdV1Schema.optional(),
-}).strict();
-export const WorkflowRunPrivateMetadataV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+export const WorkflowRunPrivateMetadataV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('available'), value: WorkflowDefinitionMetadataV1Schema }).strict(),
-  z.object({ kind: z.literal('unavailable') }).strict(),
-]);
+  z.object({ kind: z.literal('unavailable'), reason: WorkflowOperationErrorCodeV1Schema }).strict(),
+]));
 export type WorkflowRunPrivateMetadataV1 = z.infer<typeof WorkflowRunPrivateMetadataV1Schema>;
-export const WorkflowRunListResultV1Schema = z.object({
+export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.object({
   runs: z.array(WorkflowRunSummaryV1Schema),
   /** Account-private metadata opened from the accepted snapshots for this page. */
   metadataByRunId: z.record(z.string(), WorkflowRunPrivateMetadataV1Schema),
+  /** Only requested private display facts; no invocation history, output or recovery content. */
+  invocationProvenance: z.array(z.object({ index: WorkflowRunInvocationIndexV1Schema,
+    stepOrdinal: WorkflowDecimalV1Schema.optional(),
+    notificationCondition: WorkflowNotificationConditionV1Schema.optional(),
+  }).strict()).optional(),
   nextCursor: CursorSchema.optional(),
 }).strict().superRefine((value, context) => {
   const pageRunIds = new Set(value.runs.map((run) => run.id));
+  for (const [index, fact] of (value.invocationProvenance ?? []).entries()) {
+    if (!pageRunIds.has(fact.index.runId)) context.addIssue({ code: z.ZodIssueCode.custom,
+      path: ['invocationProvenance', index], message: 'Provenance must belong to a Run in the same page' });
+  }
   for (const runId of Object.keys(value.metadataByRunId)) {
     if (!pageRunIds.has(runId)) {
       context.addIssue({
@@ -202,16 +226,16 @@ export const WorkflowRunListResultV1Schema = z.object({
       });
     }
   }
-});
-export const WorkflowRunGetRequestV1Schema = z.object({ runId: WorkflowRunIdV1Schema }).strict();
-export const WorkflowRunSummariesRequestV1Schema = z.object({
+}));
+export const WorkflowRunGetRequestV1Schema = lazyZodSchema(() => z.object({ runId: WorkflowRunIdV1Schema }).strict());
+export const WorkflowRunSummariesRequestV1Schema = lazyZodSchema(() => z.object({
   sourceArtifactIds: z.array(WorkflowDefinitionIdV1Schema).superRefine((ids, context) => {
     if (new Set(ids).size !== ids.length) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate source artifacts' });
   }),
   recent: PositivePagePreferenceSchema,
-}).strict();
-const WorkflowRunRecentSummaryV1Schema = z.object({ runId: WorkflowRunIdV1Schema, state: WorkflowRunStateV1Schema }).strict();
-export const WorkflowRunSummariesResultV1Schema = z.object({
+}).strict());
+const WorkflowRunRecentSummaryV1Schema = lazyZodSchema(() => z.object({ runId: WorkflowRunIdV1Schema, state: WorkflowRunStateV1Schema }).strict());
+export const WorkflowRunSummariesResultV1Schema = lazyZodSchema(() => z.object({
   summaries: z.array(z.object({
     sourceArtifactId: WorkflowDefinitionIdV1Schema,
     lastRun: WorkflowRunRecentSummaryV1Schema.extend({ createdAt: z.string().datetime(), finishedAt: z.string().datetime().nullable() }).strict().nullable(),
@@ -220,16 +244,16 @@ export const WorkflowRunSummariesResultV1Schema = z.object({
     needsYouRunId: WorkflowRunIdV1Schema.nullable(),
   }).strict()),
   remainingSourceArtifactIds: z.array(WorkflowDefinitionIdV1Schema),
-}).strict();
+}).strict());
 export type WorkflowRunSummariesResultV1 = z.infer<typeof WorkflowRunSummariesResultV1Schema>;
-const WorkflowRunAcceptedAutomationSourceV1Schema = z.object({
+const WorkflowRunAcceptedAutomationSourceV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('automation'),
   automationId: preservedBoundedNfcString(191, 'Automation ids'),
   definitionId: WorkflowDefinitionIdV1Schema.optional(),
   revision: WorkflowArtifactRevisionV1Schema.optional(),
   savedBy: WorkflowDefinitionSavedByV1Schema.nullable().optional(),
-}).strict();
-export const WorkflowRunAcceptedContextV1Schema = z.union([
+}).strict());
+export const WorkflowRunAcceptedContextV1Schema = lazyZodSchema(() => z.union([
   z.object({
     startedBy: WorkflowRunStartedByV1Schema,
     source: WorkflowRunAcceptedAutomationSourceV1Schema,
@@ -273,9 +297,9 @@ export const WorkflowRunAcceptedContextV1Schema = z.union([
       message: 'Project workspace must use the immutable Run Machine',
     });
   }
-});
+}));
 export type WorkflowRunAcceptedContextV1 = z.infer<typeof WorkflowRunAcceptedContextV1Schema>;
-export const WorkflowRunGetResultV1Schema = z.object({
+export const WorkflowRunGetResultV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema,
   /** Effective caller capabilities from the server's live Run access owner. */
   callerAccess: z.object({ canEdit: z.boolean() }).strict(),
@@ -298,93 +322,102 @@ export const WorkflowRunGetResultV1Schema = z.object({
       ? 'Workflow Run result requires its exact producer invocation'
       : 'Workflow Run producer invocation requires a result',
   });
-});
-export const WorkflowRunWaitConditionV1Schema = z.enum(['terminal', 'attention', 'paused']);
-export const WorkflowRunWaitConditionsV1Schema = z.array(WorkflowRunWaitConditionV1Schema).min(1)
-  .refine(conditions => new Set(conditions).size === conditions.length, 'Wait conditions must be unique');
-export const WorkflowRunWaitRequestV1Schema = z.object({
+}));
+export const WorkflowRunWaitConditionV1Schema = lazyZodSchema(() => z.enum(['terminal', 'attention', 'paused']));
+export const WorkflowRunWaitConditionsV1Schema = lazyZodSchema(() => z.array(WorkflowRunWaitConditionV1Schema).min(1)
+  .refine(conditions => new Set(conditions).size === conditions.length, 'Wait conditions must be unique'));
+export const WorkflowRunWaitRequestV1Schema = lazyZodSchema(() => z.object({
   runId: WorkflowRunIdV1Schema,
   conditions: WorkflowRunWaitConditionsV1Schema.optional(),
   timeoutSeconds: z.number().positive().safe().optional(),
-}).strict();
+}).strict());
 /** Passive host sink: public summary only, including the canonical attention projection. */
-export const WorkflowRunWaitSnapshotV1Schema = z.object({ run: WorkflowRunSummaryV1Schema }).strict();
-const WorkflowRunWaitResultBaseV1Schema = z.object({
+export const WorkflowRunWaitSnapshotV1Schema = lazyZodSchema(() => z.object({ run: WorkflowRunSummaryV1Schema }).strict());
+const WorkflowRunWaitResultBaseV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema, result: StrictJsonValueSchema.optional(),
-}).strict();
-export const WorkflowRunWaitResultV1Schema = z.discriminatedUnion('observation', [
+}).strict());
+export const WorkflowRunWaitResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('observation', [
   WorkflowRunWaitResultBaseV1Schema.extend({ observation: z.literal('terminal'), matchedCondition: z.literal('terminal') }).strict(),
   WorkflowRunWaitResultBaseV1Schema.extend({ observation: z.literal('paused'), matchedCondition: z.literal('paused') }).strict(),
   WorkflowRunWaitResultBaseV1Schema.extend({ observation: z.literal('needs_attention'), matchedCondition: z.literal('attention') }).strict(),
   WorkflowRunWaitResultBaseV1Schema.extend({ observation: z.literal('timeout') }).strict(),
   WorkflowRunWaitResultBaseV1Schema.extend({ observation: z.literal('not_matched_terminal') }).strict(),
-]);
-export const WorkflowRunPauseRequestV1Schema = z.object({ runId: WorkflowRunIdV1Schema, expectedRevision: RevisionSchema }).strict();
+]));
+export const WorkflowRunPauseRequestV1Schema = lazyZodSchema(() => z.object({ runId: WorkflowRunIdV1Schema, expectedRevision: RevisionSchema }).strict());
 export const WorkflowRunCancelRequestV1Schema = WorkflowRunPauseRequestV1Schema;
-export const WorkflowRunControlResultV1Schema = z.object({
+export const WorkflowRunControlResultV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema,
   intent: z.enum(['pause_requested', 'paused', 'resumed', 'recovery_required', 'unavailable', 'cancel_requested', 'cancelled']),
-}).strict();
+}).strict());
 
-export const WorkflowInvocationListRequestV1Schema = z.object({
+export const WorkflowInvocationListRequestV1Schema = lazyZodSchema(() => z.object({
   runId: WorkflowRunIdV1Schema, cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional(),
   parentRecordId: WorkflowInvocationRecordIdSchema.optional(),
   lifecycles: z.array(WorkflowInvocationLifecycleV1Schema).min(1).optional(),
-}).strict();
-export const WorkflowInvocationListResultV1Schema = z.object({
+  /** Open private progress beside the same history page, without individual detail reads. */
+  includeContent: z.boolean().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.includeContent === true && value.parentRecordId !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['includeContent'],
+      message: 'Invocation content is available on history pages only' });
+  }
+}));
+export const WorkflowInvocationListResultV1Schema = lazyZodSchema(() => z.object({
   invocations: z.array(WorkflowRunInvocationIndexV1Schema), nextCursor: CursorSchema.optional(), parentRevision: RevisionSchema,
-}).strict();
-export const WorkflowInvocationGetRequestV1Schema = z.object({ runId: WorkflowRunIdV1Schema, invocationId: WorkflowInvocationRecordIdSchema }).strict();
-export const WorkflowInvocationGetResultV1Schema = z.object({ invocation: WorkflowInvocationDetailV1Schema }).strict();
-export const WorkflowInvocationRetryResultV1Schema = z.object({
+  /** Present only when requested; one opened detail for each index on this page. */
+  invocationDetails: z.array(WorkflowInvocationDetailV1Schema).optional(),
+}).strict());
+export const WorkflowInvocationGetRequestV1Schema = lazyZodSchema(() => z.object({ runId: WorkflowRunIdV1Schema, invocationId: WorkflowInvocationRecordIdSchema }).strict());
+export const WorkflowInvocationGetResultV1Schema = lazyZodSchema(() => z.object({ invocation: WorkflowInvocationDetailV1Schema }).strict());
+export const WorkflowInvocationRetryResultV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema, invocation: WorkflowRunInvocationIndexV1Schema,
   disposition: z.enum(['accepted', 'ineligible', 'conflict']),
-}).strict();
+}).strict());
 const WorkflowReviewTargetV1Shape = {
   runId: WorkflowRunIdV1Schema,
   invocation: WorkflowInvocationRefV1Schema,
   expectedContentRevision: WorkflowDecimalV1Schema,
 };
-export const WorkflowInvocationPublishDraftRequestV1Schema = z.object({
+export const WorkflowInvocationPublishDraftRequestV1Schema = lazyZodSchema(() => z.object({
   ...WorkflowReviewTargetV1Shape, value: StrictJsonValueSchema,
-}).strict();
+}).strict());
 export const WorkflowInvocationPublishDraftResultV1Schema = WorkflowInvocationGetResultV1Schema;
-export const WorkflowInvocationCompleteReviewRequestV1Schema = z.discriminatedUnion('mode', [
+export const WorkflowInvocationCompleteReviewRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.object({ ...WorkflowReviewTargetV1Shape, mode: z.literal('use_result'),
     value: StrictJsonValueSchema.optional(), followUp: WorkflowReviewFollowUpV1Schema.optional() }).strict(),
   z.object({ ...WorkflowReviewTargetV1Shape, mode: z.literal('generate'),
     acknowledgeUncertainPriorEffects: z.literal(true).optional() }).strict(),
-]);
-export const WorkflowInvocationCompleteReviewResultV1Schema = z.object({
+]));
+export const WorkflowInvocationCompleteReviewResultV1Schema = lazyZodSchema(() => z.object({
   run: WorkflowRunSummaryV1Schema, invocation: WorkflowRunInvocationIndexV1Schema,
   disposition: z.enum(['completed', 'generation_requested']),
-}).strict();
+}).strict());
 export const WorkflowRunDeleteRequestV1Schema = WorkflowRunPauseRequestV1Schema;
-export const WorkflowRunDeleteResultV1Schema = z.object({ deleted: z.literal(true), runId: WorkflowRunIdV1Schema }).strict();
+export const WorkflowRunDeleteResultV1Schema = lazyZodSchema(() => z.object({ deleted: z.literal(true), runId: WorkflowRunIdV1Schema }).strict());
 
-export const WorkflowDefinitionListRequestV1Schema = z.object({ cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional() }).strict();
-const WorkflowDefinitionLibraryHeaderV1Schema = WorkflowDefinitionArtifactHeaderV1Schema.extend({
+export const WorkflowDefinitionListRequestV1Schema = lazyZodSchema(() => z.object({ cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional() }).strict());
+const WorkflowDefinitionLibraryHeaderV1Schema = lazyZodSchema(() => WorkflowDefinitionArtifactHeaderV1Schema.extend({
   ownerAccountId: z.string().min(1).optional(), access: ArtifactCallerAccessV1Schema.optional(),
   /** Opened owner-private provenance, never attribution from the stored shared header. */
   savedBy: WorkflowDefinitionSavedByV1Schema.optional(),
   triggers: z.array(WorkflowTriggerSummaryInputV1Schema),
   /** Earliest enabled occurrence supplied by the Automation scheduler, never calculated by a reader. */
   nextRunAt: z.number().int().nonnegative().safe().nullable(),
-}).strict();
-export const WorkflowDefinitionListResultV1Schema = z.object({ definitions: z.array(z.discriminatedUnion('contentStatus', [
+}).strict());
+export const WorkflowDefinitionListResultV1Schema = lazyZodSchema(() => z.object({ definitions: z.array(z.discriminatedUnion('contentStatus', [
   WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('available'), stepCount: z.number().int().nonnegative().safe(), destinations: WorkflowDestinationsV1Schema.optional() }).strict(),
   WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('unavailable'), stepCount: z.null(),
     revision: WorkflowArtifactRevisionV1Schema.nullable(), metadata: WorkflowDefinitionMetadataV1Schema.nullable(),
     contentUnavailableReason: WorkflowDefinitionContentUnavailableReasonV1Schema }).strict(),
-])), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict();
-export const WorkflowDefinitionGetRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict();
-export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: WorkflowDestinationsV1Schema.optional(), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();
-export const WorkflowDefinitionCreateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();
+])), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict());
+export const WorkflowDefinitionGetRequestV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict());
+export const WorkflowDefinitionGetResultV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, destinations: WorkflowDestinationsV1Schema.optional(), metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict());
+export const WorkflowDefinitionCreateRequestV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict());
 export const WorkflowDefinitionCreateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
-export const WorkflowDefinitionUpdateRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict();
+export const WorkflowDefinitionUpdateRequestV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema, expectedRevision: WorkflowArtifactRevisionV1Schema, definition: WorkflowIngressCarrierV1Schema, metadata: WorkflowDefinitionMetadataV1Schema }).strict());
 export const WorkflowDefinitionUpdateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
-export const WorkflowDefinitionDeleteRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict();
-export const WorkflowDefinitionDeleteResultV1Schema = z.object({ deleted: z.literal(true), definitionId: WorkflowDefinitionIdV1Schema }).strict();
+export const WorkflowDefinitionDeleteRequestV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict());
+export const WorkflowDefinitionDeleteResultV1Schema = lazyZodSchema(() => z.object({ deleted: z.literal(true), definitionId: WorkflowDefinitionIdV1Schema }).strict());
 
 export { WORKFLOW_ACTION_IDS_V1, type WorkflowActionIdV1 };
 

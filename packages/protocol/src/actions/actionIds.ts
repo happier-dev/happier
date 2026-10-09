@@ -1,9 +1,13 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { MACHINE_ADD_SSH_ACTION_IDS } from './specs/machineConnection.js';
+import { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machineAccess.js';
+import { MACHINE_TERMINAL_ACTION_IDS } from './specs/machineTerminal.js';
 import { SCOPE_ACTION_IDS } from './scopeActionFamily.js';
 import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
 import { WORK_BOARD_ACTION_IDS_V1 } from '../boards/actionIdsV1.js';
 import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionFamily.js';
+import { PROJECT_SOURCE_ACTION_IDS_V1 } from './specs/projectSources.js';
 
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from '../home/governance/actionsV1.js';
 import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from '../plugins/settingsAdministration.js';
@@ -12,6 +16,10 @@ import { SESSION_DISCUSSION_ACTION_IDS_V1 } from '../sessions/discussions/action
 import { SESSION_READ_STATE_ACTION_IDS_V1 } from '../sessions/readState/actionIds.js';
 import { SESSION_ATTENTION_SET_ACTION_ID } from '../sessions/organization/attentionAction.js';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
+import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
+import { MACHINE_PRESET_ACTION_IDS_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
+import { PROJECT_WORKER_ACTION_IDS_V1 } from './specs/projectWorkers.js';
+import { ACTION_OPERATION_ACTION_IDS_V1 } from './specs/actionOperations.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
@@ -20,6 +28,8 @@ import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecr
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from '../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1 } from '../artifacts/artifactActionsV1.js';
 import { WORKSPACE_ACTION_IDS } from './workspaceActionFamily.js';
+import { PROJECT_ACTION_IDS_V1 } from './projectActionIdsV1.js';
+import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionFamily.js';
 import { SESSION_CANVAS_ACTION_IDS } from './sessionCanvasActionIds.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from '../connect/configurationActionIdsV1.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionFamily.js';
@@ -30,6 +40,9 @@ import { APP_UPDATE_ACTION_IDS } from './appUpdateActionFamily.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionActionIdsV1.js';
 import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '../workflows/stepActionsV1.js';
+import { FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
+import { PROFILE_ACTION_IDS_V1 } from '../profiles/profileActionIdsV1.js';
+import { ARTIFACT_FOLDER_ACTION_IDS_V1 } from '../prompts/library/artifactFolderActionIdsV1.js';
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
@@ -42,7 +55,7 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ] as const;
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
-export const WorkflowActionIdV1Schema = z.enum(WORKFLOW_ACTION_IDS_V1);
+export const WorkflowActionIdV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_ACTION_IDS_V1));
 
 /**
  * The closed host Action vocabulary for the public plugin-authoring journey.
@@ -74,21 +87,28 @@ export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoop
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
+  project_sources: PROJECT_SOURCE_ACTION_IDS_V1,
+  project_execution: PROJECT_ACTION_IDS_V1,
+  project_definitions: PROJECT_DEFINITION_ACTION_IDS,
   observation: ['wait'],
+  project_workers: PROJECT_WORKER_ACTION_IDS_V1,
+  operation_output: ACTION_OPERATION_ACTION_IDS_V1,
   capture_viewing: ['capture.view'],
   session_terminals: SESSION_TERMINAL_ACTION_IDS,
   workspace_layout: [...WORKSPACE_ACTION_IDS, ...SESSION_CANVAS_ACTION_IDS],
-  session_organization_move: ['session.organization.move'],
+  session_organization_move: ['session.organization.move', 'session.organization.pin.set'],
   composer_ingress: ['composer.transaction.apply', 'composer.attachments.pick', 'repository.upload.pick'],
   list_reorder: ['session.pending.reorder', 'todos.reorder'],
   todo_session_link: ['todos.session.link'],
   workspace_file_search: ['workspace.files.search'],
+  filesystem: FILESYSTEM_ACTION_IDS,
   scope: SCOPE_ACTION_IDS,
   connected_services_configuration: CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1,
   boards: WORK_BOARD_ACTION_IDS_V1,
   widgets: [...WIDGET_INSTANCE_ACTION_IDS_V1, ...WIDGET_DEFINITION_ACTION_IDS_V1, 'widgets.snapshot.post'],
   roles: ROLE_ACTION_IDS_V1,
-  launch_profiles: ['launch_profiles.publish'],
+  launch_profiles: ['launch_profiles.publish', ...PROFILE_ACTION_IDS_V1],
+  artifact_folders: ARTIFACT_FOLDER_ACTION_IDS_V1,
   discovery: [
     'action.spec.search',
     'action.spec.get',
@@ -98,6 +118,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   workflows: WORKFLOW_ACTION_IDS_V1,
   workflow_effects: WORKFLOW_EFFECT_ACTION_IDS_V1,
   workflow_authoring: ['workflow.authoring.conversation.bind'],
+  session_authoring: ['session.authoring.open'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
   artifacts: ARTIFACT_ACTION_IDS_V1,
   settings_declarations: SETTINGS_DECLARATION_ACTION_IDS_V1,
@@ -112,7 +133,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.install.cancel',
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
-  machine_connection: ['homes.connect', 'machines.add.command', 'machines.pairing.create', 'machines.terminal.open', 'machines.terminal.list', ...MACHINE_ADD_SSH_ACTION_IDS],
+  machine_connection: ['homes.connect', 'machines.add.command', 'machines.pairing.create', ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS],
+  machine_access: MACHINE_ACCESS_ACTION_IDS,
+  machine_work_summary: MACHINE_WORK_SUMMARY_ACTION_IDS,
   session_access: [
     'session.access.grants.list',
     'session.access.grant.set',
@@ -150,6 +173,11 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.list',
     'paths.list_recent',
     'projects.list',
+    'projects.open',
+    'projects.context.update',
+    'projects.visibility.set',
+    'projects.workspace.update',
+    'projects.workspace.forget',
     'prompts.invocations.list',
     'prompts.invocation.resolve',
     'machines.list',
@@ -169,11 +197,18 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   session_control: [
     'session.pending.next',
+    'session.pending.withdraw',
     'session.stop',
     'session.delete',
     'session.folder.set',
     'session.tags.set',
     'session.title.set',
+    'session.bot.set',
+    'session.memory.set',
+    'session.voice.preference.set',
+    'session.context.update',
+    'session.instructions.set',
+    'session.view.toolCalls.set',
     'session.reports_to.set',
     'session.model.set',
     'session.permission_mode.set',
@@ -344,6 +379,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'ui.pet.choose',
   ],
   memory: [
+    'memory.remember', 'memory.update', 'memory.forget', 'memory.read', 'memory.list',
     'memory.search',
     'memory.get_window',
     'memory.ensure_up_to_date',
@@ -440,6 +476,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'browser.automation.focus',
     'browser.automation.select',
     'browser.automation.setValue',
+    'browser.automation.secret.fill',
     'browser.automation.upload',
     'browser.automation.drag',
   ],
@@ -451,6 +488,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'computer.capture',
     'computer.query',
     'computer.input',
+    'computer.secret.fill',
     'computer.control.status',
     'computer.control.interrupt',
     'computer.control.handBack',
@@ -489,6 +527,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'localServices.publicPreview.copyUrl',
   ],
   local_services_actions: [
+    'projects.service.relocate',
     'localServices.actions.copyUrl',
     'localServices.actions.openPreview',
     'localServices.actions.forget',
@@ -581,6 +620,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   identity_github_apps: MANAGED_GITHUB_APP_ACTION_IDS_V1,
   identity_providers: MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1,
   machine_pools: MACHINE_POOL_ACTION_IDS_V1,
+  managed_machines: MANAGED_MACHINE_ACTION_IDS_V1,
+  machine_presets: MACHINE_PRESET_ACTION_IDS_V1,
   ephemeral_runner: EPHEMERAL_RUNNER_ACTION_IDS_V1,
   automation_events: [
     'automation.event.sources.list',
@@ -605,6 +646,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.commit.backout',
     'scm.commit.undoLast',
     'scm.log.list',
+    'scm.history.entries',
     'scm.branch.list',
     'scm.branch.create',
     'scm.branch.checkout',
@@ -647,6 +689,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.repository.init',
     'scm.repository.removeIndexLock',
     'scm.hostingRepository.describePublishTargets',
+    'scm.hostingRepository.resolveAddress',
     'scm.hostingRepository.publish',
   ],
   scm_diff_summary: [
@@ -681,7 +724,13 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
 } as const);
 
 export const ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.project_sources,
+  ...ACTION_ID_FAMILIES_V1.project_execution,
+  ...ACTION_ID_FAMILIES_V1.project_definitions,
+  ...ACTION_ID_FAMILIES_V1.project_workers,
+  ...ACTION_ID_FAMILIES_V1.operation_output,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,
+  ...ACTION_ID_FAMILIES_V1.session_authoring,
   ...ACTION_ID_FAMILIES_V1.observation,
   ...ACTION_ID_FAMILIES_V1.capture_viewing,
   ...ACTION_ID_FAMILIES_V1.session_terminals,
@@ -698,10 +747,13 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.widgets,
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ACTION_ID_FAMILIES_V1.machine_connection,
+  ...ACTION_ID_FAMILIES_V1.machine_access,
+  ...ACTION_ID_FAMILIES_V1.machine_work_summary,
   ...ACTION_ID_FAMILIES_V1.machine_agent_install,
   ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
   ...ACTION_ID_FAMILIES_V1.roles,
   ...ACTION_ID_FAMILIES_V1.launch_profiles,
+  ...ACTION_ID_FAMILIES_V1.artifact_folders,
   ...ACTION_ID_FAMILIES_V1.artifact_access,
   ...ACTION_ID_FAMILIES_V1.artifacts,
   ...ACTION_ID_FAMILIES_V1.settings_declarations,
@@ -737,6 +789,7 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.memory,
   ...ACTION_ID_FAMILIES_V1.prompt_library,
   ...ACTION_ID_FAMILIES_V1.daemon_admin,
+  ...ACTION_ID_FAMILIES_V1.filesystem,
   ...ACTION_ID_FAMILIES_V1.browser_control,
   ...ACTION_ID_FAMILIES_V1.browser_diagnostics,
   ...ACTION_ID_FAMILIES_V1.browser_context,
@@ -762,6 +815,8 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.identity_github_apps,
   ...ACTION_ID_FAMILIES_V1.identity_providers,
   ...ACTION_ID_FAMILIES_V1.machine_pools,
+  ...ACTION_ID_FAMILIES_V1.managed_machines,
+  ...ACTION_ID_FAMILIES_V1.machine_presets,
   ...ACTION_ID_FAMILIES_V1.ephemeral_runner,
   ...ACTION_ID_FAMILIES_V1.automation_events,
   ...ACTION_ID_FAMILIES_V1.automation_conversation,
@@ -793,14 +848,14 @@ export const RUNTIME_ACTION_IDS_V1 = [
   ...ACTION_ID_FAMILIES_V1.devices_simulator,
 ] as const;
 
-export const ActionIdSchema = z.enum(ACTION_IDS);
+export const ActionIdSchema = lazyZodSchema(() => z.enum(ACTION_IDS));
 export type ActionId = z.infer<typeof ActionIdSchema>;
 export type ActionIdFamilyV1 = keyof typeof ACTION_ID_FAMILIES_V1;
-export const ActionIdFamilyV1Schema = z.enum(
+export const ActionIdFamilyV1Schema = lazyZodSchema(() => z.enum(
   Object.keys(ACTION_ID_FAMILIES_V1) as [ActionIdFamilyV1, ...ActionIdFamilyV1[]],
-);
+));
 
-export const RuntimeActionIdV1Schema = z.enum(RUNTIME_ACTION_IDS_V1);
+export const RuntimeActionIdV1Schema = lazyZodSchema(() => z.enum(RUNTIME_ACTION_IDS_V1));
 export type RuntimeActionIdV1 = z.infer<typeof RuntimeActionIdV1Schema>;
 
 const RUNTIME_ACTION_ID_V1_SET: ReadonlySet<string> = new Set(RUNTIME_ACTION_IDS_V1);

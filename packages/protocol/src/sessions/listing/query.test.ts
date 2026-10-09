@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { encodeV2SessionListCursorV1, encodeV2SessionListCursorV2 } from '../control/contract.js';
 import { SessionListQueryV1Schema, SessionListUnavailableQueryV1Schema } from '../../index.js';
+import { buildSessionListServerQueryV1 } from './query.js';
 
 const query = {
   v: 1,
@@ -15,6 +16,16 @@ const query = {
 } as const;
 
 describe('SessionListQueryV1', () => {
+  it('sends Bot-filter candidate queries without the client-only facet to supported older strict servers', () => {
+    expect(buildSessionListServerQueryV1({ ...query, bot: 'bot' })).toEqual(query);
+    expect(buildSessionListServerQueryV1(query)).toBe(query);
+  });
+  it('admits an optional client-projected Bot facet and keeps unset queries unchanged', () => {
+    expect(SessionListQueryV1Schema.parse(query)).not.toHaveProperty('bot');
+    expect(SessionListQueryV1Schema.parse({ ...query, bot: 'bot' }).bot).toBe('bot');
+    expect(SessionListQueryV1Schema.parse({ ...query, bot: 'ordinary' }).bot).toBe('ordinary');
+    expect(SessionListQueryV1Schema.safeParse({ ...query, bot: 'pinned' }).success).toBe(false);
+  });
   it('initializes from its direct entrypoint before the Action catalog', () => {
     // A fresh Node graph catches cycles that a previously initialized root barrel hides.
     execFileSync(process.execPath, [

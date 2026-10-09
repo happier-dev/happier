@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
@@ -5,15 +6,15 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
 const ComposerRefSchema = asProtocolZod(ComposerRefV1Schema);
-export const UiPromptPickerOpenInputSchema = z.object({
+export const UiPromptPickerOpenInputSchema = lazyZodSchema(() => z.object({
   composerRef: ComposerRefSchema.optional(),
-}).strict();
+}).strict());
 
-export const UiPromptPickerOpenOutputSchema = z.discriminatedUnion('status', [
+export const UiPromptPickerOpenOutputSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('opened'), composerRef: ComposerRefSchema }).strict(),
   z.object({ status: z.literal('noEligibleComposer') }).strict(),
   z.object({ status: z.literal('unavailable'), reason: z.literal('noClient') }).strict(),
-]);
+]));
 
 /** Display intent only; the mounted composer owns prompt selection, edits and submission. */
 export const PROMPT_PICKER_ACTION_SPECS = [{

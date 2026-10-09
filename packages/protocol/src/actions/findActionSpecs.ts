@@ -1,15 +1,16 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
-const FindOptionsSchema = z.object({ matchCase: z.boolean(), regex: z.boolean() }).strict();
-export const UiFindInputSchema = z.discriminatedUnion('op', [
+const FindOptionsSchema = lazyZodSchema(() => z.object({ matchCase: z.boolean(), regex: z.boolean() }).strict());
+export const UiFindInputSchema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.object({ op: z.literal('read') }).strict(),
   z.object({ op: z.literal('set'), query: z.string(), options: FindOptionsSchema.optional(), target: z.string().min(1).optional() }).strict(),
   z.object({ op: z.literal('step'), direction: z.union([z.literal(1), z.literal(-1)]) }).strict(),
   z.object({ op: z.literal('stop') }).strict(),
   z.object({ op: z.literal('close') }).strict(),
-]);
-export const UiFindOutputSchema = z.union([
+]));
+export const UiFindOutputSchema = lazyZodSchema(() => z.union([
   z.object({ status: z.literal('noMountedSurface') }).strict(),
   z.object({ status: z.literal('idle') }).strict(),
   z.object({ status: z.literal('invalidPattern') }).strict(),
@@ -21,7 +22,7 @@ export const UiFindOutputSchema = z.union([
   // Query/options here are the last explicit host seed, never private engine state.
   z.object({ status: z.literal('unavailable'), unavailable: z.literal('engineOwned'),
     query: z.string(), options: FindOptionsSchema }).strict(),
-]);
+]));
 
 /** Additive client Action: no persistence, remote corpus or second Find decision owner. */
 export const FIND_ACTION_SPECS = [{

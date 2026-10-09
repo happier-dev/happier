@@ -3,10 +3,26 @@ import {
   AuthoringMemoryContentV1Schema,
   AuthoringMemoryPrivatePayloadV1Schema,
   assertAuthoringMemoryContentForModeV1,
+  buildProjectLastOpenedMemoryKeyV1,
+  parseProjectLastOpenedMemoryKeyV1,
 } from './authoringMemory.js';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 
 describe('authoring-memory envelopes', () => {
+  it('admits qualified Project recency and rejects invalid timestamps and noncanonical identities', () => {
+    const key = 'projectLastOpened:home%3Aone:project%2Fone';
+    expect(buildProjectLastOpenedMemoryKeyV1({ serverId: 'home:one', projectKey: 'project/one' })).toBe(key);
+    expect(parseProjectLastOpenedMemoryKeyV1(key)).toEqual({ serverId: 'home:one', projectKey: 'project/one' });
+    expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key, value: 0 }).success).toBe(true);
+    expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key, value: 1234 }).success).toBe(true);
+    for (const value of [-1, Infinity, '1234', { timestamp: 1234 }]) {
+      expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key, value }).success).toBe(false);
+      expect(() => assertAuthoringMemoryContentForModeV1({ t: 'plain', v: value }, 'plain', key)).toThrow();
+    }
+    for (const key of ['projectLastOpened::project', 'projectLastOpened:home:', 'projectLastOpened:home:project:extra', 'projectLastOpened:home%3aone:project', 'projectLastOpened:%20home:project']) {
+      expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key, value: 1 }).success).toBe(false);
+    }
+  });
   it('preserves opaque strict JSON engine carriers, and rejects values outside JSON', () => {
     const value = { v: 1, modelSelection: { future: { nested: [null, false, 2] } }, unknown: 'preserve' };
     expect(AuthoringMemoryContentV1Schema.parse({ t: 'plain', v: value })).toEqual({ t: 'plain', v: value });

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
 
@@ -35,7 +36,7 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
   'workspace.resize': z.object({ splitId: id, ratio: z.number().finite().min(0).max(1) }).strict(),
 } as const;
 
-export const WorkspaceTabsListOutputSchema = z.object({
+export const WorkspaceTabsListOutputSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   tabs: z.array(z.object({
     id, groupId: id, target: z.object({ kind: id, params: z.record(z.string(), z.string()) }).strict(),
@@ -45,15 +46,15 @@ export const WorkspaceTabsListOutputSchema = z.object({
   splits: z.array(z.object({ id, axis: z.enum(['row', 'column']), ratio: z.number().finite().min(0).max(1), firstNodeId: id, secondNodeId: id }).strict()),
   rootNodeId: id,
   focusedGroupId: id, maximizedGroupId: id.nullable(),
-}).strict();
-export const WorkspaceClosedTabsListOutputSchema = z.object({
+}).strict());
+export const WorkspaceClosedTabsListOutputSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   tabs: z.array(z.object({
     id, target: z.object({ kind: id, params: z.record(z.string(), z.string()) }).strict(),
     pinned: z.boolean(), title: z.string().optional(),
   }).strict()),
-}).strict();
-const MutationOutputSchema = z.object({ ok: z.literal(true) }).strict();
+}).strict());
+const MutationOutputSchema = lazyZodSchema(() => z.object({ ok: z.literal(true) }).strict());
 export const WORKSPACE_ACTION_OUTPUT_SCHEMAS = {
   'workspace.tabs.list': WorkspaceTabsListOutputSchema,
   'workspace.tabs.open': MutationOutputSchema,

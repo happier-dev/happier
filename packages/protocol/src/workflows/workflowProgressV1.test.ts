@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
@@ -30,6 +31,31 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('retains exact result condition annotations on the root, merges reported results, and tolerates only stored extras', () => {
+    const root = { kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
+      attempt: '0', logicalInvocationRecordId: 'root', resultProvenance: { report: { notificationCondition: 'suppressed' } } };
+    const parsed = WorkflowProgressEnvelopeV1Schema.parse(root);
+    const updated = applyWorkflowInvocationFactV1(parsed, { resultProvenance: {
+      report: { notificationCondition: 'matched' }, other: { notificationCondition: 'suppressed' },
+    } });
+    const replay = applyWorkflowInvocationFactV1(updated, { resultProvenance: { report: { notificationCondition: 'suppressed' } } });
+    expect(replay).toMatchObject({ resultProvenance: { report: { notificationCondition: 'matched' }, other: { notificationCondition: 'suppressed' } } });
+    const extended = { ...root, resultProvenance: { report: { notificationCondition: 'suppressed', future: true } } };
+    expect(WorkflowProgressEnvelopeV1Schema.safeParse(extended).success).toBe(false);
+    expect(createStoredReadSchema(WorkflowProgressEnvelopeV1Schema).parse(extended)).toEqual(parsed);
+    expect(WorkflowProgressEnvelopeV1Schema.safeParse({ ...root, blockKind: 'step', invocationPath: { blockId: 'report', scope: [] } }).success).toBe(false);
+  });
+  it('returns a typed review requirement without disclosing retained content', () => {
+    expect(WorkflowActionFailureV1Schema.parse({ ok: false, errorCode: 'legacy_conversion_unsupported',
+      error: 'legacy_conversion_unsupported', details: { reason: 'review_required' } })).toMatchObject({
+      ok: false, errorCode: 'legacy_conversion_unsupported', details: { reason: 'review_required' },
+    });
+  });
+  it('records an inputless Session creation without claiming an input receipt', () => {
+    expect(WorkflowExecutionCorrespondenceV1Schema.parse({ kind: 'session_ready', sessionId: 'session-1' }))
+      .toEqual({ kind: 'session_ready', sessionId: 'session-1' });
+    expect(WorkflowExecutionCorrespondenceV1Schema.safeParse({ kind: 'session_ready', sessionId: 'session-1', localInputId: 'fake' }).success).toBe(false);
+  });
   it('retains classic nested JSON projection and refinement error identity', () => {
     for (const target of ['draft-7', 'draft-2020-12'] as const) {
       expect(zodSchemaToJsonSchemaObject(WorkflowProgressEnvelopeV1Schema, { target })).toMatchObject({

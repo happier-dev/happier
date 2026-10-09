@@ -19,6 +19,7 @@ import type { WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowSt
 import type { RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
 import { parseQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { ManagedAcquireAgentStartV1Schema } from '../../machines/managed/agentStartV1.js';
 /** Authenticated Session identity itself proves its own-target relation. */
 export function isActionCallerOwnSessionV1(context: ActionExecutorContext | undefined, sessionId: unknown): boolean {
     return context?.actionCaller?.kind === 'session' && context.actionCaller.sessionId === sessionId;
@@ -43,6 +44,11 @@ export function isAgentStartActionV1(actionId: string): boolean {
         || actionId === 'review.start' || actionId === 'subagents.plan.start'
         || actionId === 'subagents.delegate.start' || actionId === 'voice_agent.start';
 }
+/** Acquisition admits Agent work only when it carries ordinary Session authoring. */
+export function isAgentStartActionInvocationV1(actionId: string, input: Readonly<Record<string, unknown>>): boolean {
+    return isAgentStartActionV1(actionId)
+        || (actionId === 'machines.managed.acquire' && input.agentStart !== undefined);
+}
 /** Action policies that may admit new Agent work, unlike observation and own-Session controls. */
 export function requiresActionAgentStartDepthV1(actionId: string): boolean {
     return isAgentStartActionV1(actionId) || actionId === 'workflow.run.start'
@@ -50,6 +56,42 @@ export function requiresActionAgentStartDepthV1(actionId: string): boolean {
         || actionId === 'workflow.definition.edit'
         || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update'
         || actionId === 'session.trigger.add' || actionId === 'session.trigger.update';
+}
+/** Native target input supplied by Workflow Agent selection. */
+export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTarget' | 'backendTarget' | 'engineIds' | 'backendTargetKeys' | null {
+    if (!isAgentStartActionV1(actionId)) return null;
+    return actionId === 'session.spawn_new' ? 'agentTarget'
+        : actionId === 'execution.run.start' ? 'backendTarget'
+            : actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
+}
+/** Workflow selection fields shared by static validation and native admission. */
+export function projectActionWorkflowSelectionInputV1(
+    actionId: string,
+    input: Readonly<Record<string, unknown>>,
+    selected: WorkflowResolvedStepSelectionV1 | undefined,
+): Record<string, unknown> {
+    const projected = { ...input };
+    if (!selected || !isAgentStartActionV1(actionId)) return projected;
+    const targetField = readActionWorkflowTargetInputFieldV1(actionId);
+    if (selected.agentTarget && targetField) {
+        if (projected[targetField] === undefined) projected[targetField] = targetField === 'agentTarget' || targetField === 'backendTarget'
+            ? selected.agentTarget : [buildBackendTargetKeyV2(selected.agentTarget)];
+    }
+    for (const key of ['permissionMode', 'connectedServices', 'mcpSelection', 'transcriptStorage'] as const) {
+        if (projected[key] === undefined && selected[key] !== undefined) projected[key] = selected[key];
+    }
+    if (actionId === 'session.spawn_new' && projected.profileId === undefined && selected.profileId !== undefined)
+        projected.profileId = selected.profileId;
+    if (projected.agentModeId === undefined && projected.acpSessionModeId === undefined && selected.acpSessionModeId !== undefined)
+        projected.agentModeId = selected.acpSessionModeId;
+    if (projected.modelSelection === undefined && projected.modelId === undefined && projected.teamCredentialModel === undefined
+        && selected.modelSelection !== undefined) {
+        projected.modelSelection = actionId === 'session.spawn_new' || selected.modelSelection === null
+            ? selected.modelSelection : selected.modelSelection.ref;
+    }
+    if (actionId !== 'session.spawn_new' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
+        && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
+    return projected;
 }
 export function resolveRunStartModelAndConfig(data: Readonly<Record<string, unknown>>) {
     const modelId = typeof data.modelId === 'string' ? data.modelId.trim() : undefined;
@@ -88,6 +130,15 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
     knownFacts?: AgentStartFactsV1;
 }> {
     const { actionId, input: request, context, baseline } = params;
+    if (actionId === 'machines.managed.acquire' && request.agentStart !== undefined) {
+        const continuation = ManagedAcquireAgentStartV1Schema.safeParse(request.agentStart);
+        if (!continuation.success) return { ok: false, errorCode: 'invalid_parameters' };
+        return { ok: true, effectiveInput: request, requests: [{
+            kind: 'spawn_new',
+            facts: { ...spawnStartFactsV1(continuation.data), machineId: { kind: 'new_machine' } },
+            ...(continuation.data.roleId ? { roleId: continuation.data.roleId } : {}),
+        }] };
+    }
     const selected = params.effectiveSelection?.selection;
     const overrideEngine = params.effectiveSelection?.overrideEngine === true;
     let inheritWorkflowModel = true;
@@ -130,24 +181,7 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
     };
     if (!isAgentStartActionV1(actionId))
         return { ok: true, requests: [], effectiveInput: request };
-    const selectedInput: Record<string, unknown> = { ...request };
-    if (selected) {
-        for (const key of ['permissionMode', 'connectedServices', 'mcpSelection', 'transcriptStorage'] as const) {
-            if (selectedInput[key] === undefined && selected[key] !== undefined)
-                selectedInput[key] = selected[key];
-        }
-        if (actionId === 'session.spawn_new' && selectedInput.profileId === undefined && selected.profileId !== undefined)
-            selectedInput.profileId = selected.profileId;
-        if (selectedInput.agentModeId === undefined && selectedInput.acpSessionModeId === undefined && selected.acpSessionModeId !== undefined)
-            selectedInput.agentModeId = selected.acpSessionModeId;
-        if (selectedInput.modelSelection === undefined && selectedInput.modelId === undefined && selectedInput.teamCredentialModel === undefined && selected.modelSelection !== undefined) {
-            selectedInput.modelSelection = actionId === 'session.spawn_new' || selected.modelSelection === null
-                ? selected.modelSelection : selected.modelSelection.ref;
-        }
-        if (actionId !== 'session.spawn_new' && selectedInput.sessionConfigOptionOverrides === undefined && selectedInput.configOptions === undefined
-            && selected.sessionConfigOptionOverrides !== undefined)
-            selectedInput.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
-    }
+    const selectedInput = projectActionWorkflowSelectionInputV1(actionId, request, selected);
     const projectSelectedEngine = (input: Readonly<Record<string, unknown>>, kind: 'spawn_new' | 'execution_run') => {
         if (!overrideEngine || !selected?.agentTarget)
             return input;
@@ -200,9 +234,9 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         return { ok: false, errorCode: 'invalid_parameters' };
     }
     const targetValues = actionId === 'review.start' ? request.engineIds : request.backendTargetKeys;
-    let targets = actionId === 'execution.run.start' ? [request.backendTarget === undefined && selected?.agentTarget
-            ? selected.agentTarget : readAgentStartTargetV1(request.backendTarget)]
-        : (Array.isArray(targetValues) ? targetValues : []).map((value) => {
+    const projectedTargetValues = actionId === 'review.start' ? selectedInput.engineIds : selectedInput.backendTargetKeys;
+    let targets = actionId === 'execution.run.start' ? [readAgentStartTargetV1(selectedInput.backendTarget)]
+        : (Array.isArray(projectedTargetValues) ? projectedTargetValues : []).map((value) => {
             if (typeof value !== 'string')
                 return null;
             const canonical = BackendTargetKeyV2Schema.safeParse(value);
@@ -211,8 +245,6 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         });
     if (overrideEngine && selected?.agentTarget)
         targets = (targets.length ? targets : [selected.agentTarget]).map(() => selected.agentTarget!);
-    else if (targetValues === undefined && targets.length === 0 && selected?.agentTarget)
-        targets = [selected.agentTarget];
     const runOptions = resolveRunStartModelAndConfig(request);
     const teamModel = TeamCredentialProviderModelSelectionV1Schema.safeParse(request.teamCredentialModel);
     const startInput = { ...request, ...(runOptions.ok ? runOptions.options : {}),
@@ -330,7 +362,9 @@ export function spawnStartFactsV1(input: Readonly<SpawnStartFactsInput>): AgentS
     const target = input.agentTarget ?? unresolved;
     return {
         machineId: input.executionTarget && !isUnresolvedStartFact(input.executionTarget) ? input.executionTarget.machineId : unresolved,
-        directory: input.directory && !isUnresolvedStartFact(input.directory) && input.directory.kind === 'path' ? input.directory.path : unresolved,
+        directory: input.directory && !isUnresolvedStartFact(input.directory)
+            ? input.directory.kind === 'path' ? input.directory.path : input.directory
+            : unresolved,
         agentTarget: target,
         modelSelection: input.modelSelection ?? (configurationUnresolved ? unresolved : configuration?.model.value ? target.kind === 'unresolved' ? unresolved : {
             agentTargetKey: buildBackendTargetKeyV2(target), providerConnectionId: null, modelId: configuration.model.value,
@@ -357,11 +391,13 @@ export async function resolveActionAgentStartContextV1(deps: Pick<ActionExecutor
     if (!resolved || targetSessionId === undefined)
         return resolved;
     const origin = resolved.caller.kind === 'session' ? resolved.caller.sessionId : resolved.caller.runOriginSessionId;
-    if (!origin || targetSessionId === origin || resolved.ledSubtreeSessionIds.includes(targetSessionId))
+    if (!origin || targetSessionId === origin)
         return resolved;
+    // Captured start facts preserve caller identity and depth, not a continuing
+    // grant to a Session that has since been detached or revoked.
     const ids = deps.sessionList
         ? await readActionCallerLedSubtreeSessionIds({ sessionList: deps.sessionList }, { ...context, defaultSessionId: origin }) : null;
-    return { ...resolved, ledSubtreeSessionIds: ids ? [...ids] : [] };
+    return { ...resolved, ledSubtreeSessionIds: !context.signal?.aborted && ids ? [...ids] : [] };
 }
 export function admitActionAgentStartV1(context: ActionExecutorContext, request: AgentStartRequestV1, resolved: AgentStartContextV1 | null) {
     const policy = SessionAgentSpawnPolicyV1StrictSchema.safeParse(context.sessionAgentSpawnPolicyV1 ?? {});

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -5,12 +6,12 @@ import {
   type AcpConfigOptionOverridesV1,
 } from '../sessions/metadata/metadataOverridesV1.js';
 
-export const SpawnConfigOptionValueSchema = z.union([
+export const SpawnConfigOptionValueSchema = lazyZodSchema(() => z.union([
   z.string(),
   z.number(),
   z.boolean(),
   z.null(),
-]);
+]));
 export type SpawnConfigOptionValue = z.infer<typeof SpawnConfigOptionValueSchema>;
 
 export type SpawnConfigOptionsAliasConflict = Readonly<{

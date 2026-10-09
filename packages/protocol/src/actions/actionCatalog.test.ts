@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type ActionDefinitionV1,
@@ -19,6 +19,10 @@ import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  // Full-catalog projection is synchronous; let worker-reporting IPC complete
+  // between contracts instead of starving it across the entire census.
+  beforeEach(() => new Promise<void>(resolve => setImmediate(resolve)));
+
   it.each([
     ['machines.list', 'api'],
     ['session.spawn_new', 'api'],
@@ -191,7 +195,16 @@ describe('actionCatalog action-definition adapter', () => {
   });
 
   it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
-    const definitions = listActionDefinitionsForCatalogSurface({ surface });
+    const definitions: ActionDefinitionV1[] = [];
+    const rejected = listActionSpecsForCatalogSurface({ surface }).flatMap(spec => {
+      try {
+        definitions.push(actionSpecToActionDefinitionV1(spec, { surface }));
+        return [];
+      } catch (error) {
+        return [`${spec.id}: ${error instanceof Error ? error.message : String(error)}`];
+      }
+    });
+    expect(rejected, rejected.join('\n')).toEqual([]);
 
     expect(definitions.length).toBeGreaterThan(0);
     expect(definitions.map((definition) => definition.id)).toEqual(
@@ -221,7 +234,6 @@ describe('actionCatalog action-definition adapter', () => {
   it('reuses immutable host projections while evaluating request-current search inputs', () => {
     const hostSpec = getActionSpec('action.spec.get');
     if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
-    const outputProjection = vi.spyOn(hostSpec.outputSchema, 'toJSONSchema');
     const hostSearchTextPrefix = `${hostSpec.id} ${hostSpec.title}`;
     const originalToLowerCase = String.prototype.toLowerCase;
     let hostSearchTextComputations = 0;
@@ -289,7 +301,8 @@ describe('actionCatalog action-definition adapter', () => {
       expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
       expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
       expect(hostSearchTextComputations).toBe(1);
-      expect(outputProjection).toHaveBeenCalledTimes(1);
+      expect(repeatedHostSearch.find((definition) => definition.id === hostSpec.id))
+        .toBe(firstHostSearch.find((definition) => definition.id === hostSpec.id));
     } finally {
       toLowerCase.mockRestore();
     }

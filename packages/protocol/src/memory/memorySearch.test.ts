@@ -1,13 +1,92 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   MEMORY_SEARCH_QUERY_MAX_LENGTH,
   MemorySearchErrorCodeSchema,
   MemorySearchQueryV1Schema,
   MemorySearchResultV1Schema,
+  negotiateMemorySearchV1,
+  type MemorySearchQueryV1,
 } from './memorySearch.js';
+import { RPC_ERROR_CODES } from '../rpc/errors.js';
 
 describe('memory_search_result.v1 schema', () => {
+  const documentHit = {
+    type: 'artifact',
+    ref: { kind: 'doc', artifactId: 'memory_1', serverId: 'home_1' },
+    revision: { headerVersion: 2, bodyVersion: 4 },
+    location: 'archive',
+    factId: 'fact_1',
+    summary: 'An archived fact remains searchable.',
+    score: 0.8,
+  };
+
+  it('parses document hits without inventing transcript ranges', () => {
+    const parsed = MemorySearchResultV1Schema.safeParse({
+      v: 1, ok: true, hits: [documentHit], documents: { state: 'ready' },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success || !parsed.data.ok) throw new Error('Expected success');
+    expect(parsed.data.hits[0]).toEqual(documentHit);
+    expect(parsed.data.hits[0]).not.toHaveProperty('seqFrom');
+  });
+
+  it('rejects document hits with unqualified or malformed navigation facts', () => {
+    for (const invalid of [
+      { ...documentHit, ref: { kind: 'doc', artifactId: 'memory_1' } },
+      { ...documentHit, revision: 4 },
+      { ...documentHit, revision: { headerVersion: -1, bodyVersion: 4 } },
+      { ...documentHit, factId: '' },
+      { ...documentHit, location: { type: 'topic', title: '' } },
+      { ...documentHit, location: { type: 'topic' } },
+      { ...documentHit, location: { type: 'topic', title: 'Engineering', artifactId: 'other' } },
+      { ...documentHit, location: { type: 'section', title: 'Engineering' } },
+      { ...documentHit, seqFrom: 1, seqTo: 2 },
+    ]) {
+      expect(MemorySearchResultV1Schema.safeParse({ v: 1, ok: true, hits: [invalid] }).success).toBe(false);
+    }
+  });
+
+  it('retains a named topic and fact identity for document navigation', () => {
+    const hit = { ...documentHit, location: { type: 'topic', title: 'Engineering / "部署"' } };
+    const parsed = MemorySearchResultV1Schema.parse({
+      v: 1, ok: true, hits: [hit], documents: { state: 'ready' },
+    });
+    if (!parsed.ok) throw new Error('Expected success');
+    expect(parsed.hits).toEqual([hit]);
+  });
+
+  it('keeps fact identity optional for each document location', () => {
+    for (const location of ['facts', 'archive', 'document', { type: 'topic', title: 'Engineering' }]) {
+      const parsed = MemorySearchResultV1Schema.safeParse({
+        v: 1, ok: true, hits: [{ ...documentHit, location, factId: undefined }],
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it('keeps the legacy transcript arm untagged alongside a document arm', () => {
+    const transcript = {
+      sessionId: 'sess_1', seqFrom: 1, seqTo: 2, createdAtFromMs: 1, createdAtToMs: 2,
+      summary: 'A past Session', score: 0.6,
+    };
+    const parsed = MemorySearchResultV1Schema.safeParse({
+      v: 1, ok: true, hits: [transcript, documentHit], documents: { state: 'pending' },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success || !parsed.data.ok) throw new Error('Expected success');
+    expect(parsed.data.hits[0]).toEqual(transcript);
+    expect(parsed.data.hits[0]).not.toHaveProperty('type');
+    expect(MemorySearchResultV1Schema.safeParse({
+      v: 1, ok: true, hits: [{ ...transcript, type: 'artifact' }],
+    }).success).toBe(false);
+  });
+
+  it('rejects malformed document coverage rather than presenting it as ready', () => {
+    expect(MemorySearchResultV1Schema.safeParse({
+      v: 1, ok: true, hits: [], documents: { state: 'complete' },
+    }).success).toBe(false);
+  });
   it('parses a success result', () => {
     const parsed = MemorySearchResultV1Schema.parse({
       v: 1,
@@ -40,7 +119,77 @@ describe('memory_search_result.v1 schema', () => {
   });
 });
 
+describe('negotiateMemorySearchV1', () => {
+  const query = { v: 1 as const, query: 'fact', scope: { type: 'global' as const }, mode: 'auto' as const };
+  const transcript = {
+    sessionId: 'session-1', seqFrom: 1, seqTo: 2, createdAtFromMs: 1, createdAtToMs: 2,
+    summary: 'Retained transcript', score: 0.5,
+  };
+
+  it('degrades an old-peer mixed request without sending an ignorable document corpus', async () => {
+    const search = vi.fn(async (_query: MemorySearchQueryV1) => ({ v: 1, ok: true, hits: [transcript] }));
+    const result = await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['sessions', 'documents'] },
+      readDocumentSearchSupport: async () => false,
+      search,
+    });
+    expect(search.mock.calls[0]?.[0]).toEqual(query);
+    expect(result).toEqual({ v: 1, ok: true, hits: [transcript], documents: { state: 'unavailable' } });
+  });
+
+  it('never searches transcripts for unsupported documents-only requests, including missing old status methods', async () => {
+    const search = vi.fn();
+    const result = await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['documents'] },
+      readDocumentSearchSupport: async () => {
+        throw Object.assign(new Error('Missing status'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+      },
+      search,
+    });
+    expect(result).toEqual({ v: 1, ok: true, hits: [], documents: { state: 'unavailable' } });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('requires document coverage even from an advertised peer and leaves legacy requests unprobed', async () => {
+    const readDocumentSearchSupport = vi.fn(async () => true);
+    const search = vi.fn(async (_query: MemorySearchQueryV1) => ({ v: 1, ok: true, hits: [transcript] }));
+    expect(await negotiateMemorySearchV1({ query, readDocumentSearchSupport, search }))
+      .toEqual({ v: 1, ok: true, hits: [transcript] });
+    expect(readDocumentSearchSupport).not.toHaveBeenCalled();
+    expect(await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['sessions', 'documents'] }, readDocumentSearchSupport, search,
+    })).toEqual({ v: 1, ok: true, hits: [transcript], documents: { state: 'unavailable' } });
+    expect(await negotiateMemorySearchV1({
+      query: { ...query, corpora: ['documents'] }, readDocumentSearchSupport, search,
+    })).toEqual({ v: 1, ok: true, hits: [], documents: { state: 'unavailable' } });
+  });
+
+  it('honors cancellation after probing and propagates genuine status failures', async () => {
+    const controller = new AbortController();
+    const search = vi.fn();
+    await expect(negotiateMemorySearchV1({
+      query: { ...query, corpora: ['documents'] },
+      readDocumentSearchSupport: async () => { controller.abort(); return true; },
+      search, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(search).not.toHaveBeenCalled();
+    const unavailable = new Error('Disconnected');
+    await expect(negotiateMemorySearchV1({
+      query: { ...query, corpora: ['documents'] },
+      readDocumentSearchSupport: async () => { throw unavailable; }, search,
+    })).rejects.toBe(unavailable);
+  });
+});
+
 describe('MemorySearchQueryV1Schema', () => {
+  it('admits only named nonempty corpora and leaves legacy omission untouched', () => {
+    const legacy = { v: 1, query: 'fact', scope: { type: 'global' }, mode: 'auto' };
+    expect(MemorySearchQueryV1Schema.parse(legacy)).not.toHaveProperty('corpora');
+    expect(MemorySearchQueryV1Schema.parse({ ...legacy, corpora: ['sessions', 'documents'] }).corpora)
+      .toEqual(['sessions', 'documents']);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...legacy, corpora: [] }).success).toBe(false);
+    expect(MemorySearchQueryV1Schema.safeParse({ ...legacy, corpora: ['library'] }).success).toBe(false);
+  });
   it('parses a basic query', () => {
     const parsed = MemorySearchQueryV1Schema.parse({
       v: 1,

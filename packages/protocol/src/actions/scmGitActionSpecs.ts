@@ -37,6 +37,8 @@ import {
 import {
   ScmRepositoryCloneInputSchema,
   ScmRepositoryCloneOutputSchema,
+  ScmHostingRepositoryResolveAddressRequestV1Schema,
+  ScmHostingRepositoryResolveAddressResponseV1Schema,
   SourceControlCloneProtocolSchema,
   type SourceControlCloneProtocol,
 } from '../scm/repositoryClone.js';
@@ -55,7 +57,8 @@ import * as scm from '../scm/index.js';
 import * as branches from '../scm/branches.js';
 import * as stash from '../scm/stash.js';
 import * as worktrees from '../scm/worktrees.js';
-import type { z } from 'zod';
+import { z } from 'zod';
+import { ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '../scm/entriesHistoryV1.js';
 import type { ActionId } from './actionIds.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
@@ -320,6 +323,25 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
         { path: 'commit', title: 'commit', widget: 'text' },
       ],
     },
+  }),
+  defineScmActionSpec({
+    id: 'scm.history.entries',
+    title: 'Entry history',
+    description: 'Read actual last-touch commits for demanded entries in the explicitly selected repository.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SCM_HISTORY_ENTRIES },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'read',
+    // The catalog needs classic Zod composition; parsing stays at the one Mini owner.
+    inputSchema: z.lazy(() => ScmHistoryEntriesInputV1Schema),
+    outputSchema: z.lazy(() => ScmHistoryEntriesResponseSchema),
+    inputHints: { title: 'Entry history', fields: [
+      { path: 'cwd', title: 'Working directory', widget: 'text' },
+      { path: 'folder', title: 'Folder', widget: 'text' },
+      { path: 'paths', title: 'Entries', widget: 'text_list', listSeparator: 'newline' },
+      { path: 'headOid', title: 'Observed HEAD', widget: 'text' },
+    ] },
   }),
   defineScmActionSpec({
     id: 'scm.log.list',
@@ -1291,6 +1313,19 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
         { path: 'confirmationToken', title: 'Confirmation token', widget: 'text', required: true },
       ],
     },
+  }),
+  defineScmActionSpec({
+    id: 'scm.hostingRepository.resolveAddress',
+    title: 'Resolve repository address',
+    description: 'Resolve a credential-free repository address through the selected Machine’s SCM hosting providers.',
+    safety: 'safe', placements: [], sideEffectClass: 'read',
+    bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS, sdkMethod: 'scm.hostingRepository.resolveAddress',
+      mcpToolName: 'scm_hosting_repository_resolve_address', voiceClientToolName: 'resolveScmRepositoryAddress' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    cli: { commands: [{ path: ['scm', 'hosting-repository', 'resolve-address'], visibility: 'canonical' }] },
+    inputSchema: ScmHostingRepositoryResolveAddressRequestV1Schema,
+    outputSchema: ScmHostingRepositoryResolveAddressResponseV1Schema,
+    inputHints: { title: 'Resolve repository address', fields: [{ path: 'address', title: 'Repository address', widget: 'text', required: true }] },
   }),
   defineScmActionSpec({
     id: 'scm.hostingRepository.describePublishTargets',

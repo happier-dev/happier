@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import type { ActionCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation } from '../actionCompletion.js';
@@ -9,7 +10,7 @@ import { ReviewPublicationEvidenceSchema, ReviewPublicationMaterializationSchema
 
 // Retained immediate output is a compatibility seam: additional owner fields survive,
 // but the launched run identity and the Action's intent must remain explicit.
-const FanoutOutputSchema = z.object({
+const FanoutOutputSchema = lazyZodSchema(() => z.object({
   intent: z.enum(['review', 'plan']),
   sessionId: z.string().nullable(),
   reviewedFingerprint: z.string().nullable().optional(),
@@ -17,14 +18,14 @@ const FanoutOutputSchema = z.object({
     z.object({ key: z.string().min(1), ok: z.literal(true), result: z.object({ runId: z.string().min(1) }).passthrough() }).passthrough(),
     z.object({ key: z.string().min(1), ok: z.literal(false), errorCode: z.string().min(1).optional(), error: z.string().min(1).optional() }).passthrough(),
   ])),
-}).passthrough();
+}).passthrough());
 
-const PerEngineOutcomeSchema = z.object({
+const PerEngineOutcomeSchema = lazyZodSchema(() => z.object({
   key: z.string().min(1), runId: z.string().min(1).optional(),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   reviewOutcome: z.enum(['complete', 'partial', 'failed', 'unavailable']).optional(),
   errorCode: z.string().min(1).optional(), materialization: ReviewPublicationMaterializationSchema.optional(),
-}).strict();
+}).strict());
 
 function readFanoutOutput(output: unknown, intent: 'review' | 'plan') {
   const parsed = FanoutOutputSchema.parse(output);
@@ -55,16 +56,16 @@ function launchFailureOutcomes(output: unknown, intent: 'review' | 'plan') {
   return readLaunches(output, intent).failed.map(({ key, errorCode }) => ({ key, errorCode, outcome: 'launch_failed' as const }));
 }
 
-const NarrationTerminalValueSchema = z.object({ runId: z.string().min(1).optional(),
+const NarrationTerminalValueSchema = lazyZodSchema(() => z.object({ runId: z.string().min(1).optional(),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   outputState: z.enum(['complete', 'partial', 'failed', 'cancelled']).optional(),
   errorCode: z.string().min(1).optional(), result: StrictJsonValueSchema.optional(),
-}).strict();
+}).strict());
 
-const NarrationLaunchSchema = z.object({ runId: z.string().min(1), comparisonId: z.string().min(1),
+const NarrationLaunchSchema = lazyZodSchema(() => z.object({ runId: z.string().min(1), comparisonId: z.string().min(1),
   observation: ReviewWalkthroughObservationSchema.optional(),
 }).passthrough().refine((launch) => !launch.observation || launch.observation.comparisonId === launch.comparisonId,
-  'Narrator observation must bind the launched comparison');
+  'Narrator observation must bind the launched comparison'));
 
 function narrationTerminalValue(run: ObservedRun) {
   if (run.outcome.kind === 'outcome_uncertain') throw new Error('Unsettled narration');
@@ -77,12 +78,12 @@ function narrationTerminalValue(run: ObservedRun) {
   };
 }
 
-export const ReviewStartTerminalValueV1Schema = z.object({
+export const ReviewStartTerminalValueV1Schema = lazyZodSchema(() => z.object({
   reviewedFingerprint: z.string().nullable(),
   commentIds: z.array(z.string().min(1)),
   perEngineOutcome: z.array(PerEngineOutcomeSchema),
   narration: NarrationTerminalValueSchema.optional(),
-}).strict();
+}).strict());
 
 export const reviewWalkthroughCompletion: ActionCompletionDeclaration = {
   awaits: 'execution_runs',

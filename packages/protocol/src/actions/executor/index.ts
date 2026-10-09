@@ -56,3 +56,4 @@ export type {
   WorkflowActionExecute,
   WorkflowActionExecuteArgs,
 } from './types.js';
+export { resolveProjectActionMachineV1, type ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';

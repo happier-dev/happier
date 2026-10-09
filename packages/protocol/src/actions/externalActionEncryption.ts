@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AccountApiTokenEncryptionAccessV1Schema, AccountApiTokenSummaryV1Schema } from '../auth/accountApiTokens.js';
@@ -9,7 +10,8 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { ActionExecuteResult } from './actionExecutionResult.js';
 import {
   ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema,
-  ExternalActionTargetV1Schema, ExternalActionServerPrincipalV1Schema,
+  ExternalActionTargetV1Schema, ExternalActionApiTokenServerPrincipalV1Schema,
+  ExternalActionAccountAuthenticationV1Schema, ExternalActionTerminalAuthenticationV1Schema,
   ExternalActionExecutionResultV1Schema, ExternalActionRequestEnvelopeV2Schema,
   ExternalActionResponseEnvelopeV2Schema, EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   EXTERNAL_ACTION_ENCRYPTED_REQUEST_PLAINTEXT_MAX_BYTES_V2,
@@ -23,27 +25,46 @@ import {
 } from './externalActionApi.js';
 
 /** Identity/routing objects are closed; opaque domain JSON retains its own schema. */
-const BindingSchema = z.object({
+const BindingRoutingShape = () => ({
   serverIdentityId: AccountApiTokenEncryptionAccessV1Schema.shape.serverIdentityId,
-  accountId: ExternalActionServerPrincipalV1Schema.shape.accountId,
+  accountId: ExternalActionApiTokenServerPrincipalV1Schema.shape.accountId,
+  actionId: ExternalActionActionIdV1Schema,
+  requestId: ExternalActionRequestIdV1Schema,
+  target: ExternalActionTargetV1Schema,
+});
+const ApiTokenBindingSchema = lazyZodSchema(() => z.object({
+  serverIdentityId: AccountApiTokenEncryptionAccessV1Schema.shape.serverIdentityId,
+  accountId: ExternalActionApiTokenServerPrincipalV1Schema.shape.accountId,
   credentialId: AccountApiTokenSummaryV1Schema.shape.tokenId,
   actionId: ExternalActionActionIdV1Schema,
   requestId: ExternalActionRequestIdV1Schema,
   target: ExternalActionTargetV1Schema,
-}).strict();
+}).strict());
+const AccountBindingSchema = lazyZodSchema(() => z.object({ ...BindingRoutingShape(),
+  // Ciphertext retains the signed credential kind and epoch, never a PAT-shaped alias or human upgrade.
+  authentication: z.union([ExternalActionAccountAuthenticationV1Schema.omit({ evidence: true }),
+    ExternalActionTerminalAuthenticationV1Schema.omit({ evidence: true })]),
+}).strict());
+const BindingSchema = lazyZodSchema(() => z.union([ApiTokenBindingSchema, AccountBindingSchema]));
 export type ExternalActionEncryptionBindingV2 = Readonly<z.infer<typeof BindingSchema>>;
 
-const RequestSchema = BindingSchema.extend({
+const requestShape = () => ({
   v: z.literal(2), direction: z.literal('request'), input: StrictJsonValueSchema,
-}).strict();
-const ResponseSchema = BindingSchema.extend({
+});
+const RequestSchema = lazyZodSchema(() => z.union([
+  ApiTokenBindingSchema.extend(requestShape()).strict(), AccountBindingSchema.extend(requestShape()).strict(),
+]));
+const responseShape = () => ({
   v: z.literal(2), direction: z.literal('response'),
   executedMachineId: ExternalActionTargetV1Schema.options[0].shape.machineId,
   requestPayloadDigest: z.string().regex(/^[A-Za-z0-9_-]{43}$/u).refine((value) => (
     encodeBase64(decodeBase64(value, 'base64url'), 'base64url') === value
   )),
   execution: ExternalActionExecutionResultV1Schema,
-}).strict();
+});
+const ResponseSchema = lazyZodSchema(() => z.union([
+  ApiTokenBindingSchema.extend(responseShape()).strict(), AccountBindingSchema.extend(responseShape()).strict(),
+]));
 
 type Material = Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
 type SealOptions = Readonly<{ material: Material; randomBytes: (length: number) => Uint8Array }>;
@@ -51,7 +72,11 @@ const kind = 'external_action_transport' as const;
 
 function matches(actual: ExternalActionEncryptionBindingV2, expected: ExternalActionEncryptionBindingV2): boolean {
   return actual.serverIdentityId === expected.serverIdentityId
-    && actual.accountId === expected.accountId && actual.credentialId === expected.credentialId
+    && actual.accountId === expected.accountId
+    && ('authentication' in actual
+      ? 'authentication' in expected && actual.authentication.kind === expected.authentication.kind
+        && actual.authentication.tokenEpoch === expected.authentication.tokenEpoch
+      : 'credentialId' in expected && actual.credentialId === expected.credentialId)
     && actual.actionId === expected.actionId && actual.requestId === expected.requestId
     && externalActionTargetsEqualV1(actual.target, expected.target);
 }
@@ -68,6 +93,8 @@ function open(ciphertext: string, material: Material, maximumPlaintextBytes: num
 
 export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   binding: ExternalActionEncryptionBindingV2; input: unknown;
+  managedAdmission?: ExternalActionRequestEnvelopeV2['managedAdmission'];
+  sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
 }>): ExternalActionRequestEnvelopeV2 {
   const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input });
   if (params.material.type !== 'dataKey' || params.material.machineKey.length !== 32) throw new TypeError('Invalid external Action material');
@@ -75,7 +102,9 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     throw new RangeError('External Action request exceeds its decoded limit');
   }
   const envelope: ExternalActionRequestEnvelopeV2 = { v: 2, requestId: payload.requestId, target: payload.target,
-    payload: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ ...params, kind, payload }) } };
+    payload: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ ...params, kind, payload }) },
+    ...(params.managedAdmission ? { managedAdmission: params.managedAdmission } : {}),
+    ...(params.sessionSpawnAdmission ? { sessionSpawnAdmission: params.sessionSpawnAdmission } : {}) };
   if (!isExternalActionRequestWithinLimit(envelope)) {
     throw new RangeError('External Action request exceeds its protected wire limit');
   }

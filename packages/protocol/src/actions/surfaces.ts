@@ -27,7 +27,8 @@ const RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS: readonly RuntimeActionIdV1[] = [
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ACTION_ID_FAMILIES_V1.local_services_inventory,
   ...ACTION_ID_FAMILIES_V1.local_services_launcher,
-  ...ACTION_ID_FAMILIES_V1.local_services_actions,
+  // Relocation ingress is recognized, but its native/source-bound leaf is not yet installed.
+  ...ACTION_ID_FAMILIES_V1.local_services_actions.filter(actionId => actionId !== 'projects.service.relocate'),
   ...ACTION_ID_FAMILIES_V1.local_services_public_preview,
   ...ACTION_ID_FAMILIES_V1.browser_control,
   ...ACTION_ID_FAMILIES_V1.browser_automation,

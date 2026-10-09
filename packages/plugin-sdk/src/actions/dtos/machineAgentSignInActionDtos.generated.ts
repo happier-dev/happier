@@ -148,7 +148,7 @@ export type MachineAgentSignInActionResultById = {
     } | {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
         error: string;
     } | {
         ok: false;

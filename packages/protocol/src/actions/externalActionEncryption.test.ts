@@ -25,6 +25,34 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('retains terminal authentication kind across encrypted finite requests and responses without an Account upgrade', () => {
+    const { credentialId: _credentialId, ...routing } = binding;
+    const terminal = { ...routing, actionId: 'projects.script.run', authentication: { kind: 'terminal' as const, tokenEpoch: 7 } };
+    const account = { ...terminal, authentication: { kind: 'account' as const, tokenEpoch: 7 } };
+    const input = { privateCommand: 'caller-owned finite work' };
+    const request = sealExternalActionRequestV2({ binding: terminal, input, material, randomBytes });
+    expect(openExternalActionRequestV2({ envelope: request, binding: terminal, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ envelope: request, binding: account, material })).toBeNull();
+    const response = prepareExternalActionResponseV2({ binding: terminal, request,
+      executedMachineId: binding.target.machineId, execution: { ok: true, result: { finite: true } }, material, randomBytes });
+    expect(openExternalActionResponseV2({ envelope: response.response, binding: terminal, request, material }))
+      .toEqual({ ok: true, result: { finite: true } });
+    expect(openExternalActionResponseV2({ envelope: response.response, binding: account, request, material })).toBeNull();
+  });
+  it('binds ordinary Account ciphertext to the exact authentication epoch without a PAT alias', () => {
+    const { credentialId: _credentialId, ...routing } = binding;
+    const accountBinding = { ...routing, authentication: { kind: 'account' as const, tokenEpoch: 7 } };
+    const input = { privateStartupInstructions: 'Do not expose this to the Home' };
+    const request = sealExternalActionRequestV2({ binding: accountBinding, input, material, randomBytes });
+    expect(openExternalActionRequestV2({ envelope: request, binding: accountBinding, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ envelope: request, binding: { ...accountBinding,
+      authentication: { kind: 'account', tokenEpoch: 8 } }, material })).toBeNull();
+    expect(openExternalActionRequestV2({ envelope: request, binding, material })).toBeNull();
+    const response = prepareExternalActionResponseV2({ binding: accountBinding, request,
+      executedMachineId: binding.target.machineId, execution: { ok: true, result: { managedId: 'waiting' } }, material, randomBytes });
+    expect(openExternalActionResponseV2({ envelope: response.response, binding: accountBinding, request, material }))
+      .toEqual({ ok: true, result: { managedId: 'waiting' } });
+  });
   it('preserves the complete decoded V1 request budget for domain input', () => {
       const target = binding.target;
       const input = { blob: '' };

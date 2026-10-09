@@ -17,6 +17,14 @@ export type SessionOrganizationMoveActionInputById = {
         parentRowId: string | null;
         depth: number | null;
         edge: 'top' | 'bottom' | null;
+        projection?: 'rail' | undefined;
+    };
+    readonly "session.organization.pin.set": {
+        pinned: boolean;
+        sessionId: string;
+        surface?: 'rail' | 'list' | undefined;
+        sortKey?: string | null | undefined;
+        serverId?: string | undefined;
     };
 };
 export type SessionOrganizationMoveActionResultById = {
@@ -30,5 +38,14 @@ export type SessionOrganizationMoveActionResultById = {
     } | {
         status: 'unknown';
         reason: string;
+    };
+    readonly "session.organization.pin.set": {
+        pin: {
+            sessionId: string;
+            sortKey: string | null;
+            pinnedAt: number;
+            listPinned: boolean;
+            railPinned: boolean;
+        } | null;
     };
 };

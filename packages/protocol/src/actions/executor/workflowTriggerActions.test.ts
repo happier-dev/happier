@@ -4,6 +4,7 @@ import type { AutomationDefinitionDetail, AutomationTriggerDetail } from '../../
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { createWorkflowTriggerActions, type WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
+import { SessionTriggerAddRequestV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
@@ -13,6 +14,7 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/a
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationPullRequestTriggerSchema } from '../../automations/automationTriggerDefinition.js';
 import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
+import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -31,6 +33,7 @@ function fixture() {
   // These operations are the persistent/network Automation boundary; all Action semantics and validation run real.
   const rows = new Map<string, AutomationDefinitionDetail>();
   let nextId = 0;
+  let managedControllerMachineId = 'controller';
   const artifact = { artifactId: workflow, ownerAccountId: 'owner', access: 'owner' as const,
     header: { kind: 'workflow-definition.v1', definitionId: workflow,
       revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } },
@@ -50,6 +53,12 @@ function fixture() {
     revision: 0, createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null });
   const deps: WorkflowTriggerActionsDependencies = {
     newId: (kind) => `${kind}-${++nextId}`,
+    resolveManagedMachine: async ({ homeId, managedId }) => ({ id: managedId, homeId, custodianAccountId: 'owner',
+      launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      controller: { machineId: managedControllerMachineId, installationId: 'controller-install' }, enrolledMachineId: project.machineId,
+      allocation: 'bound', resource: { contributionRef: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, value: {} },
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }),
     resolveRunSource: async () => ({ terminal: true }),
     resolveWorkflow: async (ref) => {
       const source = await resolveWorkflowDefinitionRefV1(ref, { readArtifact: (definitionId) => definitions.get({ definitionId }) });
@@ -126,10 +135,69 @@ function fixture() {
       delete: async (id) => { rows.delete(id); },
     },
   };
-  return { rows, deps, actions: createWorkflowTriggerActions(deps), loseSource: () => { artifacts.delete(workflow); } };
+  return { rows, deps, actions: createWorkflowTriggerActions(deps), loseSource: () => { artifacts.delete(workflow); },
+    setManagedController: (machineId: string) => { managedControllerMachineId = machineId; },
+    executor: (triggers: ReturnType<typeof createWorkflowTriggerActions>, ports: Partial<ActionExecutorDeps> = {}) => createActionExecutor({
+      ...ports,
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions, triggers,
+        runs: { execute: async () => { throw new Error('Unexpected Run write'); } } }),
+    }),
+  };
 }
 
 describe('workflow trigger Automation composition', () => {
+  it('moves only the exact managed inline scope binding after the resource controller changes', async () => {
+    const f = fixture();
+    const inline = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'stop',
+      actionId: 'machines.managed.power.set', input: {
+        homeId: { kind: 'literal', value: 'home' }, managedId: { kind: 'literal', value: 'managed' },
+        when: { kind: 'literal', value: 'after-idle' }, intent: { kind: 'literal', value: 'stop' },
+      } }] });
+    const actions = createWorkflowTriggerActions({ ...f.deps, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const bound = await actions.sessionAdd({ sessionId: 'session-one', project: { machineId: 'controller', directory: '~' },
+      target: { kind: 'inline', definition: inline }, executionTarget: { kind: 'detached_run' },
+      trigger: { kind: 'sessionLifecycle', sourceSessionId: 'session-one', events: ['sessionArchived'],
+        policy: { kind: 'everyMatch' }, enabled: true } });
+    const unrelated = await f.actions.add({ project, trigger, target: { kind: 'inline', definition } });
+    f.setManagedController('new-controller');
+    const machine = await f.deps.resolveManagedMachine!({ homeId: 'home', managedId: 'managed' });
+    await actions.moveManagedMachineScopeBindings({ machine, isCurrent: async () => true });
+    expect(f.rows.get(bound.set.automationId)?.assignments.map(value => value.machineId)).toEqual(['new-controller']);
+    expect(f.rows.get(unrelated.set.automationId)?.assignments.map(value => value.machineId)).toEqual(['machine-one']);
+  });
+
+  it('keeps an admitted Session trigger on its controller instead of moving it onto the source guest', async () => {
+    const f = fixture();
+    const controllerProject = { machineId: 'controller', directory: '~' };
+    const inline = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'stop',
+      actionId: 'machines.managed.power.set', input: {
+        homeId: { kind: 'literal', value: 'home' }, managedId: { kind: 'literal', value: 'managed' },
+        when: { kind: 'literal', value: 'after-idle' }, intent: { kind: 'literal', value: 'stop' },
+      } }] });
+    const actions = createWorkflowTriggerActions({ ...f.deps, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const result = await actions.sessionAdd(SessionTriggerAddRequestV1Schema.parse({ sessionId: 'session-one',
+      project: controllerProject, target: { kind: 'inline', definition: inline }, executionTarget: { kind: 'detached_run' },
+      trigger: { kind: 'sessionLifecycle', sourceSessionId: 'session-one', events: ['sessionArchived'],
+        policy: { kind: 'everyMatch' }, enabled: true } }));
+    expect(result.set.project).toEqual(controllerProject);
+    expect(f.rows.get(result.set.automationId)?.assignments.map(value => value.machineId)).toEqual(['controller']);
+    const updated = await actions.sessionUpdate({ sessionId: 'session-one', triggerId: result.triggerId!,
+      expectedRevision: result.set.revision, patch: { enabled: false } });
+    expect(updated.set.project).toEqual(controllerProject);
+  });
+
+  it('lists scheduled inline, saved-workflow and Session-owned sets through one Account query', async () => {
+    const f = fixture();
+    const actions = createWorkflowTriggerActions({ ...f.deps, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    await f.actions.add({ project, trigger, target: { kind: 'inline', definition } });
+    await f.actions.add({ project, trigger, workflow });
+    await actions.sessionAdd({ sessionId: 'session-one', trigger, target: { kind: 'inline', definition } });
+    // Exercise strict ingress as well as the real projection and Automation traversal.
+    const result = await f.actions.list({ scope: 'account_all' });
+    expect(result.sets).toHaveLength(3);
+    expect(result.sets.some(set => 'scopeSessionId' in set && set.scopeSessionId === 'session-one')).toBe(true);
+    expect((await f.actions.list({ scope: 'account_inline' })).sets).toHaveLength(1);
+  });
   it('prepares Session birth triggers without writing or choosing the source Session', async () => {
     const { rows, deps } = fixture();
     const actions = createWorkflowTriggerActions({ ...deps,
@@ -670,32 +738,161 @@ describe('workflow trigger Automation composition', () => {
     expect((await actions.sessionRemove({ sessionId: 'session-one', triggerId: added.triggerId! })).set.triggers).toEqual([]);
   });
   it('admits direct own-session agent writes through ORC and denies unrelated Session writes', async () => {
-    const { deps, rows } = fixture();
+    const { deps, rows, executor } = fixture();
     const actions = createWorkflowTriggerActions({ ...deps, resolveSession: async () => ({ project, nativeGoalOwner: false }),
       resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
     const caller = ownCaller;
-    await expect(actions.sessionAdd({ sessionId: 'unrelated', target: { kind: 'inline', definition }, trigger }, caller))
-      .rejects.toMatchObject({ code: 'subtree_denied' });
-    await expect(actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition }, trigger }, {
+    const boundary = executor(actions);
+    expect(await boundary.execute('session.trigger.add', { sessionId: 'unrelated', target: { kind: 'inline', definition }, trigger }, caller))
+      .toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+    expect(await boundary.execute('session.trigger.add', { sessionId: 'session-one', target: { kind: 'inline', definition }, trigger }, {
       ...caller, agentStartContext: { ...caller.agentStartContext, caller: { ...caller.agentStartContext.caller, turnDepth: 4 } },
-    })).rejects.toMatchObject({ code: 'work_depth_exceeded' });
+    })).toMatchObject({ ok: false, errorCode: 'work_depth_exceeded' });
     expect(rows.size).toBe(0);
-    const own = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition }, trigger }, caller);
-    expect(own.set.health).toBe('available');
+    expect(await boundary.execute('session.trigger.add', { sessionId: 'session-one', target: { kind: 'inline', definition }, trigger }, caller))
+      .toMatchObject({ ok: true, result: { set: { health: 'available' } } });
+  });
+  it.each(['read', 'read_after_await', 'read_after_projection', 'account_read', 'write', 'sealed_write', 'update', 'sealed_update'] as const)('rechecks a captured led Session grant before trigger %s', async (operation) => {
+    const { deps, rows, executor } = fixture();
+    let accessible = true;
+    let revokeDuringRead = false;
+    const currentCorpus = {
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: accessible ? [{ id: 'report', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+    };
+    const actions = createWorkflowTriggerActions({ ...deps, ...currentCorpus,
+      resolveSession: async () => {
+        if (revokeDuringRead) accessible = false;
+        return { project, nativeGoalOwner: false };
+      },
+      resolveMaterializer: async () => {
+        if (operation === 'write' || operation === 'update') accessible = false;
+        return { effects: { resolveTargetAvailability: async () => true } };
+      },
+      sealContext: async (input) => {
+        if (operation === 'sealed_write' || operation === 'sealed_update') accessible = false;
+        return deps.sealContext(input);
+      },
+      openContext: async (row) => {
+        if (operation === 'read_after_projection') accessible = false;
+        return deps.openContext(row);
+      },
+    });
+    const boundary = executor(actions);
+    const caller = { ...ownCaller, defaultSessionId: 'session-one',
+      agentStartContext: { ...ownCaller.agentStartContext, ledSubtreeSessionIds: ['report'] } };
+    expect(await boundary.execute('session.trigger.list', { sessionId: 'report' }, caller))
+      .toMatchObject({ ok: true, result: { sessionId: 'report', sets: [] } });
+    if (operation === 'read' || operation === 'read_after_await' || operation === 'read_after_projection' || operation === 'account_read') {
+      if (operation === 'read_after_projection' || operation === 'account_read') {
+        await actions.sessionAdd({ sessionId: 'report', target: { kind: 'inline', definition }, trigger });
+      }
+      accessible = operation !== 'read';
+      revokeDuringRead = operation === 'read_after_await';
+      if (operation === 'account_read') accessible = false;
+      const result = operation === 'account_read'
+        ? await boundary.execute('workflow.trigger.list', { scope: 'account_all' }, caller)
+        : await boundary.execute('session.trigger.list', { sessionId: 'report' }, caller);
+      expect(result).toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+    } else if (operation === 'update' || operation === 'sealed_update') {
+      const added = await actions.sessionAdd({ sessionId: 'report', target: { kind: 'inline', definition }, trigger });
+      accessible = true;
+      const result = await boundary.execute('session.trigger.update', { sessionId: 'report', triggerId: added.triggerId!,
+        expectedRevision: added.set.revision, patch: { enabled: false } }, caller);
+      expect(result).toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+      expect(rows.get(added.set.automationId)?.triggers[0]?.enabled).toBe(true);
+    } else {
+      expect(await boundary.execute('session.trigger.add', { sessionId: 'report', target: { kind: 'inline', definition }, trigger }, caller))
+        .toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+    }
+    if (operation === 'read' || operation === 'read_after_await' || operation === 'write' || operation === 'sealed_write') expect(rows.size).toBe(0);
+  });
+  it('fails captured led Session access closed when the current corpus transport is unavailable', async () => {
+    const { deps, executor } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    expect(await executor(actions).execute('session.trigger.list', { sessionId: 'report' }, { ...ownCaller,
+      agentStartContext: { ...ownCaller.agentStartContext, ledSubtreeSessionIds: ['report'] } }))
+      .toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+  });
+  it('admits own and currently led Sessions while leaving Account triggers independent of Session access', async () => {
+    const { deps, executor } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: [{ id: 'report', active: false, presence: 'offline', updatedAt: 10 }],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const boundary = executor(actions);
+    for (const sessionId of ['session-one', 'report']) {
+      expect(await boundary.execute('session.trigger.add', { sessionId, target: { kind: 'inline', definition }, trigger }, ownCaller))
+        .toMatchObject({ ok: true, result: { set: { scopeSessionId: sessionId, health: 'available' } } });
+      expect(await boundary.execute('session.trigger.list', { sessionId }, ownCaller))
+        .toMatchObject({ ok: true, result: { sets: [expect.objectContaining({ scopeSessionId: sessionId })] } });
+    }
+    const presentUser = { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+      presentUserConfirmation: { actionId: 'workflow.trigger.add' as const } };
+    expect(await boundary.execute('workflow.trigger.add', { project, target: { kind: 'inline', definition }, trigger }, presentUser))
+      .toMatchObject({ ok: true, result: { set: { scopeSessionId: null } } });
+    expect(await boundary.execute('workflow.trigger.list', { scope: 'account_inline' }, presentUser))
+      .toMatchObject({ ok: true, result: { sets: [expect.objectContaining({ scopeSessionId: null })] } });
+  });
+  it('does not remove a captured led Session trigger after access is revoked during its read', async () => {
+    const { deps, rows, executor } = fixture();
+    let accessible = true;
+    let revokeDuringRead = false;
+    const actions = createWorkflowTriggerActions({ ...deps,
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: accessible ? [{ id: 'report', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      automations: { ...deps.automations, get: async (id) => {
+        const row = await deps.automations.get(id);
+        if (revokeDuringRead) accessible = false;
+        return row;
+      } },
+    });
+    const added = await actions.sessionAdd({ sessionId: 'report', target: { kind: 'inline', definition }, trigger });
+    revokeDuringRead = true;
+    expect(await executor(actions).execute('session.trigger.remove', { sessionId: 'report', triggerId: added.triggerId! }, { ...ownCaller,
+      agentStartContext: { ...ownCaller.agentStartContext, ledSubtreeSessionIds: ['report'] } }))
+      .toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+    expect(rows.get(added.set.automationId)?.triggers).toHaveLength(1);
   });
   it('permits an originless run to remove exactly its own firing trigger without opening a missing source', async () => {
-    const { deps, loseSource } = fixture();
+    const { deps, rows, loseSource, executor } = fixture();
     let firing: { sessionId: string; triggerId: string } | null = null;
+    let revokeDuringRead = false;
     const actions = createWorkflowTriggerActions({ ...deps, resolveSession: async () => ({ project, nativeGoalOwner: false }),
-      resolveRunTrigger: async () => firing });
+      resolveRunTrigger: async () => firing,
+      automations: { ...deps.automations, get: async (id) => {
+        const row = await deps.automations.get(id);
+        if (revokeDuringRead) firing = null;
+        return row;
+      } },
+    });
     const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'workflow', ref: workflow }, trigger });
     firing = { sessionId: 'session-one', triggerId: added.triggerId! };
     const caller = { surface: 'agent' as const, actionCaller: { kind: 'workflowRun' as const, runId: 'run-one',
       authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } } };
-    await expect(actions.sessionRemove({ sessionId: 'other', triggerId: added.triggerId! }, caller)).rejects.toMatchObject({ code: 'run_access_denied' });
-    await expect(actions.sessionRemove({ sessionId: 'session-one', triggerId: 'other-trigger' }, caller)).rejects.toMatchObject({ code: 'run_access_denied' });
+    const boundary = executor(actions);
+    expect(await boundary.execute('session.trigger.remove', { sessionId: 'other', triggerId: added.triggerId! }, caller))
+      .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+    expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: 'other-trigger' }, caller))
+      .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
     loseSource();
-    expect((await actions.sessionRemove({ sessionId: 'session-one', triggerId: added.triggerId! }, caller)).set.triggers).toEqual([]);
+    revokeDuringRead = true;
+    expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: added.triggerId! }, caller))
+      .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+    expect(rows.get(added.set.automationId)?.triggers).toHaveLength(1);
+    revokeDuringRead = false;
+    firing = { sessionId: 'session-one', triggerId: added.triggerId! };
+    expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: added.triggerId! }, caller))
+      .toMatchObject({ ok: true, result: { set: { triggers: [] } } });
   });
   it('consumes session trigger writes directly through the real Action executor without an approval', async () => {
     const { deps, rows } = fixture();

@@ -30,7 +30,9 @@ export function zodSchemaToJsonSchemaObject(
   options?: Readonly<{ target?: 'draft-2020-12' | 'draft-7' }>,
 ): JsonSchemaObject {
   try {
-    const projectedSchema = schema.toJSONSchema({
+    // The top-level projector supplies native processors for genuine Mini/Core
+    // children; an instance method only carries its Classic processors.
+    const projectedSchema = z.toJSONSchema(schema, {
       io: 'input',
       target: options?.target ?? 'draft-2020-12',
       unrepresentable: 'throw',

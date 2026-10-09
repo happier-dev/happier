@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -6,7 +7,10 @@ import {
 } from '../../plugins/actions/protocolComposableSchema.js';
 
 /** The Launch Profile V2 owner's existing trim and UTF-16 length contract. */
-export const LaunchProfileIdV2Schema = z.string().trim().min(1).max(256);
+export const LaunchProfileIdV2Schema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+
+/** Retained predecessor identities are exact nonempty strings; new inline V2 authoring keeps its own stricter contract. */
+export const ProfileRecordIdV1Schema = lazyZodSchema(() => z.string().min(1));
 
 /** Neutral projection of the same parser, for references embedded in Action inputs. */
 export const LaunchProfileIdV2ProtocolSchema = createProtocolComposableSchema<string, string>(

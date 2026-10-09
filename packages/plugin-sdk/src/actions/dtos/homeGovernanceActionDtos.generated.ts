@@ -38,6 +38,46 @@ export type HomeGovernanceActionInputById = {
     };
     readonly "home.accounts.delete": {
         accountId: string;
+        managedResourceDispositions?: {
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            responsibility: 'manual';
+            expectedResource?: {
+                contributionRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                schemaVersion: number;
+                value: unknown;
+                devcontainerObservation?: {
+                    nativeResourceId: string;
+                    user: string;
+                    workspaceFolder: string;
+                    storage: {
+                        kind: 'bind';
+                        hostPath: string;
+                        childPath: string;
+                    } | {
+                        kind: 'child';
+                        childPath: string;
+                    };
+                } | undefined;
+            } | undefined;
+            expectedNativeOperationRef?: {
+                value: unknown;
+                contributionRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                schemaVersion: number;
+            } | undefined;
+            expectedRecovery?: {
+                reference: string;
+                reason: string;
+                consoleUrl?: string | undefined;
+            } | undefined;
+        }[] | undefined;
     };
     readonly "home.accounts.signOutEverywhere": {
         accountId: string;
@@ -51,7 +91,7 @@ export type HomeGovernanceActionInputById = {
             enabledMethodIds?: string[] | undefined;
             permittedAccountModes?: ('e2ee' | 'plain')[] | undefined;
             recommendedProvisioningMode?: 'e2ee' | 'plain' | undefined;
-            admission?: 'self_service' | 'closed' | 'invitation_only' | undefined;
+            admission?: 'closed' | 'self_service' | 'invitation_only' | undefined;
             signInService?: {
                 mode: 'disabled';
             } | null | undefined;
@@ -107,7 +147,7 @@ export type HomeGovernanceActionResultById = {
         viewer: {
             accountId: string;
             homeRole: 'owner' | 'admin' | 'member';
-            status: 'disabled' | 'active' | 'suspended';
+            status: 'active' | 'suspended' | 'disabled';
         };
         capabilities: {
             viewAdministration: boolean;
@@ -130,7 +170,7 @@ export type HomeGovernanceActionResultById = {
                 enabledMethodIds: string[] | null;
                 permittedAccountModes: ('e2ee' | 'plain')[] | null;
                 recommendedProvisioningMode: 'e2ee' | 'plain' | null;
-                admission: 'self_service' | 'closed' | 'invitation_only' | null;
+                admission: 'closed' | 'self_service' | 'invitation_only' | null;
                 signInServiceDisabled: boolean;
                 anonymousSignup?: boolean | null | undefined;
                 storagePolicy?: 'optional' | 'required_e2ee' | 'plaintext_only' | null | undefined;
@@ -191,7 +231,7 @@ export type HomeGovernanceActionResultById = {
             permittedAccountModes: ('e2ee' | 'plain')[];
             recommendedProvisioningMode: 'e2ee' | 'plain' | null;
             signInService: {
-                deploymentMode: 'disabled' | 'self' | 'external' | null;
+                deploymentMode: 'external' | 'disabled' | 'self' | null;
                 canDisable: boolean;
             };
             anonymousSignup?: {
@@ -233,7 +273,7 @@ export type HomeGovernanceActionResultById = {
         items: {
             accountId: string;
             homeRole: 'owner' | 'admin' | 'member';
-            status: 'disabled' | 'active' | 'suspended';
+            status: 'active' | 'suspended' | 'disabled';
             profile: {
                 firstName: string | null;
                 lastName: string | null;
@@ -309,7 +349,7 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.get": {
         accountId: string;
         homeRole: 'owner' | 'admin' | 'member';
-        status: 'disabled' | 'active' | 'suspended';
+        status: 'active' | 'suspended' | 'disabled';
         profile: {
             firstName: string | null;
             lastName: string | null;
@@ -543,8 +583,8 @@ export type HomeGovernanceActionResultById = {
         } | {
             action: 'account.status.set';
             summary: {
-                from: 'disabled' | 'active' | 'suspended';
-                to: 'disabled' | 'active' | 'suspended';
+                from: 'active' | 'suspended' | 'disabled';
+                to: 'active' | 'suspended' | 'disabled';
             };
             id: string;
             at: number;
@@ -898,7 +938,7 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.role.set": {
         accountId: string;
         homeRole: 'owner' | 'admin' | 'member';
-        status: 'disabled' | 'active' | 'suspended';
+        status: 'active' | 'suspended' | 'disabled';
         profile: {
             firstName: string | null;
             lastName: string | null;
@@ -960,7 +1000,7 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.disable": {
         accountId: string;
         homeRole: 'owner' | 'admin' | 'member';
-        status: 'disabled' | 'active' | 'suspended';
+        status: 'active' | 'suspended' | 'disabled';
         profile: {
             firstName: string | null;
             lastName: string | null;
@@ -1022,7 +1062,7 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.enable": {
         accountId: string;
         homeRole: 'owner' | 'admin' | 'member';
-        status: 'disabled' | 'active' | 'suspended';
+        status: 'active' | 'suspended' | 'disabled';
         profile: {
             firstName: string | null;
             lastName: string | null;
@@ -1089,7 +1129,7 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.signOutEverywhere": {
         accountId: string;
         homeRole: 'owner' | 'admin' | 'member';
-        status: 'disabled' | 'active' | 'suspended';
+        status: 'active' | 'suspended' | 'disabled';
         profile: {
             firstName: string | null;
             lastName: string | null;
@@ -1158,7 +1198,7 @@ export type HomeGovernanceActionResultById = {
             enabledMethodIds: string[] | null;
             permittedAccountModes: ('e2ee' | 'plain')[] | null;
             recommendedProvisioningMode: 'e2ee' | 'plain' | null;
-            admission: 'self_service' | 'closed' | 'invitation_only' | null;
+            admission: 'closed' | 'self_service' | 'invitation_only' | null;
             signInServiceDisabled: boolean;
             anonymousSignup?: boolean | null | undefined;
             storagePolicy?: 'optional' | 'required_e2ee' | 'plaintext_only' | null | undefined;
@@ -1203,15 +1243,15 @@ export type HomeGovernanceActionResultById = {
         entries: {
             key: string;
             value: unknown;
-            source: 'home' | 'default' | 'deployment';
+            source: 'default' | 'home' | 'deployment';
             fixed: boolean;
             editable: 'home' | 'bootstrap';
             apply: 'live' | 'restart';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
             declaration?: {
-                type: 'string' | 'boolean' | 'int' | 'enum' | 'url' | 'email' | 'float' | 'list' | 'json';
-                section: 'email' | 'reach' | 'policies' | 'features' | 'data' | 'runtime' | 'server';
+                type: 'string' | 'boolean' | 'int' | 'enum' | 'email' | 'url' | 'float' | 'list' | 'json';
+                section: 'email' | 'data' | 'reach' | 'policies' | 'features' | 'runtime' | 'server';
                 group?: string | undefined;
                 family?: string | undefined;
                 featureId?: string | undefined;
@@ -1231,9 +1271,9 @@ export type HomeGovernanceActionResultById = {
             } | undefined;
         }[];
         featureDecisions?: {
-            featureId: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
+            featureId: 'search' | 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
             state: 'unknown' | 'disabled' | 'enabled' | 'unsupported';
-            blockedBy: 'scope' | 'server' | 'client' | 'build_policy' | 'local_policy' | 'daemon' | 'dependency' | null;
+            blockedBy: 'scope' | 'daemon' | 'server' | 'client' | 'build_policy' | 'local_policy' | 'dependency' | null;
             blockerCode: 'none' | 'not_implemented' | 'build_disabled' | 'flag_disabled' | 'endpoint_missing' | 'feature_disabled' | 'capability_missing' | 'probe_failed' | 'mixed_scope_support' | 'misconfigured' | 'dependency_disabled' | 'dependency_unknown';
             diagnostics: string[];
             evaluatedAt: number;
@@ -1242,7 +1282,7 @@ export type HomeGovernanceActionResultById = {
                 serverId?: string | undefined;
                 machineId?: string | undefined;
             };
-            blockingDependencyId?: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
+            blockingDependencyId?: 'search' | 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
         }[] | undefined;
     };
     readonly "home.settings.set": {
@@ -1251,15 +1291,15 @@ export type HomeGovernanceActionResultById = {
         entries: {
             key: string;
             value: unknown;
-            source: 'home' | 'default' | 'deployment';
+            source: 'default' | 'home' | 'deployment';
             fixed: boolean;
             editable: 'home' | 'bootstrap';
             apply: 'live' | 'restart';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
             declaration?: {
-                type: 'string' | 'boolean' | 'int' | 'enum' | 'url' | 'email' | 'float' | 'list' | 'json';
-                section: 'email' | 'reach' | 'policies' | 'features' | 'data' | 'runtime' | 'server';
+                type: 'string' | 'boolean' | 'int' | 'enum' | 'email' | 'url' | 'float' | 'list' | 'json';
+                section: 'email' | 'data' | 'reach' | 'policies' | 'features' | 'runtime' | 'server';
                 group?: string | undefined;
                 family?: string | undefined;
                 featureId?: string | undefined;
@@ -1279,9 +1319,9 @@ export type HomeGovernanceActionResultById = {
             } | undefined;
         }[];
         featureDecisions?: {
-            featureId: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
+            featureId: 'search' | 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
             state: 'unknown' | 'disabled' | 'enabled' | 'unsupported';
-            blockedBy: 'scope' | 'server' | 'client' | 'build_policy' | 'local_policy' | 'daemon' | 'dependency' | null;
+            blockedBy: 'scope' | 'daemon' | 'server' | 'client' | 'build_policy' | 'local_policy' | 'dependency' | null;
             blockerCode: 'none' | 'not_implemented' | 'build_disabled' | 'flag_disabled' | 'endpoint_missing' | 'feature_disabled' | 'capability_missing' | 'probe_failed' | 'mixed_scope_support' | 'misconfigured' | 'dependency_disabled' | 'dependency_unknown';
             diagnostics: string[];
             evaluatedAt: number;
@@ -1290,7 +1330,7 @@ export type HomeGovernanceActionResultById = {
                 serverId?: string | undefined;
                 machineId?: string | undefined;
             };
-            blockingDependencyId?: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
+            blockingDependencyId?: 'search' | 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'prompts.library' | 'prompts.assets.external' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'prompts.skills.registries' | 'teams.credentialResources.externalApi' | 'workflows' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'mcp.servers' | 'memory.search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
         }[] | undefined;
     };
     readonly "home.mailDelivery.get": {
@@ -1468,8 +1508,8 @@ export type HomeGovernanceActionResultById = {
         } | {
             action: 'account.status.set';
             summary: {
-                from: 'disabled' | 'active' | 'suspended';
-                to: 'disabled' | 'active' | 'suspended';
+                from: 'active' | 'suspended' | 'disabled';
+                to: 'active' | 'suspended' | 'disabled';
             };
             id: string;
             at: number;
@@ -1824,12 +1864,12 @@ export type HomeGovernanceActionResultById = {
     readonly "home.reachability.get": {
         publicAddress: {
             url: string | null;
-            source: 'home' | 'deployment' | 'none' | 'inferred';
+            source: 'home' | 'none' | 'deployment' | 'inferred';
             inferredFrom?: 'relay_access' | 'tailscale_serve' | 'tailscale_funnel' | undefined;
         };
         webApp: {
             url: string;
-            source: 'home' | 'default' | 'deployment' | 'public_address';
+            source: 'default' | 'home' | 'deployment' | 'public_address';
         };
         hostAccess: {
             method: 'tailscale_serve' | 'tailscale_funnel' | 'local_only' | 'lan' | 'cloudflare_tunnel';
@@ -1840,7 +1880,7 @@ export type HomeGovernanceActionResultById = {
             availability: 'available' | 'not_available';
             mode: 'disabled' | 'enabled';
             modeFixed: boolean;
-            state: 'active' | 'unavailable' | 'failed' | 'not_composed' | 'starting' | 'stopping' | 'retired';
+            state: 'unavailable' | 'active' | 'retired' | 'failed' | 'not_composed' | 'starting' | 'stopping';
             endpointId: string | null;
             failureReason: string | null;
         };
@@ -1848,12 +1888,12 @@ export type HomeGovernanceActionResultById = {
     readonly "home.reachability.iroh.set": {
         publicAddress: {
             url: string | null;
-            source: 'home' | 'deployment' | 'none' | 'inferred';
+            source: 'home' | 'none' | 'deployment' | 'inferred';
             inferredFrom?: 'relay_access' | 'tailscale_serve' | 'tailscale_funnel' | undefined;
         };
         webApp: {
             url: string;
-            source: 'home' | 'default' | 'deployment' | 'public_address';
+            source: 'default' | 'home' | 'deployment' | 'public_address';
         };
         hostAccess: {
             method: 'tailscale_serve' | 'tailscale_funnel' | 'local_only' | 'lan' | 'cloudflare_tunnel';
@@ -1864,7 +1904,7 @@ export type HomeGovernanceActionResultById = {
             availability: 'available' | 'not_available';
             mode: 'disabled' | 'enabled';
             modeFixed: boolean;
-            state: 'active' | 'unavailable' | 'failed' | 'not_composed' | 'starting' | 'stopping' | 'retired';
+            state: 'unavailable' | 'active' | 'retired' | 'failed' | 'not_composed' | 'starting' | 'stopping';
             endpointId: string | null;
             failureReason: string | null;
         };

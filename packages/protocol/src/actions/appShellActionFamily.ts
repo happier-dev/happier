@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { SessionDraftAddressV1Schema } from '../drafts/sessionDrafts.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -11,7 +12,7 @@ export function isAppShellActionId(value: string): value is AppShellActionId {
   return (APP_SHELL_ACTION_IDS as readonly string[]).includes(value);
 }
 
-const InboxTargetSchema = z.object({ serverId: z.string().min(1), sessionId: z.string().min(1) }).strict();
+const InboxTargetSchema = lazyZodSchema(() => z.object({ serverId: z.string().min(1), sessionId: z.string().min(1) }).strict());
 export const AppShellActionInputSchemas = {
   'inbox.mark_all_read': z.object({ targets: z.array(InboxTargetSchema) }).strict(),
   'session.draft.delete': z.object({ draftId: SessionDraftAddressV1Schema.options[0].shape.draftId }).strict(),

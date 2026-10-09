@@ -16,7 +16,7 @@ export type AppUpdatesActionInputById = {
 export type AppUpdatesActionResultById = {
     readonly "app.updates.get": {
         channel: 'desktop' | 'native-store' | 'web-ui' | 'ota' | 'none';
-        state: 'unchecked' | 'checking' | 'upToDate' | 'available' | 'required' | 'running' | 'ready' | 'failed' | 'unknown' | 'offline';
+        state: 'unknown' | 'unchecked' | 'checking' | 'upToDate' | 'available' | 'required' | 'running' | 'ready' | 'failed' | 'offline';
         currentVersion: string | null;
         latestVersion: string | null;
         checkedAt: number | null;

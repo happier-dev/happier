@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeWaitActionV1 } from './waitAction.js';
 import { WaitActionInputV1Schema } from '../specs/wait.js';
 import { waitForExecutionRunTerminal } from '../../execution/runs/waitForTerminal.js';
-import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
 import { WorkflowRunSummaryV1Schema } from '../../workflows/workflowProgressV1.js';
+import { createRpcCallError, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 function run(status: 'running' | 'failed' | 'succeeded') {
   return { runId: 'run', callId: 'call', sidechainId: 'call', intent: 'delegate',
@@ -15,6 +15,51 @@ function run(status: 'running' | 'failed' | 'succeeded') {
 afterEach(() => vi.useRealTimers());
 
 describe('generic wait observation', () => {
+  it.each(['returned', 'thrown'] as const)('reports authenticated operation RPC access denial as permission denied when %s', async delivery => {
+    const target = { kind: 'action_operation', serverId: 'home', machineId: 'machine', operationId: 'operation' } as const;
+    const denial = { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN };
+    expect(await executeWaitActionV1({ target, condition: { kind: 'terminal' } }, {
+      // The existing Home RPC transport may return its denial or throw the
+      // canonical RpcError; neither is evidence of an unknown process outcome.
+      operation: async () => {
+        if (delivery === 'thrown') throw createRpcCallError(denial);
+        return denial;
+      },
+    })).toMatchObject({ disposition: 'permission_denied' });
+  });
+  it('keeps qualified operation observation cancellation separate from work and reports lost evidence as uncertain', async () => {
+    const target = { kind: 'action_operation', serverId: 'home', machineId: 'machine', operationId: 'operation' } as const;
+    const abort = new AbortController();
+    const waiting = executeWaitActionV1({ target, condition: { kind: 'terminal' } }, {
+      operation: async (_target, options) => await new Promise<never>((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+      }),
+    }, { signal: abort.signal });
+    abort.abort();
+    expect(await waiting).toMatchObject({ disposition: 'cancelled' });
+    expect(await executeWaitActionV1({ target, condition: { kind: 'terminal' } }, {
+      operation: async () => { throw new Error('Exact completion observation lost'); },
+    })).toMatchObject({ disposition: 'outcome_uncertain' });
+  });
+  it('observes the same qualified action operation terminal failure without treating acceptance as completion', async () => {
+    const operationTarget = { kind: 'action_operation', serverId: 'home', machineId: 'machine', operationId: 'operation' } as const;
+    expect(WaitActionInputV1Schema.safeParse({ target: operationTarget, condition: { kind: 'terminal' } }).success).toBe(true);
+    let release!: () => void;
+    const exit = new Promise<void>(resolve => { release = resolve; });
+    const waiting = executeWaitActionV1({ target: operationTarget, condition: { kind: 'terminal' } }, {
+      operation: async () => { await exit; return { disposition: 'matched', snapshot: {
+        version: 1, operationId: 'operation', revision: 3, actionId: 'projects.script.run', state: 'failed',
+        scope: { accountId: 'account', machineId: 'machine' }, title: 'Run script', createdAt: 1,
+        startedAt: 2, settledAt: 3, error: { errorCode: 'process_exit_nonzero', error: 'Process failed' }, cancellation: 'supported',
+      } }; },
+    });
+    let settled = false;
+    void waiting.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    expect(await waiting).toMatchObject({ target: operationTarget, disposition: 'matched', snapshot: { state: 'failed' } });
+  });
   const target = { kind: 'execution_run', serverId: 'home', machineId: 'machine', runId: 'run' } as const;
   it('returns terminal evidence only after the execution owner completes custody', async () => {
     let release!: () => void;
@@ -67,6 +112,7 @@ describe('generic wait observation', () => {
   });
   it.each(['terminal', 'needs_attention', 'timeout', 'paused'] as const)(
     'consumes FIN %s evidence without another lifecycle decision', async (observation) => {
+      const { createWorkflowAccountRunActionOwner } = await import('./workflowRunActions.js');
       const runId = '11111111-1111-4111-8111-111111111111';
       const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
         id: runId, origin: { kind: 'direct' }, state: observation === 'terminal' ? 'succeeded' : observation === 'paused' ? 'paused' : 'running',
@@ -100,6 +146,7 @@ describe('generic wait observation', () => {
     })).toMatchObject({ disposition: 'matched', snapshot: { disposition: 'needs_attention', status: 'running' } });
   });
   it.each(['terminal', 'needs_attention', 'terminal_or_needs_attention'] as const)('delegates workflow %s selection to FIN', async (kind) => {
+    const { createWorkflowAccountRunActionOwner } = await import('./workflowRunActions.js');
     const runId = '11111111-1111-4111-8111-111111111111';
     const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
       id: runId, origin: { kind: 'direct' }, state: 'running', attentionRequired: true,

@@ -33,7 +33,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
             sessionId?: string | undefined;
         } | {
@@ -46,7 +46,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -57,7 +57,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -68,7 +68,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -79,7 +79,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
             sourceId?: string | undefined;
         };
@@ -115,7 +115,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
             sessionId?: string | undefined;
         } | {
@@ -128,7 +128,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -139,7 +139,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -150,7 +150,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
         } | {
             targetId: string;
@@ -161,7 +161,7 @@ export type BrowserControlActionInputById = {
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
             } | undefined;
             sourceId?: string | undefined;
         };
@@ -238,7 +238,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -251,7 +251,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -262,7 +262,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -273,7 +273,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -284,7 +284,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -473,7 +473,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -486,7 +486,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -497,7 +497,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -508,7 +508,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -519,7 +519,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -727,7 +727,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -740,7 +740,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -751,7 +751,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -762,7 +762,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -773,7 +773,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -962,7 +962,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -975,7 +975,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -986,7 +986,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -997,7 +997,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1008,7 +1008,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -1216,7 +1216,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -1229,7 +1229,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1240,7 +1240,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1251,7 +1251,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1262,7 +1262,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -1451,7 +1451,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -1464,7 +1464,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1475,7 +1475,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1486,7 +1486,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1497,7 +1497,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -1700,7 +1700,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -1713,7 +1713,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1724,7 +1724,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1735,7 +1735,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1746,7 +1746,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -1935,7 +1935,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -1948,7 +1948,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1959,7 +1959,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1970,7 +1970,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -1981,7 +1981,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -2184,7 +2184,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -2197,7 +2197,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2208,7 +2208,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2219,7 +2219,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2230,7 +2230,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -2419,7 +2419,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -2432,7 +2432,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2443,7 +2443,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2454,7 +2454,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2465,7 +2465,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -2668,7 +2668,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -2681,7 +2681,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2692,7 +2692,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2703,7 +2703,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2714,7 +2714,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -2903,7 +2903,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -2916,7 +2916,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2927,7 +2927,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2938,7 +2938,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -2949,7 +2949,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -3152,7 +3152,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -3165,7 +3165,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3176,7 +3176,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3187,7 +3187,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3198,7 +3198,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -3387,7 +3387,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -3400,7 +3400,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3411,7 +3411,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3422,7 +3422,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3433,7 +3433,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -3636,7 +3636,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -3649,7 +3649,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3660,7 +3660,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3671,7 +3671,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3682,7 +3682,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -3871,7 +3871,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -3884,7 +3884,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3895,7 +3895,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3906,7 +3906,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -3917,7 +3917,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -4120,7 +4120,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -4133,7 +4133,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4144,7 +4144,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4155,7 +4155,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4166,7 +4166,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -4355,7 +4355,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -4368,7 +4368,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4379,7 +4379,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4390,7 +4390,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4401,7 +4401,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -4604,7 +4604,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -4617,7 +4617,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4628,7 +4628,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4639,7 +4639,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4650,7 +4650,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -4839,7 +4839,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -4852,7 +4852,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4863,7 +4863,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4874,7 +4874,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -4885,7 +4885,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -5088,7 +5088,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -5101,7 +5101,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5112,7 +5112,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5123,7 +5123,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5134,7 +5134,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };
@@ -5323,7 +5323,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sessionId?: string | undefined;
             } | {
@@ -5336,7 +5336,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5347,7 +5347,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5358,7 +5358,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
             } | {
                 targetId: string;
@@ -5369,7 +5369,7 @@ export type BrowserControlActionResultById = {
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
                 } | undefined;
                 sourceId?: string | undefined;
             };

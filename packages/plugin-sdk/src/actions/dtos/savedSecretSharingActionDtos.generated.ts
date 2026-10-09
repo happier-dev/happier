@@ -58,6 +58,22 @@ export type SavedSecretSharingActionInputById = {
             t: 'encrypted';
             c: string;
         } | null;
+        referenceCensus: {
+            accountMode: 'plain' | 'e2ee';
+            profiles: {
+                referenceGuardRevision: number | 'absent';
+                rows: {
+                    id: string;
+                    revision: number;
+                }[];
+            };
+            profileTransferRevision?: number | 'absent' | undefined;
+            artifacts?: {
+                headerVersion: number;
+                bodyVersion: number;
+                artifactId: string;
+            }[] | undefined;
+        };
         accountGrants?: string[] | undefined;
         teamGrants?: string[] | undefined;
         groupGrants?: string[] | undefined;
@@ -65,6 +81,136 @@ export type SavedSecretSharingActionInputById = {
             recipientAccountId: string;
             encryptedDataKey: string;
             recipientContentPublicKeyFingerprint: string;
+        }[] | undefined;
+        profileMutations?: {
+            id: string;
+            operation: 'create' | 'attach-builtin' | 'update' | 'remove' | 'import';
+            expectedRevision: number | 'absent';
+            content: {
+                t: 'plain';
+                v: {
+                    v: 1;
+                    id: string;
+                    definition: {
+                        kind: 'inline';
+                        profile: {
+                            v: 2;
+                            createdAt: number;
+                            updatedAt: number;
+                            id: string;
+                            name: string;
+                            description?: string | undefined;
+                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
+                            compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
+                            preferredAgentTargetKey?: unknown;
+                            preferredModelSelection?: unknown;
+                            placement?: 'automatic' | 'ask' | {
+                                fixed: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                                directory?: string | undefined;
+                            } | undefined;
+                            checkout?: 'ask' | 'reuse_workspace' | 'create_worktree' | undefined;
+                            codingPromptBehaviorOverrides?: {
+                                sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
+                                responseOptions?: 'agent' | 'disabled' | undefined;
+                            } | undefined;
+                            extraEnvironmentVariables?: {
+                                name: string;
+                                value: string;
+                                isSecret?: boolean | undefined;
+                            }[] | undefined;
+                            envVarRequirements?: {
+                                name: string;
+                                kind?: 'secret' | 'config' | undefined;
+                                required?: boolean | undefined;
+                            }[] | undefined;
+                        };
+                    } | {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
+                        kind: 'legacy';
+                        profile: {
+                            id: string;
+                            name: string;
+                            description?: string | undefined;
+                            environmentVariables?: {
+                                name: string;
+                                value: string;
+                                isSecret?: boolean | undefined;
+                            }[] | undefined;
+                            defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPermissionModeByAgent?: Record<string, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
+                            defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
+                            defaultModelMode?: string | undefined;
+                            compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
+                            compatibility?: Record<string, boolean> | undefined;
+                            authMode?: 'machineLogin' | undefined;
+                            requiresMachineLoginTargetKey?: unknown;
+                            requiresMachineLogin?: string | undefined;
+                            envVarRequirements?: {
+                                name: string;
+                                kind?: 'secret' | 'config' | undefined;
+                                required?: boolean | undefined;
+                            }[] | undefined;
+                            isBuiltIn?: boolean | undefined;
+                            defaultEnabled?: boolean | undefined;
+                            createdAt?: number | undefined;
+                            updatedAt?: number | undefined;
+                            version?: string | undefined;
+                            codingPromptBehaviorV1?: {
+                                v?: 1 | undefined;
+                                sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
+                                responseOptions?: 'agent' | 'disabled' | undefined;
+                            } | undefined;
+                        };
+                    };
+                    enabled: boolean;
+                    promptStack: {
+                        id: string;
+                        ref: {
+                            kind: 'doc' | 'bundle';
+                            artifactId: string;
+                            serverId?: string | undefined;
+                        };
+                        enabled?: boolean | undefined;
+                        placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                        maxChars?: number | undefined;
+                        required?: boolean | undefined;
+                    }[];
+                    secretBindings: Record<string, string | null>;
+                };
+            } | {
+                t: 'encrypted';
+                c: string;
+            } | null;
+            referencedSavedSecretIds?: string[] | undefined;
+            savedSecretRevisions?: {
+                resourceId: string;
+                expectedRevision: number;
+            }[] | undefined;
+            artifactRevision?: {
+                headerVersion: number;
+                bodyVersion: number;
+                artifactId: string;
+            } | null | undefined;
+            settingsCleanup?: {
+                expectedSettingsVersion: number;
+                nextSettings: {
+                    t: 'plain';
+                    v: {
+                        [x: string]: unknown;
+                    };
+                } | {
+                    t: 'encrypted';
+                    c: string;
+                } | null;
+            } | undefined;
         }[] | undefined;
     };
     readonly "secrets.shared.grants.set": {
@@ -106,6 +252,63 @@ export type SavedSecretSharingActionInputById = {
     readonly "secrets.shared.delete": {
         resourceId: string;
         expectedRevision: number;
+        expectedSettingsVersion: number;
+        referenceCensus: {
+            accountMode: 'plain' | 'e2ee';
+            profiles: {
+                referenceGuardRevision: number | 'absent';
+                rows: {
+                    id: string;
+                    revision: number;
+                }[];
+            };
+            profileTransferRevision?: number | 'absent' | undefined;
+            artifacts?: {
+                headerVersion: number;
+                bodyVersion: number;
+                artifactId: string;
+            }[] | undefined;
+        };
+        managedResourceDispositions?: {
+            managedId: string;
+            expectedIntentRevision: number;
+            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            responsibility: 'manual';
+            expectedResource?: {
+                contributionRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                schemaVersion: number;
+                value: unknown;
+                devcontainerObservation?: {
+                    nativeResourceId: string;
+                    user: string;
+                    workspaceFolder: string;
+                    storage: {
+                        kind: 'bind';
+                        hostPath: string;
+                        childPath: string;
+                    } | {
+                        kind: 'child';
+                        childPath: string;
+                    };
+                } | undefined;
+            } | undefined;
+            expectedNativeOperationRef?: {
+                value: unknown;
+                contributionRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                schemaVersion: number;
+            } | undefined;
+            expectedRecovery?: {
+                reference: string;
+                reason: string;
+                consoleUrl?: string | undefined;
+            } | undefined;
+        }[] | undefined;
     };
 };
 export type SavedSecretSharingActionResultById = {
@@ -124,7 +327,7 @@ export type SavedSecretSharingActionResultById = {
             repair: null;
         } | {
             ref: string;
-            source: 'personal' | 'shared_resource';
+            source: 'shared_resource' | 'personal';
             relationship: 'owner' | 'recipient';
             name: string | null;
             kind: 'apiKey' | 'token' | 'password' | 'other' | null;

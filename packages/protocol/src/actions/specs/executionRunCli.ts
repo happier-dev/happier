@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -30,8 +31,8 @@ import {
 } from '../executionRunActionPermissionMode.js';
 import { actionCliDerivedDefault, type ActionCliProjection } from '../actionCliProjection.js';
 
-const SessionSelectorSchema = z.string().trim().min(1);
-const RunIdSchema = z.string().trim().min(1);
+const SessionSelectorSchema = lazyZodSchema(() => z.string().trim().min(1));
+const RunIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 
 /** Existing friendly defaults, shared by the compiled command and workflow adapters. */
 export function defaultExecutionRunPermissionMode(
@@ -91,18 +92,19 @@ export function readExecutionRunCliBackendTarget(raw: string): BackendTargetRefV
   }
 }
 
-const ExecutionRunCliAgentSchema = z.string().trim().min(1).refine(
+const ExecutionRunCliAgentSchema = lazyZodSchema(() => z.string().trim().min(1).refine(
   (value) => readExecutionRunCliBackendTarget(value) !== null,
   { message: 'Agent must identify one concrete execution target' },
-);
+));
 
-const ExecutionRunCliPermissionModeSchema = z.string().trim().min(1).refine(
+const ExecutionRunCliPermissionModeSchema = lazyZodSchema(() => z.string().trim().min(1).refine(
   (value) => ExecutionRunActionPermissionModeSchema.safeParse(value).success,
   { message: 'Invalid execution run permission mode' },
-);
+));
 
-export const ExecutionRunStartCliInputSchema = z.object({
-  sessionId: SessionSelectorSchema,
+export const ExecutionRunStartCliInputSchema = lazyZodSchema(() => z.object({
+  sessionId: SessionSelectorSchema.nullable().optional(),
+  cwd: z.string().trim().min(1).optional(),
   intent: ExecutionRunIntentSchema,
   agent: ExecutionRunCliAgentSchema,
   instructions: z.string().optional(),
@@ -110,7 +112,7 @@ export const ExecutionRunStartCliInputSchema = z.object({
   retention: ExecutionRunRetentionPolicySchema.optional(),
   runClass: ExecutionRunClassSchema.optional(),
   ioMode: ExecutionRunIoModeSchema.optional(),
-}).strict();
+}).strict());
 export type ExecutionRunStartCliInput = z.infer<typeof ExecutionRunStartCliInputSchema>;
 
 export function bindExecutionRunStartCliInput(
@@ -122,7 +124,10 @@ export function bindExecutionRunStartCliInput(
   // intent-derived run-shape defaults exist only when `intent` itself does.
   const intent = input.intent;
   return {
-    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+    ...(input.sessionId === undefined
+      ? input.cwd === undefined ? {} : { sessionId: actionCliDerivedDefault(null) }
+      : { sessionId: input.sessionId }),
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(intent === undefined ? {} : { intent }),
     ...(input.agent === undefined
       ? {}
@@ -144,6 +149,7 @@ export function bindExecutionRunStartCliInput(
 }
 
 export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = {
+  transportMachineIdAliases: ['--machine'],
   commands: [{
     path: ['session', 'run', 'start'],
     positionals: ['sessionId'],
@@ -153,7 +159,8 @@ export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = {
   inputHints: {
     title: 'Start execution run',
     fields: [
-      { path: 'sessionId', title: 'Session id, tag, or unambiguous prefix', widget: 'text', required: true },
+      { path: 'sessionId', title: 'Session id, tag, or unambiguous prefix', widget: 'text' },
+      { path: 'cwd', title: 'Detached run working directory', widget: 'text' },
       {
         path: 'intent',
         title: 'Run intent',
@@ -198,12 +205,12 @@ export const EXECUTION_RUN_START_CLI_PROJECTION: ActionCliProjection = {
   bindInput: (value) => bindExecutionRunStartCliInput(value as Partial<ExecutionRunStartCliInput>),
 };
 
-export const ExecutionRunListCliInputSchema = z.object({
+export const ExecutionRunListCliInputSchema = lazyZodSchema(() => z.object({
   sessionId: SessionSelectorSchema,
   agent: ExecutionRunCliAgentSchema.optional(),
   status: ExecutionRunStatusSchema.optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).strict();
+}).strict());
 export type ExecutionRunListCliInput = z.infer<typeof ExecutionRunListCliInputSchema>;
 
 export function bindExecutionRunListCliInput(
@@ -245,6 +252,7 @@ export const EXECUTION_RUN_LIST_CLI_PROJECTION: ActionCliProjection = {
 };
 
 export const EXECUTION_RUN_GET_CLI_PROJECTION: ActionCliProjection = {
+  transportMachineIdAliases: ['--machine'],
   commands: [{
     path: ['session', 'run', 'get'],
     positionals: ['sessionId', 'runId'],
@@ -253,6 +261,7 @@ export const EXECUTION_RUN_GET_CLI_PROJECTION: ActionCliProjection = {
 };
 
 export const EXECUTION_RUN_STOP_CLI_PROJECTION: ActionCliProjection = {
+  transportMachineIdAliases: ['--machine'],
   commands: [{
     path: ['session', 'run', 'stop'],
     positionals: ['sessionId', 'runId'],
@@ -261,6 +270,7 @@ export const EXECUTION_RUN_STOP_CLI_PROJECTION: ActionCliProjection = {
 };
 
 export const EXECUTION_RUN_WAIT_CLI_PROJECTION: ActionCliProjection = {
+  transportMachineIdAliases: ['--machine'],
   commands: [{
     path: ['session', 'run', 'wait'],
     positionals: ['sessionId', 'runId'],

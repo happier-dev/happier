@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from './actionIds.js';
@@ -5,14 +6,14 @@ import { RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS } from './danger.js';
 
 export { ActionSafetySchema, type ActionSafety } from './safetyVocabulary.js';
 
-export const RuntimeActionHostEffectClassSchema = z.enum([
+export const RuntimeActionHostEffectClassSchema = lazyZodSchema(() => z.enum([
   'readOnly',
   'mutating',
   'destructive',
   'recording',
   'externalNavigation',
   'diagnostic',
-]);
+]));
 export type RuntimeActionHostEffectClass = z.infer<typeof RuntimeActionHostEffectClassSchema>;
 
 export type RuntimeActionSideEffectClass = 'none' | 'read' | 'write' | 'external' | 'danger';

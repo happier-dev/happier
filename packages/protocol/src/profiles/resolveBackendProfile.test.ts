@@ -153,6 +153,15 @@ describe('profiles (protocol)', () => {
     expect(result.profile.isBuiltIn).toBe(false);
   });
 
+  it('resolves exact retained identities before trimming a neighboring identity', () => {
+    const retained = AIBackendProfileSchema.parse({ id: ' retained-id ', name: 'Retained', environmentVariables: [] });
+    const neighbor = AIBackendProfileSchema.parse({ id: 'retained-id', name: 'Neighbor', environmentVariables: [] });
+    expect(resolveBackendProfile({ query: retained.id, customProfiles: [neighbor, retained] }))
+      .toEqual({ ok: true, profile: retained, resolvedBy: 'id' });
+    expect(resolveBackendProfile({ query: '  Neighbor  ', customProfiles: [neighbor, retained] }))
+      .toEqual({ ok: true, profile: neighbor, resolvedBy: 'name' });
+  });
+
   it('resolves profiles by name (case-insensitive)', () => {
     const customProfiles = [
       {

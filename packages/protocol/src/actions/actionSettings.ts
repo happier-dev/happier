@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
@@ -15,7 +16,7 @@ import {
 } from './metadata.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 
-const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
+const ActionSurfaceKeySchema = lazyZodSchema(() => ActionSurfaceSchema.keyof());
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
@@ -67,7 +68,7 @@ function normalizeActionToolExposureModes(raw: unknown): Partial<Record<ActionTo
   return next;
 }
 
-const ActionSettingsToolExposureModesSchema = z.preprocess(
+const ActionSettingsToolExposureModesSchema = lazyZodSchema(() => z.preprocess(
   normalizeActionToolExposureModes,
   z
     .object({
@@ -76,7 +77,7 @@ const ActionSettingsToolExposureModesSchema = z.preprocess(
       cli: ActionToolExposureModeSchema.optional(),
     })
     .default({}),
-);
+));
 
 function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -93,7 +94,7 @@ function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   return next;
 }
 
-const ActionSettingsOverrideSchema = z.preprocess(
+const ActionSettingsOverrideSchema = lazyZodSchema(() => z.preprocess(
   normalizeLegacyActionSettingsOverride,
   z
     .object({
@@ -107,7 +108,7 @@ const ActionSettingsOverrideSchema = z.preprocess(
     // Preserve fields introduced by newer clients so older clients can
     // round-trip an unknown Action policy without erasing it.
     .passthrough(),
-);
+));
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
 /** A host Action id or the canonical qualified contributed-Action identity. */
@@ -133,7 +134,7 @@ function projectKnownActionSettings(
   return next;
 }
 
-export const ActionsSettingsV1Schema = z
+export const ActionsSettingsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     // Accept unknown Action ids so older clients can round-trip newer policy rows.
@@ -152,7 +153,7 @@ export const ActionsSettingsV1Schema = z
     actions: projectKnownActionSettings(value.actions ?? {}),
     ...(value.approvalWaivedSurfaces ? { approvalWaivedSurfaces: value.approvalWaivedSurfaces } : {}),
     ...(value.pluginHostCaptureApprovalWaived ? { pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived } : {}),
-  }));
+  })));
 
 export type ActionsSettingsV1 = Readonly<{
   v: 1;

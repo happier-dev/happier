@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
@@ -7,19 +8,19 @@ export type AppUpdateActionId = typeof APP_UPDATE_ACTION_IDS[number];
 export function isAppUpdateActionId(value: string): value is AppUpdateActionId {
   return (APP_UPDATE_ACTION_IDS as readonly string[]).includes(value);
 }
-const EmptyInputSchema = z.object({}).strict();
+const EmptyInputSchema = lazyZodSchema(() => z.object({}).strict());
 export const AppUpdateActionInputSchemas = {
   'app.updates.get': EmptyInputSchema, 'app.updates.check': EmptyInputSchema,
   'app.updates.update': EmptyInputSchema, 'app.updates.retry': EmptyInputSchema, 'app.updates.restart': EmptyInputSchema,
   'app.updates.skip': z.object({ version: z.string().trim().min(1) }).strict(),
 } as const;
-export const AppUpdateStatusResultSchema = z.object({
+export const AppUpdateStatusResultSchema = lazyZodSchema(() => z.object({
   channel: z.enum(['desktop', 'native-store', 'web-ui', 'ota', 'none']),
   state: z.enum(['unchecked', 'checking', 'upToDate', 'available', 'required', 'running', 'ready', 'failed', 'unknown', 'offline']),
   currentVersion: z.string().nullable(), latestVersion: z.string().nullable(), checkedAt: z.number().nullable(),
   action: z.enum(['update', 'retry', 'restart', 'reload', 'store']).nullable(), skipped: z.boolean(), canSkip: z.boolean(),
-}).strict();
-const OperationResultSchema = z.object({ status: z.literal('requested') }).strict();
+}).strict());
+const OperationResultSchema = lazyZodSchema(() => z.object({ status: z.literal('requested') }).strict());
 export const AppUpdateActionOutputSchemas = {
   'app.updates.get': AppUpdateStatusResultSchema,
   'app.updates.check': OperationResultSchema, 'app.updates.update': OperationResultSchema,

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ActionUiPlacementSchema } from './actionUiPlacements.js';
@@ -34,23 +35,23 @@ function normalizeSerializedActionSurfaces(value: unknown): unknown {
   };
 }
 
-export const SerializedActionSurfaceSchema = z.preprocess(
+export const SerializedActionSurfaceSchema = lazyZodSchema(() => z.preprocess(
   normalizeSerializedActionSurfaces,
   ActionSurfaceSchema,
-);
+));
 
-export const ActionDefinitionIdV1Schema = z.string().trim().min(1);
+export const ActionDefinitionIdV1Schema = lazyZodSchema(() => z.string().trim().min(1));
 export type ActionDefinitionIdV1 = z.infer<typeof ActionDefinitionIdV1Schema>;
 
-export const ActionDefinitionSlashV1Schema = z
+export const ActionDefinitionSlashV1Schema = lazyZodSchema(() => z
   .object({
     tokens: z.array(z.string().min(1)),
   })
   .passthrough()
-  .nullable();
+  .nullable());
 export type ActionDefinitionSlashV1 = z.infer<typeof ActionDefinitionSlashV1Schema>;
 
-export const ActionDefinitionBindingsV1Schema = z
+export const ActionDefinitionBindingsV1Schema = lazyZodSchema(() => z
   .object({
     voiceClientToolName: z.string().min(1).optional(),
     mcpToolName: z.string().min(1).optional(),
@@ -59,10 +60,10 @@ export const ActionDefinitionBindingsV1Schema = z
     rpcMethodAliases: z.array(z.string().min(1)).optional(),
   })
   .passthrough()
-  .nullable();
+  .nullable());
 export type ActionDefinitionBindingsV1 = z.infer<typeof ActionDefinitionBindingsV1Schema>;
 
-export const ActionDefinitionExamplesV1Schema = z
+export const ActionDefinitionExamplesV1Schema = lazyZodSchema(() => z
   .object({
     voice: z
       .object({
@@ -87,10 +88,10 @@ export const ActionDefinitionExamplesV1Schema = z
       .optional(),
   })
   .passthrough()
-  .nullable();
+  .nullable());
 export type ActionDefinitionExamplesV1 = z.infer<typeof ActionDefinitionExamplesV1Schema>;
 
-export const ActionExecutionHandlerRefV1Schema = z.union([
+export const ActionExecutionHandlerRefV1Schema = lazyZodSchema(() => z.union([
   z.string().min(1),
   z
     .object({
@@ -99,10 +100,10 @@ export const ActionExecutionHandlerRefV1Schema = z.union([
       registrationId: OptionalStringSchema,
     })
     .passthrough(),
-]);
+]));
 export type ActionExecutionHandlerRefV1 = z.infer<typeof ActionExecutionHandlerRefV1Schema>;
 
-export const ActionExecutionDescriptorV1Schema = z
+export const ActionExecutionDescriptorV1Schema = lazyZodSchema(() => z
   .object({
     handler: ActionExecutionHandlerRefV1Schema.optional(),
     transport: z.enum(['host', 'plugin', 'rpc', 'api']).optional(),
@@ -110,10 +111,10 @@ export const ActionExecutionDescriptorV1Schema = z
     approvalPolicy: OptionalStringSchema,
     resultSchema: LooseJsonObjectSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ActionExecutionDescriptorV1 = z.infer<typeof ActionExecutionDescriptorV1Schema>;
 
-export const ActionDefinitionSummaryV1Schema = z
+export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z
   .object({
     id: ActionDefinitionIdV1Schema,
     title: z.string().min(1),
@@ -135,27 +136,27 @@ export const ActionDefinitionSummaryV1Schema = z
     sideEffectClass: z.enum(['none', 'read', 'write', 'external', 'danger']).optional(),
     operation: ActionOperationDeclarationV1Schema.optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ActionDefinitionSummaryV1 = z.infer<typeof ActionDefinitionSummaryV1Schema>;
 
-export const ActionDefinitionV1Schema = ActionDefinitionSummaryV1Schema.extend({
+export const ActionDefinitionV1Schema = lazyZodSchema(() => ActionDefinitionSummaryV1Schema.extend({
   kindVersion: z.literal(1).default(1),
   inputSchema: LooseJsonObjectSchema,
   compatibility: LooseJsonObjectSchema.optional(),
-}).passthrough();
+}).passthrough());
 export type ActionDefinitionV1 = z.infer<typeof ActionDefinitionV1Schema>;
 
 export const SerializedActionDefinitionV1Schema = ActionDefinitionV1Schema;
 export type SerializedActionDefinitionV1 = z.infer<typeof SerializedActionDefinitionV1Schema>;
 
-const ActionDiscoverySlashV1Schema = z
+const ActionDiscoverySlashV1Schema = lazyZodSchema(() => z
   .object({
     tokens: z.array(z.string().min(1)),
   })
   .strict()
-  .nullable();
+  .nullable());
 
-const ActionDiscoveryBindingsV1Schema = z
+const ActionDiscoveryBindingsV1Schema = lazyZodSchema(() => z
   .object({
     voiceClientToolName: z.string().min(1).optional(),
     mcpToolName: z.string().min(1).optional(),
@@ -164,9 +165,9 @@ const ActionDiscoveryBindingsV1Schema = z
     rpcMethodAliases: z.array(z.string().min(1)).optional(),
   })
   .strict()
-  .nullable();
+  .nullable());
 
-const ActionDiscoveryExamplesV1Schema = z
+const ActionDiscoveryExamplesV1Schema = lazyZodSchema(() => z
   .object({
     voice: z.object({
       argsExample: z.string().min(1).optional(),
@@ -179,18 +180,18 @@ const ActionDiscoveryExamplesV1Schema = z
     }).strict().nullable().optional(),
   })
   .strict()
-  .nullable();
+  .nullable());
 
-const ActionDiscoveryExecutionHandlerRefV1Schema = z.union([
+const ActionDiscoveryExecutionHandlerRefV1Schema = lazyZodSchema(() => z.union([
   z.string().min(1),
   z.object({
     target: z.enum(['host', 'plugin', 'daemon']),
     exportName: OptionalStringSchema,
     registrationId: OptionalStringSchema,
   }).strict(),
-]);
+]));
 
-const ActionDiscoveryExecutionDescriptorV1Schema = z
+const ActionDiscoveryExecutionDescriptorV1Schema = lazyZodSchema(() => z
   .object({
     handler: ActionDiscoveryExecutionHandlerRefV1Schema.optional(),
     transport: z.enum(['host', 'plugin', 'rpc', 'api']).optional(),
@@ -198,20 +199,20 @@ const ActionDiscoveryExecutionDescriptorV1Schema = z
     approvalPolicy: OptionalStringSchema,
     resultSchema: LooseJsonObjectSchema.optional(),
   })
-  .strict();
+  .strict());
 
-export const ActionDiscoveryDefinitionSummaryV1Schema = ActionDefinitionSummaryV1Schema.extend({
+export const ActionDiscoveryDefinitionSummaryV1Schema = lazyZodSchema(() => ActionDefinitionSummaryV1Schema.extend({
   slash: ActionDiscoverySlashV1Schema,
   bindings: ActionDiscoveryBindingsV1Schema,
   examples: ActionDiscoveryExamplesV1Schema,
   execution: ActionDiscoveryExecutionDescriptorV1Schema.optional(),
 })
-  .strict();
+  .strict());
 export type ActionDiscoveryDefinitionSummaryV1 = z.infer<typeof ActionDiscoveryDefinitionSummaryV1Schema>;
 
-export const ActionDiscoveryDefinitionV1Schema = ActionDiscoveryDefinitionSummaryV1Schema.extend({
+export const ActionDiscoveryDefinitionV1Schema = lazyZodSchema(() => ActionDiscoveryDefinitionSummaryV1Schema.extend({
   kindVersion: z.literal(1).default(1),
   inputSchema: LooseJsonObjectSchema,
   compatibility: LooseJsonObjectSchema.optional(),
-}).strict();
+}).strict());
 export type ActionDiscoveryDefinitionV1 = z.infer<typeof ActionDiscoveryDefinitionV1Schema>;

@@ -1,29 +1,63 @@
 import { resolveInputOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
+import { PromptDocRevisionV1Schema } from '../prompts/library/promptDocV2.js';
+import { ProjectContextUpdateInputV1Schema } from '../projects/projectContextV1.js';
+import { SessionPendingWithdrawInputV1Schema } from '../sessions/control/pendingWithdrawV1.js';
+import { SetSessionPinRequestSchema, SetSessionPinResponseSchema } from '../sessions/organization/mutations.js';
+import { isMemoryWriteActionV1, MEMORY_DOCUMENT_ACTION_IDS_V1, MemoryDocReadInputV1Schema, MemoryListInputV1Schema } from '../prompts/library/memoryActionsV1.js';
+import { readMemoryDocInLibrary, listMemoryDocsInLibrary, MemoryDocFailureV1 } from '../prompts/library/promptLibraryActionOperations.js';
+import { isArtifactFolderActionIdV1 } from '../prompts/library/artifactFolderActionIdsV1.js';
+import { executeArtifactFolderActionV1, ArtifactOrganizationMutationFailureV1, ArtifactOrganizationMutationFailureDetailsV1Schema } from '../prompts/library/promptFolderActionsV1.js';
+import { redactBugReportSensitiveText } from '../bugs/reports/redaction.js';
+import { assertMemoryHomeV1, readMemoryWriteAdmissionV1, bindMemoryWriteApprovalInputV1, executeMemoryWriteV1, type MemoryWriteAdmissionV1 } from './executor/memoryDocumentActions.js';
+
 import { InputOptionsConsumerV1Schema, inputOptionsConsumerActionId } from '../inputs/inputOptionsConsumer.js';
 import { readRecord, readNonEmptyString, isRecord, hasOwn } from '../inputs/inputRecords.js';
+import {
+  ProjectSourcesListInputV1Schema, ProjectSourcesReadInputV1Schema, ProjectSourcesCreateInputV1Schema,
+  ProjectSourcesUpdateInputV1Schema, ProjectSourcesDeleteInputV1Schema,
+} from '../projects/sources/projectSourceV1.js';
+import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from './sessionStateFieldActions.js';
+import { isProjectDefinitionActionId } from './projectDefinitionActionFamily.js';
+import { isAccountSettingActionSurfaceAllowedV1 } from './accountSettingDeclarations.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import type { PublicActionInputById } from './actionSpecs.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
+import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
+import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
+import { readLocalServiceControlActionRequest } from './specs/localServices.js';
+import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOriginationPreferences.js';
+import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1 } from '../machines/managed/actionsV1.js';
+import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../machines/machineReferenceCensusV1.js';
+import { ManagedRefusalCodeV1Schema } from '../machines/managed/providerFactsV1.js';
+import { PrivateSecretContinuationV1Schema, type PrivateSecretContinuationV1 } from '../approvals/privateSecretContinuationV1.js';
+import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
+import { isFilesystemActionId } from './filesystemActionFamily.js';
+import { isProjectActionIdV1 } from './projectActionIdsV1.js';
+import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../projects/openProjectV1.js';
 import { isSessionCanvasActionId } from './sessionCanvasActionFamily.js';
 import { isSessionTerminalActionId } from './sessionTerminalActionFamily.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1, type ComputerApprovalDisplayV1 } from '../computer/v1.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
 import { evaluateApiTokenGrantV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
-import { resolveCredentialActionAdmissionV1, canRequestPresentUserApprovalForActionInputV1, requiresPresentUserDecisionForActionInputV1, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
+import { resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, canRequestPresentUserApprovalForActionInputV1, requiresPresentUserDecisionForActionInputV1, requiresPresentUserExecutionAuthorityForActionInputV1 } from './decisionAuthority.js';
 import { SESSION_PERMISSION_MODES } from '../sessions/metadata/sessionPermissionModes.js';
 import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { SessionWorkerPublishInputV1Schema, SessionWorkerPublishOutputV1Schema } from '../sessions/relations/workerUpdateV1.js';
 import { MachinesAgentsListInputSchema } from '../capabilities/machineAgentInventory.js';
 import { WorkspaceFilesSearchActionInputSchema } from './actionSpecs.js';
-import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCreateInputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, type MachineAddSshActionId } from './specs/machineConnection.js';
+import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCreateInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, type MachineAddSshActionId } from './specs/machineConnection.js';
+import { isMachineTerminalActionId, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from './specs/machineTerminal.js';
+import { MachineAccessActionIdSchema, machineAccessApprovalDisclosure } from './specs/machineAccess.js';
+import { MachineWorkSummaryGetInputV1Schema } from '../machines/machineWorkSummaryV1.js';
 import { NotificationsNotifyMeInputV1Schema } from '../account/notifications/notifyMeV1.js';
 import { WorkflowWebhookInputV1Schema, WorkflowMachineCommandInputV1Schema } from '../workflows/stepActionsV1.js';
 import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema, MachinesAgentsSignInCancelInputSchema } from '../daemon/agentSignIn.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
+import { MachinePresetActionIdV1Schema, MachinePresetActionInputSchemasV1 } from '../machines/managed/machinePresetActionsV1.js';
 import { projectAccountRoleActionRefusalV1 } from '../prompts/roles/accountRoleActions.js';
 import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
@@ -33,9 +67,11 @@ import { executeWidgetInstanceActionV1, admitWidgetInstanceConfigurationV1, admi
 import { getWidgetSizeFootprintV1, WIDGET_SIZE_ORDER_V1 } from '../widgets/widgetPresentationV1.js';
 import { SessionBoardItemWidthSchema } from '../sessions/board/layout.js';
 import { clientActionUnavailable } from './clientDispatchV1.js';
+import { SessionAuthoringOpenV1Schema } from '../plugins/ui/hostApiRequests.js';
 import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
 import { readWidgetDefinitionActionAccountV1, readWidgetDefinitionActionSessionV1 } from '../widgets/definitionActionsV1.js';
-import { admitWidgetActionSurfaceV1 } from '../widgets/widgetActionScopeV1.js';
+import { admitWidgetActionSurfaceV1, readWidgetActionSurfaceAdmissionV1 } from '../widgets/widgetActionScopeV1.js';
+import { setWidgetInputBindingsV1 } from '../widgets/widgetInstanceV1.js';
 import { executeWidgetDefinitionActionV1 } from '../widgets/executeWidgetDefinitionActionV1.js';
 import { executeWidgetSnapshotPostV1 } from '../widgets/executeWidgetSnapshotPostV1.js';
 import { prepareWidgetDefinitionPublicationV1 } from '../widgets/widgetDefinitionPublicationV1.js';
@@ -43,6 +79,7 @@ import type { HomeHubLayoutActionId } from './specs/homeHub.js';
 import { executeWorkBoardActionV1 } from '../boards/executeWorkBoardActionV1.js';
 import { snapshotSessionRolesAtSpawnV1 } from '../prompts/roles/sessionRolesSnapshot.js';
 import { LaunchProfilePublishInputV1Schema } from '../launchProfiles/publishLaunchProfile.js';
+import { isProfileActionIdV1, parseProfileActionRequestV1 } from '../profiles/profileActionsV1.js';
 import {
   DaemonAgentInstallStartRequestSchema,
   DaemonAgentInstallReadRequestSchema,
@@ -147,6 +184,7 @@ import {
 import { WorkflowActionInputSchemasV1 } from '../workflows/actionsV1.js';
 import { ArtifactAccessActionIdV1Schema, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../artifacts/artifactAccessV1.js';
 import { ArtifactActionIdV1Schema, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1 } from '../artifacts/artifactActionsV1.js';
+import { getArtifactKindPolicyV1 } from '../artifacts/artifactSharingV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
@@ -176,7 +214,8 @@ import {
   buildBackendTargetKey,
   type BackendTargetRefV1,
 } from '../backends/targets/backendTargetRef.js';
-import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
+import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
+import type { AgentExecutionTargetV1 } from '../agents/executionTargetV1.js';
 import {
   TeamCredentialProviderModelSelectionV1Schema,
   type TeamCredentialProviderModelSelectionV1,
@@ -219,6 +258,9 @@ import {
   MachinePoolActionIdV1Schema,
   MachinePoolActionInputSchemasV1,
 } from '../machines/pools/actionsV1.js';
+import { ProjectWorkerActionIdV1Schema, ProjectWorkerActionInputSchemasV1 } from './specs/projectWorkers.js';
+import { MachinePoolResolveInputV1Schema, MachinePoolViewV1Schema } from '../machines/pools/v1.js';
+import { resolveMachinePoolWorkerCandidateV1 } from '../machines/pools/machinePoolWorkerPlacement.js';
 import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
 import { EphemeralRunnerActionInputSchemasV1 } from '../ephemeralRunner/actionsV1.js';
 import { isHomeDomainActionIdV1 } from './homeDomainActionFamily.js';
@@ -230,6 +272,7 @@ import { isAppShellActionId } from './appShellActionFamily.js';
 import { isNotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
 import { isAppUpdateActionId } from './appUpdateActionFamily.js';
 import { SessionOrganizationContentUnavailableError } from '../sessions/organization/content.js';
+import { PromptStackPreparationError } from '../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
   PluginSessionHookInstallActionInputV1Schema,
@@ -334,7 +377,7 @@ import {
   SessionAgentSpawnPolicyV1StrictSchema,
 } from '../account/settings/accountSettings.js';
 import {
-  admitActionAgentStartV1, isAgentStartActionV1, isActionCallerOwnSessionV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1,
+  admitActionAgentStartV1, isAgentStartActionV1, isAgentStartActionInvocationV1, isActionCallerOwnSessionV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1,
   resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1,
 } from './executor/agentStartAdmission.js';
 import { AgentStartSessionCallerV1Schema } from '../account/settings/admitAgentStartV1.js';
@@ -363,7 +406,7 @@ import {
   resolveActionBackendTargetSelection,
   resolveExecutionBackendTargetSelectionForValue,
 } from './resolveActionBackendTargetSelection.js';
-import { projectActionExecuteFailure } from './actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, projectActionExecuteFailure } from './actionExecutionResult.js';
 import { dispatchRuntimeAction } from './executor/dispatch.js';
 import { type RuntimeActionExecute } from './executor/types.js';
 import {
@@ -660,10 +703,6 @@ function buildSessionSpawnNewArgs(
         leadSessionId,
         roles: ctx.agentStartContext.roles,
         notes: ctx.sessionRoleConfiguration?.notes,
-        memoryDocRef: ctx.sessionRoleConfiguration?.memoryDocRef,
-        // This is only a host-private candidate. The canonical target creator
-        // must prove ownership of the lead before persisting a memory reference.
-        sameAccount: true,
       }),
       ...(typeof data.roleId === 'string' ? { roleId: data.roleId } : {}),
     };
@@ -1065,9 +1104,11 @@ function mapApprovalCreatedBySurface(surface: ActionExecutorContext['surface']):
   return 'system';
 }
 
-function buildApprovalSummary(spec: ActionSpec, sessionId: string | null): string {
+function buildApprovalSummary(spec: ActionSpec, sessionId: string | null, input?: unknown): string {
   const base = String(spec.title ?? '').trim() || String(spec.id);
-  return sessionId ? `${base} — ${sessionId}` : base;
+  const summary = sessionId ? `${base} — ${sessionId}` : base;
+  const disclosure = machineAccessApprovalDisclosure(spec.id, input);
+  return disclosure ? `${summary}\n\n${disclosure.description}` : summary;
 }
 
 function sameSessionCreationDirectoryApproval(
@@ -1129,6 +1170,9 @@ async function prepareApprovalRequest(params: Readonly<{
     actionId: params.actionId,
     actionArgs: observedInput,
   } as const;
+  if (params.actionId === 'computer.secret.fill' || params.actionId === 'browser.automation.secret.fill') {
+    return { actionArgs: observedInput, preview: defaultPreview };
+  }
   const customized = await params.deps.buildApprovalPreview?.({
     actionId: params.actionId,
     input: params.input,
@@ -1140,6 +1184,8 @@ async function prepareApprovalRequest(params: Readonly<{
     actionId: params.actionId,
     actionArgs: observedInput,
     ...(computerApprovalDisplay ? { computerApprovalDisplay } : {}),
+    ...(machineAccessApprovalDisclosure(params.actionId, params.input)
+      ? { machineAccessDisclosure: machineAccessApprovalDisclosure(params.actionId, params.input) } : {}),
   };
 
   // Declared live-only input custody: the durable record carries only this
@@ -1279,7 +1325,7 @@ function refuseUnmappedApprovalCaller(_caller: never): null {
   return null;
 }
 
-function buildApprovalExecutionOriginV1(params: Readonly<{
+export function buildApprovalExecutionOriginV1(params: Readonly<{
   actionId: ActionId;
   input: unknown;
   context: ActionExecutorContext;
@@ -1304,11 +1350,15 @@ function buildApprovalExecutionOriginV1(params: Readonly<{
   const externalCredential = params.context.externalActionCredential;
   const externalAuthorization = params.context.externalActionExecutionAuthorization;
   if (externalCredential && !externalAuthorization) return null;
-  // A contributed Action still executes through the plugin surface, but a
-  // Home-authorized external invocation must remain an API origin when it is
-  // persisted for approval replay. The plugin caller below retains the exact
-  // contribution provenance without turning that provenance into authority.
-  const surface = externalAuthorization ? 'api' as const : requestedSurface;
+  // Preserve the Home-admitted principal family, rather than turning genuine
+  // Account/UI or Session automation into descriptive PAT provenance.
+  const accountBinding = externalAuthorization && 'authentication' in externalAuthorization.binding
+    ? externalAuthorization.binding : null;
+  const sessionActionOrigin = accountBinding?.sessionActionOrigin;
+  if (sessionActionOrigin && params.context.workspaceWrites !== sessionActionOrigin.workspaceWrites) return null;
+  const surface = externalAuthorization
+    ? accountBinding ? sessionActionOrigin ? 'agent' as const : 'ui' as const : 'api' as const
+    : requestedSurface;
   let externalActionInputSignature: string | undefined;
   if (externalAuthorization) {
     if (!params.context.signExternalActionApprovalInput) return null;
@@ -1340,6 +1390,7 @@ function buildApprovalExecutionOriginV1(params: Readonly<{
   const machineId = normalizeId(params.context.executionRunTargetMachineId)
     || externalAuthorization?.binding.machineId
     || (getActionSpec(params.actionId).executionPlacement === 'machine' ? normalizeId(inputRecord.machineId) : '')
+    || readLocalServiceControlActionRequest(params.actionId, params.input)?.target.machineId
     || normalizeId(params.context.defaultSessionMachineId)
     || normalizeId(inputExecutionTarget.machineId)
     || (externalTarget?.kind === 'machine' ? normalizeId(externalTarget.machineId) : '');
@@ -1578,22 +1629,22 @@ function normalizeExecutionBackendOptionValue(value: string): string {
   return normalized;
 }
 
-function normalizeExecutionBackendTargetValue(value: string): BackendTargetRefV1 {
+function normalizeExecutionBackendTargetValue(value: string): BackendTargetRefV1 | AgentExecutionTargetV1 {
   const backendTarget = resolveExecutionBackendTargetSelectionForValue(value)?.backendTarget;
-  if (!backendTarget) {
-    throw new Error('invalid_backend_target_option');
+  if (backendTarget) return backendTarget;
+  const canonicalKey = tryNormalizeExecutionBackendOptionValue(value);
+  if (canonicalKey) {
+    const target = parseBackendTargetKeyV2(canonicalKey);
+    if (target.kind === 'agent') return target;
   }
-  return backendTarget;
+  throw new Error('invalid_backend_target_option');
 }
 
 function doesTeamCredentialSelectionTargetBackend(
   selection: TeamCredentialProviderModelSelectionV1,
   backendTargetValue: string,
 ): boolean {
-  const canonicalTarget = resolveExecutionBackendTargetSelectionForValue(backendTargetValue)?.canonicalBackendTarget;
-  return canonicalTarget !== null
-    && canonicalTarget !== undefined
-    && buildBackendTargetKeyV2(canonicalTarget) === selection.agentTargetKey;
+  return tryNormalizeExecutionBackendOptionValue(backendTargetValue) === selection.agentTargetKey;
 }
 
 function resolveFanoutTeamCredentialModel(
@@ -1618,12 +1669,13 @@ function buildAvailableExecutionBackendOptionKeys(value: unknown): ReadonlySet<s
   const keys = new Set<string>();
   for (const option of normalizeResolvedOptions(value)) {
     if (option.disabled === true) continue;
-    const selection = resolveExecutionBackendTargetSelectionForValue(option.value);
-    if (!selection?.backendTargetKey) continue;
+    const canonicalKey = tryNormalizeExecutionBackendOptionValue(option.value);
+    if (!canonicalKey) continue;
     const raw = normalizeId(option.value);
     if (raw) keys.add(raw);
-    keys.add(selection.backendTargetKey);
-    if (selection.backendTarget) {
+    keys.add(canonicalKey);
+    const selection = resolveExecutionBackendTargetSelectionForValue(option.value);
+    if (selection?.backendTarget) {
       keys.add(buildBackendTargetKey(selection.backendTarget));
     }
   }
@@ -1787,7 +1839,7 @@ function buildApprovalDecisionResult(request: ApprovalRequest, liveResult?: Acti
   };
 }
 
-function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest): ActionExecuteResult | null {
+export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest): ActionExecuteResult | null {
   if (!request.execution) return null;
   if (request.execution.ok) {
     return { ok: true, result: request.execution.result };
@@ -1808,6 +1860,17 @@ function projectApprovalRequestPluginCaller(
 const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
 function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown }> {
+  if (error instanceof MemoryDocFailureV1) {
+    return { errorCode: error.code, error: error.message,
+      ...(error.details === undefined ? {} : { details: error.details }) };
+  }
+  if (error instanceof ArtifactOrganizationMutationFailureV1) {
+    return { errorCode: error.code, error: error.message,
+      details: ArtifactOrganizationMutationFailureDetailsV1Schema.parse(error.details) };
+  }
+  if (error instanceof PromptStackPreparationError) {
+    return { errorCode: error.code, error: error.message };
+  }
   if (error instanceof SessionOrganizationContentUnavailableError) {
     return { errorCode: error.code, error: error.message };
   }
@@ -1837,6 +1900,7 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
     // Transport owners have already decided whether a mutation may have committed.
     || value === 'outcome_unknown'
     || value === 'cancelled'
+    || value === 'version_mismatch'
   )) ?? '';
   const rpcErrorCode = readRpcErrorCode(error);
   const typedRpcErrorCode = rpcErrorCode && RPC_ERROR_CODE_SET.has(rpcErrorCode)
@@ -1877,67 +1941,6 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
   return {
     errorCode: 'action_failed',
     error: message || 'action_failed',
-    ...(details !== undefined ? { details } : {}),
-  };
-}
-
-function readFailureEnvelopeDetails(record: Readonly<Record<string, unknown>>): unknown | undefined {
-  if (Object.prototype.hasOwnProperty.call(record, 'details')) {
-    return record.details;
-  }
-
-  const details: Record<string, unknown> = {};
-  for (const key of ['field', 'surface'] as const) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-    const value = record[key];
-    if (value !== undefined) {
-      details[key] = value;
-    }
-  }
-
-  return Object.keys(details).length > 0 ? details : undefined;
-}
-
-function readActionFailureEnvelope(
-  result: unknown,
-  options: Readonly<{ treatReturnedErrorEnvelopeAsFailure?: boolean }> = {},
-): Extract<ActionExecuteResult, Readonly<{ ok: false }>> | null {
-  if (!result || typeof result !== 'object') {
-    return null;
-  }
-  const record = result as Readonly<Record<string, unknown>>;
-  if (typeof record.errorCode !== 'string') {
-    return null;
-  }
-  const errorCode = record.errorCode.trim();
-  if (!errorCode) {
-    return null;
-  }
-  if (record.ok !== false) {
-    if (
-      record.type !== 'error'
-      || (
-        options.treatReturnedErrorEnvelopeAsFailure !== true
-        && !SpawnSessionErrorCodeSchema.safeParse(errorCode).success
-      )
-    ) {
-      return null;
-    }
-  }
-  const rawError = typeof record.error === 'string' ? record.error.trim() : '';
-  const rawFallbackMessage = typeof record.errorMessage === 'string' && record.errorMessage.trim().length > 0
-    ? record.errorMessage.trim()
-    : typeof record.message === 'string' && record.message.trim().length > 0
-      ? record.message.trim()
-      : '';
-  const error = rawError && rawError !== errorCode
-    ? rawError
-    : rawFallbackMessage || rawError || errorCode;
-  const details = readFailureEnvelopeDetails(record);
-  return {
-    ok: false,
-    errorCode,
-    error,
     ...(details !== undefined ? { details } : {}),
   };
 }
@@ -2088,9 +2091,16 @@ function completeSpawnActionResult(result: unknown): ActionExecuteResult {
   return completeActionResult(result, { treatReturnedErrorEnvelopeAsFailure: true });
 }
 
+function redactMemoryActionInput(actionId: string, input: unknown): unknown {
+  const request = readRecord(input);
+  return isMemoryWriteActionV1(actionId) && typeof request.text === 'string'
+    ? { ...request, text: redactBugReportSensitiveText(request.text) } : input;
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  continueConfidentialApprovalRequest: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   replayApprovedApprovalRequest: (args: Readonly<{
     artifactId: string;
     signal?: AbortSignal;
@@ -2228,8 +2238,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       target: destinationSession ? { kind: 'session', sessionId: destinationSession } : null,
       targetMachineId: destinationSession && destinationSession === ctx.defaultSessionId ? ctx.defaultSessionMachineId : undefined,
     }) : boundResult;
-    return finalResult.ok ? null : {
-      ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason: finalResult.reason },
+    const managedContinuation = actionId === 'machines.managed.acquire' ? readRecord(readRecord(input).agentStart) : null;
+    // A known fresh continuation cannot inherit the controller's target grant:
+    // the new Machine has no identity yet. The incumbent grant owner therefore
+    // must admit spawn without a substituted target before compute is purchased.
+    const continuationResult = finalResult.ok && managedContinuation && Object.keys(managedContinuation).length > 0
+      ? evaluateApiTokenGrantV1({ grant, actionId: 'session.spawn_new' }) : finalResult;
+    return continuationResult.ok ? null : {
+      ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason: continuationResult.reason },
     };
   }
 
@@ -2241,16 +2257,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     let currentWorkspaceWrites: 'allow' | 'deny' | undefined;
     try { currentWorkspaceWrites = deps.getCurrentWorkspaceWrites?.(); }
     catch { return { ok: false, errorCode: 'role_policy_unavailable', error: 'role_policy_unavailable' }; }
-    const workspaceWrites = ctx.workspaceWrites === 'deny' || currentWorkspaceWrites === 'deny'
-      ? 'deny' : currentWorkspaceWrites ?? ctx.workspaceWrites;
-    if (workspaceWrites === 'deny' && spec.workspaceWrite) {
-      return { ok: false, errorCode: 'workspace_write_denied', error: 'workspace_write_denied' };
-    }
-    if (isAgentCaller(ctx) && workspaceWrites !== 'allow'
-      && isRoleActionIdV1(spec.id) && readRecord(input).workspaceWrites === 'allow') {
-      return { ok: false, errorCode: 'workspace_write_escalation_denied', error: 'workspace_write_escalation_denied' };
-    }
-    return null;
+    const admission = resolveWorkspaceWriteActionAdmissionV1({
+      spec, actionInput: input, workspaceWrites: ctx.workspaceWrites, currentWorkspaceWrites,
+      agentCaller: isAgentCaller(ctx),
+    });
+    return admission.ok ? null : { ok: false, errorCode: admission.errorCode, error: admission.errorCode };
   }
 
   function pluginActionCallerPolicyFailure(
@@ -2396,6 +2407,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
      * because its durable record deliberately holds the redacted projection.
      */
     liveOnlyActionArgs?: unknown;
+    privateSecretContinuation?: PrivateSecretContinuationV1;
   }>): Promise<
     | Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }>
     | Readonly<{ ok: false; errorCode: string; error: string }>
@@ -2461,6 +2473,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     if (args.preExecutionFailure) {
       return await persistPreExecutionFailure(args.request, args.preExecutionFailure);
+    }
+    if ((args.request.actionId === 'computer.secret.fill' || args.request.actionId === 'browser.automation.secret.fill')
+      && !args.privateSecretContinuation) {
+      return await persistPreExecutionFailure(args.request, {
+        ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required',
+      });
     }
     // An Action with live-only input custody can only run while the admitted
     // invocation still holds its raw input: the durable record deliberately
@@ -2543,18 +2561,38 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     });
     const requestSurface = origin?.success ? origin.data.surface : null;
     const replayCaller = origin?.success ? origin.data.caller : { kind: 'host' as const };
+    // Only this factory's retained host invocation can resume its in-process
+    // operation. Durable replay and the deciding caller carry no such ports.
+    const retainedHostLifetime = deps.hostActionApprovalLifetime;
+    const retainsHostOperation = Boolean(retainedHostLifetime
+      && args.ctx.signal === retainedHostLifetime.signal
+      && args.ctx.operationAcceptance?.operationId === retainedHostLifetime.operationId
+      && args.ctx.actionCaller?.kind === 'host'
+      && origin?.success
+      && origin.data.caller.kind === 'host'
+      && origin.data.authority === 'account_automation'
+      && origin.data.requestId === args.ctx.actionRequestId
+      && request.v === 2
+      && request.approval?.flow === 'blocking');
     const persistedDirectoryApproval = request.actionId === 'session.spawn_new'
       ? SessionCreationDirectoryApprovalV1Schema.safeParse(
         request.sessionCreationDirectoryApproval,
       )
       : null;
-    const persistedHandoffTargetApproval = request.actionId === 'session.handoff'
+    const persistedHandoffTargetApproval = (request.actionId === 'session.handoff'
+      || request.actionId === 'workspace.sync.relationship.create')
       ? HandoffTargetReplacementApprovalV1Schema.safeParse(
         request.handoffTargetReplacementApproval,
       )
       : null;
     const executionContext: ActionExecutorContext = {
       ...(args.ctx.signal ? { signal: args.ctx.signal } : {}),
+      ...(retainsHostOperation ? {
+        operationAcceptance: args.ctx.operationAcceptance,
+        ...(args.ctx.operationProgress ? { operationProgress: args.ctx.operationProgress } : {}),
+        ...(args.ctx.operationOwnerUpdate ? { operationOwnerUpdate: args.ctx.operationOwnerUpdate } : {}),
+        ...(args.ctx.operationCancellation ? { operationCancellation: args.ctx.operationCancellation } : {}),
+      } : {}),
       ...(origin?.success ? {
         authority: origin.data.authority,
         surface: origin.data.surface,
@@ -2568,6 +2606,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : {}),
         ...(origin.data.principalId && origin.data.credentialId && origin.data.accountId
           && origin.data.externalActionExecutionAuthorization
+          && 'grant' in origin.data.externalActionExecutionAuthorization.binding
           ? { externalActionCredential: {
               accountId: origin.data.accountId,
               principalId: origin.data.principalId,
@@ -2590,6 +2629,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(origin.data.sessionAgentSpawnPolicyV1 !== undefined ? { sessionAgentSpawnPolicyV1: origin.data.sessionAgentSpawnPolicyV1 } : {}),
         ...(origin.data.causalPermissionAuthority !== undefined ? { causalPermissionAuthority: origin.data.causalPermissionAuthority } : {}),
         ...(origin.data.sessionInputSource !== undefined ? { sessionInputSource: origin.data.sessionInputSource } : {}),
+        ...(origin.data.externalActionExecutionAuthorization
+          && 'authentication' in origin.data.externalActionExecutionAuthorization.binding
+          && origin.data.externalActionExecutionAuthorization.binding.sessionActionOrigin?.workspaceWrites
+          ? { workspaceWrites: origin.data.externalActionExecutionAuthorization.binding.sessionActionOrigin.workspaceWrites }
+          : {}),
       } : {}),
       actionCaller: replayCaller,
       ...(actionId !== null && requiresPresentUserExecutionAuthorityForActionInputV1(getActionSpec(actionId), request.actionArgs)
@@ -2614,8 +2658,45 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && getActionSpec(actionId).approvalInputCustody === 'live_only'
       ? args.liveOnlyActionArgs
       : request.actionArgs;
+    const executeConfidential = async (): Promise<ActionExecuteResult> => {
+      const continuation = args.privateSecretContinuation;
+      if (!continuation || !deps.confidentialSecretFill) {
+        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      }
+      try {
+        const settlement = await deps.confidentialSecretFill({
+          actionId: continuation.actionId, request: continuation.request, choice: continuation.choice,
+          submit: continuation.submit, accountEncryptionMode: continuation.accountEncryptionMode,
+          context: { ...executionContext, authority: 'present_user',
+            runtimeAccountId: args.ctx.runtimeAccountId },
+          async isCurrent() {
+            if (args.ctx.signal?.aborted) return false;
+            if (!isActionEnabled(getActionSpec(continuation.actionId), { ...args.ctx, surface: executionContext.surface })) return false;
+            const current = deps.approvalsGet
+              ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.artifactServerId }) : null;
+            const parsed = StoredApprovalRequestSchema.safeParse(current);
+            return parsed.success && parsed.data.v === 2 && parsed.data.status === 'executing'
+              && parsed.data.decision?.kind === 'approve'
+              && parsed.data.decision.authority === 'present_user'
+              && parsed.data.actionId === continuation.actionId
+              && JSON.stringify(parsed.data.actionArgs) === JSON.stringify(continuation.request)
+              && parsed.data.executionOriginV1.requestId === continuation.requestId
+              && await isApprovalExecutionOriginCurrentForRequest({ request: parsed.data,
+                expectedOriginServerId: args.expectedOriginServerId ?? args.artifactServerId,
+                ...(args.ctx.signal ? { signal: args.ctx.signal } : {}) })
+              && await isDecidingHumanAdmissionCurrent(args.ctx);
+          },
+        });
+        const parsed = SecretFillSettlementV1Schema.safeParse(settlement);
+        return { ok: true, result: parsed.success ? parsed.data : { status: 'unknown', code: 'delivery_unknown' } };
+      } catch {
+        // An issued confidential effect is never replayed and no adapter prose crosses custody.
+        return { ok: true, result: { status: 'unknown', code: 'delivery_unknown' } };
+      }
+    };
     const exec = !originIsCurrent || !actionId
         ? { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' }
+        : args.privateSecretContinuation ? await executeConfidential()
         : requestSurface
           ? await executeCoreTerminal(
                 actionId,
@@ -2822,6 +2903,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     actionId: ActionId;
     input: unknown;
     context: ActionExecutorContext;
+    memoryAdmission?: MemoryWriteAdmissionV1;
     legacyMetadataLabel?: string;
   }>;
 
@@ -2895,10 +2977,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (!normalizedContext) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     let ctx: ActionExecutorContext = normalizedContext;
 
+    const originationPreferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, ctx);
+    if (originationPreferenceFailure) return originationPreferenceFailure;
+
     const listAccessFailure = resolveActionSessionListAccessFailure(actionId, ctx);
     if (listAccessFailure) return listAccessFailure;
 
     const spec = getActionSpec(actionId);
+    if (!isAccountSettingActionSurfaceAllowedV1(actionId, input, ctx.surface)) {
+      return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+    }
     {
       const authorityFailure = requiredAuthorityFailure(spec, ctx, input);
       if (authorityFailure) {
@@ -2936,7 +3024,45 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? classifyExecutionRunStartFailure(invalid, 'noRunCreated')
         : invalid;
     }
-    let admittedInput = parsed.data;
+    let admittedInput = redactMemoryActionInput(actionId, parsed.data);
+    if (actionId === 'connectedServices.accounts.revoke'
+      && readRecord(admittedInput).emergencyRevoke !== true
+      && readRecord(admittedInput).expectedCredentialRevision === undefined) {
+      if (existingAdmission || ctx.bypassApprovals === true) return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+      const prepareInput = deps.connectedServiceAction?.prepareInput;
+      if (!prepareInput) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      const prepared = await prepareInput({ actionId, input: admittedInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+      const preparationFailure = readActionFailureEnvelope(prepared);
+      if (preparationFailure) return preparationFailure;
+      const preparedInput = spec.inputSchema.safeParse(prepared);
+      if (!preparedInput.success || typeof readRecord(preparedInput.data).expectedCredentialRevision !== 'string') {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+      if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      admittedInput = preparedInput.data;
+    }
+    let memoryAdmission = existingAdmission?.memoryAdmission;
+    if (isMemoryWriteActionV1(actionId)) {
+      if (ctx.approvalOrigin?.kind === 'transcript_tool_call') ctx = { ...ctx, approvalOrigin: { ...ctx.approvalOrigin, toolInput: admittedInput } };
+      if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+      try {
+        const current = await readMemoryWriteAdmissionV1(deps.memoryLibrary, actionId, admittedInput, ctx);
+        if (memoryAdmission?.safety === 'safe' && current.safety === 'danger') {
+          return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+        }
+        memoryAdmission ??= current;
+        admittedInput = bindMemoryWriteApprovalInputV1(actionId, admittedInput, memoryAdmission);
+      } catch (error) {
+        const code = ctx.signal?.aborted ? 'cancelled' : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code : 'memory_exposure_unavailable';
+        return { ok: false, errorCode: code, error: code,
+          ...(!ctx.signal?.aborted && error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
+      }
+    }
+    if (ActionOperationActionIdV1Schema.safeParse(actionId).success && ctx.serverId
+      && ctx.serverId !== readNonEmptyString(readRecord(admittedInput).serverId)) {
+      return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+    }
     const credentialFailure = credentialScopeFailure(actionId, ctx, admittedInput);
     if (credentialFailure) return credentialFailure;
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
@@ -2944,7 +3070,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (WidgetDefinitionActionIdV1Schema.safeParse(actionId).success) {
       const account = readWidgetDefinitionActionAccountV1(admittedInput);
       if (!account) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
-      const accountFailure = admitWidgetActionSurfaceV1(deps, { ...account, owner: { kind: 'home' } }, ctx);
+      const accountFailure = await admitWidgetActionSurfaceV1(deps, { ...account, owner: { kind: 'home' } }, ctx);
       if (accountFailure) return accountFailure;
       const sourceSession = readWidgetDefinitionActionSessionV1(admittedInput);
       if (sourceSession) {
@@ -2954,9 +3080,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (sourceScopeFailure) return sourceScopeFailure;
       }
     }
-    const widgetTarget = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success) ? readWidgetActionSurfaceV1(admittedInput) : null;
+    const nativeBoardIntent = actionId === 'boards.apply' ? WorkBoardActionInputSchemasV1['boards.apply'].parse(admittedInput).intent : null;
+    const nativeBoardWidgetTarget = nativeBoardIntent?.kind.startsWith('widget_') && 'ref' in nativeBoardIntent
+      && 'surface' in nativeBoardIntent.ref ? nativeBoardIntent.ref.surface : null;
+    const widgetTarget = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success)
+      ? readWidgetActionSurfaceV1(admittedInput) : nativeBoardWidgetTarget;
     if (actionId === 'widgets.snapshot.post' && widgetTarget) {
-      const snapshotScopeFailure = admitWidgetActionSurfaceV1(deps, widgetTarget, ctx);
+      const snapshotScopeFailure = await admitWidgetActionSurfaceV1(deps, widgetTarget, ctx);
       if (snapshotScopeFailure) return snapshotScopeFailure;
     }
     const widgetDestination = actionId === 'widgets.instance.move' ? readWidgetActionDestinationV1(admittedInput) : null;
@@ -3010,10 +3140,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       ctx = { ...ctx, agentStartContext: { ...resolved, callerPermissionCeiling: ceiling } };
     }
-    const agentStartAction = isAgentStartActionV1(actionId);
+    const agentStartAction = isAgentStartActionInvocationV1(actionId, readRecord(admittedInput));
+    const managedAgentStart = actionId === 'machines.managed.acquire' && readRecord(admittedInput).agentStart !== undefined;
     const roleTargetAction = isRoleActionIdV1(actionId) && actionId.startsWith('session.');
     const userRoleStart = ctx.authority === 'present_user' && agentStartAction
-      && typeof readRecord(admittedInput).roleId === 'string'
+      && typeof (managedAgentStart ? readRecord(readRecord(admittedInput).agentStart) : readRecord(admittedInput)).roleId === 'string'
       && Boolean(ctx.agentStartContext);
     if ((isAgentCaller(ctx) && (agentStartAction || roleTargetAction)) || userRoleStart) {
       const roleTarget = roleTargetAction ? readRecord(admittedInput).sessionId : undefined;
@@ -3040,9 +3171,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const admission = admitActionAgentStartV1(ctx, start, startContext);
           if (!admission.ok) return classifyExecutionRunStartPreDispatchFailure(actionId, admission.error);
           if (start.kind === 'execution_run' || start.kind === 'spawn_new') {
-            admittedInput = stampAgentStartSelectionV1(request, admission.stamped,
-              actionId === 'session.spawn_new' ? 'spawn_new' : 'execution_run', startContext!);
-            if (actionId !== 'execution.run.start' && actionId !== 'session.spawn_new' && admission.stamped.roleId && admission.stamped.engine) {
+            const stampedInput = stampAgentStartSelectionV1(managedAgentStart ? readRecord(request.agentStart) : request,
+              admission.stamped, start.kind, startContext!);
+            admittedInput = managedAgentStart ? { ...request, agentStart: stampedInput } : stampedInput;
+            if (!managedAgentStart && actionId !== 'execution.run.start' && actionId !== 'session.spawn_new' && admission.stamped.roleId && admission.stamped.engine) {
               admittedInput = { ...readRecord(admittedInput),
                 [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [admission.stamped.engine.agentTargetKey] };
             }
@@ -3200,7 +3332,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
       }
     }
-    const contextualSafety = !existingAdmission && actionId === 'session.reports_to.set'
+    let sharedWidgetWrite = false;
+    if (!existingAdmission && spec.safety === 'danger' && widgetTarget) {
+      for (const target of [widgetTarget, widgetDestination]) {
+        if (!target || target.owner.kind !== 'project' && target.owner.kind !== 'workBoard') continue;
+        const admitted = await readWidgetActionSurfaceAdmissionV1(deps, target, ctx);
+        if (!admitted.ok) return admitted;
+        if (!admitted.read?.canEdit) return { ok: false, errorCode: 'widget_edit_denied', error: 'widget_edit_denied' };
+        sharedWidgetWrite ||= admitted.read.isShared === true;
+      }
+    }
+    // The incumbent approval owner consumes host-admitted Artifact facts; a
+    // Project/WorkBoard owner-kind shortcut must not turn sharing into a UI bypass.
+    const contextualSafety = !existingAdmission && memoryAdmission ? memoryAdmission.safety
+      : sharedWidgetWrite ? 'danger' as const : !existingAdmission && actionId === 'session.reports_to.set'
       ? isAgentCaller(ctx)
         && (normalizeId(ctx.defaultSessionId) === String(readRecord(admittedInput).sessionId)
           || (await readActionCallerLedSubtreeSessionIds(deps, ctx))?.has(String(readRecord(admittedInput).sessionId)))
@@ -3216,6 +3361,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ? getActionSpec('session.presentation.apply').safety
           : undefined;
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const hostApprovalLifetime = deps.hostActionApprovalLifetime;
+    const retainHostOperationApproval = Boolean(hostApprovalLifetime
+      && ctx.signal
+      && ctx.signal === hostApprovalLifetime.signal
+      && ctx.operationAcceptance?.operationId === hostApprovalLifetime.operationId
+      && ctx.actionCaller?.kind === 'host'
+      && ctx.authority === 'account_automation');
     const baseApprovalRouting = existingAdmission
       ? { required: false, flow: 'deferred' as const, result: 'none' as const }
       : resolveActionApprovalRouting({
@@ -3223,6 +3375,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           spec,
           input: admittedInput,
           context: ctx,
+          ...(retainHostOperationApproval ? { retainHostOperationApproval: true } : {}),
           ...(computerSelection ? { computerConsentGranted: computerSelection.consentGranted, settings: ctx.actionsSettings } : {}),
           ...(contextualSafety === undefined ? {} : { defaultSafety: contextualSafety, settings: ctx.actionsSettings }),
           // Pass the raw policy-hook result through (boolean | undefined). When the hook is unwired,
@@ -3231,7 +3384,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           requiredByPolicy: ctx.bypassApprovals ? false : contextualSafety === undefined
             ? deps.isActionApprovalRequired?.(actionId, ctx, admittedInput) : undefined,
         });
-    const approvalRouting = (!existingAdmission && actionId === 'workspace.sync.conflict.resolve' && !ctx.bypassApprovals)
+    const confidentialChoiceRequired = actionId === 'computer.secret.fill' || actionId === 'browser.automation.secret.fill';
+    if (confidentialChoiceRequired && ctx.bypassApprovals) {
+      return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
+    }
+    const approvalRouting = confidentialChoiceRequired
+      ? { required: true, flow: 'deferred' as const, result: 'required' as const }
+      : (!existingAdmission && actionId === 'workspace.sync.conflict.resolve' && !ctx.bypassApprovals)
       ? { required: true, flow: 'deferred' as const, result: 'required' as const }
       : requiredDirectoryApproval || requiredHandoffTargetApproval
       ? {
@@ -3380,7 +3539,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           },
           actionId,
           actionArgs: approvalActionArgs,
-          summary: buildApprovalSummary(spec, targetSessionId),
+          summary: buildApprovalSummary(spec, targetSessionId, admittedInput),
           preview: preparedApproval.preview,
           ...(requiredDirectoryApproval
             ? { sessionCreationDirectoryApproval: requiredDirectoryApproval }
@@ -3500,6 +3659,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: admittedInput,
           context: ctx,
+          ...(memoryAdmission ? { memoryAdmission } : {}),
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
         });
       }
@@ -3511,6 +3671,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (executionPlacement === 'client' && actionId !== 'widgets.instance.refresh'
         && WidgetInstanceActionIdV1Schema.safeParse(actionId).success
         && !deps.widgetSurfaceActions?.companion) return clientActionUnavailable(actionId);
+
+      if (actionId === 'session.authoring.open') {
+        if (!deps.sessionAuthoringOpen) return clientActionUnavailable(actionId);
+        return completeActionResult(await deps.sessionAuthoringOpen({
+          input: SessionAuthoringOpenV1Schema.parse(admittedInput), context: ctx,
+        }));
+      }
 
       if (SESSION_TRANSCRIPT_ACTION_ID_SET.has(actionId) && deps.sessionTranscriptAction) {
         const result = await deps.sessionTranscriptAction({
@@ -3524,6 +3691,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       // Switch by actionId; keep substrate generic.
+      if (MEMORY_DOCUMENT_ACTION_IDS_V1.some(id => id === actionId)) {
+        if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        assertMemoryHomeV1(deps.memoryLibrary, ctx.serverId);
+        if (isMemoryWriteActionV1(actionId)) {
+          if (!memoryAdmission) return { ok: false, errorCode: 'memory_exposure_unavailable', error: 'memory_exposure_unavailable' };
+          return completeActionResult(await executeMemoryWriteV1({ port: deps.memoryLibrary, actionId, input: admittedInput, context: ctx,
+            admission: memoryAdmission, sessionStateFieldSet: deps.sessionStateFieldSet }));
+        }
+        if (actionId === 'memory.read') {
+          const request = MemoryDocReadInputV1Schema.parse(admittedInput);
+          assertMemoryHomeV1(deps.memoryLibrary, request.ref.serverId);
+          return completeActionResult(await readMemoryDocInLibrary({ store: deps.memoryLibrary.store, artifactId: request.ref.artifactId,
+            ...(request.topic === undefined ? {} : { topic: request.topic }), nowMs: deps.memoryLibrary.nowMs, signal: ctx.signal }));
+        }
+        const request = MemoryListInputV1Schema.parse(admittedInput);
+        assertMemoryHomeV1(deps.memoryLibrary, request.serverId);
+        return completeActionResult(await listMemoryDocsInLibrary({ store: deps.memoryLibrary.store, request, signal: ctx.signal }));
+      }
       if (isSessionPermissionRemoteActionId(actionId)) {
         if (!deps.sessionPermissionRemoteAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -3856,7 +4041,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'boards.apply') {
           const { intent } = WorkBoardActionInputSchemasV1['boards.apply'].parse(parsed.data);
           if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref) {
-            const refusal = admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
+            const refusal = await admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
             if (refusal) return refusal;
             if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs' || intent.kind === 'widget_size') {
               let instance = intent.kind === 'widget_add' ? intent.instance : undefined;
@@ -3869,7 +4054,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 if (!state.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
                 const existing = state.data.instances.find(entry => entry.instance.id === intent.ref.instanceId)?.instance;
                 if (!existing) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
-                instance = intent.kind === 'widget_inputs' ? { ...existing, bindings: intent.bindings } : existing;
+                instance = intent.kind === 'widget_inputs' ? { ...existing,
+                  bindings: setWidgetInputBindingsV1(existing.bindings, intent.bindings, intent.paths) } : existing;
               }
               if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
                 const admission = await admitWidgetInstanceConfigurationV1(deps, intent.ref, instance!, ctx);
@@ -3892,6 +4078,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const widgetDefinitionActionId = WidgetDefinitionActionIdV1Schema.safeParse(actionId);
       if (widgetDefinitionActionId.success) return await executeWidgetDefinitionActionV1(deps, widgetDefinitionActionId.data, parsed.data, ctx);
       if (actionId === 'widgets.snapshot.post') return await executeWidgetSnapshotPostV1(deps, parsed.data, ctx);
+
+      if (isProfileActionIdV1(actionId)) {
+        if (!deps.profileActionExecute) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        return await deps.profileActionExecute(parseProfileActionRequestV1(actionId, parsed.data), ctx);
+      }
 
       if (actionId === 'launch_profiles.publish') {
         if (!deps.launchProfilePublish) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -3936,10 +4127,44 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const artifactActionId = ArtifactActionIdV1Schema.safeParse(actionId);
       if (artifactActionId.success) {
         if (!deps.artifactAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const artifactInput = ArtifactActionInputSchemasV1[artifactActionId.data].parse(parsed.data);
+        const internalKindRefusal = { ok: false as const, errorCode: 'artifact_kind_internal', error: 'artifact_kind_internal' };
+        // Generic documents consume the same kind exclusion as the browser. Specialized
+        // owners keep their native transport; retagging cannot bypass their write policy.
+        if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed
+          || artifactActionId.data === 'artifact.publish_from_file' && 'kind' in artifactInput
+            && !getArtifactKindPolicyV1(artifactInput.kind).browserListed) return internalKindRefusal;
+        if ((artifactActionId.data === 'artifact.update' || artifactActionId.data === 'artifact.delete'
+          || artifactActionId.data === 'artifact.revisions.list' || artifactActionId.data === 'artifact.revisions.restore')
+          && 'artifactId' in artifactInput) {
+          // The keyholding host opens the actual current document and admits its access.
+          // The existing expected-revision writer still decides stale/current mutations.
+          const opened = await deps.artifactAction({ actionId: 'artifact.get', input: { artifactId: artifactInput.artifactId }, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          const refusal = readActionFailureEnvelope(opened);
+          if (refusal) return refusal;
+          const admitted = ArtifactActionOutputSchemasV1['artifact.get'].safeParse(opened);
+          if (!admitted.success || admitted.data.artifact && admitted.data.artifact.artifactId !== artifactInput.artifactId)
+            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          if (!admitted.data.artifact) return { ok: false, errorCode: 'not_found', error: 'not_found' };
+          if (!getArtifactKindPolicyV1(admitted.data.artifact.header.kind).browserListed) return internalKindRefusal;
+          ctx.signal?.throwIfAborted();
+        }
         const result = await deps.artifactAction({ actionId: artifactActionId.data,
-          input: ArtifactActionInputSchemasV1[artifactActionId.data].parse(parsed.data), context: ctx,
+          input: artifactInput, context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
-        return readActionFailureEnvelope(result) ?? { ok: true, result: ArtifactActionOutputSchemasV1[artifactActionId.data].parse(result) };
+        const refusal = readActionFailureEnvelope(result);
+        if (refusal) return refusal;
+        if (artifactActionId.data === 'artifact.get') {
+          const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
+          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed) return internalKindRefusal;
+          return { ok: true, result: opened };
+        }
+        if (artifactActionId.data === 'artifact.list') {
+          const page = ArtifactActionOutputSchemasV1['artifact.list'].parse(result);
+          return { ok: true, result: { ...page, items: page.items.filter(item => getArtifactKindPolicyV1(item.header.kind).browserListed) } };
+        }
+        return { ok: true, result: ArtifactActionOutputSchemasV1[artifactActionId.data].parse(result) };
       }
 
       const workflowActionId = WorkflowActionIdV1Schema.safeParse(actionId);
@@ -4077,20 +4302,23 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           try {
             if (actionId === 'home.hub.layout.update') {
               const { intent } = HomeHubLayoutUpdateInputSchema.parse(parsed.data);
-              if (intent.kind === 'widget_add' || intent.kind === 'widget_size') {
+              if (intent.kind === 'widget_add' || intent.kind === 'widget_size' || intent.kind === 'widget_inputs') {
                 const scope = deps.widgetAccountScope?.();
                 if (!scope) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
                 const surface = { ...scope, owner: { kind: 'home' as const } };
-                const section = intent.kind === 'widget_size'
+                const section = intent.kind !== 'widget_add'
                   ? (await deps.homeHubArtifacts.describe(await deps.homeHubArtifacts.read(ctx.signal), ctx.signal)).sections
                     .find(value => value.kind === 'widget' && value.instance.id === intent.instanceId) : undefined;
-                const instance = intent.kind === 'widget_add' ? intent.instance : section?.kind === 'widget' ? section.instance : undefined;
+                const original = intent.kind === 'widget_add' ? intent.instance : section?.kind === 'widget' ? section.instance : undefined;
+                const instance = intent.kind === 'widget_inputs' && original ? { ...original,
+                  bindings: setWidgetInputBindingsV1(original.bindings, intent.bindings, intent.paths) } : original;
                 if (!instance) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
                 const ref = { surface, instanceId: instance.id };
-                if (intent.kind === 'widget_add') {
+                if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
                   const refusal = await admitWidgetInstanceConfigurationV1(deps, ref, instance, ctx);
                   if (refusal) return refusal;
                 }
+                if (intent.kind === 'widget_inputs') return { ok: true, result: await deps.homeHubArtifacts.apply(intent, ctx.signal) };
                 const admission = await admitWidgetInstanceSizeV1(deps, ref, instance, intent.size, ctx);
                 if ('ok' in admission) return admission;
                 return { ok: true, result: await deps.homeHubArtifacts.apply({ ...intent,
@@ -4123,6 +4351,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return completeActionResult(deps.nextPendingSession
           ? await deps.nextPendingSession(ctx)
           : { status: 'unavailable' });
+      }
+      if (actionId === 'session.pending.withdraw') {
+        if (!deps.sessionPendingWithdraw) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        return completeActionResult(await deps.sessionPendingWithdraw({
+          ...SessionPendingWithdrawInputV1Schema.parse(parsed.data), context: ctx,
+        }));
       }
       if (actionId === 'ui.command_palette.list' || actionId === 'ui.command_palette.invoke') {
         if (!deps.uiCommandPaletteAction) {
@@ -4159,7 +4393,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const sessionId = upsert.sessionId ?? ctx.defaultSessionId;
             if (!scope || !sessionId) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
             const surface = { ...scope, owner: { kind: 'sessionBoard' as const, sessionId } };
-            const scopeRefusal = admitWidgetActionSurfaceV1(deps, surface, ctx);
+            const scopeRefusal = await admitWidgetActionSurfaceV1(deps, surface, ctx);
             if (scopeRefusal) return scopeRefusal;
             const instance = upsert.item.source.instance;
             const ref = { surface, instanceId: instance.id };
@@ -4236,16 +4470,127 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
+      const managedMachineActionId = ManagedMachineActionIdV1Schema.safeParse(actionId);
+      if (managedMachineActionId.success) {
+        if (managedMachineActionId.data === 'machines.managed.references.get') {
+          const input = ManagedMachineActionInputSchemasV1['machines.managed.references.get'].parse(admittedInput);
+          const result = MachineReferenceCensusV1Schema.parse(deps.managedMachineReferences
+            ? await deps.managedMachineReferences({ input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) })
+            : { homeId: input.homeId, machineId: null, coverage: 'partial', references: [], unavailable: ['requester_authority'] });
+          return { ok: true, result };
+        }
+        if (!deps.managedMachineAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        try {
+          const nativeInput = ManagedMachineActionInputSchemasV1[managedMachineActionId.data].parse(admittedInput);
+          let machineReferences: MachineReferenceCensusV1 | undefined;
+          let nativeContext = ctx;
+          if (managedMachineActionId.data === 'machines.managed.delete') {
+            const deleteInput = ManagedMachineActionInputSchemasV1['machines.managed.delete'].parse(nativeInput);
+            machineReferences = MachineReferenceCensusV1Schema.parse(deps.managedMachineReferences
+              ? await deps.managedMachineReferences({ input: deleteInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) })
+              : { homeId: deleteInput.homeId, machineId: null, coverage: 'partial', references: [], unavailable: ['requester_authority'] });
+            const census = machineReferences;
+            const acceptance = ctx.operationAcceptance;
+            if (acceptance) nativeContext = { ...ctx, operationAcceptance: { ...acceptance,
+              accept: receipt => acceptance.accept(ManagedDeleteOutputV1Schema.parse({ ...readRecord(receipt), machineReferences: census })),
+            } };
+          }
+          const result = await deps.managedMachineAction({
+            actionId: managedMachineActionId.data,
+            input: nativeInput,
+            context: nativeContext,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          return readActionFailureEnvelope(result) ?? { ok: true,
+            result: machineReferences ? { ...readRecord(result), machineReferences } : result };
+        } catch (error) {
+          const refusal = ManagedRefusalCodeV1Schema.safeParse(readRecord(error).code);
+          if (refusal.success) return { ok: false, errorCode: refusal.data, error: refusal.data };
+          throw error;
+        }
+      }
+
+      const machinePresetActionId = MachinePresetActionIdV1Schema.safeParse(actionId);
+      if (machinePresetActionId.success) {
+        if (!deps.machinePresetAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        const result = await deps.machinePresetAction({
+          actionId: machinePresetActionId.data,
+          input: MachinePresetActionInputSchemasV1[machinePresetActionId.data].parse(admittedInput),
+          context: ctx,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+
       const machinePoolActionId = MachinePoolActionIdV1Schema.safeParse(actionId);
+      const operationActionId = ActionOperationActionIdV1Schema.safeParse(actionId);
+      if (operationActionId.success) {
+        if (!deps.actionOperationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.actionOperationAction({
+          actionId: operationActionId.data,
+          input: ActionOperationActionInputSchemasV1[operationActionId.data].parse(parsed.data),
+          context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      const projectWorkerActionId = ProjectWorkerActionIdV1Schema.safeParse(actionId);
+      if (projectWorkerActionId.success) {
+        if (!deps.projectWorkerAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.projectWorkerAction({
+          actionId: projectWorkerActionId.data,
+          input: ProjectWorkerActionInputSchemasV1[projectWorkerActionId.data].parse(parsed.data),
+          context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      if (actionId === 'machines.work.summary.get') {
+        if (!deps.machineWorkSummaryGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const target = MachineWorkSummaryGetInputV1Schema.parse(parsed.data);
+        if (ctx.serverId && target.serverId !== ctx.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        const result = await deps.machineWorkSummaryGet({ input: target, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      const machineAccessActionId = MachineAccessActionIdSchema.safeParse(actionId);
+      if (machineAccessActionId.success) {
+        if (!deps.machineAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const machineTarget = readRecord(parsed.data);
+        if (ctx.serverId && machineTarget.serverId !== ctx.serverId) {
+          return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        }
+        const result = await deps.machineAccessAction({ actionId: machineAccessActionId.data, input: parsed.data, context: ctx,
+          ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
       const connectedServiceActionId = ConnectedServiceConfigurationActionIdV1Schema.safeParse(actionId);
       if (connectedServiceActionId.success) {
         if (!deps.connectedServiceAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.connectedServiceAction({ actionId: connectedServiceActionId.data, input: parsed.data, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        const result = await deps.connectedServiceAction({ actionId: connectedServiceActionId.data, input: admittedInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machinePoolActionId.success) {
         if (!deps.machinePoolAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        if (machinePoolActionId.data === 'machines.pools.resolve') {
+          const request = MachinePoolResolveInputV1Schema.parse(parsed.data);
+          if (request.purpose === 'finite' || request.purpose === 'service-start') {
+            if (ctx.serverId && request.workspace.serverId !== ctx.serverId) {
+              return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+            }
+            const workerContext = { ...ctx, serverId: request.workspace.serverId };
+            const pool = await execute('machines.pools.get', { poolId: request.poolId }, workerContext);
+            if (!pool.ok) return pool;
+            const result = await resolveMachinePoolWorkerCandidateV1({ request,
+              pool: MachinePoolViewV1Schema.parse(pool.result),
+              status: (input) => execute('projects.worker.status', input, workerContext),
+              ...(ctx.signal ? { signal: ctx.signal } : {}),
+            });
+            return { ok: true, result };
+          }
         }
         const result = await deps.machinePoolAction({
           actionId: machinePoolActionId.data,
@@ -4408,21 +4753,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.machinePairingCreate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         return completeActionResult(await deps.machinePairingCreate(MachinePairingCreateInputSchema.parse(parsed.data), ctx));
       }
-      if (actionId === 'machines.terminal.open') {
-        if (!deps.machineTerminalOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const request = MachineTerminalOpenInputSchema.parse(parsed.data);
-        const serverId = request.serverId ?? ctx.serverId;
-        return completeActionResult(await deps.machineTerminalOpen({ ...request,
-          ...(serverId ? { serverId } : {}),
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-        }));
-      }
-      if (actionId === 'machines.terminal.list') {
-        if (!deps.machineTerminalList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const request = MachineTerminalListInputSchema.parse(parsed.data);
-        const serverId = request.serverId ?? ctx.serverId;
-        return completeActionResult(await deps.machineTerminalList({ ...request,
-          ...(serverId ? { serverId } : {}),
+      if (isMachineTerminalActionId(actionId)) {
+        const request = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(parsed.data);
+        if (ctx.serverId && request.serverId !== ctx.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineTerminalAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        return completeActionResult(await deps.machineTerminalAction({ actionId, input: request, context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         }));
       }
@@ -4613,6 +4948,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           input: parsed.data,
           context: ctx,
           runtimeActionExecute: deps.runtimeActionExecute,
+          executeCanonicalAction: (nestedActionId, nestedInput) => execute(nestedActionId, nestedInput, ctx),
         });
         return completeActionResult(result);
       }
@@ -4625,15 +4961,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: parsed.data,
           context: ctx,
-          executeCanonicalAction: async (nestedActionId, nestedInput, options) => await execute(
-            nestedActionId,
-            nestedInput,
-            options?.requiredContributedActionDangerLevel
-              ? { ...ctx, requiredContributedActionDangerLevel: options.requiredContributedActionDangerLevel }
-              : ctx,
-          ),
+          executeCanonicalAction: async (nestedActionId, nestedInput, options) => {
+            // Only detached Run control is Machine-bound. A retained, separately
+            // admitted Session namespace keeps the incumbent Session RPC route.
+            const nestedContext = nestedActionId.startsWith('execution.run.')
+              && !readNonEmptyString(readRecord(nestedInput).sessionId)
+              && ctx.externalActionTarget?.kind === 'machine'
+              ? { ...ctx, executionRunTargetMachineId: ctx.externalActionTarget.machineId } : ctx;
+            return await execute(nestedActionId, nestedInput, options?.requiredContributedActionDangerLevel
+              ? { ...nestedContext, requiredContributedActionDangerLevel: options.requiredContributedActionDangerLevel }
+              : nestedContext);
+          },
         });
         return completeActionResult(result);
+      }
+
+      if (isFilesystemActionId(actionId)) {
+        if (!deps.filesystemActionExecute) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        return completeActionResult(await deps.filesystemActionExecute({ actionId, input: parsed.data, context: ctx }));
       }
 
       if (actionId === 'review.walkthrough' || actionId === 'review.explain_findings') {
@@ -5979,6 +6326,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const unwrap = (result: ActionExecuteResult) => result.ok ? result.result : result;
           const result = await executeWaitActionV1(request, {
+            operation: async (target, options) => {
+              const observed = await execute('action.operations.get', {
+                serverId: target.serverId, machineId: target.machineId, operationId: target.operationId, waitForTerminal: true,
+              }, { ...ctx, ...(options.signal ? { signal: options.signal } : {}) });
+              if (!observed.ok) return observed;
+              const response = observed.result;
+              if (response && typeof response === 'object' && 'kind' in response && response.kind === 'found' && 'operation' in response) {
+                return { disposition: 'matched', snapshot: response.operation };
+              }
+              return { disposition: 'target_unavailable' };
+            },
             execution: async (target, options) => unwrap(await execute('execution.run.wait', {
               runId: target.runId,
               ...(options.condition.kind === 'terminal' ? {} : { condition: options.condition.kind }),
@@ -6073,6 +6431,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(await deps.workspaceAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
+        if (isProjectActionIdV1(actionId)) {
+          if (!deps.projectAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return completeActionResult(await deps.projectAction({ actionId, input: parsed.data, context: ctx,
+            // Like SCM's source reads, placement consumes this same admitted
+            // frontdoor and host context without lending a new target grant.
+            executeCanonicalAction: (nestedActionId, nestedInput) => execute(nestedActionId, nestedInput, ctx),
+          }));
+        }
+
+        if (isProjectDefinitionActionId(actionId)) {
+          if (!deps.projectDefinitionAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return completeActionResult(await deps.projectDefinitionAction({ actionId, input: parsed.data, context: ctx }));
+        }
+
         if (isSessionCanvasActionId(actionId)) {
           if (!deps.sessionCanvasAction) return { ok: true, result: { status: 'unavailable' } };
           return completeActionResult(await deps.sessionCanvasAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
@@ -6088,6 +6460,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.sessionOrganizationMove) return { ok: true, result: { status: 'unavailable' } };
           return completeActionResult(await deps.sessionOrganizationMove({ input: parsed.data,
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
+        if (actionId === 'session.organization.pin.set') {
+          if (!deps.sessionOrganizationPinSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = parsed.data as PublicActionInputById['session.organization.pin.set'];
+          if (input.serverId && ctx.serverId && input.serverId !== ctx.serverId) {
+            return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          }
+          const serverId = input.serverId ?? resolveServerIdForSession(deps, ctx, input.sessionId);
+          const request = SetSessionPinRequestSchema.parse({ pinned: input.pinned,
+            ...(input.surface ? { surface: input.surface } : {}),
+            ...(input.sortKey !== undefined ? { sortKey: input.sortKey } : {}),
+          });
+          const result = await deps.sessionOrganizationPinSet({ context: ctx, sessionId: input.sessionId, request, serverId,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          const failure = readActionFailureEnvelope(result);
+          if (failure) return failure;
+          const output = SetSessionPinResponseSchema.safeParse(result);
+          if (!output.success || (output.data.pin === null ? request.pinned
+            : output.data.pin.sessionId !== input.sessionId
+              || output.data.pin[(request.surface ?? 'list') === 'rail' ? 'railPinned' : 'listPinned'] !== request.pinned)) {
+            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          }
+          return completeActionResult(output.data);
         }
 
         if (actionId === 'composer.transaction.apply' || actionId === 'composer.attachments.pick' || actionId === 'repository.upload.pick') {
@@ -6110,7 +6506,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (isSessionTerminalActionId(actionId)) {
           if (!deps.sessionTerminalAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          return completeActionResult(await deps.sessionTerminalAction({ actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+          return completeActionResult(await deps.sessionTerminalAction({ actionId, input: parsed.data, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
         if (actionId === 'session.open') {
@@ -6438,16 +6834,100 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(res);
         }
 
+        if (actionId === 'projects.context.update') {
+          if (!deps.projectsContextUpdate) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.context.update' };
+          // The domain conflict carries the row revision required for the editor's next submission.
+          return { ok: true, result: await deps.projectsContextUpdate(ProjectContextUpdateInputV1Schema.parse(data), ctx) };
+        }
+
+        if (actionId === 'projects.open') {
+          if (!deps.projectsOpen) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.open' };
+          const input = OpenProjectInputV1Schema.parse(data);
+          if (ctx.serverId && ctx.serverId !== input.serverId) {
+            return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          }
+          if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+          try {
+            const result = await deps.projectsOpen(input, ctx);
+            const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+            if (approval.success && approval.data.actionId === actionId) return completeActionResult(approval.data);
+            const failure = readActionFailureEnvelope(result);
+            if (failure) return failure;
+            return completeActionResult(OpenProjectResultV1Schema.parse(result));
+          } catch (error) {
+            const code = readRpcErrorCode(error);
+            // These acknowledgements prove refusal before the handler can execute.
+            // Transport loss, cancellation after dispatch and malformed acceptance do not.
+            if (code === RPC_ERROR_CODES.METHOD_NOT_FOUND || code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+              || code === RPC_ERROR_CODES.UPDATE_REQUIRED || code === RPC_ERROR_CODES.FORBIDDEN) {
+              return completeActionResult({ kind: 'refused', code });
+            }
+            return completeActionResult({ kind: 'outcomeUnknown' });
+          }
+        }
+
+        if (actionId === 'projects.visibility.set') {
+          if (!deps.projectsVisibilitySet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.visibility.set' };
+          const { ProjectVisibilitySetInputV1Schema } = await import('../projects/projectVisibilityV1.js');
+          return completeActionResult(await deps.projectsVisibilitySet(ProjectVisibilitySetInputV1Schema.parse(data), ctx));
+        }
+
+        if (actionId === 'projects.workspace.update') {
+          if (!deps.projectsWorkspaceUpdate) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.workspace.update' };
+          const { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema } = await import('../projects/projectWorkspaceActionsV1.js');
+          const input = ProjectWorkspaceUpdateInputV1Schema.parse(data);
+          if (ctx.serverId && ctx.serverId !== input.serverId) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          return completeActionResult(ProjectWorkspaceUpdateOutputV1Schema.parse(await deps.projectsWorkspaceUpdate(input, ctx)));
+        }
+
+        if (actionId === 'projects.workspace.forget') {
+          if (!deps.projectsWorkspaceForget) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.workspace.forget' };
+          const { ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } = await import('../projects/projectWorkspaceActionsV1.js');
+          const input = ProjectWorkspaceForgetInputV1Schema.parse(data);
+          if (ctx.serverId && ctx.serverId !== input.serverId) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          return completeActionResult(ProjectWorkspaceForgetOutputV1Schema.parse(await deps.projectsWorkspaceForget(input, ctx)));
+        }
+
         if (actionId === 'projects.list') {
           const projectsList = deps.projectsList;
           if (!projectsList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.list' };
           }
           const res = await projectsList({
+            ...(typeof data.serverId === 'string' ? { serverId: data.serverId } : {}),
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
-          });
+            ...(typeof data.includeHidden === 'boolean' ? { includeHidden: data.includeHidden } : {}),
+          }, ctx);
           return completeActionResult(res);
+        }
+
+        // Domain refusals retain their acknowledged/current Source revision;
+        // the outer Action result distinguishes transport/admission failures.
+        if (actionId === 'projects.sources.list') {
+          if (!deps.projectSourcesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.projectSourcesList(ProjectSourcesListInputV1Schema.parse(data), ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === 'projects.sources.read') {
+          if (!deps.projectSourcesRead) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.projectSourcesRead(ProjectSourcesReadInputV1Schema.parse(data), ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === 'projects.sources.create') {
+          if (!deps.projectSourcesCreate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.projectSourcesCreate(ProjectSourcesCreateInputV1Schema.parse(data), ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === 'projects.sources.update') {
+          if (!deps.projectSourcesUpdate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.projectSourcesUpdate(ProjectSourcesUpdateInputV1Schema.parse(data), ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === 'projects.sources.delete') {
+          if (!deps.projectSourcesDelete) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.projectSourcesDelete(ProjectSourcesDeleteInputV1Schema.parse(data), ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
         }
 
         if (actionId === 'prompts.invocations.list') {
@@ -6481,7 +6961,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'machines.list') {
+          const requestedServerId = normalizeId(data.serverId);
+          const currentServerId = normalizeId(ctx.serverId);
+          if (requestedServerId && currentServerId && requestedServerId !== currentServerId) {
+            return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          }
           const res = await deps.machinesList({
+            ...(requestedServerId || currentServerId ? { serverId: requestedServerId || currentServerId } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
           return completeActionResult(res);
@@ -6830,16 +7316,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(res);
         }
 
-        if (actionId === 'session.title.set') {
+        if (isSessionStateFieldActionId(actionId)) {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-          if (!deps.sessionTitleSet) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.title.set' };
+          if (!deps.sessionStateFieldSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const title = String(data.title ?? '').trim();
-          if (!title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionTitleSet({ context: ctx, sessionId, title, ...(serverId ? { serverId } : {}) });
+          const serverId = 'serverId' in data && typeof data.serverId === 'string'
+            ? data.serverId : resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionStateFieldSet({ context: ctx, actionId, sessionId,
+            ...resolveSessionStateFieldActionWrite(actionId, parsed.data), ...(serverId ? { serverId } : {}) });
           return completeActionResult(res);
         }
 
@@ -7761,6 +8247,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: settlement.result };
         }
 
+        if (isArtifactFolderActionIdV1(actionId)) {
+          if (!deps.artifactFolders) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          if (ctx.serverId && !(deps.artifactFolders.matchesServerId?.(ctx.serverId) ?? ctx.serverId === deps.artifactFolders.serverId)) {
+            return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          }
+          return completeActionResult(await executeArtifactFolderActionV1({ port: deps.artifactFolders, actionId, input: parsed.data, signal: ctx.signal }));
+        }
+
         if (actionId === 'prompt_doc.get') {
           if (!deps.promptDocGet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_doc.get' };
           return completeActionResult(await deps.promptDocGet({
@@ -7799,6 +8293,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             artifactId,
             title,
             markdown: String(data.markdown ?? ''),
+            ...(data.expectedRevision === undefined ? {} : { expectedRevision: PromptDocRevisionV1Schema.parse(data.expectedRevision) }),
             ...(Object.prototype.hasOwnProperty.call(data, 'folderId')
               ? { folderId: (data.folderId ?? null) as string | null }
               : {}),
@@ -7978,6 +8473,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!parsedTargetArgs.success) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
+        let targetArgs = redactMemoryActionInput(targetActionId, parsedTargetArgs.data);
+        if (isMemoryWriteActionV1(targetActionId)) {
+          if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${targetActionId}` };
+          const admission = await readMemoryWriteAdmissionV1(deps.memoryLibrary, targetActionId, targetArgs, ctx);
+          targetArgs = bindMemoryWriteApprovalInputV1(targetActionId, targetArgs, admission);
+        }
         const approvalPluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
         if (ctx.actionCaller?.kind === 'plugin' && !approvalPluginCaller) {
           return { ok: false, errorCode: 'plugin_action_caller_required', error: 'plugin_action_caller_required' };
@@ -7985,14 +8486,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         const rawCreatedBy = data.createdBy as ApprovalRequestV1['createdBy'];
         const forcedSurface = mapApprovalCreatedBySurface(ctx.surface ?? null);
-        const actionArgsSessionId = normalizeId(readRecord(parsedTargetArgs.data).sessionId);
+        const actionArgsSessionId = normalizeId(readRecord(targetArgs).sessionId);
         const ctxDefaultSessionId = normalizeId(ctx.defaultSessionId);
         const targetSessionId = actionArgsSessionId || ctxDefaultSessionId || null;
         const rawApprovalOrigin = Object.prototype.hasOwnProperty.call(data, 'origin')
           ? data.origin
           : ctx.approvalOrigin;
         const requestSessionId = resolveExplicitApprovalRequestingSessionId(rawApprovalOrigin, ctx, targetSessionId);
-        const approvalOrigin = resolveApprovalOriginForRequest(rawApprovalOrigin, requestSessionId);
+        const rawResolvedOrigin = resolveApprovalOriginForRequest(rawApprovalOrigin, requestSessionId);
+        const approvalOrigin = isMemoryWriteActionV1(targetActionId) && rawResolvedOrigin?.kind === 'transcript_tool_call'
+          ? { ...rawResolvedOrigin, toolInput: targetArgs } : rawResolvedOrigin;
         const rawAgentId = normalizeId(rawCreatedBy.agentId) || null;
         const requestedSurface = ctx.actionCaller?.kind === 'plugin'
           ? 'plugin'
@@ -8012,15 +8515,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!String(data.summary ?? '').trim()) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
-        const summary = buildApprovalSummary(targetSpec, targetSessionId);
+        const summary = buildApprovalSummary(targetSpec, targetSessionId, targetArgs);
 
         const initialApprovalActionArgs = targetActionId === 'session.spawn_new'
-          ? materializeSessionSpawnApprovalInput(parsedTargetArgs.data, ctx)
-          : parsedTargetArgs.data;
+          ? materializeSessionSpawnApprovalInput(targetArgs, ctx)
+          : targetArgs;
         const preparedApproval = await prepareApprovalRequest({
           deps,
           actionId: targetActionId,
-          input: parsedTargetArgs.data,
+          input: targetArgs,
           actionArgs: initialApprovalActionArgs,
           context: ctx,
         });
@@ -8062,14 +8565,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       if (actionId === 'approval.request.decide') {
         const artifactId = normalizeId(data.artifactId);
-        const decision = data.decision === 'approve' || data.decision === 'reject'
+        const decision = data.decision === 'approve' || data.decision === 'reject' || data.decision === 'cancel'
           ? data.decision
           : null;
         if (!artifactId || !decision) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 
-        if (deps.targetActionApprovalReplay) {
+        if (decision !== 'cancel' && deps.targetActionApprovalReplay) {
           const replay = await deps.targetActionApprovalReplay({
             artifactId,
             decision,
@@ -8091,6 +8594,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const existingParsed = StoredApprovalRequestSchema.safeParse(existingRaw);
         if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
         const existing = existingParsed.data;
+        if (decision === 'approve' && (existing.actionId === 'computer.secret.fill' || existing.actionId === 'browser.automation.secret.fill')) {
+          return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
+        }
         const editsComputerSelection = data.computerTarget !== undefined || data.computerAccess !== undefined;
         if (editsComputerSelection && (decision !== 'approve'
           || existing.actionId !== 'computer.target.select' || existing.status !== 'open')) {
@@ -8101,6 +8607,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const requestedActionId = ActionIdSchema.safeParse(existing.actionId);
         if (requestedActionId.success
+          && decision !== 'cancel'
           && requiresPresentUserDecisionForActionInputV1(getActionSpec(requestedActionId.data), existing.actionArgs, decision)
           && resolveHostStampedAuthority(ctx) !== 'present_user') {
           return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
@@ -8142,6 +8649,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (decision === 'reject' && existing.status === 'rejected' && existing.decision?.kind === 'reject') {
           return buildApprovalDecisionResult(existing);
         }
+        if (decision === 'cancel' && existing.status === 'canceled') return buildApprovalDecisionResult(existing);
 
         if (decision === 'approve'
           && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed')
@@ -8155,6 +8663,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         const now = Date.now();
+
+        if (decision === 'cancel') {
+          const nextCanceled: ApprovalRequest = { ...existing, status: 'canceled',
+            updatedAtMs: Math.max(now, existing.updatedAtMs), actionArgs: settleApprovalRequestActionArgs(existing) };
+          const updated = await deps.approvalsUpdate({ artifactId, request: nextCanceled, serverId: effectiveServerId });
+          const updateFailure = readActionFailureEnvelope(updated);
+          if (updateFailure) return updateFailure;
+          // Blocking waiters observe the persisted canceled Artifact through their
+          // existing cancellation branch; no approval/rejection authority is minted.
+          return buildApprovalDecisionResult(nextCanceled);
+        }
 
         if (decision === 'reject') {
           // Rejection is the other settlement, and a refused request has no
@@ -8282,9 +8801,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (deps.approvalRequestApprovedReplay) {
+          const replayRequestId = normalizeId(ctx.actionRequestId)
+            || (approvedRequest.v === 2 ? approvedRequest.executionOriginV1.requestId : '');
           const replay = await deps.approvalRequestApprovedReplay({
             artifactId,
             request: approvedRequest,
+            context: ctx,
+            ...(replayRequestId ? { requestId: replayRequestId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           if (replay !== null) return replay;
@@ -8572,9 +9095,82 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return result;
   };
 
+  async function isDecidingHumanAdmissionCurrent(ctx: ActionExecutorContext): Promise<boolean> {
+    if (ctx.signal?.aborted) return false;
+    try {
+      const admitted = !ctx.verifyMachineAdmissionCurrent || await ctx.verifyMachineAdmissionCurrent();
+      return admitted && !ctx.signal?.aborted;
+    } catch {
+      return false;
+    }
+  }
+
+  async function continueConfidentialApprovalRequest(input: unknown, ctx: ActionExecutorContext = {}): Promise<ActionExecuteResult> {
+    if (resolveHostStampedAuthority(ctx) !== 'present_user') {
+      return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+    }
+    const parsed = PrivateSecretContinuationV1Schema.safeParse(input);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    if (!deps.approvalsGet || !deps.approvalsUpdate) {
+      return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    }
+    let continuation: PrivateSecretContinuationV1 | null = parsed.data;
+    try {
+      const raw = await deps.approvalsGet({ artifactId: continuation.artifactId, serverId: null });
+      const stored = StoredApprovalRequestSchema.safeParse(raw);
+      if (!stored.success || stored.data.v !== 2) {
+        return { ok: false, errorCode: raw ? 'approval_invalid' : 'approval_not_found', error: raw ? 'approval_invalid' : 'approval_not_found' };
+      }
+      let request: ApprovalRequest = stored.data;
+      const origin = stored.data.executionOriginV1;
+      if (request.actionId !== continuation.actionId || origin.requestId !== continuation.requestId
+        || origin.serverId !== continuation.request.serverId || origin.sessionId !== continuation.request.sessionId
+        || origin.machineId !== continuation.request.machineId
+        || (ctx.serverId && ctx.serverId !== origin.serverId
+          && (!origin.serverIdentityId || ctx.serverIdentityId !== origin.serverIdentityId))
+        || (ctx.serverIdentityId && origin.serverIdentityId && ctx.serverIdentityId !== origin.serverIdentityId)
+        || JSON.stringify(request.actionArgs) !== JSON.stringify(continuation.request)
+        || (continuation.submit && !continuation.request.submit)) {
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+      }
+      const recorded = buildActionExecuteResultFromRecordedApprovalExecution(request);
+      if (recorded) return recorded;
+      if (request.status === 'executing') {
+        return { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
+      }
+      if (request.status !== 'open') return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
+      const callerGrant = ctx.externalActionCredential?.grant;
+      const target = origin.target ?? { kind: 'session' as const, sessionId: continuation.request.sessionId };
+      if (callerGrant && !isApiTokenGrantTargetMemberV1(callerGrant, target, origin.machineId)) {
+        return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+      }
+      if (!isActionEnabled(getActionSpec(continuation.actionId), { ...ctx, surface: origin.surface })) {
+        return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+      }
+      if (!await isApprovalExecutionOriginCurrentForRequest({ request, expectedOriginServerId: origin.serverId,
+        ...(ctx.signal ? { signal: ctx.signal } : {}) }) || !await isDecidingHumanAdmissionCurrent(ctx)) {
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+      }
+      const now = Date.now();
+      request = { ...request, status: 'approved', updatedAtMs: Math.max(now, request.updatedAtMs),
+        decision: { kind: 'approve', decidedAtMs: now, authority: 'present_user' } };
+      const claimed = await deps.approvalsUpdate({ artifactId: continuation.artifactId, request, serverId: origin.serverId });
+      const failure = readActionFailureEnvelope(claimed);
+      if (failure) return failure;
+      const execution = await executeApprovedActionForRequest({ artifactId: continuation.artifactId, request,
+        artifactServerId: origin.serverId, expectedOriginServerId: origin.serverId, ctx,
+        privateSecretContinuation: continuation, observeExecution: true });
+      return execution.ok ? execution.exec : execution;
+    } finally {
+      // JavaScript cannot promise forensic string erasure; no owned durable reference remains.
+      continuation = null;
+    }
+  }
+
   return {
     prepare,
     execute,
+    continueConfidentialApprovalRequest,
     replayApprovedApprovalRequest,
   };
 }

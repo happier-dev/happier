@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { createPromptDocInLibrary, listPromptLibrary, setPromptDocFavorite, type PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { getActionSpec } from './actionSpecs.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { writeSessionContextIntentV1ToMetadata } from '../sessions/context/sessionContextV1.js';
+import type { StoredContentPublicShareV1 } from '../sharing/storedContentPublicShareV1.js';
+import type { PromptLibraryRecordV1 } from '../prompts/library/promptLibraryRowsV1.js';
+import { MemoryMutationResultV1Schema } from '../prompts/library/memoryActionsV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -44,14 +49,353 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it('reports a created Artifact receipt when its separate personal organization CAS conflicts', async () => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>();
+    let writerUnavailable = false;
+    const record: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [{ id: 'folder', name: 'Folder' }] } };
+    const store = {
+      read: async (artifactId: string) => artifacts.get(artifactId) ?? null,
+      create: async (content: { header: Readonly<Record<string, unknown>>; body: string }) => {
+        const artifactId = artifacts.size === 0 ? 'created' : `created-${artifacts.size + 1}`;
+        artifacts.set(artifactId, { id: artifactId, ...content, revision: { headerVersion: 1, bodyVersion: 1 } });
+        return artifactId;
+      },
+      update: async () => {},
+      organization: {
+        serverId: 'home', assertCurrent: () => {},
+        readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record, revision: 4 }], tombstones: [], diagnostics: [] } }),
+        readArtifactHeader: async (artifactId: string) => {
+          const artifact = artifacts.get(artifactId);
+          return artifact ? { header: artifact.header, owned: true } : null;
+        },
+        listArtifactHeaders: async () => ({ items: [], coverage: 'complete' as const }),
+        writeRecord: async () => {
+          if (writerUnavailable) throw Object.assign(new Error('private transport material'), { details: { secret: 'private transport material' } });
+          return { status: 'conflict' as const, revision: 5 };
+        },
+      },
+    };
+    const executor = createExecutor({ promptDocCreate: request => createPromptDocInLibrary({ store, request }) });
+    const receipt = await executor.execute('prompt_doc.create', { title: 'Created content', markdown: 'Retained content', folderId: 'folder' },
+      { surface: 'cli', serverId: 'home' });
+    expect(receipt).toMatchObject({ ok: false, errorCode: 'artifact_organization_failed', details: {
+      artifactId: 'created', organization: { status: 'conflict', revision: 5 },
+    } });
+    expect(artifacts.get('created')).toMatchObject({ header: { title: 'Created content' }, body: expect.stringContaining('Retained content') });
+    expect(artifacts.get('created')?.header).not.toHaveProperty('folderId');
+    writerUnavailable = true;
+    const unavailable = await executor.execute('prompt_doc.create', { title: 'Other content', markdown: 'Retained too', folderId: 'folder' },
+      { surface: 'cli', serverId: 'home' });
+    expect(unavailable).toMatchObject({ ok: false, errorCode: 'artifact_organization_failed', details: {
+      artifactId: 'created-2', organization: { status: 'unavailable', reason: 'artifact_organization_unavailable' },
+    } });
+    expect(JSON.stringify(unavailable)).not.toContain('private transport material');
+    expect(artifacts.get('created-2')?.body).toContain('Retained too');
+  });
+  it('organizes every Artifact kind in the private folder row through safe Actions without changing shared content', async () => {
+    let record: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [] } };
+    let revision = 1;
+    const sharedHeader = { v: 1, kind: 'document.v1', title: 'Recipient document', folderId: 'owner-folder', tags: ['Owner private'] };
+    const deps = {
+      isActionApprovalRequired: () => false,
+      artifactFolders: {
+        serverId: 'home', assertCurrent: () => {},
+        // A host-profile resolution boundary admits its known alias, never a foreign Home.
+        matchesServerId: (serverId: string) => serverId === 'home' || serverId === 'home-alias',
+        readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record, revision }], tombstones: [], diagnostics: [] } }),
+        readArtifactHeader: async () => ({ header: sharedHeader, owned: false }),
+        listArtifactHeaders: async () => ({ items: [], coverage: 'complete' as const }),
+        writeRecord: async (request: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }) => {
+          if (request.expectedRevision !== revision) return { status: 'conflict' as const, revision };
+          record = request.record; revision++;
+          return { status: 'updated' as const, revision, cursor: revision };
+        },
+      },
+    };
+    const executor = createExecutor(deps);
+    for (const surface of ['agent', 'mcp', 'cli', 'ui'] as const) {
+      const context = { surface, serverId: surface === 'ui' ? 'home-alias' : 'home' };
+      const id = `folder-${surface}`;
+      const created = await executor.execute('artifact.folders.create', { id, name: surface, expectedRevision: revision }, context);
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      expect(created).toMatchObject({ ok: true, result: { status: 'updated', revision: revision } });
+      expect(await executor.execute('artifact.folder.set', { artifactId: 'shared', folderId: id, expectedRevision: revision }, context))
+        .toMatchObject({ ok: true });
+      expect(record).toMatchObject({ key: 'folders', value: { artifactHeadersById: { shared: { folderId: id } } } });
+      if (record.key !== 'folders') throw new Error('Wrong catalog owner');
+      expect(record.value.artifactHeadersById?.shared.tags).toBeUndefined();
+      expect(await executor.execute('artifact.folders.rename', { folderId: id, name: `Renamed ${surface}`, expectedRevision: revision }, context))
+        .toMatchObject({ ok: true });
+      expect(await executor.execute('artifact.folders.move', { folderId: id, parentId: null, expectedRevision: revision }, context))
+        .toMatchObject({ ok: true });
+      expect(await executor.execute('artifact.folders.delete', { folderId: id, expectedRevision: revision }, context)).toMatchObject({ ok: true });
+      expect(record).toMatchObject({ key: 'folders', value: { folders: [], artifactHeadersById: { shared: { folderId: null } } } });
+    }
+    expect(sharedHeader).toEqual({ v: 1, kind: 'document.v1', title: 'Recipient document', folderId: 'owner-folder', tags: ['Owner private'] });
+    for (const id of ['artifact.folders.create', 'artifact.folders.rename', 'artifact.folders.move', 'artifact.folders.delete', 'artifact.folder.set'] as const) {
+      const spec = getActionSpec(id);
+      expect(spec.safety).toBe('safe');
+      expect(spec.inputSchema.safeParse({ expectedRevision: 1, payload: {} }).success).toBe(false);
+    }
+  });
+
+  it('refuses stale, incomplete, foreign-Home and cancelled folder changes before any private write', async () => {
+    const record: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [{ id: 'one', name: 'One' }] } };
+    let unavailable = false;
+    let current = true;
+    let writes = 0;
+    let inventoryCoverage: 'complete' | 'partial' | 'unavailable' = 'complete';
+    const deps = { isActionApprovalRequired: () => false, artifactFolders: {
+      serverId: 'home', assertCurrent: () => { if (!current) throw Object.assign(new Error('Retired Home'), { code: 'scope-retired' }); },
+      readCatalog: async () => ({ catalog: unavailable
+        ? { status: 'unavailable' as const, reason: 'unreachable' as const }
+        : { status: 'ready' as const, rows: [{ record, revision: 2 }], tombstones: [], diagnostics: [] } }),
+      writeRecord: async () => { writes++; return { status: 'updated' as const, revision: 3, cursor: 3 }; },
+      readArtifactHeader: async () => null,
+      listArtifactHeaders: async () => ({ items: [], coverage: inventoryCoverage }),
+    } };
+    const executor = createExecutor(deps);
+    const request = { folderId: 'one', name: 'Changed', expectedRevision: 1 };
+    const renamed = await executor.execute('artifact.folders.rename', request, { surface: 'ui', serverId: 'home' });
+    expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
+    expect(renamed).toMatchObject({ ok: true, result: { status: 'conflict', revision: 2 } });
+    unavailable = true;
+    expect(await executor.execute('artifact.folders.rename', { ...request, expectedRevision: 2 }, { surface: 'ui', serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'unreachable' } });
+    unavailable = false;
+    for (const coverage of ['partial', 'unavailable'] as const) {
+      inventoryCoverage = coverage;
+      expect(await executor.execute('artifact.folders.delete', { folderId: 'one', expectedRevision: 2 }, { surface: 'ui', serverId: 'home' }))
+        .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'artifact_inventory_incomplete' } });
+      expect(record.value.folders).toEqual([{ id: 'one', name: 'One' }]);
+    }
+    expect(await executor.execute('artifact.folders.rename', { ...request, expectedRevision: 2 }, { surface: 'ui', serverId: 'foreign' }))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    const controller = new AbortController(); controller.abort();
+    await executor.execute('artifact.folders.rename', { ...request, expectedRevision: 2 }, { surface: 'ui', serverId: 'home', signal: controller.signal });
+    current = false;
+    await executor.execute('artifact.folders.rename', { ...request, expectedRevision: 2 }, { surface: 'ui', serverId: 'home' });
+    expect(writes).toBe(0);
+  });
+  it('admits private memory, asks for shared memory and sanitizes approval custody before any write', async () => {
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, facts: [], archive: [] }) };
+    let shared = false;
+    let writes = 0;
+    let approvalInput: unknown;
+    let publication: StoredContentPublicShareV1 | null = null;
+    let publicationAvailable = true;
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => `fact-${writes}`,
+      store: { read: async () => stored, update: async input => { writes++; stored = { ...stored, body: input.body,
+        revision: { headerVersion: 1 + writes, bodyVersion: 1 + writes } }; } },
+      readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner',
+        grants: shared ? [{ principal: { kind: 'account', accountId: 'other' }, accessLevel: 'edit', createdByAccountId: 'owner', createdAt: 1, display: { name: null } }] : [] },
+        publicShares: publicationAvailable ? { publicShares: publication ? [publication] : [] } : null }),
+    }, approvalsCreate: async args => { approvalInput = args.request; return { artifactId: 'approval' }; } });
+    const request = () => ({ ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' }, expectedRevision: stored.revision, text: 'Prefer tea; password=secret' });
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      actionRequestId: 'request', defaultSessionId: 'session', serverId: 'home' } as const;
+    expect(await executor.execute('memory.remember', request(), context)).toMatchObject({ ok: true, result: { factId: 'fact-0' } });
+    expect(JSON.parse(stored.body!).index[0]).toMatchObject({ text: 'Prefer tea; password: [REDACTED]', sourceSessionRef: { serverId: 'home', sessionId: 'session' } });
+    shared = true;
+    await executor.execute('memory.remember', request(), context);
+    expect(writes).toBe(1);
+    expect(JSON.stringify(approvalInput)).not.toContain('password=secret');
+    expect(JSON.stringify(approvalInput)).toContain('[REDACTED]');
+    expect(await executor.execute('memory.remember', { ...request(), ref: { kind: 'doc', artifactId: 'memory', serverId: 'other-home' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    shared = false;
+    const prepared = await executor.prepare('memory.remember', request(), context);
+    if (prepared.kind !== 'ready') throw new Error('Private memory preparation refused');
+    shared = true;
+    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(writes).toBe(1);
+    const waived = { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'memory.remember': ['agent'] } }) };
+    expect(await executor.execute('memory.remember', request(), waived)).toMatchObject({ ok: true });
+    expect(writes).toBe(2);
+    const explicit = await executor.execute('approval.request.create', { actionId: 'memory.remember', actionArgs: request(),
+      summary: 'Remember', createdBy: { surface: 'agent' } }, context);
+    expect(explicit).toMatchObject({ ok: true });
+    expect(JSON.stringify(approvalInput)).not.toContain('password=secret');
+    shared = false;
+    publication = { id: 'publication', subject: { kind: 'artifact', id: 'memory' }, expiresAt: 10,
+      maxUses: 1, useCount: 1, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+    expect(await executor.execute('memory.remember', request(), context)).toMatchObject({ ok: true, result: { factId: 'fact-2' } });
+    expect(writes).toBe(3);
+    publication = { ...publication, expiresAt: 11 };
+    await executor.execute('memory.remember', request(), context);
+    expect(writes).toBe(3); // Exhausted admission does not revoke already-issued public viewer tokens.
+    publication = null;
+    publicationAvailable = false;
+    expect(await executor.execute('memory.remember', request(), context))
+      .toMatchObject({ ok: false, errorCode: 'memory_exposure_unavailable' });
+    expect(writes).toBe(3);
+    publicationAvailable = true;
+    const required = { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'memory.remember': { approvalRequiredSurfaces: ['agent'] } } }) };
+    expect(await executor.execute('memory.remember', request(), required))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(writes).toBe(3);
+  });
+  it('creates memory only on first remember, reuses the reserved attachment and retains an attach-conflicted fact', async () => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>();
+    let metadata: Record<string, unknown> = { bot: { kind: 'bot' }, work: { memoryEnabled: true, promptStack: [] } };
+    let revision = 3;
+    let creates = 0;
+    let attaches = 0;
+    let conflict = false;
+    let ids = 0;
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      memoryLibrary: { serverId: 'home', randomId: () => `fact-${++ids}`,
+      store: { read: async id => artifacts.get(id) ?? null, create: async input => { creates++; const id = `memory-${creates}`;
+        artifacts.set(id, { id, header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
+      update: async input => { const prior = artifacts.get(input.artifactId)!;
+        artifacts.set(prior.id, { ...prior, body: input.body, revision: { headerVersion: prior.revision.headerVersion + 1, bodyVersion: prior.revision.bodyVersion + 1 } }); } },
+      readSession: async () => ({ metadata, revision }),
+      readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'owner', access: 'owner', grants: [] }, publicShares: { publicShares: [] } }),
+    }, sessionStateFieldSet: async write => {
+      if (write.fieldId !== 'intent.context') throw new Error('Wrong writer');
+      if (conflict || write.expectedMetadataRevision !== revision) return { ok: false, errorCode: 'conflict' };
+      metadata = writeSessionContextIntentV1ToMetadata(metadata, write.value); revision++; attaches++;
+      return { ok: true };
+    } });
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: 'session', serverId: 'home' } as const;
+    const request = () => ({ sessionRef: { serverId: 'home', sessionId: 'session' }, expectedMetadataRevision: revision, text: 'Preference' });
+    const first = await executor.execute('memory.remember', request(), context);
+    expect(first).toMatchObject({ ok: true, result: { artifactId: 'memory-1', attachment: 'attached' } });
+    expect(await executor.execute('memory.remember', request(), context)).toMatchObject({ ok: true, result: { artifactId: 'memory-1' } });
+    expect(creates).toBe(1); expect(attaches).toBe(1);
+    expect(JSON.parse(artifacts.get('memory-1')!.body!).index).toHaveLength(2);
+    metadata = { bot: { kind: 'bot' }, work: { memoryEnabled: true, promptStack: [] } }; revision++; conflict = true;
+    const conflicted = await executor.execute('memory.remember', request(), context);
+    expect(conflicted).toMatchObject({ ok: true, result: { artifactId: 'memory-2', attachment: 'conflict' } });
+    expect(JSON.parse(artifacts.get('memory-2')!.body!).index).toHaveLength(1);
+    expect(attaches).toBe(1);
+    if (!conflicted.ok) throw new Error('Expected the retained creation receipt');
+    const receipt = MemoryMutationResultV1Schema.parse(conflicted.result);
+    if (!receipt.ref) throw new Error('Missing the created document reference');
+    conflict = false;
+    // Recover the actual created document through the existing context Action, not another create/retry mechanism.
+    expect(await executor.execute('session.context.update', {
+      sessionId: 'session', serverId: 'home', expectedMetadataRevision: revision,
+      intent: { kind: 'attach', entry: { id: 'session.memory', ref: receipt.ref, enabled: true, placement: 'system_append' } },
+    }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('memory.remember', request(), context)).toMatchObject({ ok: true, result: { artifactId: 'memory-2' } });
+    expect(creates).toBe(2);
+    expect(attaches).toBe(2);
+    expect(JSON.parse(artifacts.get('memory-2')!.body!).index).toHaveLength(2);
+    expect(await executor.execute('memory.remember', { ...request(), expectedMetadataRevision: revision - 1 }, context))
+      .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+    expect(creates).toBe(2);
+    metadata = { work: { memoryEnabled: false, promptStack: [] } }; revision++;
+    expect(await executor.execute('memory.remember', request(), { ...context, surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(creates).toBe(2);
+    expect(artifacts.size).toBe(2);
+  });
+  it('remembers ordinary Session facts in existing Project memory, otherwise Account memory, without a Session-only default', async () => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>(['project-memory', 'account-memory'].map(id => [id, {
+      id, header: { v: 1, kind: 'memory_doc.v1', title: id }, revision: { headerVersion: 1, bodyVersion: 1 },
+      body: JSON.stringify({ v: 1, facts: [], archive: [] }),
+    }]));
+    const entry = (artifactId: string) => ({ id: artifactId, ref: { kind: 'doc' as const, artifactId, serverId: 'home' },
+      enabled: true, placement: 'system_append' as const });
+    let projectEntries = [entry('project-memory')];
+    let accountEntries = [entry('account-memory')];
+    let creates = 0;
+    let sessionAttachments = 0;
+    let accountAttachments = 0;
+    let shared = false;
+    const metadata = { work: { memoryEnabled: true, promptStack: [] } };
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      memoryLibrary: { serverId: 'home', randomId: () => `fact-${artifacts.get('project-memory')?.revision.bodyVersion}-${creates}`,
+        store: { read: async id => artifacts.get(id) ?? null,
+          create: async input => { const id = `created-${++creates}`;
+            artifacts.set(id, { id, header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
+          update: async input => { const current = artifacts.get(input.artifactId)!;
+            artifacts.set(current.id, { ...current, body: input.body, revision: {
+              headerVersion: current.revision.headerVersion + 1, bodyVersion: current.revision.bodyVersion + 1 } }); },
+        },
+        readSession: async () => ({ metadata, revision: 3 }),
+        readArtifactHeaders: async refs => refs.map(ref => artifacts.get(ref.artifactId)?.header ?? null),
+        ...{ readInheritedContext: async () => ({ projectEntries, readAccountContext: async () => ({ accountEntries,
+          attachAccountMemory: async (ref: Readonly<{ kind: 'doc'; artifactId: string; serverId?: string }>) => {
+            accountEntries = [...accountEntries, entry(ref.artifactId)]; accountAttachments++; return true;
+          } }) }) },
+        readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'owner', access: 'owner',
+          grants: shared ? [{ principal: { kind: 'team', teamId: 'team' }, accessLevel: 'edit', createdByAccountId: 'owner',
+            createdAt: 1, display: { name: null } }] : [] }, publicShares: { publicShares: [] } }),
+      },
+      sessionStateFieldSet: async () => { sessionAttachments++; return { ok: true }; },
+      approvalsCreate: async () => ({ artifactId: 'approval' }),
+    });
+    const request = { sessionRef: { serverId: 'home', sessionId: 'ordinary' }, expectedMetadataRevision: 3, text: 'Stable preference' };
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      defaultSessionId: 'ordinary', serverId: 'home', actionRequestId: 'request' } as const;
+    expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true, result: { artifactId: 'project-memory' } });
+    expect(creates).toBe(0);
+    shared = true;
+    expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created' } });
+    expect(artifacts.get('project-memory')!.revision.bodyVersion).toBe(2);
+    shared = false; projectEntries = [];
+    expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true, result: { artifactId: 'account-memory' } });
+    accountEntries = [];
+    expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true,
+      result: { artifactId: 'created-1', attachment: 'attached' } });
+    expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true, result: { artifactId: 'created-1' } });
+    expect(creates).toBe(1); expect(accountAttachments).toBe(1); expect(sessionAttachments).toBe(0);
+    expect(metadata.work.promptStack).toEqual([]);
+  });
+  it('returns the currently admitted memory version on a reviewed write conflict without changing it', async () => {
+    const revision = { headerVersion: 4, bodyVersion: 7 };
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision, header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },
+      body: JSON.stringify({ v: 1, facts: [{ id: 'current', text: 'Current truth', createdAtMs: 1, sourceSessionRef: null }], archive: [] }) };
+    let writes = 0;
+    const executor = createExecutor({ memoryLibrary: { serverId: 'home', randomId: () => 'replacement',
+      store: { read: async () => stored, update: async () => {
+        writes++;
+        // External Artifact CAS loses to another writer; its next read is the current admitted version.
+        stored = { ...stored, revision: { headerVersion: 5, bodyVersion: 8 },
+          body: JSON.stringify({ v: 1, index: [{ id: 'current', text: 'Concurrent truth', createdAtMs: 2, sourceSessionRef: null }], topics: [] }) };
+        throw Object.assign(new Error('conflict'), { code: 'version_mismatch' });
+      } },
+      readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'owner', access: 'owner', grants: [] },
+        publicShares: { publicShares: [] } }),
+    } });
+    expect(await executor.execute('memory.update', { ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, factId: 'current', text: 'Reviewed draft' }, { surface: 'cli', serverId: 'home' }))
+      .toMatchObject({ ok: false, errorCode: 'version_mismatch', details: { current: { artifactId: 'memory', revision } } });
+    expect(writes).toBe(0);
+    expect(stored.body).toContain('Current truth');
+    expect(stored.body).not.toContain('Reviewed draft');
+    expect(await executor.execute('memory.update', { ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+      expectedRevision: revision, factId: 'current', text: 'Reviewed draft' }, { surface: 'cli', serverId: 'home' }))
+      .toMatchObject({ ok: false, errorCode: 'version_mismatch', details: { current: {
+        artifactId: 'memory', revision: { headerVersion: 5, bodyVersion: 8 },
+        body: { v: 1, index: [{ id: 'current', text: 'Concurrent truth' }], topics: [] },
+      } } });
+    expect(writes).toBe(1);
+    expect(stored.body).not.toContain('Reviewed draft');
+  });
   it('creates, inventories, and favourites through real library operations on agent, MCP, CLI and UI surfaces', async () => {
     let stored: PromptLibraryStoredArtifact | null = null;
+    const folderRecord: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [] } };
     const store = { read: async () => stored,
       create: async ({ header, body }: { header: Readonly<Record<string, unknown>>; body: string }) => {
         stored = { id: 'saved', header, body, revision: { headerVersion: 1, bodyVersion: 1 } }; return 'saved';
       },
       update: async ({ header, body }: { header: Readonly<Record<string, unknown>>; body: string }) => { stored = { ...stored!, header, body }; },
-      list: async () => ({ items: stored ? [{ id: stored.id, header: stored.header, updatedAtMs: 1 }] : [], coverage: 'complete' as const }),
+      list: async () => ({ items: stored ? [{ id: stored.id, header: stored.header, owned: true, updatedAtMs: 1 }] : [], coverage: 'complete' as const }),
+      organization: {
+        serverId: 'home', assertCurrent: () => {},
+        readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record: folderRecord, revision: 1 }], tombstones: [], diagnostics: [] } }),
+        readArtifactHeader: async () => stored ? { header: stored.header, owned: true } : null,
+        listArtifactHeaders: async () => ({ items: stored ? [{ artifactId: stored.id, header: stored.header, owned: true }] : [], coverage: 'complete' as const }),
+        writeRecord: async () => { throw new Error('This inventory fixture does not request organization mutations'); },
+      },
     };
     const executor = createExecutor({
       promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store, request, signal }),

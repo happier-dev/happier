@@ -41,6 +41,9 @@ export type ScmRepositoryActionInputById = {
         } | undefined;
         outcomeVersion?: 1 | undefined;
     };
+    readonly "scm.hostingRepository.resolveAddress": {
+        address: string;
+    };
     readonly "scm.hostingRepository.describePublishTargets": {
         [x: string]: unknown;
         cwd?: string | undefined;
@@ -146,6 +149,7 @@ export type ScmRepositoryActionResultById = {
                 worktreeCreate: boolean;
                 changeSetModel: 'index' | 'working-copy';
                 supportedDiffAreas: ('included' | 'pending' | 'both')[];
+                readHistoryEntries?: boolean | undefined;
                 readBranches?: boolean | undefined;
                 readStash?: boolean | undefined;
                 writeDiscard?: boolean | undefined;
@@ -1433,6 +1437,7 @@ export type ScmRepositoryActionResultById = {
                 worktreeCreate: boolean;
                 changeSetModel: 'index' | 'working-copy';
                 supportedDiffAreas: ('included' | 'pending' | 'both')[];
+                readHistoryEntries?: boolean | undefined;
                 readBranches?: boolean | undefined;
                 readStash?: boolean | undefined;
                 writeDiscard?: boolean | undefined;
@@ -2370,6 +2375,7 @@ export type ScmRepositoryActionResultById = {
                 worktreeCreate: boolean;
                 changeSetModel: 'index' | 'working-copy';
                 supportedDiffAreas: ('included' | 'pending' | 'both')[];
+                readHistoryEntries?: boolean | undefined;
                 readBranches?: boolean | undefined;
                 readStash?: boolean | undefined;
                 writeDiscard?: boolean | undefined;
@@ -2567,6 +2573,36 @@ export type ScmRepositoryActionResultById = {
         } | undefined;
         stdout?: string | undefined;
         stderr?: string | undefined;
+    };
+    readonly "scm.hostingRepository.resolveAddress": {
+        success: true;
+        kind: 'resolved';
+        selector: {
+            provider: {
+                id: string;
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                displayName: string;
+                baseUrl: string;
+            };
+            repository: {
+                nameWithOwner: string;
+                defaultBranch?: string | null | undefined;
+                webUrl?: string | undefined;
+                cloneUrl?: string | undefined;
+                sshUrl?: string | undefined;
+                visibility?: 'private' | 'public' | 'internal' | undefined;
+            };
+            protocol: 'auto' | 'ssh' | 'https';
+        };
+    } | {
+        success: true;
+        kind: 'unknown';
+    } | {
+        success: true;
+        kind: 'unsupported';
+    } | {
+        success: true;
+        kind: 'invalid';
     };
     readonly "scm.hostingRepository.describePublishTargets": {
         [x: string]: unknown;
@@ -3743,6 +3779,7 @@ export type ScmRepositoryActionResultById = {
                 worktreeCreate: boolean;
                 changeSetModel: 'index' | 'working-copy';
                 supportedDiffAreas: ('included' | 'pending' | 'both')[];
+                readHistoryEntries?: boolean | undefined;
                 readBranches?: boolean | undefined;
                 readStash?: boolean | undefined;
                 writeDiscard?: boolean | undefined;

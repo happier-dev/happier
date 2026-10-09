@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionListFilterFieldsV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
@@ -8,18 +9,18 @@ export const SCOPE_ACTION_IDS = [
   'shell.column.get', 'shell.column.set',
 ] as const;
 export type ScopeActionId = typeof SCOPE_ACTION_IDS[number];
-export const ScopeActionIdSchema = z.enum(SCOPE_ACTION_IDS);
+export const ScopeActionIdSchema = lazyZodSchema(() => z.enum(SCOPE_ACTION_IDS));
 
-export const SessionListActionViewSchema = z.discriminatedUnion('kind', [
+export const SessionListActionViewSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('global') }).strict(),
   z.object({ kind: z.literal('team'), serverId: z.string().trim().min(1), teamId: z.string().trim().min(1) }).strict(),
-]);
-const SessionListViewTargetSchema = z.object({
+]));
+const SessionListViewTargetSchema = lazyZodSchema(() => z.object({
   view: SessionListActionViewSchema.optional(),
   storage: z.enum(['active', 'archived']).optional(),
-}).strict();
-export const SessionListActionFiltersSchema = SessionListFilterFieldsV1Schema.extend({ searchQuery: z.string() });
-const MutationResultSchema = z.object({ ok: z.literal(true) }).strict();
+}).strict());
+export const SessionListActionFiltersSchema = lazyZodSchema(() => SessionListFilterFieldsV1Schema.extend({ searchQuery: z.string() }));
+const MutationResultSchema = lazyZodSchema(() => z.object({ ok: z.literal(true) }).strict());
 
 export const ScopeActionInputSchemas = {
   'session.list.view.get': SessionListViewTargetSchema,

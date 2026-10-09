@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { normalizeStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
@@ -10,42 +11,56 @@ import { ConnectedAccountPurposeIdSchema } from '../connect/connectedAccountPurp
 import { WidgetDefinitionV1Schema } from './widgetDefinitionV1.js';
 
 const id = z.string().trim().min(1);
-export const WidgetDefinitionRefV1Schema = z.discriminatedUnion('kind', [
+export const WidgetDefinitionRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('installed'), surface: asProtocolZod(PluginContributionIdentityV1Schema) }).strict(),
   z.object({ kind: z.literal('builtin'), id }).strict(),
   z.object({ kind: z.literal('artifact'), artifactId: id }).strict(),
   // Explicit Session audience copy. It never makes an Account-private Artifact readable.
   z.object({ kind: z.literal('inline'), definition: z.lazy(() => WidgetDefinitionV1Schema) }).strict(),
-]);
+]));
 export type WidgetDefinitionRefV1 = z.infer<typeof WidgetDefinitionRefV1Schema>;
-export const WidgetInputBindingV1Schema = z.discriminatedUnion('kind', [
+export const WidgetInputBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('value'), value: StrictJsonValueSchema }).strict(),
   z.object({ kind: z.literal('context'), slot: id }).strict(),
   z.object({ kind: z.literal('viewer'), purpose: ConnectedAccountPurposeIdSchema }).strict(),
-]);
+]));
 export type WidgetInputBindingV1 = z.infer<typeof WidgetInputBindingV1Schema>;
-export const WidgetInputBindingsV1Schema = z.record(InputPathSchema, WidgetInputBindingV1Schema);
+export const WidgetInputBindingsV1Schema = lazyZodSchema(() => z.record(InputPathSchema, WidgetInputBindingV1Schema));
 export type WidgetInputBindingsV1 = z.infer<typeof WidgetInputBindingsV1Schema>;
-export const WidgetInstanceV1Schema = z.object({
+/** Whole replacement remains the default; selected writes leave other current choices alone. */
+export function setWidgetInputBindingsV1(current: WidgetInputBindingsV1, next: WidgetInputBindingsV1, paths?: readonly string[]): WidgetInputBindingsV1 {
+  if (paths === undefined) return next;
+  const selected = new Set(paths);
+  return { ...current, ...Object.fromEntries(Object.entries(next).filter(([path]) => selected.has(path))) };
+}
+/** A reset intent removes exact saved paths from the owner's current bindings. */
+export function resetWidgetInputBindingsV1(bindings: WidgetInputBindingsV1, paths?: readonly string[]): WidgetInputBindingsV1 {
+  if (paths === undefined) return {};
+  const removed = new Set(paths);
+  return Object.fromEntries(Object.entries(bindings).filter(([path]) => !removed.has(path)));
+}
+export const WidgetInstanceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1), id, definition: WidgetDefinitionRefV1Schema,
   bindings: WidgetInputBindingsV1Schema, displayName: id.optional(),
-}).strict();
+}).strict());
 export type WidgetInstanceV1 = z.infer<typeof WidgetInstanceV1Schema>;
 
 /** Identity only: a surface reference never supplies data access or an executable target. */
-export const WidgetSurfaceRefV1Schema = z.object({
+export const WidgetSurfaceRefV1Schema = lazyZodSchema(() => z.object({
   serverId: id, accountId: id,
+  /** Explicit attached Artifact binding; it grants no access and is not stored owner identity. */
+  artifactId: id.optional(),
   owner: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('home') }).strict(),
     z.object({ kind: z.literal('sessionBoard'), sessionId: id }).strict(),
     z.object({ kind: z.literal('companion'), sessionId: id }).strict(),
     z.object({ kind: z.literal('workBoard'), boardId: id }).strict(),
-    z.object({ kind: z.literal('project'), projectId: id }).strict(),
+    z.object({ kind: z.literal('project'), projectId: id, dashboardId: id.optional() }).strict(),
     z.object({ kind: z.literal('pluginArea'), pluginId: id, pageId: id, area: id }).strict(),
   ]),
-}).strict();
+}).strict());
 export type WidgetSurfaceRefV1 = z.infer<typeof WidgetSurfaceRefV1Schema>;
-export const WidgetInstanceRefV1Schema = z.object({ surface: WidgetSurfaceRefV1Schema, instanceId: id }).strict();
+export const WidgetInstanceRefV1Schema = lazyZodSchema(() => z.object({ surface: WidgetSurfaceRefV1Schema, instanceId: id }).strict());
 export type WidgetInstanceRefV1 = z.infer<typeof WidgetInstanceRefV1Schema>;
 export const WidgetDefinitionRefV1StoredSchema = createStoredReadSchema(WidgetDefinitionRefV1Schema);
 export const WidgetInputBindingV1StoredSchema = createStoredReadSchema(WidgetInputBindingV1Schema);

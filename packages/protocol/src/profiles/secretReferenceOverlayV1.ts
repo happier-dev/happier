@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -21,7 +22,7 @@ const SecretRequirementNameSchema = EnvVarRequirementSchema.shape.name;
  * fingerprint is their currentness. A shared resource reference must carry
  * its exact `SavedSecretCatalogResourceV1.revision`.
  */
-export const SavedSecretReferenceV1Schema = z.object({
+export const SavedSecretReferenceV1Schema = lazyZodSchema(() => z.object({
   ref: z.string().refine(
     isCanonicalProviderSavedSecretIdV1,
     'Saved-secret reference must be canonical',
@@ -53,10 +54,10 @@ export const SavedSecretReferenceV1Schema = z.object({
       message: 'Shared Saved Secret references require their exact revision',
     });
   }
-});
+}));
 export type SavedSecretReferenceV1 = Readonly<z.infer<typeof SavedSecretReferenceV1Schema>>;
 
-export const SecretReferenceOverlayV1Schema = z.object({
+export const SecretReferenceOverlayV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   bindings: z.record(SecretRequirementNameSchema, SavedSecretReferenceV1Schema),
 }).strict().superRefine((value, ctx) => {
@@ -70,7 +71,7 @@ export const SecretReferenceOverlayV1Schema = z.object({
       message: 'Omit the overlay instead of sending an empty one',
     });
   }
-});
+}));
 export type SecretReferenceOverlayV1 = Readonly<z.infer<typeof SecretReferenceOverlayV1Schema>>;
 
 /** Deterministic own-key projection; never reads an inherited prototype key. */

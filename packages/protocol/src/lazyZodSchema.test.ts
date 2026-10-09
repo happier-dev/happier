@@ -3,6 +3,85 @@ import { z } from 'zod';
 import { lazyZodSchema } from './lazyZodSchema.js';
 
 describe('lazyZodSchema', () => {
+  it('preserves constraints of a derived facade reused through defaults and arrays', () => {
+    const base = lazyZodSchema(() => z.object({ name: z.string().nullable() }).strict());
+    const account = lazyZodSchema(() => base.extend({ kind: z.literal('account'), accountId: z.string().min(1) }).strict());
+    const schema = lazyZodSchema(() => z.object({
+      owner: account.nullable().optional().default(null),
+      audience: z.object({ accounts: z.array(account) }).strict().nullable().optional().default(null),
+    }).strict());
+    const concrete = z.object({ name: z.string().nullable() }).strict()
+      .extend({ kind: z.literal('account'), accountId: z.string().min(1) }).strict();
+    const expected = z.object({
+      owner: concrete.nullable().optional().default(null),
+      audience: z.object({ accounts: z.array(concrete) }).strict().nullable().optional().default(null),
+    }).strict();
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        expect(z.toJSONSchema(schema, { target, io })).toEqual(z.toJSONSchema(expected, { target, io }));
+      }
+    }
+    expect(schema.parse({ audience: { accounts: [{ name: null, kind: 'account', accountId: 'a' }] } }))
+      .toEqual({ owner: null, audience: { accounts: [{ name: null, kind: 'account', accountId: 'a' }] } });
+    expect(schema.safeParse({ audience: { accounts: [{}] } }).success).toBe(false);
+  });
+  it('preserves a refined recursive definition identity in both JSON Schema dialects', () => {
+    type Tree = { items?: Tree[] };
+    const tree: z.ZodType<Tree> = z.lazy(() => z.object({ items: z.array(tree).optional() }).strict());
+    const concrete = tree.superRefine(() => {});
+    const schema = lazyZodSchema(() => concrete);
+    const parent = z.object({ first: schema, second: schema.optional(), items: z.array(schema) }).strict();
+    const expected = z.object({ first: concrete, second: concrete.optional(), items: z.array(concrete) }).strict();
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        for (const reused of ['inline', 'ref'] as const) {
+          expect(z.toJSONSchema(parent, { target, io, reused })).toEqual(z.toJSONSchema(expected, { target, io, reused }));
+        }
+      }
+    }
+  });
+  it('shares projection identity with native parents produced by deferred composition', () => {
+    const schema = lazyZodSchema(() => z.string().min(1));
+    const derived = schema.nullable().optional();
+    const parent = z.object({ first: schema, second: derived, repeated: z.array(derived) }).strict();
+    const concrete = z.string().min(1);
+    const expectedDerived = concrete.nullable().optional();
+    const expected = z.object({ first: concrete, second: expectedDerived, repeated: z.array(expectedDerived) }).strict();
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        for (const reused of ['inline', 'ref'] as const) {
+          expect(z.toJSONSchema(parent, { target, io, reused })).toEqual(z.toJSONSchema(expected, { target, io, reused }));
+        }
+      }
+    }
+  });
+  it('keeps scalar constraints and object key derivation cold until their validator is used', () => {
+    let constructed = 0;
+    const text = lazyZodSchema(() => {
+      constructed++;
+      return z.string();
+    });
+    const constrained = text.trim().min(2).max(4).regex(/^[a-z]+$/u);
+    const object = lazyZodSchema(() => {
+      constructed++;
+      return z.object({ id: constrained, count: z.number() }).strict();
+    });
+    const keys = object.keyof();
+    expect(constructed).toBe(0);
+    expect(constrained.parse(' ab ')).toBe('ab');
+    expect(constrained.safeParse('a').success).toBe(false);
+    expect(constrained.safeParse('abcde').success).toBe(false);
+    expect(constrained.safeParse('12').success).toBe(false);
+    expect(constructed).toBe(1);
+    expect(keys.parse('count')).toBe('count');
+    expect(keys.safeParse('unknown').success).toBe(false);
+    expect(object.parse({ id: ' ab ', count: 1 })).toEqual({ id: 'ab', count: 1 });
+    expect(constructed).toBe(2);
+    const expected = z.object({ id: z.string().trim().min(2).max(4).regex(/^[a-z]+$/u), count: z.number() }).strict();
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(z.toJSONSchema(object, { target, io: 'input' })).toEqual(z.toJSONSchema(expected, { target, io: 'input' }));
+    }
+  });
   it('admits one concrete schema on use, while catalog references and derived definitions stay cold', () => {
     let constructed = 0;
     const schema = lazyZodSchema(() => {

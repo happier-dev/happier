@@ -16,8 +16,10 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec 
   const read = id.endsWith('.list') || id.endsWith('.get') || id.endsWith('.validate');
   const refresh = id.endsWith('.refresh');
   return {
-    id, title: id, description: id === 'widgets.instance.move'
-      ? 'Reorder in the same surface/view with toIndex (configured-widget ordinal), or move to an explicit qualified destination using to.index (native mixed-content insertion index).'
+    id, title: id, description: id.startsWith('widgets.area.dashboard.')
+      ? 'Read or mutate the exact Project dashboard document through its Artifact owner. Reorder uses a current dashboard Artifact anchor; the default dashboard cannot be deleted.'
+      : id === 'widgets.instance.move'
+      ? 'Reorder in the same surface/view with toIndex (configured-widget ordinal), or move to an explicit qualified destination using to.index (native mixed-content insertion index). Project main/aside moves use one document mutation.'
       : id === 'widgets.instance.add' ? 'Add through the canonical owner; viewer bindings resolve through the current viewer\'s existing Connected Account purpose selection.'
       : 'Operate on a qualified widget instance through its canonical surface owner.',
     safety: read || refresh ? 'safe' : 'danger',
@@ -29,7 +31,7 @@ export const WIDGET_INSTANCE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec 
       ? 'client' as const : 'account' as const,
     requiredAuthority: 'account_automation', placements: [],
     bindings: { mcpToolName: id.replaceAll('.', '_'), rpcMethod: id },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: WidgetInstanceActionInputSchemasV1[id], outputSchema: WidgetInstanceActionOutputSchemasV1[id],
     inputHints: { fields: [] },
@@ -43,7 +45,9 @@ export const WIDGET_DEFINITION_ACTION_SPECS_V1: readonly (PreNormalizedActionSpe
   const read = id === 'widgets.definition.list' || id === 'widgets.definition.get';
   return {
     id, title: id,
-    description: id === 'widgets.definition.update'
+    description: id === 'widgets.definition.list'
+      ? 'List reusable Account widget summaries. Each definition may include author (kind: person, agent, or plugin) and createdAt (creation timestamp); definitions saved before these provenance facts existed omit them.'
+      : id === 'widgets.definition.update'
       ? 'Edit an Account widget definition used by every referencing placement. Duplicate first to make an independent copy.'
       : id === 'widgets.definition.saveFromSession'
         ? 'Copy admitted Session widget content into your Account library without removing the Session item; Session context becomes configurable inputs.'

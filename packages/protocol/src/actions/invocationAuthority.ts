@@ -1,7 +1,8 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
 
-export const TerminalPresentUserPolicySchema = z.enum(['allowed', 'disallowed']);
+export const TerminalPresentUserPolicySchema = lazyZodSchema(() => z.enum(['allowed', 'disallowed']));
 export type TerminalPresentUserPolicy = z.infer<typeof TerminalPresentUserPolicySchema>;
 export const AUTHORITY_CEILING_HEADER_V1 = 'x-happier-authority-ceiling' as const;
 

@@ -27,5 +27,6 @@ export async function executeLocalServicesRuntimeAction(args: RuntimeActionDispa
     actionId: args.actionId,
     input: args.input,
     context: args.context,
+    ...(args.executeCanonicalAction ? { executeCanonicalAction: args.executeCanonicalAction } : {}),
   });
 }
