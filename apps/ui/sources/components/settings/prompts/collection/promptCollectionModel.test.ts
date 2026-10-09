@@ -5,15 +5,35 @@ import {
     buildPromptTemplateCollection,
     resolvePromptCollectionLandingId,
     resolvePromptCollectionRoute,
+    promptCollectionItemHref,
 } from './promptCollectionModel';
 
 const folders = { v: 1 as const, folders: [{ id: 'f-ops', name: 'Ops', parentId: null }] };
 
 function doc(id: string, title: string, folderId: string | null = null) {
-    return { id, title, header: { kind: 'prompt_doc.v2', title, folderId } };
+    return { id, title, access: 'owner' as const, header: { kind: 'prompt_doc.v2', title, folderId } };
 }
 
 describe('prompt collections', () => {
+    it('keeps the selected document Home on its canonical editor destination', () => {
+        expect(promptCollectionItemHref('doc', 'same/id', { serverId: 'Home & one' }))
+            .toBe('/settings/prompts/docs/same%2Fid?serverId=Home%20%26%20one');
+        expect(promptCollectionItemHref('doc', 'same/id')).toBe('/settings/prompts/docs/same%2Fid');
+    });
+    it('is the prompt-filtered personal Artifact tree with canonical kind and ancestor folders', () => {
+        const collection = buildPromptLibraryCollection({ kind: 'doc', artifacts: [
+            { ...doc('shared', 'Shared', 'foreign'), access: 'view' as const },
+            { ...doc('received', 'Received', 'child'), access: 'view' as const },
+            { ...doc('unknown', 'Unknown', 'child'), rawHeader: { kind: 'prompt_doc.v2 ', title: 'Unknown' } },
+            { ...doc('draft', 'Draft', 'child'), draft: true },
+            { id: 'workflow', title: 'Workflow', header: { kind: 'workflow-definition.v1', title: 'Workflow' } },
+        ], folders: { v: 1, folders: [{ id: 'root', name: 'Engineering', parentId: null },
+            { id: 'child', name: 'Reviews', parentId: 'root' }],
+            artifactHeadersById: { shared: { folderId: 'child', tags: ['mine'] } } }, query: 'mine', untitledTitle: 'Untitled' });
+        expect(collection.total).toBe(2);
+        expect(collection.groups.map(group => [group.id, group.rows.map(row => row.id)])).toEqual([['child', ['shared']]]);
+        expect(collection.tree?.map(node => node.key)).toEqual(['folder:root', 'folder:child', 'artifact:shared']);
+    });
     it('lists only the collection kind, sorted by name, with foldered items grouped under their folder first', () => {
         const collection = buildPromptLibraryCollection({
             kind: 'doc',
@@ -40,7 +60,7 @@ describe('prompt collections', () => {
             kind: 'doc',
             artifacts: [
                 doc('d-a', 'Review'),
-                { id: 'd-t', title: 'Other', header: { kind: 'prompt_doc.v2', title: 'Other', tags: ['review'] } },
+                { id: 'd-t', title: 'Other', access: 'owner', header: { kind: 'prompt_doc.v2', title: 'Other', tags: ['review'] } },
                 doc('d-x', 'Unrelated'),
             ],
             folders,

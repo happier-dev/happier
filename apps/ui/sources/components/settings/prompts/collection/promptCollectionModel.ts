@@ -1,54 +1,15 @@
 import type { PromptFoldersV1, PromptInvocationsV1 } from '@happier-dev/protocol';
 
-import { findPromptFolderById } from '@/sync/ops/promptLibrary/promptFolders';
+import { classifyArtifactBrowserKind, projectArtifactBrowserTree, type ArtifactBrowserArtifact, type ArtifactBrowserTreeNode } from '@/components/artifacts/artifactBrowserModel';
 import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
+import type { PromptCollectionKind } from './promptCollectionRoutes';
+export { promptCollectionRoot, promptCollectionItemHref, promptCollectionDraftHref, resolvePromptCollectionRoute } from './promptCollectionRoutes';
+export type { PromptCollectionKind, PromptCollectionRoute } from './promptCollectionRoutes';
 
 /**
  * The three named collections of the prompt library: prompts (`doc`), skills (`bundle`) and slash
  * templates (`template`). Each is a list beside the selected item's editor.
  */
-export type PromptCollectionKind = 'doc' | 'bundle' | 'template';
-
-const COLLECTION_ROOTS: Readonly<Record<PromptCollectionKind, string>> = {
-    doc: '/settings/prompts/docs',
-    bundle: '/settings/prompts/skills',
-    template: '/settings/prompts/templates',
-};
-
-export function promptCollectionRoot(kind: PromptCollectionKind): string {
-    return COLLECTION_ROOTS[kind];
-}
-
-export function promptCollectionItemHref(kind: PromptCollectionKind, id: string): string {
-    return `${COLLECTION_ROOTS[kind]}/${encodeURIComponent(id)}`;
-}
-
-export function promptCollectionDraftHref(kind: PromptCollectionKind): string {
-    return `${COLLECTION_ROOTS[kind]}/new`;
-}
-
-export type PromptCollectionRoute =
-    | Readonly<{ kind: 'index' }>
-    | Readonly<{ kind: 'draft' }>
-    | Readonly<{ kind: 'item'; id: string }>;
-
-/** What the route shows inside a collection: its index, the new-item draft, or an item (or one of its sub-pages). */
-export function resolvePromptCollectionRoute(kind: PromptCollectionKind, pathname: string): PromptCollectionRoute | null {
-    const root = COLLECTION_ROOTS[kind];
-    const normalized = pathname.trim().replace(/\/+$/, '');
-    if (normalized === root) return { kind: 'index' };
-    if (!normalized.startsWith(`${root}/`)) return null;
-    const first = normalized.slice(root.length + 1).split('/')[0] ?? '';
-    if (first === 'new') return { kind: 'draft' };
-    let id = first;
-    try {
-        id = decodeURIComponent(first);
-    } catch {
-        // A malformed escape is still the segment the route was opened with.
-    }
-    return id ? { kind: 'item', id } : { kind: 'index' };
-}
-
 export type PromptCollectionRow = Readonly<{
     id: string;
     title: string;
@@ -67,13 +28,11 @@ export type PromptCollection = Readonly<{
     /** Items in the collection before the search filter. */
     total: number;
     groups: readonly PromptCollectionGroup[];
+    /** The same hierarchy consumed by the Artifacts browser and shared Tree. */
+    tree?: readonly ArtifactBrowserTreeNode<ArtifactBrowserArtifact>[];
 }>;
 
-type ArtifactLike = Readonly<{
-    id: string;
-    title?: string | null;
-    header?: Readonly<Record<string, unknown>> | null;
-}>;
+type ArtifactLike = ArtifactBrowserArtifact;
 
 const ARTIFACT_KIND: Readonly<Record<'doc' | 'bundle', string>> = {
     doc: 'prompt_doc.v2',
@@ -101,29 +60,20 @@ export function buildPromptLibraryCollection(params: Readonly<{
     query: string;
     untitledTitle: string;
 }>): PromptCollection {
-    const members = params.artifacts.filter((artifact) => artifact.header?.kind === ARTIFACT_KIND[params.kind]);
-    const query = params.query.trim().toLocaleLowerCase();
-    const byFolder = new Map<string | null, { title: string | null; rows: PromptCollectionRow[] }>();
-    for (const artifact of members) {
-        const title = readPromptArtifactTitle(artifact, params.untitledTitle);
-        const folderId = typeof artifact.header?.folderId === 'string' ? artifact.header.folderId : null;
-        const folder = findPromptFolderById(params.folders ?? null, folderId);
-        const tags = Array.isArray(artifact.header?.tags)
-            ? (artifact.header.tags as unknown[]).filter((tag): tag is string => typeof tag === 'string')
-            : [];
-        if (query && ![title, folder?.name ?? '', ...tags].join('\n').toLocaleLowerCase().includes(query)) continue;
-        const key = folder ? folder.id : null;
-        const group = byFolder.get(key) ?? { title: folder?.name ?? null, rows: [] };
-        group.rows.push({ id: artifact.id, title });
-        byFolder.set(key, group);
+    const members = params.artifacts.filter(artifact => classifyArtifactBrowserKind(artifact) === 'prompt'
+        && (artifact.rawHeader ?? artifact.header)?.kind === ARTIFACT_KIND[params.kind]);
+    const tree = projectArtifactBrowserTree(members.map(artifact => ({ ...artifact,
+        title: readPromptArtifactTitle(artifact, params.untitledTitle) })),
+        { query: params.query, kind: 'prompt', sort: 'title_asc' }, { folders: params.folders });
+    const groups = new Map<string | null, { id: string | null; title: string | null; rows: PromptCollectionRow[] }>();
+    const folderNames = new Map(tree.filter(node => node.kind === 'branch').map(node => [node.key, node.title]));
+    for (const node of tree) {
+        if (node.kind !== 'leaf') continue;
+        const id = node.parentKey === null ? null : node.row.folderId;
+        const group = groups.get(id) ?? { id, title: node.parentKey === null ? null : folderNames.get(node.parentKey) ?? null, rows: [] };
+        group.rows.push({ id: node.row.key, title: node.title }); groups.set(id, group);
     }
-    const groups: PromptCollectionGroup[] = [...byFolder.entries()]
-        .filter(([id]) => id !== null)
-        .map(([id, group]) => ({ id, title: group.title, rows: group.rows.sort(compareTitles) }))
-        .sort((left, right) => (left.title ?? '').localeCompare(right.title ?? '', undefined, { sensitivity: 'base' }));
-    const loose = byFolder.get(null);
-    if (loose) groups.push({ id: null, title: null, rows: loose.rows.sort(compareTitles) });
-    return { total: members.length, groups };
+    return { total: members.length, groups: [...groups.values()], tree };
 }
 
 /** Slash templates, by name, each with its command. */

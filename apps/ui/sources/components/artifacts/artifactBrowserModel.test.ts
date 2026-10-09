@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets/widgetPresentationV1';
 
 import {
     classifyArtifactBrowserKind,
     countArtifactBrowserKinds,
     projectArtifactBrowserRows,
+    projectArtifactBrowserTree,
     readArtifactPreview,
     readArtifactProvenance,
     resolveArtifactOpenRoute,
@@ -20,14 +22,89 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('uses personal organization for every listed kind and ignores recipient header placement', () => {
+        const folders = { v: 1 as const, folders: [{ id: 'mine', name: 'My library', parentId: null }],
+            artifactHeadersById: { shared: { folderId: 'mine', tags: ['personal'] } } };
+        const shared = artifact('shared', { kind: 'workflow-definition.v1', title: 'Shared workflow',
+            folderId: 'someone-elses', tags: ['owner-only'] }, { access: 'view' });
+        const received = artifact('received', { title: 'Received document', folderId: 'mine', tags: ['owner-only'] }, { access: 'edit' });
+        const own = artifact('own', { kind: 'memory_doc.v1', title: 'Memory', folderId: 'mine', tags: ['legacy'] }, { access: 'owner' });
+        const rows = projectArtifactBrowserRows([shared, received, own], { query: '', kind: 'all', sort: 'title_asc' }, { folders });
+        expect(rows.map(row => [row.key, row.folderId, row.tags])).toEqual([
+            ['own', 'mine', ['legacy']], ['received', null, []], ['shared', 'mine', ['personal']],
+        ]);
+        expect(projectArtifactBrowserRows([shared, received], { query: 'owner-only', kind: 'all', sort: 'title_asc' }, { folders })).toEqual([]);
+        expect(projectArtifactBrowserRows([shared], { query: 'My library', kind: 'workflow', sort: 'title_asc' }, { folders }).map(row => row.key)).toEqual(['shared']);
+        expect(shared.header?.folderId).toBe('someone-elses');
+    });
+
+    it('projects nested folders once and filters artifact leaves without losing their ancestors', () => {
+        const folders = { v: 1 as const, folders: [
+            { id: 'root', name: 'Engineering', parentId: null },
+            { id: 'child', name: 'Reviews', parentId: 'root' },
+            { id: 'empty', name: 'Empty', parentId: null },
+        ], artifactHeadersById: { p: { folderId: 'child' }, w: { folderId: 'child' }, orphan: { folderId: 'deleted' } } };
+        const artifacts = [artifact('p', { kind: 'prompt_doc.v2', title: 'Review' }),
+            artifact('w', { kind: 'workflow-definition.v1', title: 'Workflow' }), artifact('orphan', { title: 'Loose' })];
+        const tree = projectArtifactBrowserTree(artifacts, { query: '', kind: 'all', sort: 'title_asc' }, { folders });
+        expect(tree.map(node => [node.key, node.parentKey, node.kind])).toEqual([
+            ['folder:empty', null, 'branch'], ['folder:root', null, 'branch'], ['folder:child', 'folder:root', 'branch'],
+            ['artifact:p', 'folder:child', 'leaf'], ['artifact:w', 'folder:child', 'leaf'], ['artifact:orphan', null, 'leaf'],
+        ]);
+        const filtered = projectArtifactBrowserTree(artifacts, { query: '', kind: 'prompt', sort: 'title_asc' }, { folders });
+        expect(filtered.map(node => node.key)).toEqual(['folder:root', 'folder:child', 'artifact:p']);
+        const collapsed = projectArtifactBrowserTree(artifacts, { query: '', kind: 'all', sort: 'title_asc' },
+            { folders, collapsedFolderIds: new Set(['root']) });
+        expect(collapsed.map(node => node.key)).toEqual(['folder:empty', 'folder:root', 'artifact:orphan']);
+    });
+
+    it('keeps malformed retained folder topology visible without inventing a persistence repair', () => {
+        const folders = { v: 1 as const, folders: [{ id: 'orphan', name: 'Orphan', parentId: 'missing' },
+            { id: 'a', name: 'A', parentId: 'b' }, { id: 'b', name: 'B', parentId: 'a' }] };
+        const tree = projectArtifactBrowserTree([], { query: '', kind: 'all', sort: 'title_asc' }, { folders });
+        expect(tree.map(node => [node.key, node.parentKey])).toEqual([
+            ['folder:a', null], ['folder:b', null], ['folder:orphan', null],
+        ]);
+        expect(folders.folders[0]?.parentId).toBe('missing');
+    });
+
+    it('keeps invalid legacy organization visible with a diagnostic beside valid neighbors', () => {
+        const rows = projectArtifactBrowserRows([artifact('bad', { title: 'Bad', folderId: 3 }, { access: 'owner' }),
+            artifact('good', { title: 'Good' })], { query: '', kind: 'all', sort: 'title_asc' }, { folders: { v: 1, folders: [] } });
+        expect(rows.map(row => [row.key, row.folderId, row.organizationError])).toEqual([
+            ['bad', null, 'invalid-stored-content'], ['good', null, undefined],
+        ]);
+    });
+
+    it('does not infer private organization authority from an Artifact without access metadata', () => {
+        const header = { title: 'Cached', folderId: 'owner-folder', tags: ['owner-tag'] };
+        const rows = projectArtifactBrowserRows([artifact('unknown', header), artifact('owned', header, { access: 'owner' })],
+            { query: '', kind: 'all', sort: 'title_asc' }, { folders: { v: 1, folders: [] } });
+        expect(rows.map(row => [row.key, row.folderId, row.tags])).toEqual([
+            ['unknown', null, []], ['owned', 'owner-folder', ['owner-tag']],
+        ]);
+    });
+
+    it('does not expose legacy owned organization before the personal catalog is admitted', () => {
+        const owned = artifact('owned', { title: 'Owned', folderId: 'legacy', tags: ['legacy-tag'] }, { access: 'owner' });
+        const filter = { query: '', kind: 'all' as const, sort: 'title_asc' as const };
+        expect(projectArtifactBrowserRows([owned], filter, { folders: null }).map(row => [row.folderId, row.tags]))
+            .toEqual([[null, []]]);
+        expect(projectArtifactBrowserRows([owned], { ...filter, query: 'legacy-tag' }, { folders: null })).toEqual([]);
+        expect(projectArtifactBrowserRows([owned], filter).map(row => [row.folderId, row.tags])).toEqual([[null, []]]);
+        expect(projectArtifactBrowserRows([owned], filter, { folders: { v: 1, folders: [] } }).map(row => [row.folderId, row.tags]))
+            .toEqual([['legacy', ['legacy-tag']]]);
+    });
+
     it('excludes both layout kinds through the shared kind policy while retaining documents', () => {
         const rows = [artifact('widget', { kind: 'widget-area-layout.v1' }), artifact('home', { kind: 'home-hub-layout.v1' }),
             artifact('approval', { kind: 'target_action_approval.v1' }), artifact('doc', { kind: 'text' }), artifact('old', {})];
         expect(projectArtifactBrowserRows(rows, { query: '', kind: 'all', sort: 'title_asc' }).map(row => row.key)).toEqual(['doc', 'old']);
     });
     it('previews the saved Board layout without live queries and prefers loaded owner data', () => {
+        const { columns, columnSpan, rowSpan } = getWidgetSizeFootprintV1('workBoard', 'wide')!;
         const previewLayout = { mode: 'by_status', source: { sections: ['needs_you'], hasFilter: true, pickedCount: 2 },
-            widgets: [{ title: 'Notes', width: 2, position: { x: 24, y: 48 } }] };
+            widgets: [{ title: 'Notes', size: 'wide', footprint: { columns, columnSpan, rowSpan }, position: { x: 24, y: 48 } }] };
         const header = { kind: 'work-board.v1', v: 1, title: 'Board', previewLayout };
         expect(readArtifactPreview(artifact('board', header))).toEqual({ kind: 'board', layout: previewLayout });
         expect(readArtifactPreview(artifact('board', { ...header, previewLayout: { ...previewLayout, widgets: [{ width: 3 }] } }))).toEqual({ kind: 'none' });
@@ -157,5 +234,27 @@ describe('artifactBrowserModel', () => {
             .toEqual({ kind: 'markdown', text: 'a'.repeat(599) });
         expect(readArtifactPreview(artifact('g', { title: 'Unicode', excerpt: atBoundary })))
             .toEqual({ kind: 'markdown', text: 'a'.repeat(599) });
+    });
+
+    it('previews authored Prompt and Role text rather than their stored JSON envelopes', () => {
+        const prompt = JSON.stringify({ v: 1, markdown: '# Review\nCheck the changed contract.', createdAtMs: 1, updatedAtMs: 2 });
+        const role = JSON.stringify({ name: 'Reviewer', instructions: 'Find reachable regressions.', runsAs: { kind: 'session' },
+            workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
+        for (const [kind, body, text] of [['prompt_doc.v2', prompt, '# Review\nCheck the changed contract.'],
+            ['role.v1', role, 'Find reachable regressions.']] as const) {
+            const header = { kind, excerpt: 'stale envelope' };
+            expect(readArtifactPreview(artifact(kind, header, { body }))).toEqual({ kind: 'markdown', text });
+            expect(readArtifactPreview(artifact(kind, { kind, excerpt: body }))).toEqual({ kind: 'markdown', text });
+            expect(readArtifactPreview(artifact(kind, header, { body: '{}' }))).toEqual({ kind: 'none' });
+            expect(readArtifactPreview(artifact(kind, { kind, excerpt: body.slice(0, 20) }))).toEqual({ kind: 'none' });
+            expect(readArtifactPreview(artifact(kind, { kind, excerpt: body }, { body: null }))).toEqual({ kind: 'none' });
+            expect(readArtifactPreview(artifact(kind, header, { body: JSON.stringify({ ...JSON.parse(body), future: true }) })))
+                .toEqual({ kind: 'markdown', text });
+        }
+        expect(readArtifactPreview(artifact('empty', { kind: 'prompt_doc.v2' }, {
+            body: JSON.stringify({ v: 1, markdown: '', createdAtMs: 1, updatedAtMs: 2 }),
+        }))).toEqual({ kind: 'none' });
+        expect(readArtifactPreview(artifact('document', { title: 'Stored example' }, { body: prompt })))
+            .toEqual({ kind: 'markdown', text: prompt });
     });
 });
