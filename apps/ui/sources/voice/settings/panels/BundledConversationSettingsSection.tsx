@@ -12,9 +12,6 @@ import {
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
-  createBundledConversationUi,
-} from '@/voice/credentials/bundledConversationClient';
-import {
   VoiceCredentialItem,
   type VoiceCredentialItemStatus,
 } from '@/voice/credentials/CredentialItem';
@@ -22,26 +19,18 @@ import {
   resolveSelectedVoiceCredentialRawGrants,
   shouldUseVoiceCredentialSourceMutationForSavedSecret,
 } from '@/voice/credentials/accountVoiceCredential';
-import {
-  getExternalVoiceProviderRegistrationsRevision,
-  subscribeExternalVoiceProviderRegistrations,
-} from '@/voice/registry/externalVoiceProviderRegistrations';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 
 import {
-  parseRealtimeSettingsDescriptor,
   readRealtimeSavedSecretCredentialPurpose,
-  resolveRealtimeProviderConfig,
   resolveVisibleRealtimeSettingsDescriptor,
-  type RealtimeProviderSettingsOwner,
   type RealtimeSettingsDescriptor,
 } from './realtime/descriptor';
-import {
-  RealtimeProviderFields,
-  type RealtimeCatalogState,
-} from './realtime/RealtimeProviderFields';
+import { RealtimeProviderFields } from './realtime/RealtimeProviderFields';
+import { useRealtimeVoiceCatalog } from './realtime/realtimeVoiceCatalogMenu';
+import { useBundledConversationProviderSettings } from './realtime/useBundledConversationProviderSettings';
 import {
   VoiceCredentialSourceField,
   type VoiceCredentialSourceFieldStatus,
@@ -50,7 +39,6 @@ import { VoiceProviderSettingsActions } from './realtime/VoiceProviderSettingsAc
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { fetchVoiceSettingsCatalog } from './realtime/voiceCatalog';
 
 const providerRegistry = createDefaultVoiceProviderRegistry();
 
@@ -58,14 +46,6 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
     : null;
-}
-
-function createUiSafely(providerId: string) {
-  try {
-    return createBundledConversationUi(providerId);
-  } catch {
-    return null;
-  }
 }
 
 function UnavailableSettings(props: Readonly<{ status: string }>) {
@@ -99,32 +79,9 @@ export function BundledConversationSettingsSection(props: Readonly<{
   ) : null;
   const latestVoiceRef = React.useRef(voice);
   latestVoiceRef.current = voice;
-  const providerId = resolveVoiceProviderId(voice.providerId);
+  const { providerId, bundledUi, descriptor, owner, resolved, config } = useBundledConversationProviderSettings(voice);
   const settingRef = useVoiceContributedSettingRefs(providerId ?? '');
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
-  const registrationsRevision = React.useSyncExternalStore(
-    subscribeExternalVoiceProviderRegistrations,
-    getExternalVoiceProviderRegistrationsRevision,
-    getExternalVoiceProviderRegistrationsRevision,
-  );
-  const bundledUi = React.useMemo(
-    () => providerId ? createUiSafely(providerId) : null,
-    [providerId, registrationsRevision],
-  );
-  const descriptor = React.useMemo(
-    () => providerId && bundledUi ? parseRealtimeSettingsDescriptor(providerId, bundledUi.settingsDescriptor) : null,
-    [bundledUi, providerId],
-  );
-  const owner = React.useMemo<RealtimeProviderSettingsOwner | null>(() => bundledUi ? Object.freeze({
-    ...bundledUi.settingsOwner,
-    schemaVersion: bundledUi.settingsOwner.currentSchemaVersion,
-  }) : null, [bundledUi]);
-  const envelope = providerId ? voice.providers?.[providerId] ?? null : null;
-  const resolved = React.useMemo(
-    () => owner ? resolveRealtimeProviderConfig(owner, envelope) : null,
-    [envelope, owner],
-  );
-  const config = resolved?.status === 'ready' ? resolved.config : null;
   const billingMode = config && typeof config.billingMode === 'string' ? config.billingMode : null;
   const byoActive = descriptor?.mode === 'byo' || billingMode === 'byo';
   const providerEntry = providerId ? providerRegistry.get(providerId) : null;
@@ -186,48 +143,14 @@ export function BundledConversationSettingsSection(props: Readonly<{
         ? credentialAvailability?.usable === true
         : false
     : credentialAvailability?.usable === true;
-  const [catalogState, setCatalogState] = React.useState<Readonly<{
-    targetKey: string;
-    value: RealtimeCatalogState;
-  }> | null>(null);
-  const catalog: RealtimeCatalogState = catalogState?.targetKey === credentialTargetKey
-    ? catalogState.value
-    : { phase: 'idle' };
-  const catalogRequestRef = React.useRef<{ generation: number; controller: AbortController | null }>({ generation: 0, controller: null });
+  const { catalog, requestCatalog, resetCatalog } = useRealtimeVoiceCatalog({
+    client: bundledUi?.client ?? null, credentialUsable, targetKey: credentialTargetKey,
+  });
 
   const persistConfig = React.useCallback((next: Readonly<Record<string, unknown>>) => {
     if (!providerId) return;
     props.setVoice(writeVoiceProviderSettingsConfig(latestVoiceRef.current, providerId, next));
   }, [props.setVoice, providerId]);
-
-  const requestCatalog = React.useCallback(() => {
-    if (!bundledUi?.client || !credentialUsable) return;
-    if (catalog.phase === 'loading') return;
-    const client = bundledUi.client;
-    catalogRequestRef.current.controller?.abort();
-    const controller = new AbortController();
-    const generation = catalogRequestRef.current.generation + 1;
-    catalogRequestRef.current = { generation, controller };
-    const targetKey = credentialTargetKey;
-    setCatalogState({ targetKey, value: { phase: 'loading' } });
-    void fetchVoiceSettingsCatalog(client, controller.signal).then((rows) => {
-      if (catalogRequestRef.current.generation === generation && !controller.signal.aborted) {
-        setCatalogState({ targetKey, value: { phase: 'ready', rows } });
-      }
-    }).catch(() => {
-      if (catalogRequestRef.current.generation === generation && !controller.signal.aborted) {
-        setCatalogState({ targetKey, value: { phase: 'error' } });
-      }
-    });
-  }, [bundledUi, catalog.phase, credentialTargetKey, credentialUsable]);
-
-  React.useEffect(() => {
-    catalogRequestRef.current.controller?.abort();
-    catalogRequestRef.current = { generation: catalogRequestRef.current.generation + 1, controller: null };
-    setCatalogState({ targetKey: credentialTargetKey, value: { phase: 'idle' } });
-  }, [credentialTargetKey]);
-
-  React.useEffect(() => () => catalogRequestRef.current.controller?.abort(), []);
 
   const onCredentialStatusChanged = React.useCallback((status: VoiceCredentialItemStatus) => {
     setCredentialState({ targetKey: credentialTargetKey, status });
@@ -240,10 +163,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
     if (resolveVoiceProviderId(latestVoiceRef.current.providerId) !== providerId) return false;
     return providerRegistry.get(providerId)?.kind === 'voice.conversation-provider.v1';
   }, [providerId]);
-  const onCredentialChanged = React.useCallback(
-    () => setCatalogState({ targetKey: credentialTargetKey, value: { phase: 'idle' } }),
-    [credentialTargetKey],
-  );
+  const onCredentialChanged = resetCatalog;
 
   if (!providerId || !bundledUi) return accountLeadOnly;
   if (!descriptor || !owner || !visibleDescriptor) {

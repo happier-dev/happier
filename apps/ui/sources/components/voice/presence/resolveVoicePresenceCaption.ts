@@ -15,10 +15,13 @@ type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surf
 /**
  * The call state's one helpful line (lab `voice-presence` captions): muted wins, then a failure's
  * reason from the projection (`captionLabel`), otherwise the conversing/connection state's caption.
+ * Connecting to a bound Session reads its instructions (lab `b-voice C`, D38): one caption inside the
+ * existing connecting state, not a new lifecycle step. `targetName` is null in global mode.
  */
-export function resolveVoicePresenceCaption(voice: CaptionFacts): string | null {
+export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: string | null = null): string | null {
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
+    if (voice.surfaceState === 'connecting' && targetName) return t('sessionVoice.preparing', { name: targetName });
     if (CAPTIONED.has(voice.surfaceState)) return t(`voicePresence.captions.${voice.surfaceState as CaptionedState}`);
     return null;
 }
@@ -26,17 +29,20 @@ export function resolveVoicePresenceCaption(voice: CaptionFacts): string | null 
 /**
  * The compact containers' quiet second line: while the call itself needs attention (muted, opening,
  * reconnecting, blocked, failed) that caption — never the stale last line, which would read as if
- * the call were fine; otherwise the last line said, or the caption until there is one.
+ * the call were fine; otherwise the last line said, or — bound to a Session — who you are talking to
+ * ("Talking to Release captain", lab `b-voice I`), or the caption until there is one.
  */
 export function resolveVoiceCompactLine(
     voice: CaptionFacts,
     latestTranscriptText: string | null,
+    targetName: string | null = null,
 ): Readonly<{ kind: 'caption' | 'transcript'; text: string }> | null {
-    const caption = resolveVoicePresenceCaption(voice);
+    const caption = resolveVoicePresenceCaption(voice, targetName);
     const callFirst = (voice.live && voice.muted) || CALL_FIRST.has(voice.surfaceState);
     if (callFirst) return caption ? { kind: 'caption', text: caption } : null;
     const line = latestTranscriptText?.trim();
     if (line) return { kind: 'transcript', text: line };
+    if (targetName) return { kind: 'caption', text: t('sessionVoice.talkingTo', { name: targetName }) };
     return caption ? { kind: 'caption', text: caption } : null;
 }
 

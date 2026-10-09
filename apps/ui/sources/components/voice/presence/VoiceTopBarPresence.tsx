@@ -17,6 +17,7 @@ import { VoiceGlancePopover } from './VoiceGlancePopover';
 import { VoiceMark, VoiceMarkArt } from './VoiceMark';
 import { VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTransport } from './VoiceTransport';
+import { VoiceTargetIdentity } from './VoiceTargetIdentity';
 import { revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
 
@@ -103,7 +104,13 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
                 onPress={toggleOpen}
                 style={({ pressed }) => [styles.label, { minHeight: resolveTouchTargetFloorPx() ?? PILL_HEIGHT }, pressed ? styles.labelPressed : null]}
             >
-                <VoiceStatusLine voice={voice} size="pill" />
+                <View style={styles.labelRow}>
+                    <VoiceStatusLine voice={voice} size="pill" />
+                    {/* Talking to a Session: its avatar and name ride the status line (lab `b-voice A`); global has none. */}
+                    {voice.live && voice.targetSessionAddress ? (
+                        <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID={`${props.testID}-target`} />
+                    ) : null}
+                </View>
             </Pressable>}
             showDivider={(voice.canStop && !voice.recoveryAvailable) || (!voice.live && Boolean(voice.ended))}
             transport={<VoiceTransport voice={voice} size="pill" testID={`${props.testID}-transport`} />}
@@ -121,6 +128,7 @@ const stylesheet = StyleSheet.create({
         flexShrink: 1,
     },
     labelPressed: { opacity: 0.7 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
 });
 
 /**

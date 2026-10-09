@@ -179,6 +179,17 @@ describe('CommandPaletteProvider lazy command building', () => {
         })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     });
 
+    it('offers Ask Happier through the mounted manual command catalog without starting a Session', async () => {
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+        const listing = await executeCommandPaletteAction({
+            actionId: 'ui.command_palette.list', input: {}, context: { surface: 'agent' },
+        });
+        expect(listing).toMatchObject({
+            ok: true, result: { commands: expect.arrayContaining([expect.objectContaining({ id: 'askHappier' })]) },
+        });
+        expect(testState.routerPush).not.toHaveBeenCalled();
+    });
+
     it('offers phone pairing in Search and invokes the same modal through the palette Action', async () => {
         const { Modal } = await import('@/modal');
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);

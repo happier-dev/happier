@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
 import type { VoiceWelcomeSelection } from '@/voice/settings/welcome';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -19,7 +19,7 @@ import { getPreferredLanguage, t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { AccountVoiceCredentialUseStatus } from '@/voice/credentials/accountVoiceCredential';
 import { performVoiceAdapterRuntimeAction } from '@/voice/session/voiceAdapterRegistry';
-import { playRealtimeCatalogPreview, readRealtimeCatalogPreview, stopRealtimeCatalogPreview, subscribeRealtimeCatalogPreview } from './catalogPreview';
+import { useRealtimeCatalogMenuItems, useRealtimeCatalogPreview, type RealtimeCatalogState } from './realtimeVoiceCatalogMenu';
 
 import {
   readRealtimeProviderConfigPath,
@@ -28,25 +28,13 @@ import {
   type RealtimeSettingsDescriptor,
   type RealtimeSettingsFieldDescriptor,
 } from './descriptor';
-import { Icon } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import type { VoiceRemoteCatalogState } from '@/voice/settings/remoteCatalogState';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { confirmRealtimeProviderSettingChange } from './confirmRealtimeProviderSettingChange';
 import { isVoiceWelcomeLanguageSupported } from '@/voice/agent/voiceWelcomeText';
 
-const REALTIME_CATALOG_PREVIEW_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-
-type CatalogRow = Readonly<{
-  id: string;
-  name: string;
-  subtitle?: string;
-  previewUrl?: string | null;
-}>;
-
-export type RealtimeCatalogState = VoiceRemoteCatalogState<CatalogRow>;
+export type { RealtimeCatalogState } from './realtimeVoiceCatalogMenu';
 
 type SettingsValue = Readonly<Record<string, unknown>>;
 
@@ -145,8 +133,7 @@ export function RealtimeProviderFields(props: Readonly<{
   const [customField, setCustomField] = React.useState<string | null>(null);
   const actionBusyRef = React.useRef(false);
   const [actionBusy, setActionBusy] = React.useState(false);
-  const previewSnapshot = React.useSyncExternalStore(subscribeRealtimeCatalogPreview, readRealtimeCatalogPreview, readRealtimeCatalogPreview);
-  const previewingId = previewSnapshot?.providerId === props.providerId ? previewSnapshot.voiceId : null;
+  const { previewingId, playPreview, stopPreview } = useRealtimeCatalogPreview(props.providerId);
   const [expandedAdvancedPaths, setExpandedAdvancedPaths] = React.useState<ReadonlySet<string>>(() => new Set());
   const previousProviderIdRef = React.useRef(props.providerId);
   const latestSettingsRef = React.useRef({
@@ -170,11 +157,6 @@ export function RealtimeProviderFields(props: Readonly<{
       ? tLoose('voice.readiness.credential_unknown')
       : tLoose('settingsVoice.realtimeProviders.catalog.credentialRequired');
 
-  const stopPreview = React.useCallback(() => {
-    stopRealtimeCatalogPreview(props.providerId);
-  }, [props.providerId]);
-
-  React.useEffect(() => stopPreview, [stopPreview]);
   React.useEffect(() => {
     // Initial disclosure reveal runs after mount; only a real provider change resets it.
     if (previousProviderIdRef.current === props.providerId) return;
@@ -186,13 +168,8 @@ export function RealtimeProviderFields(props: Readonly<{
     setActionBusy(false);
   }, [props.providerId, stopPreview]);
 
-  const playPreview = React.useCallback((row: CatalogRow) => {
-    if (!row.previewUrl) return;
-    if (previewingId === row.id) { stopPreview(); return; }
-    const providerId = props.providerId;
-    fireAndForget(playRealtimeCatalogPreview({ providerId, row,
-      isCurrent: () => latestSettingsRef.current.providerId === providerId }), { tag: 'RealtimeProviderFields.previewVoice' });
-  }, [previewingId, props.providerId, stopPreview]);
+  const { statusRows: catalogStatusRows, catalogRows } = useRealtimeCatalogMenuItems({ catalog: props.catalog, credentialUsable,
+    credentialUnavailableDetail, previewingId, onPreview: playPreview });
 
   const write = React.useCallback((
     field: RealtimeSettingsFieldDescriptor,
@@ -462,46 +439,13 @@ export function RealtimeProviderFields(props: Readonly<{
 
       const optionRows = readOptionRows(field);
       const isCatalog = field.kind === 'voice_catalog' || field.kind === 'remote_voice';
-      const catalogRows: DropdownMenuItem[] = props.catalog.phase === 'ready'
-        ? props.catalog.rows.map((row) => ({
-          id: row.id,
-          title: row.name,
-          subtitle: row.subtitle,
-          rightElement: !row.previewUrl ? undefined : <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('settingsVoice.realtimeProviders.catalog.preview', { voice: row.name })}
-            style={{
-              minWidth: REALTIME_CATALOG_PREVIEW_TARGET_SIZE,
-              minHeight: REALTIME_CATALOG_PREVIEW_TARGET_SIZE,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            onPress={(event) => {
-              event.stopPropagation();
-              playPreview(row);
-            }}
-          >
-            <Icon
-              name={previewingId === row.id ? 'stop-circle' : 'play-circle'}
-              size={24}
-              color={theme.colors.text.secondary}
-            />
-          </Pressable>,
-        }))
-        : [];
       const optionalRows: DropdownMenuItem[] = field.kind === 'language_hint'
         ? [{ id: '', title: tLoose('settingsVoice.realtimeProviders.options.automatic') }]
         : [];
       const rows = isCatalog ? catalogRows : [...optionalRows, ...optionRows];
       const hasCustomRow = rows.some((row) => row.id === '__custom__');
       const allowCustom = field.customIdAllowed === true || hasCustomRow;
-      const statusRows: DropdownMenuItem[] = !isCatalog ? []
-        : !credentialUsable ? [{ id: '__status__', title: credentialUnavailableDetail, disabled: true }]
-          : props.catalog.phase === 'loading' ? [{ id: '__status__', title: t('common.loading'), disabled: true }]
-            : props.catalog.phase === 'error' ? [{ id: '__retry__', title: tLoose('settingsVoice.realtimeProviders.catalog.retry') }]
-              : props.catalog.phase === 'ready' && props.catalog.rows.length === 0
-                ? [{ id: '__status__', title: tLoose('settingsVoice.realtimeProviders.catalog.empty'), disabled: true }]
-                : [];
+      const statusRows: DropdownMenuItem[] = isCatalog ? catalogStatusRows : [];
       const customRow = allowCustom && !hasCustomRow
         ? [{ id: '__custom__', title: tLoose('settingsVoice.realtimeProviders.options.custom') }]
         : [];

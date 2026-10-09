@@ -14,6 +14,7 @@ import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { resolveVoiceCompactLine, resolveVoiceTranscriptTail } from './resolveVoicePresenceCaption';
+import { useVoiceTargetName } from './VoiceTargetIdentity';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -25,7 +26,7 @@ const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
  * stands in placeholder speech.
  */
 export const VoiceCompactTranscript = React.memo(function VoiceCompactTranscript(props: Readonly<{
-    voice: Pick<VoiceAttemptControlProjection, 'sessionId' | 'live' | 'muted' | 'surfaceState' | 'captionLabel'>;
+    voice: Pick<VoiceAttemptControlProjection, 'sessionId' | 'live' | 'muted' | 'surfaceState' | 'captionLabel' | 'targetSessionAddress'>;
     testID?: string;
 }>): React.ReactElement | null {
     const voiceSettings = useSetting('voice');
@@ -40,7 +41,8 @@ export const VoiceCompactTranscript = React.memo(function VoiceCompactTranscript
         transcriptEnabled: canonicalVoice.ui.activityFeedEnabled === true && props.voice.live,
         voiceSettings,
     });
-    const line = resolveVoiceCompactLine(props.voice, latestText);
+    const targetName = useVoiceTargetName(props.voice.targetSessionAddress);
+    const line = resolveVoiceCompactLine(props.voice, latestText, targetName);
     if (!line) return null;
     if (line.kind === 'caption') {
         return <Text testID={props.testID ?? 'voice-compact-transcript'} numberOfLines={1} style={styles.line}>{line.text}</Text>;

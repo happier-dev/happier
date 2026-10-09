@@ -22,6 +22,7 @@ import { VoiceNeedsYouPrompts } from './VoiceNeedsYouPrompts';
 import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
 import { presentVoiceContinuation } from '@/voice/transcript/voiceTranscriptNotePresentation';
 import { VoiceStatusCell } from './VoiceStatusCell';
+import { useVoiceTargetName, VoiceTargetIdentity } from './VoiceTargetIdentity';
 import { formatVoiceElapsed, readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
 
 /** How many of the latest turns the glance reads back; the full history is the conversation itself. */
@@ -50,14 +51,25 @@ export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
     const voice = model.attemptControl;
     const startedAt = readVoiceElapsedStartedAt(voice);
     const testID = props.testID ?? 'voice-glance';
+    // Talking to a Session (lab `b-voice A`): the title names it beside its avatar, and the source is
+    // the provider with the voice the attempt actually applied — never the saved preference.
+    const boundTarget = voice.live ? voice.targetSessionAddress ?? null : null;
+    const boundName = useVoiceTargetName(boundTarget);
     const target = model.targetLabel ?? t('voicePresence.globalVoice');
-    const source = model.providerLabel ? `${target} · ${model.providerLabel}` : target;
+    const source = boundName
+        ? voice.inUseVoice && model.providerLabel
+            ? t('sessionVoice.currentVoice', { provider: model.providerLabel, voice: voice.inUseVoice.displayName })
+            : model.providerLabel ?? undefined
+        : model.providerLabel ? `${target} · ${model.providerLabel}` : target;
     return (
         <WidgetFrame
             testID={testID}
             frameStyle="plain"
             placement="companion"
-            title={t('voicePresence.title')}
+            mark={boundTarget && boundName
+                ? <VoiceTargetIdentity address={boundTarget} size="hero" avatarOnly testID={`${testID}-target`} />
+                : undefined}
+            title={boundName ? t('sessionVoice.talkingTo', { name: boundName }) : t('voicePresence.title')}
             source={source}
             menu={props.menu}
             // The call's clock reads with its title ("Voice 2:14"), not across the header.
@@ -72,10 +84,10 @@ export const VoiceGlance = React.memo(function VoiceGlance(props: Readonly<{
 });
 
 /** One helpful line per state (lab ST captions); a failure names what failed instead. */
-function resolveVoiceGlanceCaption(model: VoiceSurfaceViewModel): string {
+function resolveVoiceGlanceCaption(model: VoiceSurfaceViewModel, targetName: string | null): string {
     const voice = model.attemptControl;
     if (voice.recoveryAvailable && model.subtitle) return model.subtitle;
-    return resolveVoicePresenceCaption(voice) ?? model.subtitle ?? voice.micStateLabel;
+    return resolveVoicePresenceCaption(voice, targetName) ?? model.subtitle ?? voice.micStateLabel;
 }
 
 const VoiceGlanceBody = React.memo(function VoiceGlanceBody(props: Readonly<{
@@ -91,13 +103,14 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(props: Readonly<{
         () => model.visibleTranscriptEntries.filter((entry) => entry.kind !== 'note').slice(-GLANCE_TURNS),
         [model.visibleTranscriptEntries],
     );
+    const targetName = useVoiceTargetName(voice.live ? voice.targetSessionAddress ?? null : null);
     if (!voice.live && voice.ended) {
         return <VoiceGlanceEnded model={model} sheet={sheet} testID={props.testID} />;
     }
     const showTurns = model.activityFeedEnabled && model.expanded && turns.length > 0 && voice.canStop;
     // The caption is the call's own fact (what failed, or the state's one helpful line); delegated
     // work keeps its own line below so an agent's status never reads as the call's state.
-    const caption = resolveVoiceGlanceCaption(model);
+    const caption = resolveVoiceGlanceCaption(model, targetName);
     return (
         <View style={sheet ? styles.bodySheet : styles.body}>
             <View style={sheet ? styles.heroSheet : styles.hero}>

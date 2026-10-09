@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { AskHappierMark } from '@/components/sessions/bots/AskHappierOfferCard';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
@@ -28,7 +29,8 @@ function buildOption(command: Command): SelectionListOption {
         testID: `command-palette:option:${command.id}`,
         label: command.title,
         ...(command.subtitle ? { subtitle: command.subtitle } : {}),
-        ...(icon ? { icon: () => <Icon name={icon} size={ICON_SIZE.md} /> } : {}),
+        ...(command.mark === 'askHappier' ? { icon: () => <AskHappierMark size={ICON_SIZE.md} /> }
+            : icon ? { icon: () => <Icon name={icon} size={ICON_SIZE.md} /> } : {}),
         ...(shortcut ? { rightAccessory: () => <KeyHint label={shortcut} /> } : {}),
     };
 }

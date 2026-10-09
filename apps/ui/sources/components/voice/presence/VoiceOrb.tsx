@@ -13,7 +13,8 @@ import { t } from '@/text';
 
 import { VoiceMark } from './VoiceMark';
 import { VOICE_PRESENCE_NO_DRAG_PROPS } from './VoicePresenceFloat';
-import { VoiceStatusLine } from './VoiceStatusLine';
+import { readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
+import { VoiceTargetIdentity } from './VoiceTargetIdentity';
 
 import { VoiceOrbAnatomy, VOICE_ORB_BODY_SIZE, VOICE_ORB_MARK_SIZE, VOICE_ORB_CAPTION_WIDTH, VOICE_ORB_OPTIONS_GAP, resolveVoiceOrbContainerWidth } from './voicePresenceAnatomy';
 export { VOICE_ORB_BODY_SIZE, VOICE_ORB_MARK_SIZE, VOICE_ORB_CAPTION_WIDTH } from './voicePresenceAnatomy';
@@ -102,7 +103,15 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                         {/* The chip is the options target and keeps saying what the call is doing
                             (lab: "Speaking 2:14"); its accessible name is "Voice options". */}
                         <GlassPanel radius={13} shadowLevel={2} innerShadow={false} style={styles.caption}>
-                            <VoiceStatusLine voice={voice} size="pill" />
+                            {voice.live && voice.targetSessionAddress ? (
+                                // Talking to a Session (lab `b-voice O`): its avatar · name · the call's clock.
+                                <View style={styles.targetCaption}>
+                                    <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID="voice-orb-target" />
+                                    {readVoiceElapsedStartedAt(voice) !== null ? (
+                                        <VoiceElapsed startedAt={readVoiceElapsedStartedAt(voice)!} fontSize={12.5} lineHeight={16} />
+                                    ) : null}
+                                </View>
+                            ) : <VoiceStatusLine voice={voice} size="pill" />}
                         </GlassPanel>
                     </Pressable>
                     </CompanionNoDragRegion>
@@ -139,6 +148,7 @@ const stylesheet = StyleSheet.create({
     captionSlot: { position: 'absolute', top: 0, width: VOICE_ORB_CAPTION_WIDTH, flexDirection: 'row' },
     options: { minHeight: VOICE_ORB_BODY_SIZE, minWidth: VOICE_ORB_BODY_SIZE, justifyContent: 'center' },
     caption: { height: 26, paddingHorizontal: 10, justifyContent: 'center' },
+    targetCaption: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 0 },
     body: {
         width: VOICE_ORB_BODY_SIZE,
         height: VOICE_ORB_BODY_SIZE,

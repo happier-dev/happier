@@ -48,6 +48,8 @@ import { useSessionMachineControlTarget } from '@/components/sessions/model/useS
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getChangelogEntries } from '@/changelog';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -66,6 +68,7 @@ import { UNIVERSAL_SEARCH_ROUTE } from '@/components/appShell/search/universalSe
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { TERMINAL_JUMP_ROUTE_PARAM } from '@/components/sessions/terminal/jump/terminalJumpTarget';
 import { NextPendingNavigationHost } from '@/components/sessions/pendingNavigation/NextPendingNavigationHost';
+import { t } from '@/text';
 
 export function readActiveSessionIdFromRoute(
     segments: readonly string[],
@@ -205,6 +208,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 
 function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
+    const currentUiContextReader = useOptionalCurrentUiContextReader();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     // Sessions are read when commands are built (`buildCommands`) and followed only while the palette
     // is open (below). This provider is always mounted around the whole app shell: subscribing it to
@@ -373,6 +377,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         const scopedPluginActionPresentation = exactSessionContext
             ? pluginActionPresentation
             : null;
+        const askHappierLifetime = captureActiveServerAccountScopeLifetime();
+        const askHappierCurrentContext = currentUiContextReader?.readCurrentUiContext() ?? null;
         return buildCommandPaletteCommands({
             sessionsById: storage.getState().sessions,
             isDev: __DEV__ === true,
@@ -385,11 +391,18 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             ...(scopedPluginActionPresentation ? { pluginActionPresentation: scopedPluginActionPresentation } : {}),
             compactAppDestinations: paletteDestinations,
             onActivateCompactAppDestination: activateCompactAppDestination,
+            // "About this update" asks about the newest release the changelog owner lists.
+            ...(getFeatureBuildPolicyDecision('app.ui.changelog') !== 'deny' && getChangelogEntries()[0]
+                ? { askHappierRelease: getChangelogEntries()[0] } : {}),
             nav: {
                 push: (path) => router.push(path as any),
                 openNewSession,
                 openNewWorkflow,
                 openWorkflowAgentAuthoring,
+                openAskHappier: async (context) => {
+                    const { startAskHappier } = await import('@/components/sessions/bots/askHappierEntry');
+                    await startAskHappier({ lifetime: askHappierLifetime, context, currentUiContext: askHappierCurrentContext });
+                },
                 openTextInFiles: () => textSearchOpener.current(requestedScope),
                 openHomePairingModal: async () => {
                     const { showHomePairingModal } = await import('@/components/auth/pairing/HomePairingModal');
@@ -404,7 +417,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [commandContextSessionId, commandContextServerId, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor]);
+    }, [commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;

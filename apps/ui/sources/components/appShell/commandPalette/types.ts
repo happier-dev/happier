@@ -16,6 +16,8 @@ export interface Command {
     title: string;
     subtitle?: string;
     icon?: IconName;
+    /** A product mark drawn in place of `icon` by the Search surface (keeps the mark's art out of the catalog's eager graph). */
+    mark?: 'askHappier';
     shortcut?: string;
     category?: string;
     action: () => void | Promise<void>;
