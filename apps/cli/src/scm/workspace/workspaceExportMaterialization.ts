@@ -42,12 +42,21 @@ export type WorkspaceExportMaterializationNaming = Readonly<{
     stagingIdPrefix: string;
 }>;
 
+export type WorkspaceTargetMaterializationWorkerCopyCreation = Readonly<{
+    serverId: string;
+    relationshipId: string;
+    sourceWorkspaceRefId: string;
+    targetWorkspaceRefId: string;
+}>;
+
 export type WorkspaceTargetMaterializationReceiptV1 = Readonly<{
     v: 1;
     previousTargetName: string | null;
     originalTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     promotedTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     expectedBackupIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
+    /** Initial target-custodian creation evidence, never enriched by retirement or recovery. */
+    workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
     /** Settled promotion custody; rollback must never delete this copy. */
     committed?: Readonly<{ canonicalRoot: string; rootFingerprint: string }>;
     /** Explicit removal began; retain the exact moved name for inspection, never blind replay. */
@@ -70,6 +79,8 @@ export type WorkspaceExportMaterializationResult = Readonly<{
 export type WorkspaceTargetMaterializationFence = Readonly<{
     state: 'missing' | 'empty' | 'nonempty';
     identity: WorkspaceSyncRootObjectIdentityV1 | null;
+    /** Derived from the original current Home relationship by the physical target custodian. */
+    workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
 }>;
 
 async function readMaterializationReceipt(path: string): Promise<WorkspaceTargetMaterializationReceiptV1 | null> {
@@ -81,7 +92,7 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
     try {
         const value = JSON.parse(raw) as unknown;
         if (!value || typeof value !== 'object' || Array.isArray(value)
-            || Object.keys(value).filter((key) => key !== 'committed' && key !== 'removalTargetName').sort().join('\0') !== [
+            || Object.keys(value).filter((key) => key !== 'committed' && key !== 'removalTargetName' && key !== 'workerCopyCreation').sort().join('\0') !== [
                 'expectedBackupIdentity',
                 'originalTargetIdentity',
                 'previousTargetName',
@@ -98,6 +109,7 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
             || !(candidate.promotedTargetIdentity === null
                 || isWorkspaceSyncRootObjectIdentityV1(candidate.promotedTargetIdentity))
             || !isCommittedTarget(candidate.committed) || !isRemovalTargetName(candidate.removalTargetName)
+            || !isWorkerCopyCreation(candidate.workerCopyCreation)
             || !(candidate.expectedBackupIdentity === null
                 || isWorkspaceSyncRootObjectIdentityV1(candidate.expectedBackupIdentity))) {
             throw new Error('invalid receipt');
@@ -110,6 +122,39 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
 
 function materializationRecoveryError(message: string): Error {
     return Object.assign(new Error(message), { code: 'workspace_target_materialization_manual_recovery' });
+}
+
+function isWorkerCopyCreation(value: unknown): boolean {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const candidate = value as Record<string, unknown>;
+    const fields = ['relationshipId', 'serverId', 'sourceWorkspaceRefId', 'targetWorkspaceRefId'];
+    return Object.keys(candidate).sort().join('\0') === fields.join('\0')
+        && fields.every(key => {
+            const field = candidate[key];
+            return typeof field === 'string' && field !== '' && field === field.trim();
+        })
+        && candidate.sourceWorkspaceRefId !== candidate.targetWorkspaceRefId;
+}
+
+function workerCopyCreationsEqual(
+    left: WorkspaceTargetMaterializationWorkerCopyCreation | undefined,
+    right: WorkspaceTargetMaterializationWorkerCopyCreation,
+): boolean {
+    return left !== undefined && left.serverId === right.serverId && left.relationshipId === right.relationshipId
+        && left.sourceWorkspaceRefId === right.sourceWorkspaceRefId && left.targetWorkspaceRefId === right.targetWorkspaceRefId;
+}
+
+function workerCopyCreationError(): Error {
+    return Object.assign(new Error('Workspace target has no matching original worker-copy creation evidence'), { code: 'workspace_copy_not_worker' });
+}
+
+/** Recovery and retirement share the original physical receipt's creation proof. */
+export function assertWorkspaceTargetMaterializationWorkerCopyCreation(
+    receipt: WorkspaceTargetMaterializationReceiptV1,
+    expected: WorkspaceTargetMaterializationWorkerCopyCreation,
+): void {
+    if (!workerCopyCreationsEqual(receipt.workerCopyCreation, expected)) throw workerCopyCreationError();
 }
 
 function isCommittedTarget(value: unknown): boolean {
@@ -177,10 +222,13 @@ export async function prepareWorkspaceTargetMaterializationReceipt(input: Readon
     backupDirectoryPrefix: string;
     receiptPath: string;
     originalTargetExists: boolean;
+    workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
 }>): Promise<WorkspaceTargetMaterializationReceiptV1> {
+    if (!isWorkerCopyCreation(input.workerCopyCreation)) throw workerCopyCreationError();
     const existing = await readMaterializationReceipt(input.receiptPath);
     if (existing) {
         if (existing.committed) throw materializationRecoveryError('Workspace target already has committed materialization custody');
+        if (input.workerCopyCreation) assertWorkspaceTargetMaterializationWorkerCopyCreation(existing, input.workerCopyCreation);
         if ((existing.previousTargetName !== null) !== input.originalTargetExists) {
             throw materializationRecoveryError('Workspace target materialization receipt does not match the observed target state');
         }
@@ -199,6 +247,7 @@ export async function prepareWorkspaceTargetMaterializationReceipt(input: Readon
         originalTargetIdentity,
         promotedTargetIdentity: null,
         expectedBackupIdentity: previousTargetPath ? originalTargetIdentity : null,
+        ...(input.workerCopyCreation ? { workerCopyCreation: Object.freeze({ ...input.workerCopyCreation }) } : {}),
     });
     await writeJsonAtomic(input.receiptPath, receipt);
     return receipt;
@@ -236,6 +285,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
     previousTargetPath?: string;
     custody: WorkspaceExportMaterializationCustody;
 }>> {
+    if (!isWorkerCopyCreation(input.targetFence?.workerCopyCreation)) throw workerCopyCreationError();
     const targetExists = await pathExists(input.targetPath);
     if (input.targetFence) await assertTargetMaterializationFence(input.targetPath, input.targetFence);
     const originalTargetExists = input.originalTargetExists ?? targetExists;
@@ -245,6 +295,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
             backupDirectoryPrefix: input.backupDirectoryPrefix,
             receiptPath: input.receiptPath,
             originalTargetExists,
+            ...(input.targetFence?.workerCopyCreation ? { workerCopyCreation: Object.freeze({ ...input.targetFence.workerCopyCreation }) } : {}),
         })
         : Object.freeze({
             v: 1 as const,
@@ -254,6 +305,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
             originalTargetIdentity: await readObjectIdentityOrAbsent(input.targetPath),
             promotedTargetIdentity: null,
             expectedBackupIdentity: null,
+            ...(input.targetFence?.workerCopyCreation ? { workerCopyCreation: Object.freeze({ ...input.targetFence.workerCopyCreation }) } : {}),
         });
     if (receipt.previousTargetName !== null && receipt.expectedBackupIdentity === null) {
         receipt = Object.freeze({ ...receipt, expectedBackupIdentity: receipt.originalTargetIdentity });
@@ -359,7 +411,7 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
 }>): Promise<WorkspaceExportMaterializationCustody | null> {
     const receipt = input.receipt as unknown;
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
-        || Object.keys(receipt).filter((key) => key !== 'committed' && key !== 'removalTargetName').sort().join('\0') !== [
+        || Object.keys(receipt).filter((key) => key !== 'committed' && key !== 'removalTargetName' && key !== 'workerCopyCreation').sort().join('\0') !== [
             'expectedBackupIdentity',
             'originalTargetIdentity',
             'previousTargetName',
@@ -370,6 +422,7 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
     }
     const candidate = receipt as Record<string, unknown>;
     if (candidate.v !== 1 || !isCommittedTarget(candidate.committed) || !isRemovalTargetName(candidate.removalTargetName)
+        || !isWorkerCopyCreation(candidate.workerCopyCreation)
         || !(candidate.previousTargetName === null || typeof candidate.previousTargetName === 'string')
         || !(candidate.originalTargetIdentity === null || isWorkspaceSyncRootObjectIdentityV1(candidate.originalTargetIdentity))
         || !(candidate.promotedTargetIdentity === null || isWorkspaceSyncRootObjectIdentityV1(candidate.promotedTargetIdentity))
@@ -492,6 +545,8 @@ export async function inspectCommittedWorkspaceTargetMaterialization(input: Read
     rootFingerprint?: string;
     /** Display-only observed bytes, never stored in committed custody. */
     measureSize?: true;
+    /** Worker retirement must match original physical creation, not only its reviewed input. */
+    workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
 }> & ({ receiptPath: string; receipt?: never } | { receipt: WorkspaceTargetMaterializationReceiptV1; receiptPath?: never })): Promise<WorkspaceTargetMaterializationReceiptV1 & Readonly<{
     committed: NonNullable<WorkspaceTargetMaterializationReceiptV1['committed']>;
     sizeBytes?: number;
@@ -500,6 +555,7 @@ export async function inspectCommittedWorkspaceTargetMaterialization(input: Read
     if (!receipt?.committed || !receipt.promotedTargetIdentity) {
         throw Object.assign(new Error('Workspace target has no committed owned-copy evidence'), { code: 'workspace_copy_not_owned' });
     }
+    if (input.workerCopyCreation) assertWorkspaceTargetMaterializationWorkerCopyCreation(receipt, input.workerCopyCreation);
     const targetPath = resolve(input.targetPath);
     if (receipt.removalTargetName) {
         throw Object.assign(new Error('Workspace copy removal requires inspection'), {
@@ -542,6 +598,7 @@ export async function removeCommittedWorkspaceTargetMaterialization(input: Reado
     receiptPath: string;
     rootFingerprint: string;
     signal?: AbortSignal;
+    workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
 }>, dependencies: Readonly<{ removeTarget?: typeof rm }> = {}): Promise<void> {
     input.signal?.throwIfAborted();
     const receipt = await inspectCommittedWorkspaceTargetMaterialization(input);

@@ -35,6 +35,28 @@ const naming = {
 } as const;
 const registry = createScmBackendRegistry([]);
 describe('workspace export materialization custody', () => {
+    it.each(['ordinary', 'different_worker'] as const)('does not relabel an original uncommitted materialization receipt (%s)', async original => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-creation-binding-')));
+        try {
+            const target = join(fixture, 'copy');
+            const receiptPath = join(fixture, 'receipt.json');
+            const creation = { serverId: 'home', relationshipId: 'worker-link', sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' };
+            const originalFence = { state: 'missing' as const, identity: null,
+                ...(original === 'different_worker' ? { workerCopyCreation: creation } : {}) };
+            await beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath,
+                targetFence: originalFence });
+            const receiptBytes = await readFile(receiptPath, 'utf8');
+            const nextFence = { state: 'missing' as const, identity: null,
+                workerCopyCreation: original === 'ordinary' ? creation : { ...creation, relationshipId: 'another-worker-link' } };
+            await expect(beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath,
+                targetFence: nextFence })).rejects.toMatchObject({ code: 'workspace_copy_not_worker' });
+            expect(await readFile(receiptPath, 'utf8')).toBe(receiptBytes);
+            await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
+
     it('observes current regular-file bytes in the owned copy including nested warm caches without following outside symlinks', async () => {
         const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-owned-size-')));
         try {
@@ -241,8 +263,12 @@ describe('workspace export materialization custody', () => {
         let stderr = '';
         child.stderr?.setEncoding('utf8');
         child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
+        const exitedBeforeReceipt = new Promise<never>((_resolve, reject) => {
+            child.once('error', error => reject(new Error(`materialization child failed: ${stderr}`, { cause: error })));
+            child.once('exit', (code, signal) => reject(new Error(`materialization child exited before receipt (code=${code}, signal=${signal}): ${stderr}`)));
+        });
         try {
-            await waitForFile(receiptPath);
+            await Promise.race([waitForFile(receiptPath), exitedBeforeReceipt]);
             child.kill('SIGKILL');
             await new Promise<void>((resolve, reject) => {
                 child.once('error', reject);
