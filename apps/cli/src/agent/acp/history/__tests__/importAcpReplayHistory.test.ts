@@ -60,7 +60,15 @@ function createFakeSession(params?: {
 }
 
 describe('importAcpReplayHistoryV1', () => {
-  it('does not prompt when the only divergence is the internal change-title instruction suffix', async () => {
+  it('does not prompt when Gemini replay includes the exact predecessor title suffix', async () => {
+    // Captured from ../0.2 HEAD 37a6541578749067b49d4579be8c752c9591b8c8; independent of the current live producer.
+    const legacySuffix = `Before you respond, call the change-title tool once to set (or update) a short, descriptive session title based on the user's message.
+
+The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use an equivalent alias (for example: change_title, session_title_set, change-title).
+
+Never violate the user's explicit constraints on tool usage (for example: "exactly one tool call" or "do not use any other tools"). If the user has constrained tool usage for this turn, skip calling the change-title tool.
+
+Call this tool again if the task changes significantly.`;
     const { session, calls } = createFakeSession({
       existing: [
         { role: 'user', text: 'hi' },
@@ -70,10 +78,10 @@ describe('importAcpReplayHistoryV1', () => {
 
     await importAcpReplayHistoryV1({
       session,
-      provider: 'opencode',
+      provider: 'gemini',
       remoteSessionId: 'session-123',
       replay: [
-        { type: 'message', role: 'user', text: `hi\n\n${CHANGE_TITLE_INSTRUCTION}` },
+        { type: 'message', role: 'user', text: `hi\n\n${legacySuffix}` },
         { type: 'message', role: 'agent', text: 'hello' },
       ] as any,
       permissionHandler: {

@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { buildAppendSystemPromptBaseV1 } from './buildAppendSystemPromptBaseV1.js';
 
 describe('buildAppendSystemPromptBaseV1', () => {
+  it('places fresh-Bot first-message guidance in the canonical coding base', () => {
+    const text = buildAppendSystemPromptBaseV1({ settings: {}, executionRunsFeatureEnabled: false, createdAsBot: true });
+    expect(text).toMatch(/task or remit[\s\S]*proceed[\s\S]*without asking/i);
+    expect(text).toMatch(/one concise focus question/i);
+    expect(text).toMatch(/persona name/i);
+    expect(text).not.toContain('task changes significantly');
+  });
   it('returns the base prompt when execution runs guidance is disabled', () => {
     expect(buildAppendSystemPromptBaseV1({
       settings: {},

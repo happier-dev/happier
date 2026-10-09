@@ -8,6 +8,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  createdAsBot?: boolean;
 }>): PromptPlanV1 {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
@@ -17,6 +18,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     : buildHappierBaseSystemPromptV1({
         settings,
         sessionTitleToolAvailable: args.sessionTitleToolAvailable,
+        createdAsBot: args.createdAsBot,
       });
 
   const blocks = [{
@@ -42,6 +44,7 @@ export function buildAppendSystemPromptBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
+  createdAsBot?: boolean;
 }>): string {
   return renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1(args));
 }

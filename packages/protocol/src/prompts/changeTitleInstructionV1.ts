@@ -1,7 +1,7 @@
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '../tools/v2/aliases.js';
 import { trimIdent } from '../strings/trimIdent.js';
+import { buildHappierSessionTitleGuidanceV1, type HappierSessionTitleGuidanceV1Options } from './systemPromptBaseV1.js';
 
-export interface ChangeTitleInstructionV1Options {
+export interface ChangeTitleInstructionV1Options extends HappierSessionTitleGuidanceV1Options {
   /**
    * Preferred tool name to mention first.
    *
@@ -28,19 +28,14 @@ export function shouldAppendChangeTitleInstructionV1(userText: string): boolean 
 }
 
 export function buildChangeTitleInstructionV1(opts: ChangeTitleInstructionV1Options = {}): string {
-  const preferred = (opts.preferredToolName ?? 'mcp__happier__change_title').trim();
-  const fallbacks = CHANGE_TITLE_TOOL_NAME_ALIASES.filter((n) => n !== preferred);
-  const fallbackPreview = fallbacks.slice(0, 3).join(', ');
+  return buildHappierSessionTitleGuidanceV1(opts);
+}
 
-  return trimIdent(
-    `Before you respond, call the change-title tool once to set (or update) a short, descriptive session title based on the user's message.
+/** Frozen predecessor suffix used only to recognize historical ACP replay text. */
+export const CHANGE_TITLE_INSTRUCTION_V1 = trimIdent(`Before you respond, call the change-title tool once to set (or update) a short, descriptive session title based on the user's message.
 
-The tool may be exposed under different names depending on the provider. Prefer "${preferred}" when available; otherwise use an equivalent alias (for example: ${fallbackPreview}).
+The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use an equivalent alias (for example: change_title, session_title_set, change-title).
 
 Never violate the user's explicit constraints on tool usage (for example: "exactly one tool call" or "do not use any other tools"). If the user has constrained tool usage for this turn, skip calling the change-title tool.
 
-Call this tool again if the task changes significantly.`,
-  );
-}
-
-export const CHANGE_TITLE_INSTRUCTION_V1 = buildChangeTitleInstructionV1();
+Call this tool again if the task changes significantly.`);
