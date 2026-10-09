@@ -72,7 +72,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
   } catch (error) {
     result = { status: 'failed', code: error.code ?? 'store_publication_failed', message: error.message,
-      platform: values.platform, publicAvailability: 'unverified' };
+      platform: values.platform, publicAvailability: 'unverified',
+      ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+      ...(error.operation !== undefined ? { operation: error.operation } : {}),
+      ...(error.apiStatus !== undefined ? { apiStatus: error.apiStatus } : {}),
+      ...(error.apiMessage !== undefined ? { apiMessage: error.apiMessage, apiReasons: error.apiReasons } : {}),
+    };
     process.exitCode = 1;
   }
   if (values['out-json']) {

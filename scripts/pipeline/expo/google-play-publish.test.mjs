@@ -13,7 +13,10 @@ function boundary({ releases = [previous, target], failAt, invalidUpdate = false
   const fetchImpl = async (url, init = {}) => {
     const call = { url, ...init };
     calls.push(call);
-    if (failAt === calls.length) return new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED', message: 'private server detail' } }), { status: 403 });
+    if (failAt === calls.length) return new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED',
+      message: `Production release access is required. ${credentialJson} ${calls.length > 1 ? 'fixture-token' : ''} ${new URLSearchParams(calls[0].body).get('assertion')}`,
+      errors: [{ reason: 'forbidden' }],
+    } }), { status: 403 });
     if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fixture-token', token_type: 'Bearer' });
     assert.equal(init.headers.Authorization, 'Bearer fixture-token');
     if (url.endsWith('/edits')) return Response.json({ id: 'edit-1', expiryTimeSeconds: '123' });
@@ -86,10 +89,19 @@ test('the exact version must be present once and alone in its release before cha
   }
 });
 
-test('API permission and commit failures retain honest errors without exposing response details', async () => {
+test('API failures retain Google reason and message without exposing credentials or signed tokens', async () => {
   for (const [failAt, operation] of [[1, 'authorize'], [3, 'read_track'], [5, 'commit_edit']]) {
     const { fetchImpl } = boundary({ failAt });
-    await assert.rejects(publishGooglePlayProduction({ ...input, fetchImpl }), (error) => error.code === 'play_api_error' && error.httpStatus === 403 && error.operation === operation && error.apiStatus === 'PERMISSION_DENIED' && !error.message.includes('private server detail'));
+    await assert.rejects(publishGooglePlayProduction({ ...input, fetchImpl }), (error) => {
+      assert.equal(error.code, 'play_api_error');
+      assert.equal(error.httpStatus, 403);
+      assert.equal(error.operation, operation);
+      assert.equal(error.apiStatus, 'PERMISSION_DENIED');
+      assert.deepEqual(error.apiReasons, ['forbidden']);
+      assert.match(error.apiMessage, /Production release access is required\./);
+      assert.doesNotMatch(error.message + error.apiMessage, /publisher@example|fixture-token|BEGIN PRIVATE KEY|fixture-key|eyJ/);
+      return true;
+    });
   }
 });
 

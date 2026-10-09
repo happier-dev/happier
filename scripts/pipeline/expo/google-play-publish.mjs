@@ -4,7 +4,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const PUBLISHER_URL = 'https://androidpublisher.googleapis.com/androidpublisher/v3';
 const SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
-// Google RPC's public status codes; arbitrary response messages and details stay private.
+// Google RPC's public status codes; arbitrary response details stay private.
 const API_STATUSES = new Set(['CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND', 'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION', 'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS', 'UNAUTHENTICATED']);
 
 export class GooglePlayPublicationError extends Error {
@@ -64,6 +64,17 @@ export async function publishGooglePlayProduction(options) {
     throw new GooglePlayPublicationError('invalid_play_notes', 'The approved playStore.whatsNew projection is required (maximum 500 characters).');
   }
   const fetchImpl = options.fetchImpl ?? fetch;
+  const secrets = new Set([options.credentialJson, ...Object.values(JSON.parse(options.credentialJson))
+    .filter((value) => typeof value === 'string' && value)]);
+  function redact(message) {
+    let safe = typeof message === 'string' ? message : '';
+    for (const secret of secrets) {
+      for (const spelling of [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]) {
+        safe = safe.replaceAll(spelling, '[redacted]');
+      }
+    }
+    return safe.replace(/Bearer\s+\S+/giu, 'Bearer [redacted]');
+  }
   async function request(operation, url, init = {}) {
     let response;
     try { response = await fetchImpl(url, init); } catch {
@@ -72,7 +83,10 @@ export async function publishGooglePlayProduction(options) {
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       const apiStatus = API_STATUSES.has(body?.error?.status) ? body.error.status : undefined;
-      throw new GooglePlayPublicationError('play_api_error', `Google Play ${operation} failed (HTTP ${response.status}${apiStatus ? `, ${apiStatus}` : ''}); retry publication without re-uploading the binary.`, response.status, operation, apiStatus);
+      const apiMessage = redact(body?.error?.message);
+      const apiReasons = Array.isArray(body?.error?.errors) ? [...new Set(body.error.errors
+        .map((error) => error?.reason).filter((reason) => typeof reason === 'string' && /^[A-Za-z][A-Za-z0-9_-]*$/u.test(reason) && !secrets.has(reason)))] : [];
+      throw Object.assign(new GooglePlayPublicationError('play_api_error', `Google Play ${operation} failed (HTTP ${response.status}${apiStatus ? `, ${apiStatus}` : ''}); ${apiMessage ? `${apiMessage} ` : ''}Retry publication without re-uploading the binary.`, response.status, operation, apiStatus), { apiMessage, apiReasons });
     }
     if (response.status === 204) return null;
     try { return await response.json(); } catch { return invalidResponse('Google Play returned invalid JSON.'); }
@@ -83,11 +97,13 @@ export async function publishGooglePlayProduction(options) {
     iss: credential.clientEmail, scope: SCOPE, aud: TOKEN_URL, iat: issuedAt, exp: issuedAt + 3600,
   })}`;
   const assertion = `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), credential.privateKey).toString('base64url')}`;
+  secrets.add(assertion);
   const token = await request('authorize', TOKEN_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString(),
   });
   if (typeof token?.access_token !== 'string' || !token.access_token) invalidResponse('Google OAuth returned no access token.');
+  secrets.add(token.access_token);
   const headers = { Authorization: `Bearer ${token.access_token}`, 'Content-Type': 'application/json' };
   const base = `${PUBLISHER_URL}/applications/${encodeURIComponent(options.packageName)}/edits`;
   const edit = await request('create_edit', base, { method: 'POST', headers, body: '{}' });
