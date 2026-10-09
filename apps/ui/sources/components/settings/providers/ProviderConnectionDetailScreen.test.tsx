@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { HappierLink } from '@happier-dev/plugin-ui/presentation';
 import { act } from 'react-test-renderer';
+import { NavigationContext, useNavigation } from '@react-navigation/native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -10,9 +11,17 @@ import {
     createProviderConnectionsDescribeFixture,
     createProviderModelsFixture,
     createProviderSettingsHarness,
+    createProviderSettingsAccountHarness,
     installProviderSettingsRpcBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
-import { createMachineAdministrationTargetSelectionMock, installMachineAdministrationTargetSelectionBoundary } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -23,15 +32,19 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+function DetailNavigationBoundary(props: React.PropsWithChildren) {
+    const navigation = useNavigation();
+    return <NavigationContext.Provider value={navigation}>{props.children}</NavigationContext.Provider>;
+}
+
 const state = vi.hoisted(() => ({
-    providerDecisionState: 'enabled' as 'enabled' | 'loading',
+    focused: true,
     connection: null as Record<string, unknown> | null,
     discoveryCandidates: [] as Record<string, unknown>[],
     localInstallations: [] as Record<string, unknown>[],
     error: null as Record<string, unknown> | null,
 }));
 const run = vi.hoisted(() => vi.fn());
-const providerDecisionListeners = vi.hoisted(() => new Set<() => void>());
 const prompt = vi.hoisted(
     () => vi.fn(async (): Promise<string | null> => 'Custom copy'),
 );
@@ -40,7 +53,6 @@ const alert = vi.hoisted(() => vi.fn());
 const alertAsync = vi.hoisted(() => vi.fn(async () => undefined));
 const openUrl = vi.hoisted(() => vi.fn(async () => undefined));
 const probeProviderConnection = vi.hoisted(() => vi.fn());
-const refreshProfile = vi.hoisted(() => vi.fn(async () => undefined));
 const connectedAccountProfileState = vi.hoisted(() => ({
     accounts: [] as Array<Record<string, unknown>>,
     groups: [] as Array<Record<string, unknown>>,
@@ -60,40 +72,51 @@ const navigationPreventRemove = vi.hoisted(() => ({
 }));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
-const administrationTarget = createMachineAdministrationTargetSelectionMock({
-    machines: [
-        { machineId: 'machine-a', displayName: 'Mac' },
-        { machineId: 'machine-b', displayName: 'Linux box' },
-    ],
-});
-installMachineAdministrationTargetSelectionBoundary(administrationTarget);
+const account = createProviderSettingsAccountHarness();
+let foreignServerId = '';
+let machines = [createMachineFixture({ id: 'machine-a', kind: 'persistent', activeAt: Date.now(), metadata: {
+    host: 'mac.local', platform: 'darwin', displayName: 'Mac', happyCliVersion: 'test',
+    happyHomeDir: '/Users/tester/.happy', homeDir: '/Users/tester',
+} }), createMachineFixture({ id: 'machine-b', kind: 'persistent', activeAt: Date.now(), metadata: {
+    host: 'linux.local', platform: 'linux', displayName: 'Linux box', happyCliVersion: 'test',
+    happyHomeDir: '/home/tester/.happy', homeDir: '/home/tester',
+} })];
+const administrationTarget = {
+    controller: {
+        async setMachines(entries: ReadonlyArray<Readonly<{ machineId: string; displayName?: string; serverId?: string; serverIdentityId?: string; serverLabel?: string }>>) {
+            const byServer = new Map<string, ReturnType<typeof createMachineFixture>[]>();
+            byServer.set(account.serverId, []);
+            if (foreignServerId) byServer.set(foreignServerId, []);
+            for (const entry of entries) {
+                const serverId = entry.serverId === 'server-b' ? foreignServerId : account.serverId;
+                const group = byServer.get(serverId) ?? [];
+                group.push(createMachineFixture({ ...machines[0], id: entry.machineId, activeAt: Date.now(),
+                    metadata: { ...machines[0]!.metadata!, displayName: entry.displayName ?? entry.machineId } }));
+                byServer.set(serverId, group);
+            }
+            for (const [serverId, rows] of byServer) await account.publishMachines(serverId, rows);
+        },
+        async select(machineId: string, serverIdentityId?: string) {
+            await account.selectMachine(serverIdentityId === 'srv_b' ? foreignServerId : account.serverId, machineId);
+        },
+    },
+};
 
 installSettingsViewCommonModuleMocks({
-    router: async () => ({
-        usePathname: () => '/settings/providers/cpx-moving',
-        useRouter: () => router,
-        useNavigation: () => ({ dispatch: navigationDispatch }),
-    }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            pathname: '/settings/providers/cpx-moving', router,
+            navigation: { dispatch: navigationDispatch, addListener: () => () => undefined, isFocused: () => true },
+        }).module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Linking: { openURL: openUrl },
         });
     },
-    storage: async () => ({
-        // The page header reads the viewer's content-width preference.
-        useLocalSetting: () => undefined,
-        useAllMachines: () => [
-            { id: 'machine-a', active: true, revokedAt: null, metadata: { displayName: 'Mac' } },
-            { id: 'machine-b', active: true, revokedAt: null, metadata: { displayName: 'Linux' } },
-        ],
-        useMachineListByServerId: () => ({
-            'server-a': [
-                { id: 'machine-a', active: true, revokedAt: null },
-                { id: 'machine-b', active: true, revokedAt: null },
-            ],
-        }),
-    }),
+    storage: 'real',
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
@@ -104,132 +127,16 @@ installSettingsViewCommonModuleMocks({
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return createReactNavigationNativeMock({
+    return { ...createReactNavigationNativeMock({
         usePreventRemove: (enabled, callback) => {
             navigationPreventRemove.enabled = enabled;
             navigationPreventRemove.callback = callback;
         },
-    });
+    }), useIsFocused: () => state.focused };
 });
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
-vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => {
-        const [, rerender] = React.useReducer((value: number) => value + 1, 0);
-        React.useEffect(() => {
-            const listener = () => rerender();
-            providerDecisionListeners.add(listener);
-            return () => {
-                providerDecisionListeners.delete(listener);
-            };
-        }, []);
-        return state.providerDecisionState === 'loading'
-            ? null
-            : { state: 'enabled', blockedBy: null, blockerCode: 'none' };
-    },
-}));
-// The active snapshot reports the profile's SCOPE id
-// (`profile.serverIdentityId ?? profile.id`), while an Administration target
-// resolves to the profile's device-local `profile.id`. The two are different
-// strings for the same server, so the suite drives both forms.
-const activeServer = vi.hoisted(() => ({ serverId: 'srv_test' }));
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: activeServer.serverId }) }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    loadHomeViewState: () => null,
-    getServerProfilesGeneration: () => 0,
-    subscribeServerProfiles: () => () => {},
-    getServerProfileById: (id: string) => ({
-        id,
-        serverUrl: id === 'srv_b' ? 'https://server-b.example.test' : 'https://server-a.example.test',
-    }),
-    getActiveServerSnapshot: () => ({
-        serverId: activeServer.serverId,
-        serverUrl: 'https://server-a.example.test',
-        generation: 1,
-    }),
-    // Stands in for the MMKV-backed profile registry: identifiers resolve to
-    // the profile that owns them, so an identity id and a device-local id of
-    // the same profile are equivalent and two distinct profiles are not.
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
-        const profileIdByIdentifier: Readonly<Record<string, string>> = {
-            'server-a': 'server-a',
-            srv_test: 'server-a',
-            'server-b': 'server-b',
-            srv_b: 'server-b',
-        };
-        const leftId = profileIdByIdentifier[String(left ?? '').trim()];
-        const rightId = profileIdByIdentifier[String(right ?? '').trim()];
-        return Boolean(leftId && rightId && leftId === rightId);
-    },
-    resolveServerProfileScopeIdForIdentifier: (value: unknown) => ({
-        'server-a': 'srv_test',
-        srv_test: 'srv_test',
-        'server-b': 'srv_b',
-        srv_b: 'srv_b',
-    } as const)[String(value ?? '').trim() as 'server-a' | 'srv_test' | 'server-b' | 'srv_b'] ?? String(value ?? '').trim(),
-}));
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/store/hooks')>(),
-    useProfile: () => ({
-        id: 'account-a',
-        connectedAccountsV4: connectedAccountProfileState.accounts,
-        connectedAccountGroupsV4: connectedAccountProfileState.groups,
-    }),
-    useActiveServerAccountScope: () => ({ serverId: 'srv_test', accountId: 'account-a' }),
-    useSettingsSelector: <T,>(selector: (settings: Record<string, unknown>) => T) => selector({ connectedServicesProfileLabelByKey: {} }),
-    useLocalSetting: () => 'comfortable',
-}));
-vi.mock('@/sync/sync', () => ({ sync: { refreshProfile } }));
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesRuntimeSnapshot: () => ({
-        status: 'ready',
-        features: {
-            capabilities: {
-                connectedServices: {
-                    qualifiedAccounts: { protocolVersion: 4 },
-                },
-            },
-        },
-    }),
-}));
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useProjectedConnectedServicesRegistry: () => ({
-        scopeKey: 'server-a', status: 'ready', errorReason: null, entries: connectedServiceRegistryState.entries,
-    }),
-    useProjectedPluginLocalizedTextResolver: () => (
-        _pluginId: string,
-        value: string | Readonly<{ key: string; fallback: string }>,
-    ) => typeof value === 'string' ? value : `localized:${value.key}`,
-}));
-vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-    getConnectedAccountAuthentication: () => ({
-        defaultModeId: 'oauth',
-        modes: [{
-            id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
-        }],
-    }),
-    getQualifiedConnectedServiceRegistryEntry: () => null,
-    getGeneratedLegacyConnectedServiceRegistryFallback: () => null,
-    getLegacyConnectedServiceRegistryEntry: () => ({
-        serviceId: 'unavailable', connectCommand: '', supportsOauth: false,
-    }),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: { children?: React.ReactNode; rightElement?: React.ReactNode }) => React.createElement(
-        'Item',
-        props,
-        props.children,
-        props.rightElement,
-    ),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children) }));
-vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children) }));
-vi.mock('@/components/ui/status/StatusPill', () => ({ StatusPill: (props: Record<string, unknown>) => React.createElement('StatusPill', props) }));
-vi.mock('@/components/ui/forms/Switch', () => ({ Switch: (props: Record<string, unknown>) => React.createElement('Switch', props) }));
-vi.mock('@/components/ui/icons/SafeIonicons', () => ({ SafeIonicons: () => null }));
-vi.mock('@/providers/connection/ProviderIcon', () => ({ ProviderIcon: (props: Record<string, unknown>) => React.createElement('ProviderIcon', props) }));
-// The detail page is one virtualized list (its sections as the header, the model rows as items);
-// the recycler renders every row here so the page reads as a whole.
+// Legend's third-party native recycler requires platform layout/scroll geometry.
+// The canonical native adapter supplies that boundary and invokes the real header/row renderers.
 vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
     return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
@@ -311,29 +218,41 @@ function findProviderExternalLink(
 
 
 /** The rendered component that carries `prop` for a test id (the host view under it carries none). */
-function findComposite(screen: { findAllByTestId: (testID: string) => Array<{ props: Record<string, any> }> }, testID: string, prop: string) {
+function findComposite(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string, prop: string) {
     return screen.findAllByTestId(testID).find((node) => node.props[prop] !== undefined) ?? null;
 }
 
+await loadSyncSingletonForTests();
+const [{ Item }, { ItemGroup }] = await Promise.all([
+    import('@/components/ui/lists/Item'), import('@/components/ui/lists/ItemGroup'),
+]);
 const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
 
+/** Error pages now use the real shared state card, not a pair of Item rows. */
+function presentedTitles(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const errors = screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('provider-error:') && typeof node.props.title === 'string');
+    return [...screen.findAllByType(Item).map(item => item.props.title),
+        ...errors.flatMap(node => [node.props.title, node.props.action?.label].filter(Boolean))];
+}
+
+function findProviderRecoveryAction(screen: Awaited<ReturnType<typeof renderScreen>>, label: string) {
+    return screen.findAll(node => node.props.accessibilityRole === 'button'
+        && node.props.accessibilityLabel === label && typeof node.props.onPress === 'function')[0];
+}
+
 describe('ProviderConnectionDetailScreen', () => {
-    afterEach(standardCleanup);
-    beforeEach(() => {
+    afterEach(async () => { standardCleanup(); await account.reset(); });
+    beforeEach(async () => {
         providerHarness.reset();
-        administrationTarget.controller.reset();
-        activeServer.serverId = 'srv_test';
-        state.providerDecisionState = 'enabled';
+        machines = machines.map(machine => createMachineFixture({ ...machine, activeAt: Date.now() }));
+        state.focused = true;
+
         state.connection = connection();
         state.discoveryCandidates = [];
         state.localInstallations = [];
         state.error = null;
-        connectedAccountProfileState.accounts = [];
-        connectedAccountProfileState.groups = [];
-        connectedServiceRegistryState.entries = [];
         run.mockReset();
-        refreshProfile.mockReset();
-        refreshProfile.mockResolvedValue(undefined);
         alert.mockReset();
         alertAsync.mockReset();
         alertAsync.mockResolvedValue(undefined);
@@ -353,6 +272,50 @@ describe('ProviderConnectionDetailScreen', () => {
         probeProviderConnection.mockResolvedValue({
             status: 'success', models: [], requestFingerprint: 'probe-request:v1:detail',
         });
+        await account.restore({ serverIdentityId: 'srv_provider_detail', machines, waivedActions: [
+            'providers.connections.update', 'providers.connections.enabled.set', 'providers.connections.delete',
+            'providers.connections.duplicate', 'providers.connections.endpoint.set', 'providers.connections.start_local',
+            'providers.connections.secrets.bind', 'providers.probe',
+        ] });
+        await account.selectMachine(account.serverId, 'machine-a');
+        foreignServerId = await account.addHome({ name: 'Other Provider Account', serverUrl: 'https://provider-detail-foreign.test',
+            serverIdentityId: 'srv_b', accountId: 'account-foreign', active: false });
+        const [{ storage }, registry, { captureActiveServerAccountScopeLifetime }] = await Promise.all([
+            import('@/sync/domains/state/storage'), import('@/sync/domains/connectedServices/connectedServiceRegistry'),
+            import('@/sync/domains/scope/activeServerAccountScope'),
+        ]);
+        for (const [field, key] of [['accounts', 'connectedAccountsV4'], ['groups', 'connectedAccountGroupsV4']] as const) {
+            Object.defineProperty(connectedAccountProfileState, field, {
+                configurable: true, get: () => storage.getState().profile[key],
+                set: value => {
+                    const profile = AccountProfileSchema.parse({ ...storage.getState().profile, [key]: value });
+                    storage.getState().applyProfile(profile);
+                    account.home.answer(account.serverId, '/v1/account/profile', { body: profile });
+                },
+            });
+        }
+        Object.defineProperty(connectedServiceRegistryState, 'entries', {
+            configurable: true, get: () => registry.getConnectedServiceRegistrySnapshot().entries,
+            set: (entries: ReadonlyArray<Readonly<Record<string, unknown>>>) => {
+                const descriptors = entries.map(entry => {
+                    const service = entry.service as { pluginId: string; localId: string };
+                    return ConnectedAccountUiProjectionEntryV1Schema.parse({
+                        id: service.localId, pluginId: service.pluginId, serviceId: entry.serviceId,
+                        provenance: 'external', sourceKind: 'plugin', title: entry.projectedTitle ?? entry.serviceId,
+                        authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode',
+                            pkce: 'required', outcomeReconciliation: 'none' }] },
+                        capabilities: [], availability: { state: 'available', reason: 'installed' }, diagnostics: [],
+                    });
+                });
+                registry.installConnectedAccountDescriptorProjection({ scopeKey: account.serverId, status: 'ready',
+                    descriptors, conflicts: [], errorReason: null }, captureActiveServerAccountScopeLifetime());
+            },
+        });
+        connectedServiceRegistryState.entries = [{
+            serviceId: 'openai', service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+            projectedTitle: 'OpenAI',
+        }];
+        account.home.answer(account.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [] } });
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async () => {
             if (state.error) return { status: 'error', error: state.error };
             return createProviderConnectionsDescribeFixture({
@@ -396,25 +359,37 @@ describe('ProviderConnectionDetailScreen', () => {
         });
     });
 
-    it('recovers a directly opened detail route when Provider availability finishes loading', async () => {
-        state.providerDecisionState = 'loading';
-        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
-        const element = <ProviderConnectionDetailScreen connectionId="pc_a" />;
-        const screen = await renderScreen(element);
-
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
-            .toContain('settingsProviders.availabilityChecking');
-        expect(providerHarness.state.requests).toEqual([]);
-
-        state.providerDecisionState = 'enabled';
-        await act(async () => {
-            providerDecisionListeners.forEach((listener) => listener());
-            await Promise.resolve();
-        });
+    it('requests no Provider data when blurred and only selected-machine data for an account connection', async () => {
+        state.focused = false;
+        const detail = (section?: string) => <DetailNavigationBoundary>
+            <ProviderConnectionDetailScreen connectionId="pc_a" section={section} />
+        </DetailNavigationBoundary>;
+        const screen = await renderScreen(detail());
         await flushHookEffects();
-        expect(providerHarness.state.requests.map((request) => request.method)).toContain(
-            RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
-        );
+        const describeRequests = () => providerHarness.state.requests.filter((request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE);
+        const modelRequests = () => providerHarness.state.requests.filter((request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODELS);
+        expect(describeRequests()).toHaveLength(0);
+        expect(modelRequests()).toHaveLength(0);
+        state.focused = true;
+        await screen.update(detail('models'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-detail')).toBeTruthy());
+        await flushHookEffects();
+        expect(describeRequests()).toHaveLength(1);
+        expect(modelRequests()).toHaveLength(1);
+    });
+
+    it('recovers a directly opened detail route when Provider availability finishes loading', async () => {
+        const { deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        let releaseFeatures!: () => void;
+        const pending = new Promise<void>(resolve => { releaseFeatures = resolve; });
+        const features = createRootLayoutFeaturesResponse({ features: { providers: { enabled: true } } });
+        account.home.answer(account.serverId, '/v1/features', { body: features, respondAfter: pending });
+        account.home.answer(account.serverId, '/v1/features/authenticated', { body: features, respondAfter: pending });
+        deleteServerFeaturesSnapshot({ serverId: account.serverId });
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        expect(providerHarness.state.requests).toHaveLength(0);
+        await act(async () => { releaseFeatures(); await account.publishFeatures(account.serverId, features); await flushHookEffects(); });
+        expect(findComposite(screen, 'provider-connection-header', 'title')?.props.title).toBe('Acme');
     });
 
     it('renders connection identity supplied by the shared Provider RPC boundary', async () => {
@@ -424,11 +399,14 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
 
-        expect(findComposite(screen, 'provider-connection-header', 'title')?.props.title).toBe('Boundary detail');
+        await waitForHomeGovernance(() => expect({
+            title: findComposite(screen, 'provider-connection-header', 'title')?.props.title,
+            titles: presentedTitles(screen), requests: providerHarness.state.requests,
+        }).toMatchObject({ title: 'Boundary detail' }));
     });
 
     it('keeps foreign-daemon inspection but disables active-Account Saved Secrets with colliding ids', async () => {
-        administrationTarget.controller.setMachines([
+        await administrationTarget.controller.setMachines([
             { machineId: 'machine-a', displayName: 'Account A machine' },
             {
                 machineId: 'machine-a',
@@ -438,7 +416,7 @@ describe('ProviderConnectionDetailScreen', () => {
                 serverLabel: 'Server B',
             },
         ]);
-        administrationTarget.controller.select('machine-a', 'srv_b');
+        await administrationTarget.controller.select('machine-a', 'srv_b');
         state.connection = connection({
             credential: {
                 required: true,
@@ -453,13 +431,13 @@ describe('ProviderConnectionDetailScreen', () => {
 
         expect(providerHarness.state.requests.some((request) => (
             request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
-            && request.serverId === 'server-b'
+            && request.serverId === resolveServerProfileScopeIdForIdentifier(foreignServerId)
         ))).toBe(true);
         for (const testID of [
             'provider-connection-account-api-key',
             'provider-connection-machine-api-key',
         ]) {
-            const row = screen.findAllByType('Item').find((item) => item.props.testID === testID);
+            const row = screen.findAllByType(Item).find((item) => item.props.testID === testID);
             // The key's Replace stays visible but cannot open the other Account's Saved Secrets.
             expect(row?.props.rightElement.props.disabled).toBe(true);
             expect(row?.props.onPress).toBeUndefined();
@@ -469,6 +447,9 @@ describe('ProviderConnectionDetailScreen', () => {
     });
 
     it('offers an Account Provider credential to an exact Team through the canonical source picker', async () => {
+        await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({ features: {
+            providers: { enabled: true }, teams: { enabled: true, credentialResources: { enabled: true } },
+        } }));
         state.connection = connection({
             credential: { required: true, accountBound: true, boundMachineIds: [] },
             teamCredentialSourceOffer: {
@@ -481,13 +462,13 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
 
-        const shareRow = screen.findAllByType('Item')
+        const shareRow = screen.findAllByType(Item)
             .find((item) => item.props.testID === 'provider-connection-share-with-team');
         expect(shareRow).toBeDefined();
         await pressAndFlush(shareRow);
 
         expect(router.push).toHaveBeenCalledWith(
-            '/settings/teams?credentialSourceKind=provider_connection&credentialSourceServerId=server-a&credentialSourceConnectionId=pc_a&credentialSourceSlotId=apiKey&credentialSourceMachineId=machine-a&credentialSourceConnectionSecurityFingerprint=connection-security%3Av1%3Acurrent',
+            `/settings/teams?credentialSourceKind=provider_connection&credentialSourceServerId=${account.serverId}&credentialSourceConnectionId=pc_a&credentialSourceSlotId=apiKey&credentialSourceMachineId=machine-a&credentialSourceConnectionSecurityFingerprint=connection-security%3Av1%3Acurrent`,
         );
     });
 
@@ -500,7 +481,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const initialConnection = state.connection;
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const titles = screen.findAllByType('Item').map((item) => item.props.title);
+        const titles = presentedTitles(screen);
         const testStatusBefore = findTestRow(screen)?.props.subtitle;
 
         expect(findMenuAction(screen, 'website')).toBeDefined();
@@ -526,8 +507,8 @@ describe('ProviderConnectionDetailScreen', () => {
         const initialConnection = state.connection;
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const titles = screen.findAllByType('Item').map((item) => item.props.title);
-        const getKeyRow = screen.findAllByType('Item')
+        const titles = presentedTitles(screen);
+        const getKeyRow = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.links.getApiKey');
 
         expect(findMenuAction(screen, 'website')).toBeUndefined();
@@ -569,7 +550,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const unavailable = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const unavailableTitles = unavailable.findAllByType('Item').map((item) => item.props.title);
+        const unavailableTitles = presentedTitles(unavailable);
         expect(findMenuAction(unavailable, 'website')).toBeUndefined();
         expect(unavailableTitles).not.toContain('settingsProviders.links.getApiKey');
 
@@ -578,7 +559,7 @@ describe('ProviderConnectionDetailScreen', () => {
             provenance: 'custom',
         });
         const custom = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const customTitles = custom.findAllByType('Item').map((item) => item.props.title);
+        const customTitles = presentedTitles(custom);
         expect(findMenuAction(custom, 'website')).toBeUndefined();
         expect(customTitles).not.toContain('settingsProviders.links.getApiKey');
     });
@@ -620,7 +601,7 @@ describe('ProviderConnectionDetailScreen', () => {
         };
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const titles = screen.findAllByType('Item').map((item) => item.props.title);
+        const titles = presentedTitles(screen);
         expect(titles).toContain('settingsProviders.errors.unreachableTitle');
         expect(titles).toContain('settingsProviders.errors.actions.retry');
         expect(screen.findByTestId('provider-connection-not-found')).toBeNull();
@@ -669,7 +650,7 @@ describe('ProviderConnectionDetailScreen', () => {
             .toBe('settingsProviders.detail.testSucceeded');
 
         await act(async () => {
-            administrationTarget.controller.select('machine-b');
+            await administrationTarget.controller.select('machine-b');
         });
         expect(findTestRow(screen)?.props.subtitle)
             .toBeNull();
@@ -683,7 +664,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const testRow = findTestRow(screen);
         await act(async () => { testRow?.props.onPress?.(); });
-        await act(async () => { administrationTarget.controller.select('machine-b'); });
+        await act(async () => { await administrationTarget.controller.select('machine-b'); });
         await act(async () => {
             resolveProbe?.({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:late' });
             await Promise.resolve();
@@ -721,7 +702,7 @@ describe('ProviderConnectionDetailScreen', () => {
             },
         });
         await act(async () => {
-            administrationTarget.controller.select('machine-a');
+            await administrationTarget.controller.select('machine-a');
         });
 
         expect(findTestRow(screen)?.props.subtitle)
@@ -781,7 +762,7 @@ describe('ProviderConnectionDetailScreen', () => {
             probeObservationIdentity: 'probe-observation:v1:request-two',
         });
         await act(async () => {
-            administrationTarget.controller.select('machine-a');
+            await administrationTarget.controller.select('machine-a');
         });
         await act(async () => {
             resolveProbe?.({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:late' });
@@ -882,7 +863,7 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(findTestRow(screen)?.props.subtitle)
             .toBe('settingsProviders.detail.testSucceeded');
 
-        const accountRow = screen.findAllByType('Item')
+        const accountRow = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.detail.accountAccess');
         await act(async () => { accountRow?.props.rightElement.props.onValueChange(false); });
 
@@ -899,12 +880,11 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const accountRow = screen.findAllByType('Item')
+        const accountRow = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.detail.accountAccess');
 
         await act(async () => { await accountRow?.props.rightElement.props.onValueChange(true); });
-        const retry = screen.findAllByType('Item')
-            .find((item) => item.props.title === 'settingsProviders.errors.actions.retry');
+        const retry = findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.retry');
         expect(retry).toBeDefined();
         await act(async () => { await retry?.props.onPress?.(); });
 
@@ -916,12 +896,11 @@ describe('ProviderConnectionDetailScreen', () => {
         run.mockRejectedValueOnce(new Error('acknowledgement lost after dispatch'));
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const accountRow = screen.findAllByType('Item')
+        const accountRow = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.detail.accountAccess');
 
         await act(async () => { await accountRow?.props.rightElement.props.onValueChange(true); });
-        const review = screen.findAllByType('Item')
-            .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState');
+        const review = findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.reviewCurrentState');
         expect(review).toBeDefined();
         const readsBeforeReview = providerHarness.state.requests.filter(
             (request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
@@ -944,7 +923,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const titles = screen.findAllByType('Item').map((item) => item.props.title);
+        const titles = presentedTitles(screen);
         expect(titles).toContain('settingsProviders.detail.accountAccess');
         // Machine rows are named by the canonical Administration candidate
         // projection, not by a second lookup in the active server's store.
@@ -968,8 +947,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const enable = screen.findAllByType('Item')
-            .find((item) => item.props.title === 'settingsProviders.errors.actions.enableOnMachine');
+        const enable = findProviderRecoveryAction(screen, 'settingsProviders.errors.actions.enableOnMachine');
         expect(enable).toBeDefined();
 
         await pressAndFlush(enable);
@@ -999,98 +977,94 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(router.back).not.toHaveBeenCalled();
     });
 
-    it('refuses a confirmed delete once the machine selection moved while the modal was open', async () => {
-        // The confirmation authorized deleting the connection on machine-a. By
-        // the time it resolved the user had switched targets, so running the
-        // captured request would delete on a machine they never confirmed.
-        confirm.mockReset();
-        confirm.mockImplementationOnce(async () => {
-            administrationTarget.controller.select('machine-b');
-            return true;
-        });
-        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+    it('uses default Ask-first approval once and navigates only after its real terminal result', async () => {
+        await account.restore({ accountId: 'default-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.selectMachine(account.serverId, 'machine-a');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const remove = findMenuAction(screen, 'delete');
-
-        await pressAndFlush(remove);
-
-        expect(confirm).toHaveBeenCalledOnce();
-        expect(run.mock.calls.map((call) => (call[0] as { action?: string }).action))
-            .not.toContain('delete');
-        expect(router.replace).not.toHaveBeenCalled();
-        // The detail view has already re-scoped to the newly selected machine,
-        // so the refusal is silent by the existing scope contract rather than
-        // surfacing an error about the machine the user just left.
-        expect(providerHarness.state.requests.some((request) => (
-            request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE && request.machineId === 'machine-b'
-        ))).toBe(true);
-    });
-
-    it('admits one delete confirmation and re-enables the action after cancellation', async () => {
-        const confirmation = createDeferred<boolean>();
-        confirm.mockReturnValueOnce(confirmation.promise).mockResolvedValueOnce(false);
-        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
-        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-
+        await waitForHomeGovernance(() => expect({
+            remove: findMenuAction(screen, 'delete'), titles: presentedTitles(screen),
+            requests: providerHarness.state.requests,
+        }).toMatchObject({ remove: expect.anything() }));
         await act(async () => {
             const remove = findMenuAction(screen, 'delete');
-            remove?.props.onPress?.();
-            remove?.props.onPress?.();
-            await Promise.resolve();
+            expect(remove).toBeDefined();
+            remove!.props.onPress();
+            remove!.props.onPress();
+            await flushHookEffects();
         });
-
-        expect(confirm).toHaveBeenCalledOnce();
+        expect(confirm).not.toHaveBeenCalled();
         expect(run).not.toHaveBeenCalled();
-        expect(findMenuAction(screen, 'delete')?.props)
-            .toMatchObject({ disabled: true });
-
-        await act(async () => {
-            confirmation.resolve(false);
-            await confirmation.promise;
-            await Promise.resolve();
+        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
+        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        expect(router.replace).not.toHaveBeenCalled();
+        expect(router.push).toHaveBeenCalledWith(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(account.serverId)}`);
+        expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(true);
+        await expect(decideApprovalAsInbox(account.serverId, artifactId, 'approve')).resolves.toMatchObject({
+            ok: true, result: { status: 'executed' },
         });
-        expect(findMenuAction(screen, 'delete')?.props)
-            .toMatchObject({ disabled: false });
+        await waitForHomeGovernance(() => expect(router.replace).toHaveBeenCalledWith('/(app)/settings/providers'));
+        expect(run.mock.calls.filter(([input]) => input.action === 'delete')).toHaveLength(1);
+        expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE))
+            .toEqual([expect.objectContaining({ serverId: resolveServerProfileScopeIdForIdentifier(account.serverId),
+                accountId: 'default-approval-account', machineId: 'machine-a',
+                payload: expect.objectContaining({ action: 'delete', connectionId: 'pc_a' }) })]);
+    });
 
+    it('keeps a durable approval addressed to its captured Machine when selection moves', async () => {
+        await account.restore({ accountId: 'captured-machine-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.selectMachine(account.serverId, 'machine-a');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
         await pressAndFlush(findMenuAction(screen, 'delete'));
-        expect(confirm).toHaveBeenCalledTimes(2);
+        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
+        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        await act(async () => { await account.selectMachine(account.serverId, 'machine-b'); await flushHookEffects(); });
+        await decideApprovalAsInbox(account.serverId, artifactId, 'approve');
+        const writes = providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE);
+        expect(writes).toEqual([expect.objectContaining({ machineId: 'machine-a', payload: expect.objectContaining({ action: 'delete' }) })]);
+        expect(router.replace).not.toHaveBeenCalled();
+    });
+
+    it('admits one approval request and re-enables deletion after cancellation without writing', async () => {
+        await account.restore({ accountId: 'cancelled-approval-account', serverIdentityId: 'srv_provider_detail', machines });
+        await account.selectMachine(account.serverId, 'machine-a');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
+        await act(async () => {
+            const remove = findMenuAction(screen, 'delete');
+            remove?.props.onPress();
+            remove?.props.onPress();
+            await flushHookEffects();
+        });
+        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(1));
+        const artifactId = account.home.artifacts(account.serverId).list()[0]!.id;
+        expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(true);
+        await decideApprovalAsInbox(account.serverId, artifactId, 'cancel');
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(false));
+        expect(run).not.toHaveBeenCalled();
+        expect(router.replace).not.toHaveBeenCalled();
+        await pressAndFlush(findMenuAction(screen, 'delete'));
+        await waitForHomeGovernance(() => expect(account.home.artifacts(account.serverId).list()).toHaveLength(2));
         expect(run).not.toHaveBeenCalled();
     });
 
-    it('admits one delete mutation and re-enables the action after failure', async () => {
+    it('admits one waived delete mutation and re-enables the action after transport failure', async () => {
         const deletion = createDeferred<never>();
         run.mockReturnValueOnce(deletion.promise);
-        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')).toBeDefined());
         await act(async () => {
             const remove = findMenuAction(screen, 'delete');
-            remove?.props.onPress?.();
-            remove?.props.onPress?.();
-            for (let turn = 0; turn < 3; turn += 1) await Promise.resolve();
+            remove?.props.onPress();
+            remove?.props.onPress();
+            await flushHookEffects();
         });
-
-        expect(confirm).toHaveBeenCalledOnce();
-        expect(run).toHaveBeenCalledOnce();
-        expect(findMenuAction(screen, 'delete')?.props)
-            .toMatchObject({ disabled: true });
-
-        await act(async () => {
-            deletion.reject(new Error('delete acknowledgement unavailable'));
-            try {
-                await deletion.promise;
-            } catch {
-                // The mutation owner translates transport failure into typed recovery.
-            }
-            for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
-        });
+        await waitForHomeGovernance(() => expect(run).toHaveBeenCalledOnce());
+        expect(confirm).not.toHaveBeenCalled();
+        expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(true);
+        await act(async () => { deletion.reject(new Error('delete acknowledgement unavailable')); await flushHookEffects(); });
+        await waitForHomeGovernance(() => expect(findMenuAction(screen, 'delete')?.props.disabled).toBe(false));
         expect(router.replace).not.toHaveBeenCalled();
-        expect(findMenuAction(screen, 'delete')?.props)
-            .toMatchObject({ disabled: false });
-
-        confirm.mockResolvedValueOnce(false);
-        await pressAndFlush(findMenuAction(screen, 'delete'));
-        expect(confirm).toHaveBeenCalledTimes(2);
         expect(run).toHaveBeenCalledOnce();
     });
 
@@ -1104,7 +1078,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const switchRows = screen.findAllByType('Item').filter((item) => (
+        const switchRows = screen.findAllByType(Item).filter((item) => (
             typeof item.props.rightElement?.props?.onValueChange === 'function'
         ));
 
@@ -1132,7 +1106,7 @@ describe('ProviderConnectionDetailScreen', () => {
         }).connections[0]?.endpoints).toHaveLength(2);
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const actionRows = screen.findAllByType('Item').filter((item) => (
+        const actionRows = screen.findAllByType(Item).filter((item) => (
             item.props.title === 'settingsProviders.detail.resetEndpoint'
             || item.props.title === 'settingsProviders.detail.endpointMachine'
         ));
@@ -1156,7 +1130,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const rows = screen.findAllByType('Item');
+        const rows = screen.findAllByType(Item);
         const defaultRow = rows.find((row) => row.props.accessibilityLabel
             === 'openai-responses, settingsProviders.detail.endpointDefault');
         const machineRow = rows.find((row) => row.props.accessibilityLabel
@@ -1187,12 +1161,12 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const account = screen.findAllByType('Item')
+        const account = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.detail.accountAccess');
-        const machine = screen.findAllByType('Item').find((item) => item.props.title === 'Mac');
+        const machine = screen.findAllByType(Item).find((item) => item.props.title === 'Mac');
         expect(account?.props.rightElement.props.value).toBe(false);
         expect(machine?.props.rightElement.props.value).toBe(false);
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toContain(actionTitle);
+        expect(presentedTitles(screen)).toContain(actionTitle);
     });
 
     it('presents account and current-machine grant validity independently', async () => {
@@ -1209,9 +1183,9 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const account = screen.findAllByType('Item')
+        const account = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.detail.accountAccess');
-        const machine = screen.findAllByType('Item').find((item) => item.props.title === 'Mac');
+        const machine = screen.findAllByType(Item).find((item) => item.props.title === 'Mac');
 
         expect(account?.props.rightElement.props.value).toBe(false);
         expect(machine?.props.rightElement.props.value).toBe(true);
@@ -1224,7 +1198,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.models.add');
     });
 
@@ -1238,7 +1212,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const codex = screen.findAllByType('Item').find((item) => item.props.title === 'Codex');
+        const codex = screen.findAllByType(Item).find((item) => item.props.title === 'Codex');
         expect(codex?.props.rightElement.props.label).toBe('settingsProviders.compatibility.experimental');
         expect(codex?.props.subtitle).toContain('settingsProviders.compatibility.experimentalDescription');
         expect(codex?.props.subtitle).toContain('settingsProviders.compatibility.reasons.evidenceMissing');
@@ -1278,9 +1252,9 @@ describe('ProviderConnectionDetailScreen', () => {
         }];
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        expect(screen.findAllByType('Item').map((item) => item.props.subtitle))
+        expect(screen.findAllByType(Item).map((item) => item.props.subtitle))
             .toContain('settingsProviders.local.runningOutsideHappier');
-        const start = screen.findAllByType('Item')
+        const start = screen.findAllByType(Item)
             .find((item) => typeof item.props.onPress === 'function'
                 && item.props.subtitle === 'settingsProviders.local.installedNotRunning');
         expect(start).toBeDefined();
@@ -1313,7 +1287,7 @@ describe('ProviderConnectionDetailScreen', () => {
             status: 'connected',
             authenticationModeId: 'oauth',
             revisionSemantics: 'revisioned',
-            credentialRevision: 'cred-1',
+            credentialRevision: 'csr_1111111111111111111111',
             configurationReady: true,
             configurationRevision: null,
             displayName: 'Work account',
@@ -1355,7 +1329,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const rows = screen.findAllByType('Item');
+        const rows = screen.findAllByType(Item);
         const implementation = rows.find(
             (item) => item.props.testID === 'provider-connection-managed-implementation',
         );
@@ -1411,7 +1385,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const implementation = screen.findAllByType('Item').find(
+        const implementation = screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-implementation',
         );
 
@@ -1434,7 +1408,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const rows = screen.findAllByType('Item');
+        const rows = screen.findAllByType(Item);
         const unavailable = rows.find(
             (item) => item.props.testID === 'provider-connection-managed-unavailable',
         );
@@ -1457,7 +1431,7 @@ describe('ProviderConnectionDetailScreen', () => {
             status: 'connected',
             authenticationModeId: 'oauth',
             revisionSemantics: 'revisioned',
-            credentialRevision: 'cred-work',
+            credentialRevision: 'csr_2222222222222222222222',
             configurationReady: true,
             configurationRevision: null,
             displayName: 'Work account',
@@ -1474,7 +1448,7 @@ describe('ProviderConnectionDetailScreen', () => {
             },
             incarnation: 'qualified-group-row-team',
             displayName: 'Team pool',
-            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true },
             activeConnectedAccountId: 'work',
             generation: 1,
             runtimeStateRevision: 1,
@@ -1508,12 +1482,13 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const activate = screen.findAllByType('Item').find(
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-managed-configure')).toBeTruthy());
+        const activate = screen.findAllByType(Item).find(
             (item) => item.props.title === 'settingsProviders.local.configureManaged',
         );
 
         expect(activate).toBeDefined();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .toContain('settingsProviders.local.subscriptionPolicyTitle');
         await pressAndFlush(activate);
         expect(run).not.toHaveBeenCalled();
@@ -1569,7 +1544,7 @@ describe('ProviderConnectionDetailScreen', () => {
             },
             incarnation: 'qualified-group-row-team',
             displayName: 'Team pool',
-            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true },
             activeConnectedAccountId: null,
             generation: 1,
             runtimeStateRevision: 1,
@@ -1592,7 +1567,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         ));
         const { ConnectedAccountPurposeTargetChooser } = await import(
@@ -1612,7 +1587,7 @@ describe('ProviderConnectionDetailScreen', () => {
         // The Account drops the group while the editor is still open, and the
         // user reloads the chooser's targets through its own refresh action.
         connectedAccountProfileState.groups = [];
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream:reload',
         ));
         await pressAndFlush(screen.findByTestId('provider-connection-managed-purpose-save') ?? undefined);
@@ -1629,7 +1604,7 @@ describe('ProviderConnectionDetailScreen', () => {
         // all come from the ACTIVE server's Account. Offering this Account's
         // choices for a target on another server would store a foreign
         // reference that only fails later on that server.
-        administrationTarget.controller.setMachines([
+        await administrationTarget.controller.setMachines([
             { machineId: 'machine-a', displayName: 'Mac' },
             {
                 machineId: 'machine-remote',
@@ -1638,7 +1613,7 @@ describe('ProviderConnectionDetailScreen', () => {
                 serverId: 'server-b',
             },
         ]);
-        administrationTarget.controller.select('machine-remote', 'srv_b');
+        await administrationTarget.controller.select('machine-remote', 'srv_b');
         state.connection = connection({
             deployment: { kind: 'external' },
             managedLocalOption: {
@@ -1657,14 +1632,14 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
 
-        const testIDs = screen.findAllByType('Item').map((item) => item.props.testID);
+        const testIDs = screen.findAllByType(Item).map((item) => item.props.testID);
         expect(testIDs).toContain('provider-connection-managed-account-scope');
         expect(testIDs).not.toContain('provider-connection-managed-configure');
         expect(run).not.toHaveBeenCalled();
     });
 
     it('synchronously retires an open Account purpose editor when the target switches to another server', async () => {
-        administrationTarget.controller.setMachines([
+        await administrationTarget.controller.setMachines([
             { machineId: 'machine-a', displayName: 'Account A machine' },
             {
                 machineId: 'machine-a',
@@ -1674,11 +1649,21 @@ describe('ProviderConnectionDetailScreen', () => {
             },
         ]);
         connectedAccountProfileState.groups = [{
+            v: 1,
             ref: {
                 service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
                 groupId: 'account-a-team',
             },
+            incarnation: 'qualified-group-row-account-a-team',
             displayName: 'Account A team',
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true },
+            activeConnectedAccountId: null,
+            generation: 1,
+            runtimeStateRevision: 1,
+            state: { status: 'ready' },
+            createdAt: 1,
+            updatedAt: 1,
+            members: [],
         }];
         state.connection = connection({
             deployment: { kind: 'external' },
@@ -1697,20 +1682,20 @@ describe('ProviderConnectionDetailScreen', () => {
             '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
         );
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         ));
         expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1);
 
         await act(async () => {
-            administrationTarget.controller.select('machine-a', 'srv_b');
+            await administrationTarget.controller.select('machine-a', 'srv_b');
             await Promise.resolve();
         });
 
         expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(presentedTitles(screen))
             .not.toContain('Account A team');
-        expect(screen.findAllByType('Item').map((item) => item.props.testID))
+        expect(screen.findAllByType(Item).map((item) => item.props.testID))
             .toContain('provider-connection-managed-account-scope');
         expect(run).not.toHaveBeenCalled();
     });
@@ -1733,7 +1718,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const activate = screen.findAllByType('Item').find(
+        const activate = screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         );
 
@@ -1772,7 +1757,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         ));
         await pressAndFlush(screen.findByTestId('provider-connection-managed-purpose-save') ?? undefined);
@@ -1801,7 +1786,7 @@ describe('ProviderConnectionDetailScreen', () => {
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         ));
 
@@ -1813,11 +1798,11 @@ describe('ProviderConnectionDetailScreen', () => {
         );
         expect(chooser?.props.reloadSubtitle).toBe('settingsProviders.status.disabled');
 
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:telemetry:reload',
         ));
 
-        expect(refreshProfile).toHaveBeenCalledTimes(1);
+        expect(account.home.requestsFor('/v1/account/profile').length).toBeGreaterThan(0);
     });
 
     it('requires a structured target for required purposes and cancellation performs no write', async () => {
@@ -1841,7 +1826,7 @@ describe('ProviderConnectionDetailScreen', () => {
             '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
         );
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const activate = screen.findAllByType('Item').find(
+        const activate = screen.findAllByType(Item).find(
             (item) => item.props.title === 'settingsProviders.local.configureManaged',
         );
 
@@ -1861,7 +1846,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const raisedBody = en.settingsProviders.local.invalidPurposeTargetDescription;
         expect(raisedBody).not.toMatch(/\b(account|group)\s*:\s*<?id>?/iu);
         // (The page's own Name field and model filter sit in other sections.)
-        const managedSection = screen.findAllByType('ItemGroup')
+        const managedSection = screen.findAllByType(ItemGroup)
             .find((group) => group.props.title === 'settingsProvidersCollection.managedTitle');
         expect(managedSection).toBeDefined();
         expect(managedSection?.findAllByType('TextInput')).toHaveLength(0);
@@ -1869,7 +1854,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         await pressAndFlush(screen.findByTestId('provider-connection-managed-purpose-cancel') ?? undefined);
         expect(run).not.toHaveBeenCalled();
-        expect(screen.findAllByType('Item').some(
+        expect(screen.findAllByType(Item).some(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         )).toBe(true);
     });
@@ -1891,7 +1876,7 @@ describe('ProviderConnectionDetailScreen', () => {
             '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
         );
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        await pressAndFlush(screen.findAllByType('Item').find(
+        await pressAndFlush(screen.findAllByType(Item).find(
             (item) => item.props.testID === 'provider-connection-managed-configure',
         ));
         expect(navigationPreventRemove.enabled).toBe(false);
@@ -1951,7 +1936,7 @@ describe('ProviderConnectionDetailScreen', () => {
         // Moving to another machine goes through the same guard; discarding clears the draft.
         let navigationResult: true | Promise<boolean> = true;
         await act(async () => {
-            navigationResult = runGuardedNavigation(() => { administrationTarget.controller.select('machine-b'); });
+            navigationResult = runGuardedNavigation(async () => { await administrationTarget.controller.select('machine-b'); });
             await flushHookEffects({ cycles: 1, turns: 2 });
         });
         const discardButtons = alert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
@@ -1972,7 +1957,7 @@ describe('ProviderConnectionDetailScreen', () => {
             status: 'connected',
             authenticationModeId: 'oauth',
             revisionSemantics: 'revisioned',
-            credentialRevision: 'cred-work',
+            credentialRevision: 'csr_2222222222222222222222',
             configurationReady: true,
             configurationRevision: null,
             displayName: 'Work account',
@@ -1986,7 +1971,7 @@ describe('ProviderConnectionDetailScreen', () => {
             },
             incarnation: 'qualified-group-row-future-team',
             displayName: 'Future team pool',
-            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true },
             activeConnectedAccountId: 'work',
             generation: 1,
             runtimeStateRevision: 1,
@@ -2048,7 +2033,8 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const rows = screen.findAllByType('Item');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-managed-use-external')).toBeTruthy());
+        const rows = screen.findAllByType(Item);
         const edit = rows.find(
             (item) => item.props.title === 'settingsProviders.local.editManagedDefaults',
         );
@@ -2093,7 +2079,7 @@ describe('ProviderConnectionDetailScreen', () => {
         }), 'deployment:managedLocal');
 
         await pressAndFlush(useExternal);
-        expect(confirm).toHaveBeenCalled();
+        expect(confirm).not.toHaveBeenCalled();
         expect(run).toHaveBeenCalledWith({
             action: 'update',
             machineId: 'machine-a',
