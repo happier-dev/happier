@@ -1,5 +1,5 @@
-import { realpathSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
+import { readlinkSync, realpathSync } from 'node:fs';
+import { readlink, realpath } from 'node:fs/promises';
 import { basename, dirname, posix, win32 } from 'node:path';
 
 import {
@@ -29,6 +29,14 @@ function pathApi(platform: NodeJS.Platform) {
   return platform === 'win32' ? win32 : posix;
 }
 
+function pathErrorCode(error: unknown): string | undefined {
+  return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+}
+
+function isMissingPath(error: unknown): boolean {
+  return pathErrorCode(error) === 'ENOENT' || pathErrorCode(error) === 'ENOTDIR';
+}
+
 function resolveRealPathForAuthorization(pathValue: string, platform: NodeJS.Platform): string {
   const resolved = normalizeFilesystemPathForPolicy(pathValue, platform);
   if (platform !== process.platform) {
@@ -45,7 +53,16 @@ function resolveRealPathForAuthorization(pathValue: string, platform: NodeJS.Pla
         api.join(realAncestor, ...missingSegments.reverse()),
         platform,
       );
-    } catch {
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      // realpath cannot open a dangling link. Resolve its destination before
+      // appending the missing suffix, so a write cannot escape through it.
+      try {
+        const destination = readlinkSync(candidate);
+        return resolveRealPathForAuthorization(api.resolve(api.dirname(candidate), destination, ...missingSegments.reverse()), platform);
+      } catch (linkError) {
+        if (!isMissingPath(linkError) && pathErrorCode(linkError) !== 'EINVAL') throw linkError;
+      }
       const parent = dirname(candidate);
       if (parent === candidate) return resolved;
       missingSegments.push(basename(candidate));
@@ -74,7 +91,14 @@ async function resolveRealPathForAuthorizationAsync(pathValue: string, platform:
         api.join(realAncestor, ...missingSegments.reverse()),
         platform,
       );
-    } catch {
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      try {
+        const destination = await readlink(candidate);
+        return await resolveRealPathForAuthorizationAsync(api.resolve(api.dirname(candidate), destination, ...missingSegments.reverse()), platform);
+      } catch (linkError) {
+        if (!isMissingPath(linkError) && pathErrorCode(linkError) !== 'EINVAL') throw linkError;
+      }
       const parent = dirname(candidate);
       if (parent === candidate) return resolved;
       missingSegments.push(basename(candidate));
@@ -156,10 +180,14 @@ export function authorizeFilesystemPath(input: AuthorizeFilesystemPathInput): Fi
     ...input.accessPolicy.roots,
     ...normalizeAdditionalAllowedDirs(input.additionalAllowedDirs, platform),
   ];
-  for (const root of allowedRoots) {
-    if (isWithinRoot(resolved.resolvedPath, root, platform)) {
-      return resolved;
+  try {
+    for (const root of allowedRoots) {
+      if (isWithinRoot(resolved.resolvedPath, root, platform)) {
+        return resolved;
+      }
     }
+  } catch {
+    return { valid: false, error: 'Access denied: Path could not be resolved' };
   }
 
   return {
@@ -196,10 +224,12 @@ export async function prepareFilesystemPathAuthorizer(
     });
     if (!resolved.valid) return resolved;
 
-    const resolvedTargetKey = filesystemPathComparisonKey(
-      await resolveRealPathForAuthorizationAsync(resolved.resolvedPath, platform),
-      platform,
-    );
+    let resolvedTargetKey: string;
+    try {
+      resolvedTargetKey = filesystemPathComparisonKey(await resolveRealPathForAuthorizationAsync(resolved.resolvedPath, platform), platform);
+    } catch {
+      return { valid: false, error: 'Access denied: Path could not be resolved' };
+    }
     for (const root of resolvedRootKeys) {
       if (isWithinResolvedRoot(resolvedTargetKey, root, platform)) {
         return resolved;

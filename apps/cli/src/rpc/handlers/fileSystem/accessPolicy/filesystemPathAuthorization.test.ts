@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { authorizeFilesystemPath, prepareFilesystemPathAuthorizer } from './filesystemPathAuthorization';
+import { validatePath } from '../../pathSecurity';
 
 const createdPaths = new Set<string>();
 
@@ -23,6 +24,23 @@ afterEach(() => {
 });
 
 describe('authorizeFilesystemPath', () => {
+  it('rejects dangling symlinks that would create files outside the root, while allowing contained links', async () => {
+    const allowed = createTempRoot('happier-fs-policy-dangling-allowed');
+    const outside = createTempRoot('happier-fs-policy-dangling-outside');
+    const outsideLink = join(allowed, 'outside.json');
+    const insideLink = join(allowed, 'inside.json');
+    symlinkSync(join(outside, 'missing.json'), outsideLink);
+    symlinkSync(join(allowed, 'missing.json'), insideLink);
+    const accessPolicy = { kind: 'restrictedRoots' as const, roots: [allowed] };
+    const asyncAuthorize = await prepareFilesystemPathAuthorizer({ defaultDirectory: allowed, accessPolicy });
+    expect(authorizeFilesystemPath({ targetPath: outsideLink, defaultDirectory: allowed, accessPolicy })).toMatchObject({ valid: false });
+    expect(validatePath(outsideLink, allowed)).toMatchObject({ valid: false });
+    await expect(asyncAuthorize(outsideLink)).resolves.toMatchObject({ valid: false });
+    expect(authorizeFilesystemPath({ targetPath: insideLink, defaultDirectory: allowed, accessPolicy })).toMatchObject({ valid: true });
+    expect(validatePath(insideLink, allowed)).toMatchObject({ valid: true });
+    await expect(asyncAuthorize(insideLink)).resolves.toMatchObject({ valid: true });
+  });
+
   it('allows absolute paths outside the default directory for the os-user policy', () => {
     expect(
       authorizeFilesystemPath({
