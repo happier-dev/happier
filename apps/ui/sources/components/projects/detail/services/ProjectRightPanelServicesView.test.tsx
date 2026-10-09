@@ -1,23 +1,23 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-dev/protocol';
 import type { IModal } from '@/modal/types';
-import {
-    buildLocalServiceInventoryState,
-    pressTestInstanceAsync,
-    renderScreen,
-} from '@/dev/testkit';
-import {
-    applyLocalServiceLauncherSnapshot,
-    createLocalServiceLauncherState,
-} from '@/sync/domains/local/services/launch';
+import { buildLocalServiceInventoryState } from '@/dev/testkit/fixtures/localServices';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
     applyLocalServicePublicPreviewSnapshot,
     createLocalServicePublicPreviewState,
 } from '@/sync/domains/local/services/publicPreview/store';
 
-import { ProjectRightPanelServicesView } from './ProjectRightPanelServicesView';
+// Real Account lifetime beneath genuine network/device-credential boundaries;
+// signed-out fixtures cannot dispatch through the mounted Services host.
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
+const { ProjectRightPanelServicesView } = await import('./ProjectRightPanelServicesView');
 
 const useFeatureDecisionMock = vi.hoisted(() => vi.fn((featureId: FeatureId, _scope?: unknown): FeatureDecision => ({
     featureId,
@@ -122,7 +122,10 @@ function buildPublicPreviewState() {
 }
 
 describe('ProjectRightPanelServicesView', () => {
-    beforeEach(() => {
+    let serverId: string;
+    beforeEach(async () => {
+        await home.reset();
+        serverId = await home.addHome({ name: 'Project Home', serverUrl: 'https://project.example.test', accountId: 'project-account', currentAccount: true });
         useFeatureDecisionMock.mockImplementation((featureId: FeatureId): FeatureDecision => ({
             featureId,
             state: 'enabled',
@@ -136,6 +139,7 @@ describe('ProjectRightPanelServicesView', () => {
         modalShowMock.mockReset();
         modalShowMock.mockImplementation(() => 'modal-id');
     });
+    afterEach(async () => { await home.reset(); });
 
     it('passes supplied local service launcher state into the Services pane', async () => {
         const screen = await renderScreen(
@@ -146,6 +150,30 @@ describe('ProjectRightPanelServicesView', () => {
         );
 
         expect(screen.findByTestId('project-rightpanel-services-row:inventory:project-feed')).toBeTruthy();
+    });
+
+    it('mounts one body on the Services page and the rail: only the page leads with its purpose', async () => {
+        const page = await renderScreen(
+            <ProjectRightPanelServicesView
+                presentation="page"
+                testID="project-services-page"
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={buildLauncherState()}
+            />,
+        );
+        expect(page.findByTestId('project-services-page-header')).toBeTruthy();
+        expect(page.getTextContent()).toContain('Long-running services for this checkout');
+        expect(page.findByTestId('project-services-page-row:inventory:project-feed')).toBeTruthy();
+        await page.unmount();
+
+        const rail = await renderScreen(
+            <ProjectRightPanelServicesView
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={buildLauncherState()}
+            />,
+        );
+        expect(rail.findAllByTestId('project-rightpanel-services-header')).toHaveLength(0);
+        expect(rail.findByTestId('project-rightpanel-services-row:inventory:project-feed')).toBeTruthy();
     });
 
     it('does not poll public preview status when public previews are disabled', async () => {
@@ -170,7 +198,7 @@ describe('ProjectRightPanelServicesView', () => {
         await renderScreen(
             <ProjectRightPanelServicesView
                 machineId="machine-a"
-                serverId="server-a"
+                serverId={serverId}
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 publicPreviewStatusClient={publicPreviewStatusClient}
@@ -197,13 +225,15 @@ describe('ProjectRightPanelServicesView', () => {
         const screen = await renderScreen(
             <ProjectRightPanelServicesView
                 machineId="machine-a"
-                serverId="server-a"
+                serverId={serverId}
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 runtimeActionExecute={runtimeActionExecute}
             />,
         );
 
+        // Let the real asynchronous credential binding publish before user ingress.
+        await flushHookEffects();
         await pressTestInstanceAsync(
             screen.findByTestId('project-rightpanel-services-row:inventory:project-feed-start'),
             'project-rightpanel-services-row:inventory:project-feed-start',
@@ -216,7 +246,9 @@ describe('ProjectRightPanelServicesView', () => {
                 targetId: 'inventory:project-feed',
             },
             context: {
-                serverId: 'server-a',
+                serverId,
+                expectedAccountId: 'project-account',
+                signal: expect.any(AbortSignal),
                 surface: 'ui',
             },
         });
@@ -276,7 +308,7 @@ describe('ProjectRightPanelServicesView', () => {
         const screen = await renderScreen(
             <ProjectRightPanelServicesView
                 machineId="machine-a"
-                serverId="server-a"
+                serverId={serverId}
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
                 launcherState={buildPublicPreviewLauncherState()}
                 publicPreviewState={buildPublicPreviewState()}
@@ -284,11 +316,10 @@ describe('ProjectRightPanelServicesView', () => {
             />,
         );
 
-        await pressTestInstanceAsync(
-            screen.findByTestId('project-rightpanel-services-public-preview-target:preview-project-create'),
-            'project-rightpanel-services-public-preview-target:preview-project-create',
-        );
-        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+        await screen.pressByTestIdAsync('project-rightpanel-services-row:preview:project-feed-item');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('project-rightpanel-services-row:preview:project-feed-public-preview-target:preview-project-create');
+        await flushHookEffects();
 
         expect(modalShowMock).toHaveBeenCalledOnce();
         expect(modalConfirmMock).not.toHaveBeenCalled();
@@ -303,7 +334,9 @@ describe('ProjectRightPanelServicesView', () => {
                 confirmation: { acknowledged: true },
             },
             context: {
-                serverId: 'server-a',
+                serverId,
+                expectedAccountId: 'project-account',
+                signal: expect.any(AbortSignal),
                 surface: 'ui',
             },
         });

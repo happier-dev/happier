@@ -81,13 +81,69 @@ describe('buildLocalServiceRows', () => {
         expect(rows[0]?.serviceLabel).toBe('Vite');
         expect(rows[0]?.addressLabel).toBe('localhost:5173');
     });
-    it('offers a package script as a new-terminal intent, never Local services Start', () => {
+    it('keeps an unaccepted package suggestion inert instead of diverting Start to a Session terminal', () => {
         const target = packageTarget({ sourceClass: { kind: 'package_script', runTargetId: 'web:dev', packageName: 'web', scriptName: 'dev', cwd: '/repo/web' } });
         const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: 'session-a', scope: 'workspace' });
-        expect(rows[0]?.primaryAction).toEqual({ kind: 'run_script', target });
+        expect(rows[0]?.primaryAction).toBeNull();
         expect(rows[0]?.status).toBe('stopped');
         expect(selectLocalServiceRunningCount(rows)).toBe(0);
     });
+    it.each(['package_script', 'managed_service'] as const)('offers a fresh reviewed Start intent for a qualified %s declaration without inventing executable actions', source => {
+        const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
+        const target = packageTarget({ source,
+            sourceClass: source === 'package_script'
+                ? { kind: 'package_script', runTargetId: 'project-service:selected', packageName: 'web', scriptName: 'dev', cwd: '/repo/web' }
+                : { kind: 'managed_service', managedServiceId: 'project-service:selected' },
+            workspace, declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } },
+        });
+        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        expect(rows[0]?.primaryAction).toEqual({ kind: 'start', target });
+        expect(target.actions).toEqual([]);
+        expect(selectLocalServiceRunningCount(rows)).toBe(0);
+        expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('ready');
+    });
+    it.each([
+        { serviceState: 'running', status: 'running', section: 'running', canStart: false },
+        { serviceState: 'stopped', status: 'stopped', section: 'ready', canStart: true },
+        { serviceState: 'failed', status: 'failed', section: 'ready', canStart: true },
+        { serviceState: 'stopping', status: 'stopping', section: 'running', canStart: false },
+    ] as const)('groups an available URL-less managed declaration by its actual $serviceState lifetime, not launcher availability', ({ serviceState, status, section, canStart }) => {
+        // feed.ts#managedTarget publishes launcher availability independently
+        // of the actual supervisor phase, including stopped/failed records.
+        const target = packageTarget({ source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'worker' } },
+            state: 'available', serviceState, actions: ['manage'],
+        });
+        const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        expect(rows[0]?.primaryAction).toEqual(canStart ? { kind: 'start', target } : null);
+        expect(rows[0]?.status).toBe(status);
+        expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe(section);
+        expect(selectLocalServiceRunningCount(rows)).toBe(0);
+    });
+    it('projects the declaring file, a truthful address note and no placeholder refusal beside Start', () => {
+        const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
+        const managed = (id: string, overrides: Partial<LocalServiceLaunchTarget>) => packageTarget({ id, source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: id }, workspace, ...overrides });
+        const rows = buildLocalServiceRows({ inventoryRows: [], sessionId: null, scope: 'workspace', launchTargets: [
+            managed('jobs', { state: 'available', serviceState: 'running', actions: ['manage'], declaration: { workspaceRefId: 'accepted',
+                selection: { kind: 'native', source: { kind: 'native', tool: 'procfile', file: 'apps/Procfile', target: 'jobs' } } } }),
+            managed('server', { state: 'available', serviceState: 'detecting', actions: ['manage'],
+                declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'server' } } }),
+            managed('web', { state: 'available', serviceState: 'running', actions: ['manage'], endpointUrl: 'http://localhost:5173/' }),
+            managed('docs', { declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
+                source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'docs' } } } }),
+        ] });
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        expect(byId.get('jobs')).toMatchObject({ sourceBadge: 'Procfile', addressNote: 'none', status: 'running' });
+        expect(byId.get('server')).toMatchObject({ sourceBadge: 'project.json', addressNote: 'waiting', status: 'running' });
+        // An observed endpoint is never overridden by a note, and a service with no declaration has no badge.
+        expect(byId.get('web')).toMatchObject({ sourceBadge: null, addressNote: null, addressLabel: 'localhost:5173' });
+        // The feed's `launch_unavailable` placeholder is not a refusal while Start is offered.
+        expect(byId.get('docs')).toMatchObject({ primaryAction: { kind: 'start' }, reasonCode: null, sourceBadge: 'compose.yaml', status: 'stopped' });
+    });
+
     it('orders running/this-session → workspace → machine → suggestions and never filters in-scope rows', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow()],
@@ -242,7 +298,10 @@ describe('buildLocalServiceRows', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow({ id: 'mine' }), inventoryRow({ id: 'other', port: 8080 })],
             launchTargets: [
-                packageTarget({ id: 'package:docs', title: 'docs', state: 'available', unavailableReason: undefined, actions: ['start'] }),
+                packageTarget({ id: 'package:docs', title: 'docs',
+                    workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+                    declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
+                        source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' } } } }),
                 openableTarget({ id: 'inventory:mine', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'mine' }, sessionId: 'session-a' }),
                 openableTarget({ id: 'inventory:stopped', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'stopped' }, sessionId: 'session-a', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] }),
                 openableTarget({ id: 'inventory:other', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'other' }, sessionId: 'session-b' }),
@@ -412,7 +471,10 @@ describe('buildLocalServiceRows', () => {
             launchTargets: [
                 packageTarget({ id: 'package:refused' }),
                 openableTarget({ id: 'inventory:ssh', sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'ssh' }, title: 'localhost:22', state: 'unavailable', unavailableReason: 'preview_registration_unavailable', actions: [] }),
-                packageTarget({ id: 'package:docs', title: 'docs', state: 'available', unavailableReason: undefined, actions: ['start'] }),
+                packageTarget({ id: 'package:docs', title: 'docs',
+                    workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+                    declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
+                        source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' } } } }),
             ],
             sessionId: 'session-a',
             scope: 'workspace',

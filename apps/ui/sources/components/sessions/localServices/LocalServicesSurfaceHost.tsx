@@ -18,14 +18,21 @@ import {
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
+import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { ServiceRowOpenHandler } from './ServiceRowView';
 import { useLocalServiceLauncherStartAction } from './launcherStartAction';
+import type { LocalServiceActionAdmission } from './localServiceActionAdmission';
 import {
     useDetectedLocalServiceForgetAction,
     useDetectedLocalServiceTerminateAction,
     useLocalServiceCopyUrlAction,
+    useLocalServiceLauncherHistoryClearAction,
+    useManagedLocalServiceControlAction,
 } from './lifecycleActions';
 import { useLocalServicePublicPreviewActions } from './publicPreviewActions';
 import { useLocalServiceLiveFeeds } from './useLocalServiceLiveFeeds';
@@ -49,11 +56,17 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
     runtimeActionExecute?: RuntimeActionExecute;
+    /** Explicit current-effect review UI; declining or retiring this scope never re-enters Start. */
+    reviewEffect?: LocalServiceActionAdmission['reviewEffect'];
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     /** Exact AppPane-admitted projection when a driver-owned surface supplies it. */
     pluginUiProjection?: PluginUiProjectionModel | null;
     projectionInteractionEnabled?: boolean;
     platform?: LocalServicePreviewPlatform;
+    /** `page` on the Project Services page; the rail and Session panel keep the pane chrome. */
+    presentation?: 'pane' | 'page';
+    /** The placement owner's per-row "Runs on" control (plan 32), hosted in each row's expansion. */
+    renderServicePlacement?: (row: ServiceRow) => React.ReactNode;
     testID: string;
 }>;
 
@@ -96,35 +109,77 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         () => props.runtimeActionExecute ?? createFrontDoorRuntimeActionExecutor(),
         [props.runtimeActionExecute],
     );
+    const credentialBindings = useServerCredentialAccountScopeBindings([serverId]);
+    const credentialBinding = credentialBindings.get(resolveServerProfileScopeIdForIdentifier(serverId));
+    const actionScopeKey = JSON.stringify([serverId, credentialBinding?.accountId, credentialBinding?.revision, machineId, workspaceRoot, sessionId]);
+    const cancellation = React.useMemo(() => new AbortController(), [actionScopeKey]);
+    React.useEffect(() => {
+        const retirement = credentialBinding?.onRetire(() => cancellation.abort());
+        return () => { retirement?.dispose(); cancellation.abort(); };
+    }, [credentialBinding, cancellation]);
+    const refreshAfterApproval = React.useCallback(() => { void onRefresh(); }, [onRefresh]);
+    const approval = useActionApprovalContinuation({ scopeKey: actionScopeKey, serverId: serverId ?? '', onExecuted: refreshAfterApproval });
+    const isActionScopeCurrent = React.useCallback(() => Boolean(credentialBinding?.isCurrent()) && !cancellation.signal.aborted,
+        [credentialBinding, cancellation]);
+    const actionAdmission: LocalServiceActionAdmission = {
+        expectedAccountId: credentialBinding?.accountId,
+        signal: cancellation.signal,
+        isCurrent: isActionScopeCurrent,
+        onApprovalPending: approval.requestApproval,
+        reviewEffect: props.reviewEffect,
+    };
     const onTerminateDetectedService = useDetectedLocalServiceTerminateAction({
+        ...actionAdmission,
         runtimeActionExecute,
         machineId,
         serverId,
         sessionId,
     });
     const onForgetDetectedService = useDetectedLocalServiceForgetAction({
+        ...actionAdmission,
         runtimeActionExecute,
         machineId,
         serverId,
         sessionId,
     });
     const onCopyServiceUrl = useLocalServiceCopyUrlAction({
+        ...actionAdmission,
         runtimeActionExecute,
         machineId,
         serverId,
         sessionId,
     });
+    // Stop and Restart a managed lifetime through its exact occurrence; the result settles the row.
+    const managedControl = useManagedLocalServiceControlAction({
+        ...actionAdmission,
+        runtimeActionExecute,
+        machineId,
+        serverId,
+        sessionId,
+    });
+    const onStopManagedService = React.useMemo(() => managedControl
+        ? (target: Parameters<typeof managedControl>[0]) => managedControl(target, 'localServices.actions.stopManaged')
+        : undefined, [managedControl]);
+    const onRestartManagedService = React.useMemo(() => managedControl
+        ? (target: Parameters<typeof managedControl>[0]) => managedControl(target, 'localServices.actions.restartManaged')
+        : undefined, [managedControl]);
     const onStartLauncherTarget = useLocalServiceLauncherStartAction({
+        ...actionAdmission,
         runtimeActionExecute,
         machineId,
         serverId,
         sessionId,
         applyLauncherSnapshot: feeds.applyLauncherSnapshot,
     });
+    const onClearLauncherHistory = useLocalServiceLauncherHistoryClearAction({ ...actionAdmission,
+        runtimeActionExecute, machineId, serverId, sessionId, scope, workspaceRoot,
+        applyLauncherSnapshot: feeds.applyLauncherSnapshot,
+    });
     const publicPreviewState = props.publicPreviewState !== undefined
         ? props.publicPreviewState
         : livePublicPreviewState.state;
     const publicPreviewActions = useLocalServicePublicPreviewActions({
+        ...actionAdmission,
         runtimeActionExecute,
         machineId,
         serverId,
@@ -172,13 +227,18 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             onChangeScope={setScope}
             onTerminateDetectedService={onTerminateDetectedService}
             onForgetDetectedService={onForgetDetectedService}
+            onStopManagedService={onStopManagedService}
+            onRestartManagedService={onRestartManagedService}
             onCopyServiceUrl={onCopyServiceUrl}
             onStartLauncherTarget={onStartLauncherTarget}
+            onClearLauncherHistory={onClearLauncherHistory}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
             publicPreviewActions={publicPreviewActions}
             publicPreviewCapabilityDisabledReasons={publicPreviewCapabilityDisabledReasons}
             machine={machine}
             onRefresh={onRefresh}
+            presentation={props.presentation}
+            renderServicePlacement={props.renderServicePlacement}
             testID={props.testID}
             footer={pluginStack}
         />

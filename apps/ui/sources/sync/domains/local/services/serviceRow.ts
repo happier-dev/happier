@@ -11,7 +11,7 @@ import type { TranslationKey } from '@/text/i18n';
 import { localServiceListenerGroupKey } from '@happier-dev/protocol/local/services/inventory';
 
 export type ServiceRowScope = 'thisSession' | 'workspace' | 'machine' | 'suggestion';
-export type ServiceRowStatus = 'running' | 'starting' | 'stale' | 'stopped' | 'unavailable';
+export type ServiceRowStatus = 'running' | 'starting' | 'stopping' | 'stale' | 'stopped' | 'failed' | 'unavailable';
 
 export type ServiceRow = Readonly<{
     id: string; // stable identity (inventory:<id> | package:<id> | ...)
@@ -26,12 +26,19 @@ export type ServiceRow = Readonly<{
     serviceLabel?: string | null;
     addressLabel?: string | null;
     sourceLabel: TranslationKey; // translation key for the source label
+    /** The file a Project declaration comes from (`package.json`, `compose.yaml`, `project.json`): a reference, never a copy. */
+    sourceBadge?: string | null;
+    /**
+     * A managed lifetime that is up without an observed endpoint: `waiting` while the supervisor is
+     * still detecting one, `none` once it runs without one (a queue worker, a Compose service). Never
+     * an invented address, and never a stopped or healthy claim.
+     */
+    addressNote?: 'waiting' | 'none' | null;
     status: ServiceRowStatus;
     reasonCode: string | null; // raw code for OWNER-COPY (NEVER rendered raw)
     primaryAction:
         | Readonly<{ kind: 'open'; openTarget: LocalServiceLaunchTarget }>
         | Readonly<{ kind: 'start'; target: LocalServiceLaunchTarget }>
-        | Readonly<{ kind: 'run_script'; target: LocalServiceLaunchTarget }>
         | null; // null ⇒ inert row (quiet caption, no headline action)
     terminateIdentityConfidence?: 'full' | 'pid_only' | null;
     /** The underlying launch target, carried for per-row secondary affordances (e.g. public preview). */
@@ -66,6 +73,16 @@ function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
     // Available means the script can be launched, never that a listener is running. Older
     // launcher snapshots may omit sourceClass; source already establishes this distinction.
     if (target.source === 'package_script') return 'stopped';
+    // Launcher availability does not revive a settled managed lifetime. Keep
+    // stale/offline presentation, but consume the supervisor's actual outcome.
+    if (target.source === 'managed_service' && target.state !== 'stale') {
+        if (target.serviceState === 'stopped') return 'stopped';
+        if (target.serviceState === 'failed') return 'failed';
+        if (target.serviceState === 'stopping') return 'stopping';
+        // A declaration nobody has started is stopped (Ready to start); the feed's placeholder
+        // `unavailable` describes the launcher row, not a broken service.
+        if (target.declaration && target.serviceState === undefined && target.state === 'unavailable') return 'stopped';
+    }
     switch (target.state) {
         case 'available':
             return 'running';
@@ -80,17 +97,54 @@ function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
 }
 
 function resolvePrimaryAction(target: LocalServiceLaunchTarget): ServiceRow['primaryAction'] {
-    if (target.source === 'package_script' && target.sourceClass?.kind === 'package_script') return { kind: 'run_script', target };
+    // An unaccepted package is presentation only, not a Session terminal command.
+    if (target.source === 'package_script' && !(target.workspace && target.declaration)) return null;
     // A target with private-preview registration is an Open intent. The shared action
     // owner registers it before admitting the returned browser target and access URL.
     const openTarget = resolveLocalServiceOpenableTarget(target);
     if (openTarget) {
         return { kind: 'open', openTarget };
     }
+    // A qualified declaration offers review, not executable feed authority. The
+    // launcher resolves current accepted facts and policy before admitting Start.
+    const declarationCanBeReviewed = (target.source === 'package_script' || target.source === 'managed_service')
+        && target.workspace && target.declaration
+        && (target.serviceState === undefined || target.serviceState === 'stopped' || target.serviceState === 'failed')
+        && target.state !== 'starting';
+    if (declarationCanBeReviewed) return { kind: 'start', target };
     if (target.actions.includes('start')) {
         return { kind: 'start', target };
     }
     return null;
+}
+
+/** The declaring file's name: the manifest for a manifest service, else the native reference's file. */
+function resolveSourceBadge(target: LocalServiceLaunchTarget): string | null {
+    const selection = target.declaration?.selection;
+    if (!selection) return null;
+    if (selection.kind === 'manifest') return 'project.json';
+    return selection.source.file.split(/[\\/]/).filter(Boolean).pop() ?? null;
+}
+
+const LIVE_MANAGED_STATES: ReadonlySet<NonNullable<LocalServiceLaunchTarget['serviceState']>> = new Set([
+    'running', 'detecting', 'healthy', 'unhealthy',
+]);
+
+function resolveAddressNote(target: LocalServiceLaunchTarget, hasAddress: boolean): ServiceRow['addressNote'] {
+    if (target.source !== 'managed_service' || target.state === 'stale' || hasAddress || target.endpointUrl) return null;
+    if (!target.serviceState || !LIVE_MANAGED_STATES.has(target.serviceState)) return null;
+    return target.serviceState === 'detecting' ? 'waiting' : 'none';
+}
+
+/** The supervisor's observed endpoint as a place a person can go (`localhost:5173`), never a guess. */
+function readEndpointAddressLabel(endpointUrl: string | undefined): string | null {
+    if (!endpointUrl) return null;
+    try {
+        const url = new URL(endpointUrl);
+        return url.host.replace(/^127\.0\.0\.1(?=:|$)/, 'localhost') || null;
+    } catch {
+        return null;
+    }
 }
 
 function inventoryIdFromTarget(target: LocalServiceLaunchTarget): string | null {
@@ -286,6 +340,10 @@ export function buildLocalServiceRows(input: Readonly<{
             ?? resolveLocalServiceLaunchTargetPortLabel(target);
         const title = resolveServiceRowTitle(target, processLabel, portLabel);
         const listenerKey = inventoryRow ? localServiceListenerGroupKey(inventoryRow) : null;
+        const primaryAction = resolvePrimaryAction(target);
+        const addressLabel = readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.addressLabel : null)
+            ?? readString(target.browserTarget?.display?.addressLabel)
+            ?? readEndpointAddressLabel(target.endpointUrl);
         const row: ServiceRow = {
             id: target.id,
             scope: resolveBand(target, input.sessionId, input.scope),
@@ -298,12 +356,17 @@ export function buildLocalServiceRows(input: Readonly<{
             serviceLabel: readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.displayName : null)
                 ?? readString(isRecord(inventoryRow?.classification) ? inventoryRow.classification.displayName : null)
                 ?? executableName(processLabel),
-            addressLabel: readString(isRecord(inventoryRow?.presentation) ? inventoryRow.presentation.addressLabel : null)
-                ?? readString(target.browserTarget?.display?.addressLabel),
+            addressLabel,
             sourceLabel: SOURCE_LABEL_KEYS[target.source],
+            sourceBadge: resolveSourceBadge(target),
+            addressNote: resolveAddressNote(target, Boolean(addressLabel || portLabel || readHost(inventoryRow))),
             status,
-            reasonCode: target.source === 'package_script' && target.sourceClass?.kind === 'package_script' ? null : target.unavailableReason ?? null,
-            primaryAction: resolvePrimaryAction(target),
+            // A declaration that offers Start has no refusal to explain yet: its feed placeholder
+            // (`launch_unavailable`) is not a reason, and saying "can't be started" beside ▶ would lie.
+            reasonCode: (target.source === 'package_script' && target.sourceClass?.kind === 'package_script') || primaryAction?.kind === 'start'
+                ? null
+                : target.unavailableReason ?? null,
+            primaryAction,
             terminateIdentityConfidence: readTerminateIdentityConfidence(inventoryRow, target),
             target,
             internal: (target.source === 'inventory_entry' && target.kind === 'happier')
@@ -340,11 +403,13 @@ export function resolveServiceRowSection(row: ServiceRow): ServiceRowSection | n
     // Happier's own listeners are one quiet group, closed by default, and never "running here".
     if (row.internal) return 'happier';
     // A package script is a launcher suggestion: its `available` state means "can start", not "running".
-    if (row.scope === 'suggestion') return row.primaryAction?.kind === 'start' || row.primaryAction?.kind === 'run_script' ? 'ready' : null;
-    if (row.status === 'running' || row.status === 'starting' || row.status === 'stale') {
+    if (row.scope === 'suggestion') return row.primaryAction?.kind === 'start' ? 'ready' : null;
+    if (row.status === 'running' || row.status === 'starting' || row.status === 'stopping' || row.status === 'stale') {
         return row.scope === 'machine' ? 'elsewhere' : 'running';
     }
-    return row.primaryAction?.kind === 'start' ? 'ready' : null;
+    // A Project declaration keeps its row even when it cannot start right now: it says why and
+    // offers nothing it can't do, instead of disappearing (plan 22 §2).
+    return row.primaryAction?.kind === 'start' || row.target.declaration ? 'ready' : null;
 }
 
 /** The ranked rows split into non-empty sections, keeping the ranking order inside each. */

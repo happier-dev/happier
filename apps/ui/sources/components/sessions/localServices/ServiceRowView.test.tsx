@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
-import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
+import { buildLocalServiceRows, type ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import {
     applyLocalServicePublicPreviewSnapshot,
@@ -77,13 +77,28 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('ServiceRowView', () => {
-    it('shows a ready script without a running or stopped status badge', async () => {
-        const target = launchTarget({ state: 'available', actions: ['start'], sourceClass: { kind: 'package_script', packageName: 'docs', scriptName: 'dev', runTargetId: 'docs:dev' }, commandPreview: 'yarn docs:dev' });
-        const screen = await renderScreen(<ServiceRowView row={serviceRow({ target, status: 'stopped', reasonCode: null, processLabel: 'yarn docs:dev', primaryAction: { kind: 'run_script', target } })} onStartLauncherTarget={() => {}} testID="row" />);
-        expect(screen.findByTestId('row-dot')).toBeNull();
-        expect(screen.findByTestId('row-status-stopped')).toBeNull();
-        expect(screen.findByTestId('row-start')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('yarn docs:dev');
+    it('dispatches a qualified declaration Start from the actual row model without fabricating an executable feed action', async () => {
+        const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'project-service:selected' },
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'docs' } },
+            commandPreview: 'current declaration command' });
+        const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        // Start dispatch is the outer consumer port; the current row model and
+        // actual rendered control remain real.
+        const start = vi.fn(async () => undefined);
+        const screen = await renderScreen(<ServiceRowView row={row!} onStartLauncherTarget={start} testID="row" />);
+        await pressTestInstanceAsync(screen.findByTestId('row-start'), 'row-start');
+        expect(start).toHaveBeenCalledExactlyOnceWith(target);
+        expect(target.actions).toEqual([]);
+    });
+
+    it('does not copy a managed address through the renderer when its canonical Action port is absent', async () => {
+        const target = launchTarget({ source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
+            state: 'available', serviceState: 'running', actions: ['manage'], endpointUrl: 'http://localhost:5173/' });
+        const screen = await renderScreen(<ServiceRowView row={serviceRow({ target, scope: 'workspace', status: 'running',
+            reasonCode: null, portLabel: ':5173', host: 'localhost', scheme: 'http' })} expanded onExpandedChange={vi.fn()} testID="row" />);
+        await pressTestInstanceAsync(screen.findByTestId('row-copy-address'), 'row-copy-address');
+        expect(clipboardSpies.setClipboardStringSafe).not.toHaveBeenCalled();
     });
 
     beforeEach(() => {
@@ -555,5 +570,73 @@ describe('ServiceRowView', () => {
         );
         await pressTestInstanceAsync(screen.findByTestId('row-item'), 'row-item');
         expect(onExpandedChange).toHaveBeenCalledWith(true);
+    });
+    /** Plan 22 §2 / lab s-services: Project declarations through the one row model. */
+    function projectTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): LocalServiceLaunchTarget {
+        return launchTarget({ id: 'project-service:jobs', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'owned-jobs' },
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
+                source: { kind: 'native', tool: 'procfile', file: 'Procfile', target: 'jobs' } } },
+            title: 'jobs', unavailableReason: undefined, ...overrides });
+    }
+    function projectRow(target: LocalServiceLaunchTarget) {
+        return buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' })[0]!;
+    }
+
+    it('reads a never-started declaration as Ready to start: its command, its file and no status word', async () => {
+        const row = projectRow(projectTarget({ commandPreview: 'yarn storybook', declaration: { workspaceRefId: 'accepted',
+            selection: { kind: 'native', source: { kind: 'native', tool: 'package_script', file: 'apps/ui/package.json', target: 'storybook' } } } }));
+        const screen = await renderScreen(<ServiceRowView row={row} onStartLauncherTarget={vi.fn()} machineName="devbox" testID="row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('yarn storybook');
+        expect(screen.findByTestId('row-source')).toBeTruthy();
+        expect(text).toContain('package.json');
+        expect(text).toContain('not started');
+        expect(text).not.toContain('Unavailable');
+        expect(text).not.toContain("can't be started");
+        expect(screen.findAllByTestId('row-dot')).toHaveLength(0);
+        expect(screen.findByTestId('row-start')).toBeTruthy();
+    });
+
+    it('says a live service with no endpoint has no address and keeps Restart, Stop and Hide on the row', async () => {
+        const target = projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'] });
+        const row = projectRow(target);
+        const onStop = vi.fn(async () => ({ status: 'succeeded' }));
+        const onRestart = vi.fn(async () => ({ status: 'succeeded' }));
+        const screen = await renderScreen(<ServiceRowView row={row} machineName="devbox" onStopManagedService={onStop}
+            onRestartManagedService={onRestart} onForgetDetectedService={vi.fn()} expanded={false} onExpandedChange={vi.fn()} testID="row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('No address');
+        expect(text).toContain('Procfile');
+        expect(text).toContain('on devbox');
+        // Nothing to grow into: the overflow is the row's own control, not an empty expansion.
+        expect(screen.findAllByTestId('row-expansion')).toHaveLength(0);
+        expect(rowOverflowActions(screen).map((action) => action.id)).toEqual(['restart', 'stop', 'forget']);
+
+        modalSpies.confirm.mockResolvedValueOnce(false);
+        await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'stop')?.onPress as () => void)(); });
+        expect(onStop).not.toHaveBeenCalled();
+        await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'stop')?.onPress as () => void)(); });
+        expect(onStop).toHaveBeenCalledExactlyOnceWith(target);
+        await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'restart')?.onPress as () => void)(); });
+        expect(onRestart).toHaveBeenCalledExactlyOnceWith(target);
+    });
+
+    it('offers no Stop for a settled lifetime and names a failed start as Failed', async () => {
+        const row = projectRow(projectTarget({ state: 'available', serviceState: 'failed', actions: ['manage'] }));
+        const screen = await renderScreen(<ServiceRowView row={row} onStopManagedService={vi.fn()} onRestartManagedService={vi.fn()}
+            onStartLauncherTarget={vi.fn()} testID="row" />);
+        expect(screen.findByTestId('row-status-failed')).toBeTruthy();
+        expect(rowOverflowActions(screen).map((action) => action.id)).not.toContain('stop');
+    });
+
+    it('labels every status as last known while the machine is offline', async () => {
+        const row = projectRow(projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'], endpointUrl: 'http://127.0.0.1:3005/' }));
+        const screen = await renderScreen(<ServiceRowView row={row} offline machineName="devbox" testID="row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('Last known');
+        expect(text).not.toContain('Running');
+        expect(text).toContain('localhost:3005');
     });
 });

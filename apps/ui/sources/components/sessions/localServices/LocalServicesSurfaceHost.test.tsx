@@ -5,23 +5,25 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
-import {
-    buildLocalServiceInventoryState,
-    flushHookEffects,
-    pressTestInstanceAsync,
-    renderScreen,
-} from '@/dev/testkit';
-import * as inventoryMachineRpc from '@/sync/domains/local/services/inventory/machineRpc';
-import { resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
-import { resetLocalServiceLauncherStoreForTests } from '@/sync/domains/local/services/launch/sharedStore';
-import {
-    applyLocalServiceLauncherSnapshot,
-    createLocalServiceLauncherState,
-    type LocalServiceLaunchTarget,
-} from '@/sync/domains/local/services/launch';
+import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-dev/protocol';
+import { buildLocalServiceInventoryState } from '@/dev/testkit/fixtures/localServices';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createUiApprovalRequest, decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
+import type { LocalServiceEffectReview } from './localServiceActionAdmission';
 
-import { LocalServicesSurfaceHost } from './LocalServicesSurfaceHost';
+// Genuine credential/HTTP boundaries are installed before importing the mounted
+// host. Its credential lifetime, row projection and Action admission stay real.
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const inventoryMachineRpc = await import('@/sync/domains/local/services/inventory/machineRpc');
+const { resetLocalServiceInventoryStoreForTests } = await import('@/sync/domains/local/services/inventory/sharedStore');
+const { resetLocalServiceLauncherStoreForTests } = await import('@/sync/domains/local/services/launch/sharedStore');
+const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
+const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
+const { LocalServicesSurfaceHost } = await import('./LocalServicesSurfaceHost');
 
 const useFeatureDecisionMock = vi.hoisted(() => vi.fn((featureId: FeatureId, _scope?: unknown): FeatureDecision => ({
     featureId,
@@ -48,6 +50,11 @@ const pluginProjectionState = vi.hoisted(() => ({
     scopedInputs: [] as unknown[],
     stackProps: [] as Record<string, unknown>[],
 }));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ confirmResult: true }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: FeatureId, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
@@ -103,7 +110,8 @@ function buildLauncherState() {
 }
 
 describe('LocalServicesSurfaceHost', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await home.reset();
         useFeatureDecisionMock.mockImplementation((featureId: FeatureId): FeatureDecision => ({
             featureId,
             state: 'enabled',
@@ -131,9 +139,10 @@ describe('LocalServicesSurfaceHost', () => {
         resetLocalServiceLauncherStoreForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         resetLocalServiceInventoryStoreForTests();
         resetLocalServiceLauncherStoreForTests();
+        await home.reset();
     });
 
     it('renders the detected services pane and the Services-bound plugin stack under the testID prefix', async () => {
@@ -197,6 +206,126 @@ describe('LocalServicesSurfaceHost', () => {
         );
 
         expect(onOpenServiceInBrowser).toHaveBeenCalledExactlyOnceWith(openableTarget);
+    });
+
+    it('reviews Restart explicitly and binds exact Project controls to the initiating Home Account', async () => {
+        const serverId = await home.addHome({ name: 'Service Home', serverUrl: 'https://services-host.test', accountId: 'initiating-account', currentAccount: true });
+        const requests: Parameters<RuntimeActionExecute>[0][] = [];
+        const reviewEffect = vi.fn(async (_review: LocalServiceEffectReview) => true);
+        // The front-door Action executor is the transport boundary; the host, row model and row are real.
+        const runtimeActionExecute: RuntimeActionExecute = async request => {
+            requests.push(request);
+            const input = request.input as { requestId: string; action: string; expectedEffectDigest?: string };
+            return { v: 1, requestId: input.requestId, action: input.action,
+                status: request.actionId === 'localServices.actions.restartManaged' && !input.expectedEffectDigest ? 'denied' : 'succeeded',
+                ...(!input.expectedEffectDigest && request.actionId === 'localServices.actions.restartManaged' ? {
+                    reasonCode: 'project_service_effect_review_required', reviewedEffect: { command: 'current service' }, reviewedEffectDigest: 'reviewed-service-effect',
+                } : {}), auditEvents: [] };
+        };
+        const managed: LocalServiceLaunchTarget = {
+            id: 'project-service:jobs', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'owned-jobs' },
+            machineId: 'machine-a', workspaceId: 'accepted', cwd: '/repo',
+            workspace: { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'jobs' } },
+            title: 'jobs', confidence: 'high', state: 'available', serviceState: 'running', actions: ['manage'],
+        };
+        const props = { reviewEffect };
+        const screen = await renderScreen(
+            <LocalServicesSurfaceHost {...props}
+                machineId="machine-a"
+                serverId={serverId}
+                workspaceRoot="/repo"
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+                    v: 1, machineId: 'machine-a', updatedAt: 1, targets: [managed],
+                })}
+                runtimeActionExecute={runtimeActionExecute}
+                testID="surface-host-services"
+            />,
+        );
+        await flushHookEffects();
+        const menus = screen.findAllByType(ItemRowActions);
+        const actions = menus.flatMap((menu) => (menu.props as { actions: Array<{ id: string; onPress: () => void }> }).actions);
+        await act(async () => { actions.find((action) => action.id === 'restart')!.onPress(); });
+        await act(async () => { actions.find((action) => action.id === 'stop')!.onPress(); });
+        await flushHookEffects();
+        expect(requests.map((request) => request.actionId)).toEqual([
+            'localServices.actions.restartManaged', 'localServices.actions.restartManaged', 'localServices.actions.stopManaged',
+        ]);
+        expect(reviewEffect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: managed, reviewedEffectDigest: 'reviewed-service-effect' }));
+        expect(requests.every(request => Reflect.get(request.context ?? {}, 'expectedAccountId') === 'initiating-account')).toBe(true);
+        expect(requests[1]).toMatchObject({ input: { expectedEffectDigest: 'reviewed-service-effect' } });
+        expect(requests[2]).toMatchObject({ input: { action: 'stop_managed', target: {
+            kind: 'managed_service', managedServiceId: 'owned-jobs', machineId: 'machine-a', cwd: '/repo',
+            declaration: managed.declaration } } });
+    });
+
+    it('retires a held Project effect review when its exact Home Account changes', async () => {
+        const serverId = await home.addHome({ name: 'Service Home', serverUrl: 'https://services-review-retirement.test', accountId: 'initiating-account', currentAccount: true });
+        let acceptReview!: (accepted: boolean) => void;
+        const reviewEffect = vi.fn((_review: LocalServiceEffectReview) => new Promise<boolean>(resolve => { acceptReview = resolve; }));
+        const runtimeActionExecute = vi.fn<RuntimeActionExecute>(async request => ({ protocolVersion: 1, machineId: 'machine-a',
+            targetId: 'project-service:jobs', status: 'denied', reasonCode: 'project_service_effect_review_required',
+            reviewedEffect: { command: 'current service' }, reviewedEffectDigest: 'a'.repeat(64),
+            snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [] } }));
+        const target: LocalServiceLaunchTarget = { id: 'project-service:jobs', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'declared-jobs' }, machineId: 'machine-a',
+            title: 'jobs', confidence: 'high', state: 'available', actions: ['start'], cwd: '/repo',
+            workspace: { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'jobs' } } };
+        const props = { reviewEffect };
+        const screen = await renderScreen(<LocalServicesSurfaceHost {...props} serverId={serverId} machineId="machine-a" workspaceRoot="/repo"
+            inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+                v: 1, machineId: 'machine-a', updatedAt: 1, targets: [target],
+            })} runtimeActionExecute={runtimeActionExecute} testID="service-retirement" />);
+        await flushHookEffects();
+        act(() => { screen.pressByTestId('service-retirement-row:project-service:jobs-start'); });
+        await flushHookEffects();
+        expect(runtimeActionExecute).toHaveBeenCalledOnce();
+        expect(reviewEffect).toHaveBeenCalledOnce();
+        const signal = reviewEffect.mock.calls[0]![0].signal;
+        await act(async () => { await home.switchAccount(serverId, 'replacement-account'); });
+        await waitForHomeGovernance(() => expect(signal?.aborted).toBe(true));
+        await act(async () => { acceptReview(true); });
+        await flushHookEffects();
+        expect(runtimeActionExecute).toHaveBeenCalledOnce();
+    });
+
+    it('holds managed Stop until the mounted exact-Account Artifact reader observes the durable decision', async () => {
+        const serverId = await home.addHome({ name: 'Service Home', serverUrl: 'https://services-stop-approval.test', accountId: 'initiating-account', currentAccount: true });
+        await home.requireUiApproval(serverId, 'localServices.actions.stopManaged');
+        let artifactId: string | undefined;
+        const runtimeActionExecute: RuntimeActionExecute = async request => {
+            artifactId = await createUiApprovalRequest({ serverId, actionId: request.actionId,
+                actionInput: request.input, actionRequestId: 'mounted-service-stop' });
+            return { kind: 'approval_request_created', actionId: request.actionId, artifactId };
+        };
+        const target: LocalServiceLaunchTarget = { id: 'project-service:jobs', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'owned-jobs' }, machineId: 'machine-a',
+            title: 'jobs', confidence: 'high', state: 'available', serviceState: 'running', actions: ['manage'], cwd: '/repo',
+            workspace: { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'jobs' } } };
+        const screen = await renderScreen(<LocalServicesSurfaceHost serverId={serverId} machineId="machine-a" workspaceRoot="/repo"
+            inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+                v: 1, machineId: 'machine-a', updatedAt: 1, targets: [target],
+            })} runtimeActionExecute={runtimeActionExecute} testID="service-stop-approval" />);
+        await flushHookEffects();
+        const stop = screen.findAllByType(ItemRowActions).flatMap(menu =>
+            (menu.props as { actions: Array<{ id: string; onPress: () => void }> }).actions).find(action => action.id === 'stop');
+        await act(async () => { stop!.onPress(); });
+        await waitForHomeGovernance(() => expect(artifactId).toBeDefined());
+        await waitForHomeGovernance(() => expect(home.requests.some(request => request.path.startsWith(`/v1/artifacts/${artifactId}`))).toBe(true));
+        const isPending = () => screen.findAllByTestId('service-stop-approval-row:project-service:jobs-item').some(node => node.props.loading === true);
+        expect(isPending()).toBe(true);
+        const body = home.artifacts(serverId).readPlainBody(artifactId!);
+        expect(body && JSON.parse(body)).toMatchObject({ status: 'open', actionId: 'localServices.actions.stopManaged',
+            executionOriginV1: { accountId: 'initiating-account' }, actionArgs: { target: { managedServiceId: 'owned-jobs', declaration: target.declaration } } });
+        await expect(decideApprovalAsInbox(serverId, artifactId!, 'reject')).resolves.toMatchObject({ ok: true });
+        await flushHookEffects();
+        await waitForHomeGovernance(() => expect(isPending()).toBe(false));
+        expect(home.artifacts(serverId).readPlainBody(artifactId!) && JSON.parse(home.artifacts(serverId).readPlainBody(artifactId!)!)).toMatchObject({ status: 'rejected' });
+        // Rejecting approval must never pretend that the actual service stopped.
+        expect(screen.getTextContent()).toContain('Running');
     });
 
     it('does not render the open affordance when no onOpenServiceInBrowser callback is supplied', async () => {

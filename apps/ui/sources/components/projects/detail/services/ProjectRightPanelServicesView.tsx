@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices';
+import type { LocalServicesSurfaceHostProps } from '@/components/sessions/localServices/LocalServicesSurfaceHost';
+import { createProjectServicePlacementRenderer } from './ProjectServicePlacementControls';
 import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
 import type { RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
@@ -14,6 +16,8 @@ import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local
 export type ProjectRightPanelServicesViewProps = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
+    /** The SOURCE checkout's accepted ref: service placement is saved there, never on a worker copy. */
+    workspaceRefId?: string | null;
     workspaceRoot?: string | null;
     inventoryState?: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
@@ -21,10 +25,18 @@ export type ProjectRightPanelServicesViewProps = Readonly<{
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
     runtimeActionExecute?: RuntimeActionExecute;
+    reviewEffect?: LocalServicesSurfaceHostProps['reviewEffect'];
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
+    /** The Services page leads with its purpose; the rail keeps the pane chrome. Same body. */
+    presentation?: 'pane' | 'page';
+    testID?: string;
 }>;
 
 export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesViewProps = {}): React.ReactElement {
+    const renderServicePlacement = React.useMemo(() => createProjectServicePlacementRenderer(
+        props.serverId && props.machineId && props.workspaceRefId
+            ? { serverId: props.serverId, machineId: props.machineId, refId: props.workspaceRefId } : null,
+    ), [props.machineId, props.serverId, props.workspaceRefId]);
     return (
         <LocalServicesSurfaceHost
             machineId={props.machineId}
@@ -37,8 +49,11 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
             publicPreviewState={props.publicPreviewState}
             publicPreviewStatusClient={props.publicPreviewStatusClient}
             runtimeActionExecute={props.runtimeActionExecute}
+            reviewEffect={props.reviewEffect}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
-            testID="project-rightpanel-services"
+            presentation={props.presentation}
+            renderServicePlacement={renderServicePlacement}
+            testID={props.testID ?? 'project-rightpanel-services'}
         />
     );
 }

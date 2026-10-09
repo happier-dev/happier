@@ -2,12 +2,17 @@ import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+
 import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import type { MachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -42,6 +47,7 @@ import {
     ServiceRowView,
     type ServiceRowCopyUrlHandler,
     type ServiceRowForgetHandler,
+    type ServiceRowManagedControlHandler,
     type ServiceRowOpenHandler,
     type ServiceRowStartHandler,
     type ServiceRowTerminateHandler,
@@ -78,6 +84,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     scopeToggle: {
         marginHorizontal: 16,
         marginBottom: 8,
+    },
+    /** On the Services page the scope sits under the purpose at its own width, not across the column. */
+    scopeTogglePage: {
+        alignSelf: 'flex-start',
     },
     offlineLine: {
         marginTop: 4,
@@ -147,6 +157,7 @@ function buildHeaderLine(input: Readonly<{
 function ServicesScopeBar(props: Readonly<{
     scope: ServicesScope;
     onChangeScope: (scope: ServicesScope) => void;
+    page: boolean;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
@@ -155,7 +166,7 @@ function ServicesScopeBar(props: Readonly<{
         { id: 'machine' as const, label: t('localServices.scope.machine') },
     ]), []);
     return (
-        <View style={styles.scopeToggle}>
+        <View style={[styles.scopeToggle, props.page ? styles.scopeTogglePage : null]}>
             <SegmentedTabBar
                 tabs={tabs}
                 activeTabId={props.scope}
@@ -212,11 +223,22 @@ export function DetectedLocalServicesPane(props: Readonly<{
     scope?: ServicesScope;
     onChangeScope?: (scope: ServicesScope) => void;
     onStartLauncherTarget?: ServiceRowStartHandler;
+    onClearLauncherHistory?: () => Promise<unknown>;
     onTerminateDetectedService?: ServiceRowTerminateHandler;
     onForgetDetectedService?: ServiceRowForgetHandler;
+    onStopManagedService?: ServiceRowManagedControlHandler;
+    onRestartManagedService?: ServiceRowManagedControlHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     publicPreviewActions?: LocalServicePublicPreviewActions;
+    /**
+     * `page`: the Project Services page leads with its purpose in the reading column (lab s-services
+     * PAGE). `pane` (default): the rail and Session panel, whose header slot carries the live line.
+     * One body either way; only the chrome around it differs.
+     */
+    presentation?: 'pane' | 'page';
+    /** The placement owner's per-row "Runs on" control, hosted in the row's expansion (plan 32). */
+    renderServicePlacement?: (row: ServiceRow) => React.ReactNode;
     publicPreviewCapabilityDisabledReasons?: LocalServiceCapabilityDisabledReasons;
     /** The machine these services run on: its name for the header and sections, and whether it answers. */
     machine?: MachinePresenceSummary | null;
@@ -322,7 +344,12 @@ export function DetectedLocalServicesPane(props: Readonly<{
             onStartLauncherTarget={props.onStartLauncherTarget}
             onTerminateDetectedService={props.onTerminateDetectedService}
             onForgetDetectedService={props.onForgetDetectedService}
+            onStopManagedService={props.onStopManagedService}
+            onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
+            machineName={machineName}
+            offline={offline}
+            placement={props.renderServicePlacement?.(row)}
             publicPreviewState={props.publicPreviewState}
             publicPreviewActions={props.publicPreviewActions}
             publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
@@ -334,8 +361,13 @@ export function DetectedLocalServicesPane(props: Readonly<{
     ), [
         animationEnabled,
         expandedId,
+        machineName,
+        offline,
         props.onCopyServiceUrl,
         props.onForgetDetectedService,
+        props.onRestartManagedService,
+        props.onStopManagedService,
+        props.renderServicePlacement,
         props.onOpenServiceInBrowser,
         props.onStartLauncherTarget,
         props.onTerminateDetectedService,
@@ -344,6 +376,21 @@ export function DetectedLocalServicesPane(props: Readonly<{
         props.publicPreviewState,
         testID,
     ]);
+
+    const page = props.presentation === 'page';
+    const deviceType = useDeviceType();
+    const columnMaxWidth = useLayoutMaxWidth();
+    // The phone page is titled by its cockpit header and leads straight into the list (lab PAGEp).
+    const pageHeader = page && deviceType !== 'phone' ? (
+        <HappierPageHeader
+            title=""
+            showTitle={false}
+            columnMaxWidthPx={columnMaxWidth}
+            renderText={renderPageHeaderText}
+            description={t('localServices.pane.purpose')}
+            testID={`${testID}-header`}
+        />
+    ) : null;
 
     // What the person can see or do: rows that are neither running nor startable are not shown.
     const hasRows = sections.length > 0;
@@ -420,6 +467,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
             contentContainerStyle={styles.scrollContent}
         >
             <ConstrainedScreenContent>
+                {pageHeader}
                 {offline ? (
                     <View style={styles.offlineLine}>
                         <SurfaceFreshnessLine
@@ -435,6 +483,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                     <ServicesScopeBar
                         scope={scope}
                         onChangeScope={props.onChangeScope}
+                        page={page}
                         testID={`${testID}-scope-toggle`}
                     />
                 ) : null}
