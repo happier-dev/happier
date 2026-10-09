@@ -3,6 +3,11 @@ import { AIBackendProfileSchema } from '../../profiles/backendProfileSchema.js';
 import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
 import { LaunchProfileV2Schema } from '../../profiles/v2/schema.js';
 import { normalizeBackendTargetKeyV2Input } from '../../backends/targets/backendTargetRefV2.js';
+import { getBuiltInBackendProfile } from '../../profiles/builtInBackendProfiles.js';
+import { createProfileDuplicateDraftV1 } from '../../profiles/profileOperations.js';
+import { readAiLaunchProfileRecords } from '../../profiles/read.js';
+import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1 } from '../../profiles/v2/schema.js';
+import { DEFAULT_PROVIDER_SETTINGS_V1 } from '../settings/v1.js';
 
 import {
   confirmLegacyAiLaunchProfileMigrationV1,
@@ -36,6 +41,35 @@ function connectionCandidate(sourceProfileId: string, connectionId: string, secr
     removedEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
   };
 }
+
+it.each(['azure-openai', 'gemini-api-key', 'gemini-vertex'])('duplicates the actual %s preset only after the incumbent Provider translator produces current selection', id => {
+  const preset = getBuiltInBackendProfile(id);
+  if (!preset) throw new Error('Expected a current routing preset');
+  const source = ProfileRecordV1Schema.parse({ v: 1, id, definition: { kind: 'legacy', profile: preset },
+    enabled: false, promptStack: [], secretBindings: { MASKED: null } });
+  const before = readAiLaunchProfileRecords([source], { artifactsById: new Map(), recordRevisionsById: new Map([[id, 8]]) }).entries[0];
+  if (!before || before.kind === 'opaque') throw new Error('Expected the current preset source');
+  expect(createProfileDuplicateDraftV1({ profile: before.profile, sourceRow: { record: source, revision: 8 },
+    newProfileId: `${id}-copy`, name: 'Copy', now: 30 })).toMatchObject({ status: 'invalid', reason: 'legacy-creation-unsupported' });
+  const agentTargetKey = id === 'azure-openai' ? 'agent:codex' : 'agent:gemini';
+  const removed = [...new Set([...preset.environmentVariables.map(variable => variable.name),
+    ...preset.envVarRequirements.map(requirement => requirement.name)])].filter(name => LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1.has(name));
+  const result = migrateLegacyAiLaunchProfilesV1({ profiles: [preset] }, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, pendingCustomProfileIds: [], candidates: [{
+    kind: 'connection', sourceProfileId: id, connection: { v: 1, id: 'pc-converted',
+      source: { kind: 'contribution', contributionKey: id === 'azure-openai' ? 'happier.provider.openai/openai' : 'happier.provider.google/google' },
+      role: 'default', displayName: preset.name, displayNameMode: 'automatic', revision: 0, createdAt: 20, updatedAt: 20 },
+    selectedModel: { agentTargetKey, modelId: 'selected-model' }, removedEnvironmentVariableNames: removed,
+  }] }, { lastUsedProfile: null }, { profileRecordIds: [id], records: [{ record: source, revision: 8 }] });
+  if (!result.ok || !Array.isArray(result.settings.profiles)) throw new Error('Expected accepted Provider translation');
+  const converted = ProfileRecordV1Schema.parse({ ...source, definition: { kind: 'inline', profile: result.settings.profiles[0] } });
+  const after = readAiLaunchProfileRecords([converted], { artifactsById: new Map(), recordRevisionsById: new Map([[id, 9]]) }).entries[0];
+  if (!after || after.kind !== 'slim') throw new Error('Expected acknowledged current source');
+  const draft = createProfileDuplicateDraftV1({ profile: after.profile, sourceRow: { record: converted, revision: 9 },
+    newProfileId: `${id}-copy`, name: 'Copy', now: 30 });
+  expect(draft).toMatchObject({ status: 'draft', secretBindings: source.secretBindings, profile: { v: 2, enabled: false,
+    preferredModelSelection: { ref: { agentTargetKey: normalizeBackendTargetKeyV2Input(agentTargetKey), providerConnectionId: 'pc-converted', modelId: 'selected-model' } },
+    extraEnvironmentVariables: preset.environmentVariables.filter(variable => !removed.includes(variable.name)) } });
+});
 
 describe('migrateLegacyAiLaunchProfilesV1', () => {
   it('preserves an existing private long untrimmed legacy identity and predecessor environment counts after accepted Provider conversion', () => {
@@ -75,7 +109,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       routingEnvironmentVariableNames: [], manualModelIds: ['company-model'],
       selectedModel: { agentTargetKey: 'agent:claude', modelId: 'company-model' },
     });
-    const confirmation = { rawSettings: raw, sourceProfileId: id, reviewedMapping, authoringMemory: { lastUsedProfile: id },
+    const confirmation = { rawSettings: raw, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1, sourceProfileId: id, reviewedMapping, authoringMemory: { lastUsedProfile: id },
       recordContext: { profileRecordIds: [id], records: [{ record, revision: 4 }] } };
     const result = confirmLegacyAiLaunchProfileMigrationV1({ ...confirmation, migratedAt: 20,
       expectedSourceFingerprint: createLegacyProfileMigrationSourceFingerprintV1(confirmation) });
@@ -89,8 +123,9 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       codingPromptBehaviorOverrides: { sessionTitleUpdates: 'disabled' },
       preferredModelSelection: { ref: { providerConnectionId: 'pc-company' } }, createdAt: 1, updatedAt: 2 }],
       profileEnabledById: { [id]: false }, secretBindingsByProfileId: { [id]: { OTHER_TOKEN: 'private-secret' } },
-      promptStacksV1, unrelated: { keep: true },
-      providerSettingsV1: { migration: { completedSources: [{ sourceProfileId: id, kind: 'connection', connectionId: 'pc-company' }] } } });
+      promptStacksV1, unrelated: { keep: true } });
+    expect(result.providerSettings).toMatchObject({ connections: [{ id: 'pc-company' }] });
+    expect(result.providerSettings.migration).toBeUndefined();
     expect(result).not.toHaveProperty('lastUsedProfileClear');
     const convertedProfile = Array.isArray(result.settings.profiles) ? result.settings.profiles[0] : undefined;
     const convertedRecord = ProfileRecordV1Schema.parse({ ...record, definition: { kind: 'inline', profile: convertedProfile },
@@ -107,7 +142,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
     const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile],
       profileEnabledById: { deepseek: true }, favoriteProfiles: ['deepseek'],
       secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'secret-a', OTHER_TOKEN: 'secret-private' } },
-    }, { migratedAt: 20, candidates: [connectionCandidate('deepseek', 'pc-deepseek')], pendingCustomProfileIds: [] },
+    }, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, candidates: [connectionCandidate('deepseek', 'pc-deepseek')], pendingCustomProfileIds: [] },
     { lastUsedProfile: 'deepseek' }, { profileRecordIds: ['deepseek'] });
     expect(result).toMatchObject({ ok: true, settings: {
       profiles: [{ v: 2, id: 'deepseek', name: 'My routing profile', extraEnvironmentVariables: [],
@@ -124,7 +159,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       requiresMachineLoginTargetKey: 'agent:claude', createdAt: 1, updatedAt: 1 });
     const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile], profileEnabledById: { anthropic: true },
       secretBindingsByProfileId: { anthropic: { OTHER_TOKEN: 'secret-private' } },
-    }, { migratedAt: 20, candidates: [{ kind: 'default_environment', sourceProfileId: 'anthropic' }], pendingCustomProfileIds: [] },
+    }, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, candidates: [{ kind: 'default_environment', sourceProfileId: 'anthropic' }], pendingCustomProfileIds: [] },
     { lastUsedProfile: 'anthropic' }, { profileRecordIds: ['anthropic'] });
     expect(result).toMatchObject({ ok: true, settings: { profiles: [profile], profileEnabledById: { anthropic: true },
       secretBindingsByProfileId: { anthropic: { OTHER_TOKEN: 'secret-private' } } } });
@@ -138,11 +173,12 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       envVarRequirements: [{ name: 'DEEPSEEK_AUTH_TOKEN', kind: 'secret', required: true }], createdAt: 1, updatedAt: 1 });
     const result = migrateLegacyAiLaunchProfilesV1({ profiles: [profile], secretBindingsByProfileId: {
       company: { DEEPSEEK_AUTH_TOKEN: 'secret-a', OTHER_TOKEN: 'private-secret' } },
-    }, { migratedAt: 20, candidates: [connectionCandidate('company', 'pc-company')], pendingCustomProfileIds: [] },
+    }, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, candidates: [connectionCandidate('company', 'pc-company')], pendingCustomProfileIds: [] },
     { lastUsedProfile: 'company' }, { profileRecordIds: ['company'] });
     expect(result).toMatchObject({ ok: true, settings: { profiles: [{ id: 'company', authMode: 'machineLogin',
       requiresMachineLoginTargetKey: normalizeBackendTargetKeyV2Input('agent:claude'), environmentVariables: [{ name: 'TEAM_FLAG', value: 'public' }], envVarRequirements: [] }],
-      secretBindingsByProfileId: { company: { OTHER_TOKEN: 'private-secret' } }, providerSettingsV1: { connections: [{ id: 'pc-company' }] } } });
+      secretBindingsByProfileId: { company: { OTHER_TOKEN: 'private-secret' } } } });
+    expect(result.ok && result.providerSettings).toMatchObject({ connections: [{ id: 'pc-company' }] });
     expect(result).not.toHaveProperty('lastUsedProfileClear');
   });
 
@@ -186,12 +222,12 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
     };
     const context = { migratedAt: 20, candidates: [connectionCandidate('deepseek', 'pc-deepseek')], pendingCustomProfileIds: [] };
     const memory = { lastUsedProfile: 'deepseek' };
-    const result = migrateLegacyAiLaunchProfilesV1(raw, context, memory);
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, context, memory);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected migration');
     expect(result.settings).not.toHaveProperty('lastUsedProfile');
     expect(result.lastUsedProfileClear).toEqual({ base: 'deepseek', proposed: null });
-    const repeated = migrateLegacyAiLaunchProfilesV1(result.settings, { ...context, candidates: [] }, memory);
+    const repeated = migrateLegacyAiLaunchProfilesV1(result.settings, result.providerSettings, { ...context, candidates: [] }, memory);
     expect(repeated).toMatchObject({ ok: true, changed: false, lastUsedProfileClear: { base: 'deepseek', proposed: null } });
   });
 
@@ -206,7 +242,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       favoriteProfiles: ['deepseek'],
       profileEnabledById: { deepseek: true },
     };
-    const result = migrateLegacyAiLaunchProfilesV1(raw, {
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [connectionCandidate('deepseek', 'pc-deepseek')],
       pendingCustomProfileIds: [],
@@ -217,13 +253,11 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       schemaVersion: 7,
       unknown: { preserve: true },
       savedSecrets: [{ id: 'secret-a', opaque: true }],
-      providerSettingsV1: {
-        connections: [{ id: 'pc-deepseek' }],
-        secretBindingsByConnectionId: { 'pc-deepseek': { account: { apiKey: 'secret-a' } } },
-      },
       lastUsedProfile: 'deepseek',
       favoriteProfiles: [],
     });
+    expect(result.providerSettings).toMatchObject({ connections: [{ id: 'pc-deepseek' }],
+      secretBindingsByConnectionId: { 'pc-deepseek': { account: { apiKey: 'secret-a' } } } });
     const settings = result.settings as Record<string, unknown>;
     expect((settings.profiles as Array<Record<string, unknown>>)[0]).toMatchObject({ v: 2, id: 'deepseek' });
     expect(settings.secretBindingsByProfileId).toEqual({});
@@ -235,7 +269,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       },
       addedAtMs: 20,
     }]);
-    expect((settings.providerSettingsV1 as any).defaultsByAgentTargetKey).toEqual({});
+    expect(result.providerSettings.defaultsByAgentTargetKey).toEqual({});
   });
 
   it('records explicit disabled intent terminally and leaves no-evidence sources untouched', () => {
@@ -244,24 +278,24 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       profiles: [{ id: 'deepseek', name: 'DeepSeek', environmentVariables: [], createdAt: 1, updatedAt: 1 }],
       profileEnabledById: { deepseek: false },
       favoriteProfiles: ['deepseek'],
-    }, {
+    }, DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{ kind: 'skipped_disabled', sourceProfileId: 'deepseek' }],
       pendingCustomProfileIds: [],
     }, { lastUsedProfile: null });
     expect(disabled.ok).toBe(true);
     if (!disabled.ok) throw new Error('expected disabled migration');
-    expect((disabled.settings.providerSettingsV1 as any).migration.completedSources).toContainEqual({
+    expect(disabled.providerSettings.migration?.completedSources).toContainEqual({
       sourceProfileId: 'deepseek', kind: 'skipped_disabled',
     });
-    expect((disabled.settings.providerSettingsV1 as any).connections).toEqual([]);
+    expect(disabled.providerSettings.connections).toEqual([]);
     expect((disabled.settings.profiles as any[])[0].id).toBe('deepseek');
     expect(disabled.settings.favoriteProfiles).toEqual(['deepseek']);
 
     const noEvidence = migrateLegacyAiLaunchProfilesV1({
       schemaVersion: 7,
       profiles: [{ id: 'deepseek', name: 'DeepSeek', environmentVariables: [], createdAt: 1, updatedAt: 1 }],
-    }, { migratedAt: 20, candidates: [], pendingCustomProfileIds: [] }, { lastUsedProfile: null });
+    }, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, candidates: [], pendingCustomProfileIds: [] }, { lastUsedProfile: null });
     expect(noEvidence.ok).toBe(true);
     if (!noEvidence.ok) throw new Error('expected no-op migration');
     expect(noEvidence.changed).toBe(false);
@@ -276,7 +310,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       [connectionCandidate('deepseek-a', 'pc-a', 'secret-a'), connectionCandidate('deepseek-b', 'pc-b', 'secret-b')],
       [connectionCandidate('deepseek-b', 'pc-b', 'secret-b'), connectionCandidate('deepseek-a', 'pc-a', 'secret-a')],
     ]) {
-      const result = migrateLegacyAiLaunchProfilesV1({ schemaVersion: 7 }, {
+      const result = migrateLegacyAiLaunchProfilesV1({ schemaVersion: 7 }, DEFAULT_PROVIDER_SETTINGS_V1, {
         migratedAt: 20,
         candidates,
         pendingCustomProfileIds: [],
@@ -298,8 +332,8 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       connectedServiceProfileId: 'service-profile',
       secretBindingsByProfileId: { 'azure-openai': { AZURE_OPENAI_API_KEY: 'azure-secret' } },
     };
-    const result = migrateLegacyAiLaunchProfilesV1(raw, { migratedAt: 20, candidates: [], pendingCustomProfileIds: [] }, { lastUsedProfile: null });
-    expect(result).toEqual({ ok: true, changed: false, settings: raw, outcomes: [] });
+    const result = migrateLegacyAiLaunchProfilesV1(raw, DEFAULT_PROVIDER_SETTINGS_V1, { migratedAt: 20, candidates: [], pendingCustomProfileIds: [] }, { lastUsedProfile: null });
+    expect(result).toEqual({ ok: true, changed: false, settings: raw, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1, outcomes: [] });
   });
 
   it('binds guided custom confirmation to the exact profile, secret binding, evidence, and reviewed mapping', () => {
@@ -375,7 +409,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
     expect(LegacyProfileReviewedMappingV1Schema.safeParse(mismatchedCredentialStyle).success).toBe(false);
     const changedBinding = structuredClone(raw);
     changedBinding.secretBindingsByProfileId.company.COMPANY_API_KEY = 'secret-b';
-    expect(confirmLegacyAiLaunchProfileMigrationV1({ authoringMemory: { lastUsedProfile: 'company' },
+    expect(confirmLegacyAiLaunchProfileMigrationV1({ providerSettings: DEFAULT_PROVIDER_SETTINGS_V1, authoringMemory: { lastUsedProfile: 'company' },
       rawSettings: changedBinding,
       sourceProfileId: 'company', expectedSourceFingerprint: fingerprint, reviewedMapping, migratedAt: 20,
     })).toMatchObject({ ok: false, changed: false, reason: 'legacy_profile_source_changed' });
@@ -385,23 +419,18 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
     const malformedFingerprint = createLegacyProfileMigrationSourceFingerprintV1({ authoringMemory: { lastUsedProfile: null },
       rawSettings: malformedBinding, sourceProfileId: 'company', reviewedMapping,
     });
-    expect(confirmLegacyAiLaunchProfileMigrationV1({ authoringMemory: { lastUsedProfile: null },
+    expect(confirmLegacyAiLaunchProfileMigrationV1({ providerSettings: DEFAULT_PROVIDER_SETTINGS_V1, authoringMemory: { lastUsedProfile: null },
       rawSettings: malformedBinding,
       sourceProfileId: 'company', expectedSourceFingerprint: malformedFingerprint, reviewedMapping, migratedAt: 20,
     })).toMatchObject({ ok: false, changed: false, reason: 'legacy_profile_source_changed' });
 
-    const confirmed = confirmLegacyAiLaunchProfileMigrationV1({ authoringMemory: { lastUsedProfile: 'company' },
+    const confirmed = confirmLegacyAiLaunchProfileMigrationV1({ providerSettings: DEFAULT_PROVIDER_SETTINGS_V1, authoringMemory: { lastUsedProfile: 'company' },
       rawSettings: raw,
       sourceProfileId: 'company', expectedSourceFingerprint: fingerprint, reviewedMapping, migratedAt: 20,
     });
     expect(confirmed.ok).toBe(true);
     if (!confirmed.ok) throw new Error('expected confirmed migration');
     expect(confirmed.settings).toMatchObject({
-      providerSettingsV1: {
-        connections: [{ id: 'pc-company' }],
-        secretBindingsByConnectionId: { 'pc-company': { account: { apiKey: 'secret-a' } } },
-        manualModelsByConnectionId: { 'pc-company': [{ id: 'company-model' }] },
-      },
       profiles: [{
         v: 2,
         id: 'company',
@@ -410,6 +439,9 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       }],
       secretBindingsByProfileId: { company: { RETAINED_TOKEN: 'secret-retained' } },
     });
+    expect(confirmed.providerSettings).toMatchObject({ connections: [{ id: 'pc-company' }],
+      secretBindingsByConnectionId: { 'pc-company': { account: { apiKey: 'secret-a' } } },
+      manualModelsByConnectionId: { 'pc-company': [{ id: 'company-model' }] } });
   });
 
   it('preserves every auxiliary environment row for deterministic built-ins while removing routing/auth/primary-model ownership', () => {
@@ -470,7 +502,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       const base = connectionCandidate(fixture.id, `pc-${fixture.id}`);
       const result = migrateLegacyAiLaunchProfilesV1({
         schemaVersion: 7, profiles: [profile], lastUsedProfile: fixture.id,
-      }, {
+      }, DEFAULT_PROVIDER_SETTINGS_V1, {
         migratedAt: 20,
         candidates: [{
           ...base,
@@ -504,7 +536,7 @@ describe('migrateLegacyAiLaunchProfilesV1', () => {
       secretBindingsByProfileId,
       profileEnabledById,
       lastUsedProfile: 'anthropic',
-    }, {
+    }, DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{ kind: 'default_environment', sourceProfileId: 'anthropic' }],
       pendingCustomProfileIds: [],

@@ -7,14 +7,15 @@ import {
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderSettingsLimitError,
   ProviderSettingsMigrationPendingConflictV1Schema,
+  ProviderMigrationSourceProfileIdSchema,
   ProviderSettingsV1Schema,
   assertProviderSettingsV1WithinLimits,
-  parseProviderSettingsV1Narrow,
   type ProviderSettingsMigrationSourceOutcomeV1,
 } from '../settings/v1.js';
-import { classifyProviderSettingsSubtreeV1 } from '../settings/classifySubtreeV1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
-import { LaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
+import { composeProviderSettingsV1, splitProviderSettingsV1 } from '../connections/connectionRowsV1.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { StoredLaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
 import { ProviderAgentTargetKeySchema, ProviderModelIdSchema } from '../ids.js';
 import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import {
@@ -62,24 +63,26 @@ export type ProviderAccountSettingsMigrationContextV1 = Readonly<{
   candidates: readonly ProviderAccountSettingsMigrationCandidateV1[];
   pendingCustomProfileIds: readonly string[];
   pendingConflicts?: readonly ProviderSettingsMigrationPendingConflictV1[];
+  /** A complete census of genuine Profile inputs which can still recreate a Provider. */
+  retainedSourceProfileIds?: readonly string[];
 }>;
 
 export type ProviderAccountSettingsMigrationResultV1 =
   | Readonly<{
       ok: true;
       changed: boolean;
-      settings: Record<string, unknown>;
+      providerSettings: ProviderSettingsV1;
       outcomes: readonly ProviderSettingsMigrationSourceOutcomeV1[];
     }>
   | Readonly<{
       ok: false;
       changed: false;
-      settings: unknown;
+      providerSettings: ProviderSettingsV1;
       reason: 'account_settings_invalid' | 'provider_settings_future' | 'provider_settings_malformed' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'migration_context_invalid' | 'migration_conflict';
     }>;
 
 function isCanonicalSourceProfileId(value: string): boolean {
-  return value.length > 0 && value.length <= 256 && value === value.trim() && !/[\u0000-\u001f\u007f]/u.test(value);
+  return ProviderMigrationSourceProfileIdSchema.safeParse(value).success;
 }
 
 function mergeSecretBindings(
@@ -144,34 +147,29 @@ function hasSameBackendTargetIdentity(left: string, right: string): boolean {
 }
 
 export function migrateProviderAccountSettingsV1(
-  raw: unknown,
+  providerSettings: ProviderSettingsV1,
   context: ProviderAccountSettingsMigrationContextV1,
 ): ProviderAccountSettingsMigrationResultV1 {
-  const classification = classifyProviderSettingsSubtreeV1(raw);
-  if (classification.kind === 'future') {
-    return { ok: false, changed: false, settings: raw, reason: 'provider_settings_future' };
+  if (isRecord(providerSettings) && typeof providerSettings.v === 'number' && providerSettings.v > 1) {
+    return { ok: false, changed: false, providerSettings, reason: 'provider_settings_future' };
   }
-  if (classification.kind === 'malformed') {
-    return {
-      ok: false,
-      changed: false,
-      settings: raw,
-      reason: isRecord(raw) ? 'provider_settings_malformed' : 'account_settings_invalid',
-    };
+  let parsedProviderSettings: ProviderSettingsV1;
+  try {
+    const { catalog, defaults } = splitProviderSettingsV1(providerSettings);
+    parsedProviderSettings = composeProviderSettingsV1(catalog, defaults);
+  } catch {
+    return { ok: false, changed: false, providerSettings, reason: 'provider_settings_malformed' };
   }
-  if (!isRecord(raw) || !Number.isFinite(context.migratedAt) || context.migratedAt < 0) {
-    return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+  if (!Number.isFinite(context.migratedAt) || context.migratedAt < 0
+    || context.retainedSourceProfileIds?.some(id => !isCanonicalSourceProfileId(id))) {
+    return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
   }
-
-  const parsedProviderSettings = classification.kind === 'current'
-    ? parseProviderSettingsV1Narrow(classification.settings).settings
-    : DEFAULT_PROVIDER_SETTINGS_V1;
 
   const sourceProfileIds = new Set<string>();
   const candidates: ProviderAccountSettingsMigrationCandidateV1[] = [];
   for (const candidate of context.candidates) {
     if (!isCanonicalSourceProfileId(candidate.sourceProfileId) || sourceProfileIds.has(candidate.sourceProfileId)) {
-      return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+      return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
     }
     sourceProfileIds.add(candidate.sourceProfileId);
     if (candidate.kind === 'default_environment' || candidate.kind === 'skipped_disabled') {
@@ -186,12 +184,12 @@ export function migrateProviderAccountSettingsV1(
       || candidate.movedSecretBindingEnvironmentVariableNames?.some(
         (name) => !candidate.removedEnvironmentVariableNames?.includes(name)) === true
       || (candidate.retainedLaunchProfile !== undefined
-        && !LaunchProfileV2Schema.safeParse(candidate.retainedLaunchProfile).success)
+        && !StoredLaunchProfileV2Schema.safeParse(candidate.retainedLaunchProfile).success)
       || (candidate.selectedModel !== undefined && (!ProviderAgentTargetKeySchema.safeParse(candidate.selectedModel.agentTargetKey).success
         || !ProviderModelIdSchema.safeParse(candidate.selectedModel.modelId).success))
       || (candidate.sourceRevision !== undefined && (!Number.isSafeInteger(candidate.sourceRevision) || candidate.sourceRevision < 1))
       || (candidate.selectedModelOrigin !== undefined && candidate.selectedModel === undefined)) {
-      return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+      return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
     }
     const normalizedConnection: ProviderConnectionV1 = connection.data.source.kind === 'contribution'
       ? {
@@ -216,7 +214,7 @@ export function migrateProviderAccountSettingsV1(
         : {},
     });
     if (!normalizedCandidate.success) {
-      return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+      return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
     }
     candidates.push({
       ...candidate,
@@ -232,7 +230,7 @@ export function migrateProviderAccountSettingsV1(
   }
   if (context.pendingCustomProfileIds.some((id) => !isCanonicalSourceProfileId(id))
     || new Set(context.pendingCustomProfileIds).size !== context.pendingCustomProfileIds.length) {
-    return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+    return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
   }
   const pendingConflictInputs = context.pendingConflicts ?? [];
   const parsedPendingConflicts = pendingConflictInputs
@@ -240,7 +238,7 @@ export function migrateProviderAccountSettingsV1(
   if (parsedPendingConflicts.some((entry) => !entry.success)
     || new Set(pendingConflictInputs.map((entry) => entry.sourceProfileId)).size !== pendingConflictInputs.length
     || pendingConflictInputs.some((entry) => sourceProfileIds.has(entry.sourceProfileId))) {
-    return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+    return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
   }
   const pendingConflicts = parsedPendingConflicts.flatMap((entry) => entry.success ? [{
       ...entry.data,
@@ -256,9 +254,7 @@ export function migrateProviderAccountSettingsV1(
   const outcomesBySourceProfileId = new Map(
     completedSources.map((outcome) => [outcome.sourceProfileId, outcome] as const),
   );
-  let changed = classification.kind === 'absent'
-    || (classification.kind === 'current'
-      && JSON.stringify(parsedProviderSettings) !== JSON.stringify(classification.settings));
+  let changed = JSON.stringify(parsedProviderSettings) !== JSON.stringify(providerSettings);
 
   for (const candidate of candidates) {
     const completed = outcomesBySourceProfileId.get(candidate.sourceProfileId);
@@ -309,7 +305,7 @@ export function migrateProviderAccountSettingsV1(
     if (!winner) {
       if (connections.some((connection) => connection.id === selected.id)
         || current.connectionTombstones.some((tombstone) => tombstone.id === selected.id)) {
-        return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+        return { ok: false, changed: false, providerSettings, reason: 'migration_context_invalid' };
       }
       connections.push(selected);
     }
@@ -332,7 +328,7 @@ export function migrateProviderAccountSettingsV1(
 
     const currentBindings = readOwnRecordValue(secretBindingsByConnectionId, selected.id);
     if (hasSecretBindingConflict(currentBindings, candidate.secretBindings)) {
-      return { ok: false, changed: false, settings: raw, reason: 'migration_conflict' };
+      return { ok: false, changed: false, providerSettings, reason: 'migration_conflict' };
     }
     const mergedBindings = mergeSecretBindings(currentBindings, candidate.secretBindings);
     if (mergedBindings) secretBindingsByConnectionId[selected.id] = mergedBindings;
@@ -342,7 +338,7 @@ export function migrateProviderAccountSettingsV1(
     for (const model of candidate.manualModels ?? []) {
       const existing = modelsById.get(model.id);
       if (existing && !hasEquivalentManualModelFacts(existing, model)) {
-        return { ok: false, changed: false, settings: raw, reason: 'migration_conflict' };
+        return { ok: false, changed: false, providerSettings, reason: 'migration_conflict' };
       }
       if (!existing) modelsById.set(model.id, model);
     }
@@ -361,7 +357,7 @@ export function migrateProviderAccountSettingsV1(
     ...context.pendingCustomProfileIds,
   ])].filter((id) => !outcomesBySourceProfileId.has(id)).sort();
   const pendingConflictBySource = new Map(
-    (context.pendingConflicts === undefined ? current.migration?.pendingConflicts ?? [] : [])
+    (current.migration?.pendingConflicts ?? [])
       .map((entry) => [entry.sourceProfileId, entry] as const),
   );
   for (const conflict of pendingConflicts) pendingConflictBySource.set(conflict.sourceProfileId, conflict);
@@ -379,19 +375,25 @@ export function migrateProviderAccountSettingsV1(
 
   let nextProviderSettings: ProviderSettingsV1;
   try {
-    nextProviderSettings = assertProviderSettingsV1WithinLimits({
+    const validated = assertProviderSettingsV1WithinLimits({
       ...current,
       connections,
       accountGrants,
       secretBindingsByConnectionId,
       manualModelsByConnectionId,
       migration,
+      defaultsByAgentTargetKey: {},
     });
+    nextProviderSettings = composeProviderSettingsV1(splitProviderSettingsV1(validated).catalog, current.defaultsByAgentTargetKey);
+    if (context.retainedSourceProfileIds !== undefined) {
+      nextProviderSettings = reconcileProviderMigrationSourcesV1(nextProviderSettings, context.retainedSourceProfileIds);
+    }
+    changed = !sameStrictJsonValue(nextProviderSettings, providerSettings);
   } catch (error) {
     return {
       ok: false,
       changed: false,
-      settings: raw,
+      providerSettings,
       reason: error instanceof ProviderSettingsLimitError
         ? 'provider_settings_limit_exceeded'
         : 'provider_settings_invalid',
@@ -400,15 +402,32 @@ export function migrateProviderAccountSettingsV1(
   const outcomes = [...outcomesBySourceProfileId.values()]
     .sort((a, b) => compareProviderCanonicalStringsV1(a.sourceProfileId, b.sourceProfileId));
   if (!changed) {
-    return { ok: true, changed: false, settings: raw, outcomes };
+    return { ok: true, changed: false, providerSettings, outcomes };
   }
   return {
     ok: true,
     changed: true,
-    settings: {
-      ...raw,
-      providerSettingsV1: nextProviderSettings,
-    },
+    providerSettings: nextProviderSettings,
     outcomes,
+  };
+}
+
+/** Remove recreation guards only after the source owner proves the complete retained-source census. */
+export function reconcileProviderMigrationSourcesV1(
+  settings: ProviderSettingsV1,
+  retainedSourceProfileIds: readonly string[],
+): ProviderSettingsV1 {
+  const retained = new Set(retainedSourceProfileIds);
+  const completedSources = settings.migration?.completedSources.filter(source => retained.has(source.sourceProfileId)) ?? [];
+  const guardedConnections = new Set(completedSources.flatMap(source => source.kind === 'connection' ? [source.connectionId] : []));
+  const pendingCustomProfileIds = settings.migration?.pendingCustomProfileIds.filter(id => retained.has(id)) ?? [];
+  const pendingConflicts = settings.migration?.pendingConflicts ?? [];
+  const { migration: previousMigration, ...base } = settings;
+  return {
+    ...base,
+    connectionTombstones: settings.connectionTombstones.filter(tombstone => guardedConnections.has(tombstone.id)),
+    ...(completedSources.length + pendingCustomProfileIds.length + pendingConflicts.length > 0 ? {
+      migration: { ...previousMigration, v: 1 as const, completedSources, pendingCustomProfileIds, pendingConflicts },
+    } : {}),
   };
 }

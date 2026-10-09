@@ -5,7 +5,7 @@ import {
   migrateProviderAccountSettingsV1,
 } from './accountSettingsV1.js';
 import { deleteProviderConnectionV1 } from '../settings/operationsV1.js';
-import { ProviderSettingsV1Schema } from '../settings/v1.js';
+import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema } from '../settings/v1.js';
 
 function candidate(connectionId: string) {
   return {
@@ -34,6 +34,40 @@ function candidate(connectionId: string) {
 }
 
 describe('provider account-settings migration', () => {
+  it('migrates an opened Provider catalog without creating a Settings entity root', () => {
+    const basis = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{ ...candidate('pc-existing').connection, role: 'named', displayNameMode: 'custom' }],
+      secretBindingsByConnectionId: { 'pc-existing': { byMachineId: { machine: { apiKey: 'existing-key' } } } },
+    });
+    const result = migrateProviderAccountSettingsV1(basis, {
+      migratedAt: 20, candidates: [candidate('pc-new')], pendingCustomProfileIds: [],
+    });
+    expect(result).toMatchObject({ ok: true, providerSettings: {
+      connections: [{ id: 'pc-existing' }, { id: 'pc-new' }],
+      secretBindingsByConnectionId: {
+        'pc-existing': { byMachineId: { machine: { apiKey: 'existing-key' } } },
+        'pc-new': { account: { apiKey: 'saved-secret-id-unchanged' } },
+      },
+    } });
+    expect(result).not.toHaveProperty('settings.providerSettingsV1');
+  });
+  it('contracts obsolete source completion and semantic tombstones while preserving unresolved conflicts', () => {
+    const pending = { v: 1 as const, sourceProfileId: 'unresolved', contributionKey: 'happier.deepseek/deepseek',
+      existingConnectionId: null, kinds: ['credential_binding' as const], modelChoices: [],
+      candidateFingerprint: 'legacy-profile-migration-conflict:v1:unresolved', detectedAt: 1 };
+    const basis = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connectionTombstones: [{ v: 1, id: 'pc-deleted', contributionKey: 'happier.deepseek/deepseek',
+        lastDisplayName: 'Deleted', deletedAt: 10 }],
+      migration: { v: 1, completedSources: [{ sourceProfileId: 'gone', kind: 'connection', connectionId: 'pc-deleted' }],
+        pendingCustomProfileIds: [], pendingConflicts: [pending], migratedAt: 10 },
+    });
+    const result = migrateProviderAccountSettingsV1(basis, {
+      migratedAt: 20, candidates: [], pendingCustomProfileIds: [], retainedSourceProfileIds: [],
+    });
+    expect(result).toMatchObject({ ok: true, providerSettings: {
+      connectionTombstones: [], migration: { completedSources: [], pendingConflicts: [pending] },
+    } });
+  });
   it('classifies only the provider subtree and never mistakes outer v6/v7 for provider versions', () => {
     expect(classifyProviderSettingsSubtreeV1({ schemaVersion: 6 })).toEqual({ kind: 'absent' });
     expect(classifyProviderSettingsSubtreeV1({ schemaVersion: 7 })).toEqual({ kind: 'absent' });
@@ -43,8 +77,8 @@ describe('provider account-settings migration', () => {
     expect(classifyProviderSettingsSubtreeV1({ providerSettingsV1: 'invalid' })).toEqual({ kind: 'malformed' });
   });
 
-  it('preserves unknown account keys and SavedSecret ids while migrating one preallocated candidate', () => {
-    const raw = { schemaVersion: 7, unknownFutureKey: { preserve: true }, savedSecrets: [{ id: 'saved-secret-id-unchanged' }] };
+  it('preserves SavedSecret ids while migrating one preallocated candidate into the domain projection', () => {
+    const raw = DEFAULT_PROVIDER_SETTINGS_V1;
     const result = migrateProviderAccountSettingsV1(raw, {
       migratedAt: 20,
       candidates: [candidate('pc_allocated_once')],
@@ -52,26 +86,21 @@ describe('provider account-settings migration', () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected migration success');
-    expect(result.settings).toMatchObject({
-      schemaVersion: 7,
-      unknownFutureKey: { preserve: true },
-      savedSecrets: [{ id: 'saved-secret-id-unchanged' }],
-      providerSettingsV1: {
+    expect(result.providerSettings).toMatchObject({
         connections: [{ id: 'pc_allocated_once' }],
         secretBindingsByConnectionId: { pc_allocated_once: { account: { apiKey: 'saved-secret-id-unchanged' } } },
         migration: {
           completedSources: [{ sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_allocated_once' }],
           pendingCustomProfileIds: ['company-gateway'], migratedAt: 20,
         },
-      },
     });
     expect(result.outcomes).toEqual([
       { sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_allocated_once' },
     ]);
-    expect((result.settings.providerSettingsV1 as { connections: Array<{ source: { contributionKey: string } }> })
+    expect((result.providerSettings as { connections: Array<{ source: { contributionKey: string } }> })
       .connections[0]?.source.contributionKey).toBe('happier.deepseek/deepseek');
 
-    const repeated = migrateProviderAccountSettingsV1(result.settings, {
+    const repeated = migrateProviderAccountSettingsV1(result.providerSettings, {
       migratedAt: 999,
       candidates: [candidate('pc_allocated_once')],
       pendingCustomProfileIds: ['company-gateway'],
@@ -80,18 +109,18 @@ describe('provider account-settings migration', () => {
   });
 
   it('converges a losing CAS retry on the winning default connection without duplicating identity', () => {
-    const first = migrateProviderAccountSettingsV1({ schemaVersion: 6 }, {
+    const first = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: [candidate('pc_client_a')], pendingCustomProfileIds: [],
     });
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error('expected first migration success');
 
-    const retry = migrateProviderAccountSettingsV1(first.settings, {
+    const retry = migrateProviderAccountSettingsV1(first.providerSettings, {
       migratedAt: 21, candidates: [candidate('pc_client_b')], pendingCustomProfileIds: [],
     });
     expect(retry.ok).toBe(true);
     if (!retry.ok) throw new Error('expected retry success');
-    expect((retry.settings.providerSettingsV1 as any).connections.map((entry: any) => entry.id)).toEqual(['pc_client_a']);
+    expect((retry.providerSettings as any).connections.map((entry: any) => entry.id)).toEqual(['pc_client_a']);
     expect(retry.outcomes).toEqual([
       { sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_client_a' },
     ]);
@@ -99,7 +128,7 @@ describe('provider account-settings migration', () => {
   });
 
   it('repairs an already-completed current-Dev model target without replacing connection or secret identity', () => {
-    const legacy = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const legacy = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{
         ...candidate('pc_existing'),
@@ -110,7 +139,7 @@ describe('provider account-settings migration', () => {
     expect(legacy.ok).toBe(true);
     if (!legacy.ok) throw new Error('expected legacy Provider migration');
 
-    const repaired = migrateProviderAccountSettingsV1(legacy.settings, {
+    const repaired = migrateProviderAccountSettingsV1(legacy.providerSettings, {
       migratedAt: 30,
       candidates: [{
         ...candidate('pc_must_not_replace'),
@@ -121,9 +150,9 @@ describe('provider account-settings migration', () => {
     expect(repaired.ok).toBe(true);
     if (!repaired.ok) throw new Error('expected Provider migration repair');
     expect(repaired.changed).toBe(true);
-    expect((repaired.settings.providerSettingsV1 as any).connections.map((entry: any) => entry.id))
+    expect((repaired.providerSettings as any).connections.map((entry: any) => entry.id))
       .toEqual(['pc_existing']);
-    expect((repaired.settings.providerSettingsV1 as any).secretBindingsByConnectionId).toEqual({
+    expect((repaired.providerSettings as any).secretBindingsByConnectionId).toEqual({
       pc_existing: { account: { apiKey: 'saved-secret-id-unchanged' } },
     });
     expect(repaired.outcomes).toContainEqual({
@@ -139,14 +168,14 @@ describe('provider account-settings migration', () => {
   });
 
   it('never retargets a losing candidate grant onto a concurrently-created winner', () => {
-    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const winner = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{ ...candidate('pc_winner'), accountGrant: undefined }],
       pendingCustomProfileIds: [],
     });
     expect(winner.ok).toBe(true);
     if (!winner.ok) throw new Error('expected winner');
-    const retried = migrateProviderAccountSettingsV1(winner.settings, {
+    const retried = migrateProviderAccountSettingsV1(winner.providerSettings, {
       migratedAt: 21,
       candidates: [{
         ...candidate('pc_loser'),
@@ -162,16 +191,16 @@ describe('provider account-settings migration', () => {
     });
     expect(retried.ok).toBe(true);
     if (!retried.ok) throw new Error('expected retry');
-    expect((retried.settings.providerSettingsV1 as any).accountGrants).toEqual([]);
+    expect((retried.providerSettings as any).accountGrants).toEqual([]);
   });
 
   it('refuses a conflicting secret binding instead of making candidate order the credential owner', () => {
-    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const winner = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: [candidate('pc_winner')], pendingCustomProfileIds: [],
     });
     expect(winner.ok).toBe(true);
     if (!winner.ok) throw new Error('expected winner');
-    const conflict = migrateProviderAccountSettingsV1(winner.settings, {
+    const conflict = migrateProviderAccountSettingsV1(winner.providerSettings, {
       migratedAt: 21,
       candidates: [{
         ...candidate('pc_loser'),
@@ -184,12 +213,12 @@ describe('provider account-settings migration', () => {
   });
 
   it('reuses an existing equivalent manual model without treating its provenance timestamp as conflicting model data', () => {
-    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const winner = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: [candidate('pc_winner')], pendingCustomProfileIds: [],
     });
     expect(winner.ok).toBe(true);
     if (!winner.ok) throw new Error('expected winner');
-    const reused = migrateProviderAccountSettingsV1(winner.settings, {
+    const reused = migrateProviderAccountSettingsV1(winner.providerSettings, {
       migratedAt: 21,
       candidates: [{
         ...candidate('pc_loser'),
@@ -200,7 +229,7 @@ describe('provider account-settings migration', () => {
     });
     expect(reused.ok).toBe(true);
     if (!reused.ok) throw new Error('expected equivalent model reuse');
-    expect((reused.settings.providerSettingsV1 as any).manualModelsByConnectionId.pc_winner)
+    expect((reused.providerSettings as any).manualModelsByConnectionId.pc_winner)
       .toEqual([{ id: 'deepseek-chat', addedAt: 10 }]);
   });
 
@@ -224,24 +253,24 @@ describe('provider account-settings migration', () => {
         role: 'named', displayName: 'Company Gateway', displayNameMode: 'custom', revision: 0, createdAt: 10, updatedAt: 10,
       },
     } as const);
-    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const winner = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: [customCandidate('pc_custom_a')], pendingCustomProfileIds: [],
     });
     expect(winner.ok).toBe(true);
     if (!winner.ok) throw new Error('expected custom winner');
-    const loserRetry = migrateProviderAccountSettingsV1(winner.settings, {
+    const loserRetry = migrateProviderAccountSettingsV1(winner.providerSettings, {
       migratedAt: 21, candidates: [customCandidate('pc_custom_b')], pendingCustomProfileIds: [],
     });
     expect(loserRetry.ok).toBe(true);
     if (!loserRetry.ok) throw new Error('expected custom retry');
-    expect((loserRetry.settings.providerSettingsV1 as any).connections.map((entry: any) => entry.id)).toEqual(['pc_custom_a']);
+    expect((loserRetry.providerSettings as any).connections.map((entry: any) => entry.id)).toEqual(['pc_custom_a']);
     expect(loserRetry.outcomes.find((outcome) => outcome.sourceProfileId === 'company-gateway')).toEqual({
       sourceProfileId: 'company-gateway', kind: 'connection', connectionId: 'pc_custom_a',
     });
   });
 
   it('records default-environment completion and allows a later candidate after a no-candidate v3 pass', () => {
-    const initial = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const initial = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{ sourceProfileId: 'anthropic', kind: 'default_environment' }],
       pendingCustomProfileIds: [],
@@ -251,14 +280,14 @@ describe('provider account-settings migration', () => {
     expect(initial.outcomes.find((outcome) => outcome.sourceProfileId === 'anthropic'))
       .toEqual({ sourceProfileId: 'anthropic', kind: 'default_environment' });
 
-    const competingDefaultEnvironment = migrateProviderAccountSettingsV1(initial.settings, {
+    const competingDefaultEnvironment = migrateProviderAccountSettingsV1(initial.providerSettings, {
       migratedAt: 999,
       candidates: [{ sourceProfileId: 'anthropic', kind: 'default_environment' }],
       pendingCustomProfileIds: [],
     });
     expect(competingDefaultEnvironment).toEqual({ ...initial, changed: false });
 
-    const later = migrateProviderAccountSettingsV1(initial.settings, {
+    const later = migrateProviderAccountSettingsV1(initial.providerSettings, {
       migratedAt: 21, candidates: [candidate('pc_later')], pendingCustomProfileIds: [],
     });
     expect(later.ok).toBe(true);
@@ -273,11 +302,11 @@ describe('provider account-settings migration', () => {
       { schemaVersion: 6, keep: true, providerSettingsV1: { v: '1', preserve: 'malformed' } },
       { schemaVersion: 7, keep: true, providerSettingsV1: { v: 2, preserve: 'future' } },
     ]) {
-      const result = migrateProviderAccountSettingsV1(raw, {
+      const result = migrateProviderAccountSettingsV1(raw.providerSettingsV1 as unknown as import('../settings/v1.js').ProviderSettingsV1, {
         migratedAt: 20, candidates: [], pendingCustomProfileIds: [],
       });
       expect(result.ok).toBe(false);
-      expect(result.settings).toEqual(raw);
+      expect(result.providerSettings).toEqual(raw.providerSettingsV1);
       expect(result.changed).toBe(false);
     }
   });
@@ -294,12 +323,12 @@ describe('provider account-settings migration', () => {
       },
     ];
     for (const invalid of invalidCandidates) {
-      expect(() => migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      expect(() => migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
         migratedAt: 20,
         candidates: [invalid as ReturnType<typeof candidate>],
         pendingCustomProfileIds: [],
       })).not.toThrow();
-      expect(migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      expect(migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
         migratedAt: 20,
         candidates: [invalid as ReturnType<typeof candidate>],
         pendingCustomProfileIds: [],
@@ -308,32 +337,32 @@ describe('provider account-settings migration', () => {
   });
 
   it('keeps a completed source terminal after connection deletion and tombstone pruning', () => {
-    const migrated = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const migrated = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: [candidate('pc_historical')], pendingCustomProfileIds: [],
     });
     expect(migrated.ok).toBe(true);
     if (!migrated.ok) throw new Error('expected migration');
     const deleted = deleteProviderConnectionV1(
-      ProviderSettingsV1Schema.parse(migrated.settings.providerSettingsV1),
+      ProviderSettingsV1Schema.parse(migrated.providerSettings),
       'pc_historical',
       30,
     );
     const pruned = ProviderSettingsV1Schema.parse({ ...deleted, connectionTombstones: [] });
-    const rawAfterPrune = { ...migrated.settings, providerSettingsV1: pruned };
+    const rawAfterPrune = pruned;
     const rerun = migrateProviderAccountSettingsV1(rawAfterPrune, {
       migratedAt: 40, candidates: [candidate('pc_must_not_reappear')], pendingCustomProfileIds: [],
     });
     expect(rerun.ok).toBe(true);
     if (!rerun.ok) throw new Error('expected terminal completion');
     expect(rerun.changed).toBe(false);
-    expect((rerun.settings.providerSettingsV1 as any).connections).toEqual([]);
+    expect((rerun.providerSettings as any).connections).toEqual([]);
     expect(rerun.outcomes.find((outcome) => outcome.sourceProfileId === 'deepseek')).toEqual({
       sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc_historical',
     });
   });
 
   it('preserves legacy source profile ids that coincide with object prototype keys', () => {
-    const result = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    const result = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [{ sourceProfileId: '__proto__', kind: 'default_environment' }],
       pendingCustomProfileIds: [],
@@ -371,10 +400,10 @@ describe('provider account-settings migration', () => {
       };
     });
 
-    expect(() => migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    expect(() => migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: oversizedCandidates, pendingCustomProfileIds: [],
     })).not.toThrow();
-    expect(migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+    expect(migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20, candidates: oversizedCandidates, pendingCustomProfileIds: [],
     })).toMatchObject({ ok: false, changed: false, reason: 'provider_settings_limit_exceeded' });
   });

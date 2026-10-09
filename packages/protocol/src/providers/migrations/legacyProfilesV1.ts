@@ -8,14 +8,14 @@ import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '../
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderConnectionV1Schema } from '../connections/v1.js';
 import { ProviderAgentTargetKeySchema, ProviderLocalIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { isCanonicalProviderSavedSecretIdV1 } from '../settings/v1.js';
+import { isCanonicalProviderSavedSecretIdV1, type ProviderSettingsV1 } from '../settings/v1.js';
 import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import type { ProviderContributionV1 } from '../contributions/v1.js';
 import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
 import { projectHistoricalCodingPromptBehaviorProfileOverrideV1 } from '../../prompts/codingPromptBehaviorV1.js';
 import {
-  classifyProviderSettingsSubtreeV1,
   migrateProviderAccountSettingsV1,
+  reconcileProviderMigrationSourcesV1,
   type ProviderAccountSettingsMigrationCandidateV1,
   type ProviderAccountSettingsMigrationContextV1,
   type ProviderAccountSettingsMigrationResultV1,
@@ -158,23 +158,21 @@ function repairSelectionForKnownMigration(
 type LegacySourceDispositionV1 = 'migrate_legacy_state' | 'repair_provider_outputs_only';
 
 function readCompletedConnectionOutcome(
-  raw: RecordValue,
+  settings: ProviderSettingsV1,
   sourceProfileId: string,
 ) {
-  const classified = classifyProviderSettingsSubtreeV1(raw);
-  if (classified.kind !== 'current') return null;
-  for (const outcome of classified.settings.migration?.completedSources ?? []) {
+  for (const outcome of settings.migration?.completedSources ?? []) {
     if (outcome.sourceProfileId === sourceProfileId && outcome.kind === 'connection') return outcome;
   }
   return null;
 }
 
 function legacySourceDisposition(
-  raw: RecordValue,
+  settings: ProviderSettingsV1,
   candidate: ProviderAccountSettingsMigrationCandidateV1,
 ): LegacySourceDispositionV1 {
   if (candidate.kind !== 'connection' || !candidate.selectedModel) return 'migrate_legacy_state';
-  const completed = readCompletedConnectionOutcome(raw, candidate.sourceProfileId);
+  const completed = readCompletedConnectionOutcome(settings, candidate.sourceProfileId);
   if (completed?.connectionId !== candidate.connection.id
     || !completed.modelSelection
     || completed.modelSelection.modelId !== candidate.selectedModel.modelId
@@ -240,55 +238,44 @@ export type LegacyProfileRecordMigrationContextV1 = Readonly<{
 }>;
 export type LegacyAiLaunchProfilesMigrationResultV1 =
   | (Extract<ProviderAccountSettingsMigrationResultV1, { ok: true }> & Readonly<{
+      settings: Record<string, unknown>;
       lastUsedProfileClear?: LegacyProfileAuthoringMemoryClearV1;
     }>)
-  | Extract<ProviderAccountSettingsMigrationResultV1, { ok: false }> | Readonly<{
-  ok: false;
-  changed: false;
-  settings: unknown;
-  reason: 'migration_conflict';
-}>;
+  | (Extract<ProviderAccountSettingsMigrationResultV1, { ok: false }> & Readonly<{ settings: unknown }>);
 
 function withAuthoringMemoryClear(
-  result: Extract<ProviderAccountSettingsMigrationResultV1, { ok: true }>,
+  result: Extract<LegacyAiLaunchProfilesMigrationResultV1, { ok: true }>,
   authoringMemory: LegacyProfileAuthoringMemoryV1,
 ): LegacyAiLaunchProfilesMigrationResultV1 {
   const sourceId = authoringMemory.lastUsedProfile;
   if (sourceId === null || (Array.isArray(result.settings.profiles)
     && result.settings.profiles.some((profile) => isRecord(profile) && profile.id === sourceId))) return result;
-  const classified = classifyProviderSettingsSubtreeV1(result.settings);
   const outcome = result.outcomes.find((entry) => entry.sourceProfileId === sourceId)
-    ?? (classified.kind === 'current'
-      ? classified.settings.migration?.completedSources.find((entry) => entry.sourceProfileId === sourceId) : undefined);
+    ?? result.providerSettings.migration?.completedSources.find((entry) => entry.sourceProfileId === sourceId);
   if (!outcome || outcome.kind === 'skipped_disabled') return result;
   return { ...result, lastUsedProfileClear: { base: sourceId, proposed: null } };
 }
 
 export function migrateLegacyAiLaunchProfilesV1(
   raw: unknown,
+  providerSettings: ProviderSettingsV1,
   context: ProviderAccountSettingsMigrationContextV1,
   authoringMemory: LegacyProfileAuthoringMemoryV1,
   recordContext?: LegacyProfileRecordMigrationContextV1,
 ): LegacyAiLaunchProfilesMigrationResultV1 {
   const profileRecordIds = new Set(recordContext?.profileRecordIds ?? []);
-  if (!isRecord(raw)) return migrateProviderAccountSettingsV1(raw, context);
-  if (context.candidates.length === 0
-    && context.pendingCustomProfileIds.length === 0
-    && (context.pendingConflicts?.length ?? 0) === 0) {
-    return withAuthoringMemoryClear({ ok: true, changed: false, settings: raw, outcomes: [] }, authoringMemory);
-  }
+  if (!isRecord(raw)) return { ok: false, changed: false, settings: raw, providerSettings, reason: 'account_settings_invalid' };
   if (hasConflictingConnectionCandidates(context.candidates)) {
-    return { ok: false, changed: false, settings: raw, reason: 'migration_conflict' };
+    return { ok: false, changed: false, settings: raw, providerSettings, reason: 'migration_conflict' };
   }
-  const migrated = migrateProviderAccountSettingsV1(raw, context);
-  if (!migrated.ok) return migrated;
-  if (!migrated.changed) return withAuthoringMemoryClear(migrated, authoringMemory);
+  const migrated = migrateProviderAccountSettingsV1(providerSettings, context);
+  if (!migrated.ok) return { ...migrated, settings: raw };
 
   const outcomeBySource = new Map(migrated.outcomes.map((outcome) => [outcome.sourceProfileId, outcome]));
   const candidateBySource = new Map(context.candidates.map((candidate) => [candidate.sourceProfileId, candidate]));
   const dispositionBySource = new Map(context.candidates.map((candidate) => [
     candidate.sourceProfileId,
-    legacySourceDisposition(raw, candidate),
+    legacySourceDisposition(providerSettings, candidate),
   ] as const));
   const selectionsBySource = new Map<string, SessionModelSelectionV1>();
   for (const outcome of migrated.outcomes) {
@@ -431,7 +418,7 @@ export function migrateLegacyAiLaunchProfilesV1(
   }
 
   const settings: RecordValue = {
-    ...migrated.settings,
+    ...raw,
     ...(retainedProfiles.length > 0 || raw.profiles !== undefined ? { profiles: retainedProfiles } : {}),
     ...(raw.secretBindingsByProfileId !== undefined ? { secretBindingsByProfileId: nextBindings } : {}),
     ...(raw.profileEnabledById !== undefined ? { profileEnabledById: nextEnabled } : {}),
@@ -448,7 +435,28 @@ export function migrateLegacyAiLaunchProfilesV1(
       : {}),
     ...(favoriteModelSelections.length > 0 ? { favoriteModelSelectionsV1: favoriteModelSelections } : {}),
   };
-  return withAuthoringMemoryClear({ ...migrated, settings }, authoringMemory);
+  const retainedSources = retainedProfiles.flatMap(profile => {
+    if (StoredLaunchProfileV2Schema.safeParse(profile).success) return [];
+    const legacy = AIBackendProfileSchema.safeParse(profile);
+    // An opaque retained source is not evidence that its migration input disappeared.
+    if (!legacy.success) return isRecord(profile) && typeof profile.id === 'string' ? [profile.id] : [];
+    const retainedBindings = nextBindings[legacy.data.id];
+    const bindings = isRecord(retainedBindings) ? retainedBindings : {};
+    const canonicalBindings = Object.fromEntries(Object.entries(bindings).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    return requiresLegacyAiLaunchProfileProviderSourcePreparationV1(legacy.data, canonicalBindings)
+      || outcomeBySource.get(legacy.data.id)?.kind === 'skipped_disabled' ? [legacy.data.id] : [];
+  });
+  const remembered = authoringMemory.lastUsedProfile;
+  if (remembered !== null && !retainedProfileIds.has(remembered)
+    && migrated.outcomes.some(outcome => outcome.sourceProfileId === remembered && outcome.kind === 'connection')) {
+    // The still-open authoring-memory source can re-enter the incumbent builtin translator until its conditional clear succeeds.
+    retainedSources.push(remembered);
+  }
+  // A retained genuine source, not the converted private identity, justifies recreation guards.
+  const reconciled = reconcileProviderMigrationSourcesV1(migrated.providerSettings, retainedSources);
+  return withAuthoringMemoryClear({ ...migrated, settings, providerSettings: reconciled,
+    changed: JSON.stringify(settings) !== JSON.stringify(raw)
+      || JSON.stringify(reconciled) !== JSON.stringify(providerSettings) }, authoringMemory);
 }
 
 export const LegacyProfileCredentialStyleV1Schema = lazyZodSchema(() => z.enum(['bearer', 'x-api-key', 'api-key']));
@@ -560,6 +568,7 @@ export function createLegacyProfileMigrationSourceFingerprintV1(input: Readonly<
 
 export function confirmLegacyAiLaunchProfileMigrationV1(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>>;
+  providerSettings: ProviderSettingsV1;
   authoringMemory: LegacyProfileAuthoringMemoryV1;
   sourceProfileId: string;
   expectedSourceFingerprint: string;
@@ -592,7 +601,7 @@ export function confirmLegacyAiLaunchProfileMigrationV1(input: Readonly<{
     }
     accountBindings[move.credentialSlotId] = savedSecretId;
   }
-  return migrateLegacyAiLaunchProfilesV1(input.rawSettings, {
+  return migrateLegacyAiLaunchProfilesV1(input.rawSettings, input.providerSettings, {
     migratedAt: input.migratedAt,
     pendingCustomProfileIds: [],
     candidates: [{
