@@ -51,7 +51,9 @@ export function useActionApprovalContinuation(input: Readonly<{
     const onExecutedRef = React.useRef(input.onExecuted);
     onExecutedRef.current = input.onExecuted;
     const deliveredSettlementRef = React.useRef<ApprovalSettlement | null>(null);
-    const artifactBinding = useApprovalArtifact({ artifactId: approvalId, serverId: input.serverId });
+    const artifactScope = approval?.continuation?.scope;
+    const artifactBinding = useApprovalArtifact({ artifactId: approvalId,
+        serverId: artifactScope?.serverId ?? input.serverId, scope: artifactScope });
     const approvalStatus = artifactBinding.artifact?.header?.approvalStatus;
     const awaitingTypedBody = Boolean(approval?.continuation)
         && (approvalStatus === 'executed' || TERMINAL_FAILURE_STATUSES.has(approvalStatus as ActionApprovalTerminalStatus))
@@ -128,7 +130,9 @@ export function useActionApprovalContinuation(input: Readonly<{
                     // an executed Action because a result callback threw.
                 });
             }
-            onExecutedRef.current();
+            // Task admission is an executed Action, but not completion of the
+            // caller's operation. That caller refreshes after observing its task.
+            if (continuation?.refreshAfterExecution !== false) onExecutedRef.current();
         } finally {
             // Start the original continuation before exposing the next Artifact.
             // A callback may enqueue another Action without losing either result.

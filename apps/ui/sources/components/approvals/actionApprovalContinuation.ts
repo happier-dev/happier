@@ -23,6 +23,10 @@ export type ActionApprovalTerminalStatus = 'rejected' | 'failed' | 'canceled' | 
  */
 export type ActionApprovalContinuation = Readonly<{
     artifactId: string;
+    /** The Account that admitted this result-bearing invocation. */
+    scope?: ServerAccountScope;
+    /** False when the caller owns completion beyond this Action receipt and its later refresh. */
+    refreshAfterExecution?: boolean;
     /** Ends only the mounted caller's interest, not the durable approval. */
     signal?: AbortSignal;
     onExecuted: (artifact: DecryptedArtifact) => Promise<'consumed' | 'ignored'>;
@@ -181,6 +185,7 @@ function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonl
 
 type CreateActionApprovalContinuationInput<TValue, TActionId extends ActionId> = Readonly<{
     artifactId: string;
+    refreshAfterExecution?: boolean;
     actionId: TActionId;
     scope: ServerAccountScope;
     signal?: AbortSignal;
@@ -222,6 +227,8 @@ export function createActionApprovalContinuation(
         : undefined;
     return Object.freeze({
         artifactId: input.artifactId,
+        scope: input.scope,
+        ...(input.refreshAfterExecution !== undefined ? { refreshAfterExecution: input.refreshAfterExecution } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         onExecuted: async (artifact: DecryptedArtifact) => {
             const inspection = inspectActionApprovalRequest({

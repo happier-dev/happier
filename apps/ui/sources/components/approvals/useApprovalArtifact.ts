@@ -4,7 +4,7 @@ import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/appro
 import { storage, useArtifact } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     areServerProfileIdentifiersEquivalent,
     listServerProfiles,
@@ -45,7 +45,7 @@ function hasCompatibleApprovalArtifact(
 }
 
 /** One exact-Home approval reader for the detail screen and its originating form. */
-export function useApprovalArtifact(input: Readonly<{ artifactId: string | null; serverId: string | null }>) {
+export function useApprovalArtifact(input: Readonly<{ artifactId: string | null; serverId: string | null; scope?: ServerAccountScope }>) {
     const requestedServerIdentifier = input.serverId?.trim() || null;
     const serverProfilesGeneration = useServerProfilesGeneration();
     const requestedServerTarget = React.useMemo(() => {
@@ -87,6 +87,8 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
     const { artifactId } = input;
     const focused = useIsFocused();
     const resolution = useServerCredentialAccountScopeResolution(serverId);
+    const scopeMatches = input.scope === undefined || (resolution.kind === 'bound'
+        && areServerAccountScopesEqual(resolution.scope, input.scope));
     const activeScope = useActiveServerAccountScope();
     const local = useArtifact(artifactId ?? '');
     // Socket updates can publish the terminal header before this reader has the
@@ -100,7 +102,7 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
             : null;
     // The local store row belongs to the active Home. An unresolvable Home is not
     // the active Home merely because it has no local profile id.
-    const localMatches = !unresolvedServer
+    const localMatches = scopeMatches && !unresolvedServer
         && (!serverId || (resolution.kind === 'bound' && areServerAccountScopesEqual(activeScope, resolution.scope)));
     const [loaded, setLoaded] = React.useState<Readonly<{
         artifactId: string;
@@ -130,7 +132,7 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
         requestedServerIdentityId,
         requestedByPortableIdentity,
     ) ? local : null;
-    const artifact = compatibleFetched && localMatches && compatibleLocal && compatibleLocal.updatedAt > compatibleFetched.updatedAt
+    const artifact = !scopeMatches ? null : compatibleFetched && localMatches && compatibleLocal && compatibleLocal.updatedAt > compatibleFetched.updatedAt
         ? compatibleLocal
         : compatibleFetched ?? (localMatches ? compatibleLocal : null);
     // A store row may legitimately be header-only while the encrypted body is
@@ -139,7 +141,7 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
     const invalidArtifact = fetchedInvalid;
     const refresh = React.useCallback(async () => {
         pending.current?.abort();
-        if (!artifactId || unresolvedServer || (serverId && resolution.kind !== 'bound')) return;
+        if (!artifactId || unresolvedServer || !scopeMatches || (serverId && resolution.kind !== 'bound')) return;
         const controller = new AbortController();
         pending.current = controller;
         setLoading(true);
@@ -149,6 +151,7 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
                 const context = await captureActionAccountContext(serverId, controller.signal);
                 try {
                     if (resolution.kind !== 'bound' || context.accountId !== resolution.scope.accountId) return null;
+                    if (input.scope && context.accountId !== input.scope.accountId) return null;
                     return await context.fetchArtifact(artifactId);
                 } finally { context.dispose(); }
             })() : await sync.fetchArtifactWithBody(artifactId);
@@ -175,7 +178,7 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
         } finally {
             if (!controller.signal.aborted) setLoading(false);
         }
-    }, [artifactId, requestedByPortableIdentity, requestedServerIdentityId, resolution, serverId, unresolvedServer]);
+    }, [artifactId, input.scope, requestedByPortableIdentity, requestedServerIdentityId, resolution, scopeMatches, serverId, unresolvedServer]);
     React.useEffect(() => {
         if (focused && artifactId && (serverId || (local?.body == null && local?.isDecrypted !== false))) void refresh();
         return () => { pending.current?.abort(); };
@@ -192,9 +195,9 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
     }, [artifactId, focused, refresh, resolution, serverId]);
     return {
         artifact,
-        isLoading: !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),
-        homeUnavailable: unresolvedServer || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving'),
-        error: error || unresolvedServer || Boolean(serverId && resolution.kind !== 'bound'),
+        isLoading: scopeMatches && !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),
+        homeUnavailable: unresolvedServer || !scopeMatches || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving'),
+        error: error || unresolvedServer || !scopeMatches || Boolean(serverId && resolution.kind !== 'bound'),
         invalidArtifact,
         refresh,
     };
