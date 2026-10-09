@@ -1,10 +1,16 @@
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
+import { projectMachineAgentConnectedServices } from '@/agents/machineAgents/machineAgentConnectedServices';
+import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
+import { AgentSessionStartBlocker } from '@/components/machines/agents/AgentSessionStartBlocker';
+import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { storage } from '@/sync/domains/state/storage';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { NewSessionConnectedServicesSelectionContentProps } from '../components/NewSessionConnectedServicesSelectionContent';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +22,15 @@ import {
     installConnectedAccountDescriptorProjection,
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { installNewSessionModulesCommonModuleMocks } from './newSessionModulesTestHelpers';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+installDisconnectedServerSocketBoundary();
 
 (
     globalThis as typeof globalThis & {
@@ -144,21 +159,35 @@ function v4Account(params: Readonly<{
 
 const profileState = {
     set current(profile: TestAccountProfile) {
-        storage.setState({ profile: AccountProfileSchema.parse({ ...profileDefaults, ...profile }) });
+        storage.setState({ profile: AccountProfileSchema.parse({ ...profileDefaults, id: storage.getState().profile?.id ?? profileDefaults.id, ...profile }) });
     },
 };
 const initialStorageState = storage.getState();
 let activeHomeId = '';
 let targetHomeId = '';
 let activeGroupsEnabled = true;
+let legacyConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let legacyBridge: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | null = null;
+let legacyHttp: ReturnType<typeof createHomeHubArtifactHttpBoundary> | null = null;
+let legacyPurposeBindings: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
+
+function publishLegacyTestPurposeBindings(value: QualifiedConnectedAccountPurposeBindingsV1): void {
+    legacyPurposeBindings = value;
+    applyConnectedAccountCatalogSnapshot({ serverId: activeHomeId, accountId: 'legacy-controls' }, 'purposes',
+        { status: 'ready', revision: 1, record: { key: 'purposes', value } }, true);
+}
 
 async function arrangeAccountGroupFeatures(preload = true) {
     const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     resetServerFeaturesClientForTests();
-    const request: typeof fetch = async (input) => {
+    const request: typeof fetch = async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
-        if (url.pathname !== '/v1/features') return new Response('{}', { status: 404 });
+        if (url.pathname === '/v1/account/entity-rows/connected-accounts/purposes') return Response.json({
+            status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: legacyPurposeBindings } },
+        });
+        if (url.pathname !== '/v1/features') return legacyHttp?.request(input, init) ?? new Response('{}', { status: 404 });
         const response = buildServerFeaturesResponse();
+        response.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
         response.features.connectedServices.accountGroups.enabled = url.hostname === 'target-connected-services.test' || activeGroupsEnabled;
         return new Response(JSON.stringify(response), { status: 200, headers: { 'content-type': 'application/json' } });
     };
@@ -167,6 +196,7 @@ async function arrangeAccountGroupFeatures(preload = true) {
     if (preload) {
         await Promise.all([activeHomeId, targetHomeId].map((serverId) => getServerFeaturesSnapshot({ serverId, force: true })));
     }
+    return request;
 }
 
 function seedClaudeProfile(): void {
@@ -218,13 +248,10 @@ installNewSessionModulesCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
-    normalizeNodeForView: (node: React.ReactNode) => node,
-}));
-
-vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () => ({
-    AgentInputChipLabel: 'AgentInputChipLabel',
-}));
+// Load real owners during collection, after native boundary factories are set.
+const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
+const { useNewSessionConnectedServicesAgentOptions } = await import('../hooks/screenModel/useNewSessionConnectedServicesAgentOptions');
 
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
     const popover = chip?.collapsedContentPopover;
@@ -246,36 +273,308 @@ const NOVEL_CONNECTED_ACCOUNTS: ConnectedAccountsParam = [
     { purpose: 'primary', service: { pluginId: 'acme.review', localId: 'reviewer-service' } },
 ];
 
-describe('useNewSessionConnectedServices', () => {
-    beforeEach(async () => {
+afterEach(async () => {
+    await standardCleanup();
+    await legacyConnection?.dispose();
+    legacyConnection = null;
+    legacyBridge?.dispose();
+    legacyBridge = null;
+    legacyHttp = null;
+    resetRuntimeFetch();
+    vi.unstubAllGlobals();
+    storage.setState(initialStorageState, true);
+    installConnectedAccountDescriptorProjection(
+        createConnectedAccountDescriptorProjectionLoadingState('new-session-test-cleanup'),
+    );
+});
+
+describe('new Session Connected Accounts from the machine catalog', () => {
+    it('offers both Claude subscription profiles without a pool through the machine catalog and spawn option owner', async () => {
+        const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+        const serviceKey = 'happier.agent.claude/claude-subscription';
+        // This is the daemon's public declaration, not the bundled scalar catalog.
+        const projection = PluginProjectionV2Schema.parse({
+            v: 2,
+            generation: 7,
+            agentsById: {
+                claude: {
+                    id: 'claude',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                    isBuiltIn: true,
+                    connectedAccounts: [{
+                        purpose: 'model_upstream', service, required: false,
+                        materializationKinds: ['environment', 'files', 'httpHeaders'],
+                        credentialKinds: ['oauth', 'token'],
+                    }],
+                    providerOwnedEnvironmentKeys: [],
+                },
+            },
+        });
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            ...adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection),
+        });
+        const entry = entries.find((candidate) => candidate.builtInAgentId === 'claude');
+        expect(entry).toBeDefined();
+        if (!entry) throw new Error('Expected projected Claude target');
+        profileState.current = {
+            connectedAccountsV4: ['personal', 'work'].map((accountId) => v4Account({
+                ...service, accountId, displayName: accountId,
+            })),
+            connectedAccountGroupsV4: [],
+        };
+        const hook = await renderHook(() => {
+            const [optionStateByTarget, setOptionStateByTarget] = React.useState<Record<string, Record<string, unknown>>>({});
+            return useNewSessionConnectedServicesAgentOptions({
+                staticAgentId: entry.catalogAgentId,
+                runtimeCarrierAgentId: entry.agentId,
+                selectedMachineId: 'machine-claude',
+                targetServerId: null,
+                selectedBackendTargetKey: entry.backendTargetKey,
+                connectedAccounts: entry.agentCatalogEntry.connectedAccounts,
+                agentIdentity: entry.agentCatalogEntry.identity,
+                setBackendNewSessionOptionStateByTargetKey: setOptionStateByTarget,
+                agentOptionState: optionStateByTarget[entry.backendTargetKey] ?? null,
+                settings: { connectedServicesDefaultProfileByServiceId: {} },
+                router: { push: vi.fn() },
+            });
+        });
+        const popover = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip);
+        if (typeof popover.renderContent !== 'function') throw new Error('Expected account picker content renderer');
+        const content = popover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+        expect(content.props.supportedServiceIds).toEqual([serviceKey]);
+        expect(content.props.profileOptionsByServiceId[serviceKey]?.map((profile) => profile.profileId)).toEqual(['personal', 'work']);
+        expect(content.props.groupOptionsByServiceId).toEqual({});
+        await act(async () => {
+            await content.props.setBindingForService(serviceKey, { source: 'connected', selection: 'profile', profileId: 'work' });
+        });
+        expect(hook.getCurrent().agentNewSessionOptions).toMatchObject({
+            connectedServices: { v: 2, bindingsByServiceId: {
+                [serviceKey]: { source: 'connected', selection: 'profile', profileId: 'work' },
+            } },
+        });
+    });
+});
+
+async function arrangeLegacyConnectedServicesHomes() {
         storage.setState(initialStorageState, true);
         activeGroupsEnabled = true;
-        // Home activation can probe immediately; arrange HTTP before choosing it.
-        await arrangeAccountGroupFeatures(false);
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
-        const active = await upsertServerProfile({ serverUrl: 'https://active-connected-services.test', name: 'Active' });
-        const target = await upsertServerProfile({ serverUrl: 'https://target-connected-services.test', name: 'Target' });
-        activeHomeId = active.id;
+        legacyHttp = createHomeHubArtifactHttpBoundary('legacy-controls');
+        legacyBridge = await loadSyncSingletonForTests();
+        const boundaryRequest = await arrangeAccountGroupFeatures(false);
+        legacyConnection = await restoreServerAccountForTest({ serverUrl: 'https://active-connected-services.test',
+            accountId: 'legacy-controls', request: boundaryRequest });
+        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        const target = await upsertServerProfileOnly({ serverUrl: 'https://target-connected-services.test', name: 'Target' });
+        activeHomeId = legacyConnection.home.id;
         targetHomeId = target.id;
-        await setActiveServerId(activeHomeId, { scope: 'device' });
+        storage.setState({ profileScope: { serverId: activeHomeId, accountId: 'legacy-controls' },
+            profile: AccountProfileSchema.parse({ id: 'legacy-controls' }) });
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [] });
         await arrangeAccountGroupFeatures();
         installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
         modalShowMock.mockReset();
         modalConfirmMock.mockReset();
         modalConfirmMock.mockResolvedValue(false);
         seedClaudeProfile();
-    });
+}
 
-    afterEach(async () => {
-        await standardCleanup();
-        resetRuntimeFetch();
-        vi.unstubAllGlobals();
+describe('New Session purpose catalog authority', () => {
+    beforeEach(() => {
         storage.setState(initialStorageState, true);
-        installConnectedAccountDescriptorProjection(
-            createConnectedAccountDescriptorProjectionLoadingState('new-session-test-cleanup'),
-        );
+        installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
     });
 
+    it.each([
+        { native: 'signedOut' as const, connected: true, selected: 'native', ready: false },
+        { native: 'signedIn' as const, connected: true, selected: 'native', ready: true },
+        { native: 'signedOut' as const, connected: true, selected: 'connected', ready: true },
+        { native: 'signedOut' as const, connected: false, selected: 'native', ready: false },
+    ])('launch readiness follows the selected credential and offers a one-tap binding recovery: %j', async (scenario) => {
+        const bridge = await loadSyncSingletonForTests();
+        const accountId = 'selected-launch-credential';
+        const http = createHomeHubArtifactHttpBoundary(accountId);
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const value = { v: 1 as const, bindings: [] };
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://selected-launch-credential.test', accountId,
+            request: (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/features') return Promise.resolve(Response.json(features));
+                if (path === '/v1/account/entity-rows/connected-accounts/purposes') return Promise.resolve(Response.json({
+                    status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value } },
+                }));
+                return http.request(input, init);
+            } });
+        const scope = { serverId: connection.home.id, accountId };
+        const profile = AccountProfileSchema.parse({ id: accountId, connectedAccountsV4: scenario.connected
+            ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work', displayName: 'Work', kind: 'token' }),
+                revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`, authenticationModeId: 'api-key' }] : [] });
+        storage.setState({ profileScope: scope, profile });
+        installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1, record: { key: 'purposes', value } }, true);
+        const connectedServices = projectMachineAgentConnectedServices({ agents: [{ agentId: 'claude', connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS }],
+            profile, accountTransport: 'advertised-v4', entries: getConnectedServiceRegistrySnapshot().entries, now: Date.now() }).claude;
+        const machineAgent = projectMachineAgent({ agentId: 'claude', title: 'Claude', checking: false, stale: false, job: null, connectedServices,
+            facts: { agentId: 'claude', title: 'Claude', installed: true, version: '1', latestVersion: '1', update: null,
+                signIn: { status: scenario.native, loginSupport: 'login_terminal' }, platform: { supported: true },
+                install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } });
+        const hook = await renderHook(() => {
+            const [options, setOptions] = React.useState<Record<string, Record<string, unknown>>>(scenario.selected === 'connected' ? {
+                'agent:happier.agent.claude/claude': { connectedServicesBindingsByServiceId: {
+                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+                } },
+            } : {});
+            return useNewSessionConnectedServicesAgentOptions({ staticAgentId: 'claude', runtimeCarrierAgentId: 'claude', selectedMachineId: 'devbox',
+                targetServerId: connection.home.id, selectedBackendTargetKey: 'agent:happier.agent.claude/claude',
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, agentIdentity: { pluginId: 'happier.agent.claude', localId: 'claude' }, machineAgent,
+                settings: { connectedServicesDefaultProfileByServiceId: {} }, agentOptionState: options['agent:happier.agent.claude/claude'] ?? null,
+                setBackendNewSessionOptionStateByTargetKey: setOptions, router: { push() {} } });
+        });
+        try {
+            expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(scenario.ready);
+            // Aggregate Machine/Agent rows retain their "any usable credential" contract.
+            expect(isMachineAgentReady(machineAgent)).toBe(scenario.connected || scenario.native === 'signedIn');
+            const screen = await renderScreen(<AgentSessionStartBlocker agent={hook.getCurrent().selectedCredentialMachineAgent}
+                machineName="Devbox" onSetUp={() => {}} connectedServicesRecoveryAction={hook.getCurrent().connectedServicesRecoveryAction} />);
+            try {
+                expect(Boolean(screen.findHostByTestId('new-session-agent-blocker'))).toBe(!scenario.ready);
+                const canRecover = scenario.native === 'signedOut' && scenario.connected && scenario.selected === 'native';
+                expect(Boolean(screen.findByTestId('new-session-agent-blocker.connected'))).toBe(canRecover);
+                if (canRecover) {
+                    expect(screen.findByTestId('new-session-agent-blocker.action')).not.toBeNull();
+                    await screen.pressByTestIdAsync('new-session-agent-blocker.connected');
+                    expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(true);
+                    expect(hook.getCurrent().agentNewSessionOptions).toMatchObject({ connectedServices: { bindingsByServiceId: {
+                        [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+                    } } });
+                    const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+                    expect(getConnectedAccountCatalogValue(scope, 'purposes').value).toEqual(value);
+                }
+            } finally { await screen.unmount(); }
+        } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
+    });
+
+    it('retires an optimistic authored authentication choice when its mounted Account scope changes before controlled echo', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const bridge = await loadSyncSingletonForTests();
+        const http = createHomeHubArtifactHttpBoundary('optimistic-account-a');
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://optimistic-account-scope.test', accountId: 'optimistic-account-a', request: (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Promise.resolve(Response.json(features));
+            if (path === '/v1/account/entity-rows/connected-accounts/purposes') return Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+            return http.request(input, init);
+        } });
+        const scope = { serverId: connection.home.id, accountId: 'optimistic-account-a' };
+        storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+        const hook = await renderHook(() => useNewSessionConnectedServices({
+            agentCore: null, defaultAuthAgentId: 'claude', defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, agentOptionState: null,
+            settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: connection.home.id,
+            router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+        }));
+        try {
+            const popover = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip);
+            if (!popover.renderContent) throw new Error('Expected real auth selection content');
+            const content = popover.renderContent({ maxHeight: 560, requestClose() {} }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+            await act(async () => { await content.props.setBindingForService(CLAUDE_SERVICE_KEY, { source: 'native' }); });
+            expect(hook.getCurrent().connectedAccountDefaultsStatus).toBe('ready');
+            const successor = { ...scope, accountId: 'optimistic-account-b' };
+            await act(async () => {
+                applyConnectedAccountCatalogSnapshot(successor, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+                storage.setState({ profileScope: successor, profile: AccountProfileSchema.parse({ id: successor.accountId }) });
+                expect(() => hook.getCurrent().requireConnectedAccountDefaultsReady()).toThrow();
+            });
+            expect(hook.getCurrent().connectedAccountDefaultsStatus).not.toBe('ready');
+        } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
+    });
+
+    it('inherits destination-only purpose defaults and refuses unavailable inheritance without blocking explicit or native-only auth', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const bridge = await loadSyncSingletonForTests();
+        const http = createHomeHubArtifactHttpBoundary('catalog-inheritance');
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const service = CLAUDE_CONNECTED_ACCOUNTS[0]!.service;
+        const value = { v: 1 as const, bindings: [{ purpose: { consumer, purpose: 'primary' },
+            target: { kind: 'account' as const, account: { service, accountId: 'work' } } }] };
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://catalog-inheritance.test', accountId: 'catalog-inheritance', request: (input, init) => {
+            if (new URL(String(input)).pathname === '/v1/features') return Promise.resolve(Response.json(features));
+            if (new URL(String(input)).pathname === '/v1/account/entity-rows/connected-accounts/purposes') return Promise.resolve(Response.json({
+                status: 'present', revision: 5, content: { t: 'plain', v: { key: 'purposes', value } },
+            }));
+            return http.request(input, init);
+        } });
+        const scope = { serverId: connection.home.id, accountId: 'catalog-inheritance' };
+        storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId,
+            connectedAccountsV4: [v4Account({ ...service, accountId: 'work', displayName: 'Work' })] }) });
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 5, record: { key: 'purposes', value } }, true);
+        let withdrawing = false;
+        const withdrawnLabels: string[] = [];
+        const hook = await renderHook((props: Readonly<{ agentOptionState: Record<string, unknown> | null; connectedAccounts: ConnectedAccountsParam }>) => {
+            const result = useNewSessionConnectedServices({
+            agentCore: null, defaultAuthAgentId: 'claude', defaultAuthConsumer: consumer, connectedAccounts: props.connectedAccounts,
+            agentOptionState: props.agentOptionState, settings: { connectedServicesDefaultProfileByServiceId: {} },
+            targetServerId: connection.home.id, router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+            });
+            if (withdrawing) withdrawnLabels.push(requireCollapsedContentPopover(result.connectedServicesAuthChip).label);
+            return result;
+        }, { initialProps: { agentOptionState: null, connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS } });
+        try {
+            expect(hook.getCurrent().connectedServicesBindingsPayload).toMatchObject({ bindingsByServiceId: {
+                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+            } });
+            const submittedAdmission = hook.getCurrent().requireConnectedAccountDefaultsReady;
+            await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 6,
+                record: { key: 'purposes', value } }, true); });
+            expect(() => submittedAdmission()).toThrow();
+            expect(() => hook.getCurrent().requireConnectedAccountDefaultsReady()).not.toThrow();
+            withdrawing = true;
+            await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true); });
+            expect(hook.getCurrent()).toMatchObject({ connectedAccountDefaultsStatus: 'unavailable', connectedServicesBindingsPayload: null });
+            expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label).toBe('common.unavailable');
+            expect(withdrawnLabels.every((label) => !label.includes('Work'))).toBe(true);
+            withdrawing = false;
+            await hook.rerender({ agentOptionState: { connectedServicesBindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } } }, connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS });
+            expect(hook.getCurrent()).toMatchObject({ connectedAccountDefaultsStatus: 'ready' });
+            await hook.rerender({ agentOptionState: null, connectedAccounts: [] });
+            expect(hook.getCurrent()).toMatchObject({ connectedAccountDefaultsStatus: 'ready' });
+        } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
+    });
+
+    it('refuses inherited authentication without the projected Agent consumer while allowing an explicit Native recovery', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const bridge = await loadSyncSingletonForTests();
+        const http = createHomeHubArtifactHttpBoundary('unknown-consumer');
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://unknown-consumer.test', accountId: 'unknown-consumer', request: (input, init) =>
+            new URL(String(input)).pathname === '/v1/features' ? Promise.resolve(Response.json(features)) : http.request(input, init) });
+        const scope = { serverId: connection.home.id, accountId: 'unknown-consumer' };
+        storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true);
+        const hook = await renderHook((agentOptionState: Record<string, unknown> | null) => useNewSessionConnectedServices({
+            agentCore: null, defaultAuthAgentId: 'claude', defaultAuthConsumer: null,
+            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, agentOptionState,
+            settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: connection.home.id,
+            router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+        }), { initialProps: null });
+        try {
+            expect(hook.getCurrent()).toMatchObject({ connectedAccountDefaultsStatus: 'unavailable', connectedServicesBindingsPayload: null });
+            await hook.rerender({ connectedServicesBindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } } });
+            expect(hook.getCurrent()).toMatchObject({ connectedAccountDefaultsStatus: 'ready' });
+        } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
+    });
+});
+
+describe('useNewSessionConnectedServices', () => {
+    beforeEach(arrangeLegacyConnectedServicesHomes);
     it('returns a connected-services chip that opens the anchored account picker popover', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
@@ -285,14 +584,15 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent,
             }),
@@ -346,14 +646,15 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent,
             }),
@@ -412,10 +713,13 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
-                agentOptionState: null,
+                agentOptionState: { connectedServicesBindingsByServiceId: {
+                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'feature-pool' },
+                } },
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -433,8 +737,10 @@ describe('useNewSessionConnectedServices', () => {
         );
         const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
         if (typeof renderContent !== 'function') throw new Error('Expected account-groups picker content');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<{ accountGroupsEnabled: boolean }>;
-        expect(content.props.accountGroupsEnabled).toBe(true);
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+        expect(content.props.resolveOptionAvailability?.({ serviceId: CLAUDE_SERVICE_KEY,
+            optionId: `connected-service:${encodeURIComponent(CLAUDE_SERVICE_KEY)}:native`, binding: { source: 'native' },
+        })).toMatchObject({ subtitle: 'connectedServices.defaultAuth.warning.connected_group_unavailable' });
         await hook.unmount();
     });
 
@@ -447,10 +753,13 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
-                agentOptionState: null,
+                agentOptionState: { connectedServicesBindingsByServiceId: {
+                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'feature-pool' },
+                } },
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
@@ -468,22 +777,28 @@ describe('useNewSessionConnectedServices', () => {
         );
         const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
         if (typeof renderContent !== 'function') throw new Error('Expected account-groups picker content');
-        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<{ accountGroupsEnabled: boolean }>;
-        expect(content.props.accountGroupsEnabled).toBe(false);
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+        expect(content.props.resolveOptionAvailability?.({ serviceId: CLAUDE_SERVICE_KEY,
+            optionId: `connected-service:${encodeURIComponent(CLAUDE_SERVICE_KEY)}:native`, binding: { source: 'native' },
+        })).toMatchObject({ subtitle: 'connectedServices.defaultAuth.warning.connected_group_disabled' });
         await hook.unmount();
     });
 
     it('applies the per-agent default connected auth binding before the user opens the chip', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
+            target: { kind: 'account', account: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' } },
+        }] });
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: { id: 'claude', connectedServices: null },
+                defaultAuthAgentId: 'claude',
                 defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -501,7 +816,7 @@ describe('useNewSessionConnectedServices', () => {
                         },
                     },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -527,30 +842,20 @@ describe('useNewSessionConnectedServices', () => {
             deliveryMode: 'direct',
             disclosedMember: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'source-member' },
         } as const;
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [], teamResourceSelections: [{
+            purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
+            teamId: 'team-acme', selection: teamSelection,
+        }] });
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: { id: 'claude', connectedServices: null },
+                defaultAuthAgentId: 'claude',
                 defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
-                    // What the Agent page chooser persists: the canonical Team
-                    // selection of its Team (lane 10 child 02 :271).
-                    connectedAccountPurposeBindingsV1: {
-                        v: 1,
-                        bindings: [],
-                        teamResourceSelections: [{
-                            purpose: {
-                                consumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
-                                purpose: 'primary',
-                            },
-                            teamId: 'team-acme',
-                            selection: teamSelection,
-                        }],
-                    },
                     // A stale released default for the same Agent never wins.
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -564,7 +869,7 @@ describe('useNewSessionConnectedServices', () => {
                         },
                     },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -581,6 +886,10 @@ describe('useNewSessionConnectedServices', () => {
     it('applies an installed Agent default through its selected routing identity', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
         const installedAgentId = 'acme.review/reviewer';
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'acme.review', localId: 'reviewer' }, purpose: 'primary' },
+            target: { kind: 'account', account: { service: { pluginId: 'acme.review', localId: 'reviewer-service' }, accountId: 'reviewer' } },
+        }] });
         profileState.current = {
             connectedAccountsV4: [
                 v4Account({
@@ -604,7 +913,6 @@ describe('useNewSessionConnectedServices', () => {
                 connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -622,7 +930,7 @@ describe('useNewSessionConnectedServices', () => {
                         },
                     },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -640,6 +948,10 @@ describe('useNewSessionConnectedServices', () => {
 
     it('preserves a per-agent default group binding when the active profile changes', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+            target: { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'primary' },
+        }] });
 
         profileState.current = {
             connectedAccountsV4: [
@@ -680,7 +992,6 @@ describe('useNewSessionConnectedServices', () => {
                 ],
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -698,7 +1009,7 @@ describe('useNewSessionConnectedServices', () => {
                         },
                     },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -722,6 +1033,10 @@ describe('useNewSessionConnectedServices', () => {
 
     it('preserves a stale default group identity while presenting native availability', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        publishLegacyTestPurposeBindings({ v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+            target: { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'missing-group' },
+        }] });
 
         profileState.current = {
             connectedAccountsV4: [
@@ -747,7 +1062,6 @@ describe('useNewSessionConnectedServices', () => {
                 ],
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: {
                         v: 1,
@@ -765,7 +1079,7 @@ describe('useNewSessionConnectedServices', () => {
                         },
                     },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -832,14 +1146,15 @@ describe('useNewSessionConnectedServices', () => {
                 // An installed external Agent has no bundled core and no bundled
                 // scalar service declaration — only the machine projection.
                 agentCore: null,
+                defaultAuthAgentId: 'acme.review/reviewer',
+                defaultAuthConsumer: { pluginId: 'acme.review', localId: 'reviewer' },
                 connectedAccounts: NOVEL_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent,
             }),
@@ -893,14 +1208,15 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -927,10 +1243,10 @@ describe('useNewSessionConnectedServices', () => {
         // UI-2: the picker's settings action deep-links to the tapped service's
         // settings screen instead of discarding the serviceId.
         expect(routerPush).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
+            pathname: '/(app)/settings/connected-services',
             params: {
-                pluginId: 'happier.agent.claude',
-                localId: 'anthropic',
+                service: CLAUDE_SERVICE_KEY,
+                connect: '1',
             },
         });
 
@@ -966,11 +1282,10 @@ describe('useNewSessionConnectedServices', () => {
                 ],
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -1031,14 +1346,15 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
                 agentCore: null,
+                defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
                 agentOptionState: null,
                 settings: {
-                    connectedServicesProfileLabelByKey: {},
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: null,
+                targetServerId: activeHomeId,
                 router: { push: routerPush },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -1101,11 +1417,12 @@ describe('useNewSessionConnectedServices', () => {
         };
         const hook = await renderHook(() => useNewSessionConnectedServices({
             agentCore: null,
-            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+            defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             agentOptionState: null,
             settings: {
-                connectedServicesProfileLabelByKey: {},
-                connectedServicesDefaultProfileByServiceId: {},
+                                connectedServicesDefaultProfileByServiceId: {},
             },
             targetServerId: 'server-1',
             teamCredentialResources: [resource],
@@ -1156,11 +1473,12 @@ describe('useNewSessionConnectedServices', () => {
         };
         const hook = await renderHook(() => useNewSessionConnectedServices({
             agentCore: null,
-            connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+            defaultAuthAgentId: 'claude',
+                defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
             agentOptionState: null,
             settings: {
-                connectedServicesProfileLabelByKey: {},
-                connectedServicesDefaultProfileByServiceId: {},
+                                connectedServicesDefaultProfileByServiceId: {},
             },
             targetServerId: 'server-1',
             teamCredentialResources: [resource],

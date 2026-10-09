@@ -43,6 +43,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     applyTeamCredentialPolicy?: ConnectedServicesParams['applyTeamCredentialPolicy'];
     setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
     agentOptionState: Record<string, unknown> | null;
+    machineAgent?: ConnectedServicesParams['machineAgent'];
     settings: ConnectedServicesParams['settings'];
     router: ConnectedServicesParams['router'];
 }>): Readonly<{
@@ -50,7 +51,11 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     connectedServicesAuthChip: NewSessionConnectedServicesResult['connectedServicesAuthChip'];
     connectedServicesBindingsPayload: NewSessionConnectedServicesResult['connectedServicesBindingsPayload'];
     connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
+    connectedAccountDefaultsStatus: NewSessionConnectedServicesResult['connectedAccountDefaultsStatus'];
+    requireConnectedAccountDefaultsReady: NewSessionConnectedServicesResult['requireConnectedAccountDefaultsReady'];
     agentNewSessionOptions: Record<string, unknown> | null;
+    selectedCredentialMachineAgent: NewSessionConnectedServicesResult['selectedCredentialMachineAgent'];
+    connectedServicesRecoveryAction: NewSessionConnectedServicesResult['connectedServicesRecoveryAction'];
 }> {
     const staticAgentId = params.staticAgentId ?? params.agentType ?? null;
     const behaviorAgentId = resolveNewSessionBehaviorAgentId({
@@ -71,14 +76,18 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         });
     }, [params.selectedBackendTargetKey]);
 
-    const { connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip } = useNewSessionConnectedServices({
+    const { connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady,
+        connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
+        selectedCredentialMachineAgent, connectedServicesRecoveryAction } = useNewSessionConnectedServices({
         agentCore,
         defaultAuthAgentId: behaviorAgentId,
         defaultAuthConsumer: params.agentIdentity ?? null,
         connectedAccounts: params.connectedAccounts ?? [],
         agentOptionState: params.agentOptionState,
+        machineAgent: params.machineAgent,
         settings: params.settings,
         targetServerId: params.targetServerId,
+        sourceMachineId: selectedMachineId,
         teamCredentialResources: params.teamCredentialResources,
         teamCredentialResourceCurrentKeys: params.teamCredentialResourceCurrentKeys,
         teamNameById: params.teamNameById,
@@ -107,6 +116,10 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         connectedServicesAuthChip,
         connectedServicesBindingsPayload,
         connectedServicesModelProbeCacheIdentity,
+        connectedAccountDefaultsStatus,
+        requireConnectedAccountDefaultsReady,
         agentNewSessionOptions,
+        selectedCredentialMachineAgent,
+        connectedServicesRecoveryAction,
     };
 }
