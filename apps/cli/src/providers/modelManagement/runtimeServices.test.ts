@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import * as persistence from '@/persistence';
 import {
   AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
@@ -11,18 +16,23 @@ import {
   createProviderEndpointFingerprintV1,
   createProviderObservationAuthorizationFingerprintV1,
   createProviderProbeRequestFingerprintV1,
-  createProviderSavedSecretRecordFingerprintV1,
   createEmptyProviderRuntimeStateFileV1,
-  encryptSecretStringV1,
-  readProviderSettingsFromAccountSettingsV1,
+  splitProviderSettingsV1,
+  formatSharedSavedSecretRefV1,
+  sealSavedSecretResourceStoredContentV1,
+  ProviderConnectionsRowMutationV1Schema,
+  type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 
-import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
+import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { commitActiveProviderConnectionsCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import {
   resolveProviderProbeAuthorization,
@@ -32,7 +42,9 @@ import {
   createProviderProbeHttpClient,
   type ProviderProbeTransportRequest,
 } from '@/providers/probe/client';
-import { createProviderConnectionService } from '@/providers/connections';
+import { createRuntimeProviderConnectionServices } from '@/providers/connections/runtimeServices';
+import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
+import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
 import { PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS } from '@/providers/probe/scheduler';
 import type { ProviderModelSettingsMutationIntent } from '@/providers/connections';
 
@@ -41,10 +53,46 @@ import {
   resolveProviderManualModelCatalog,
 } from './runtimeServices';
 
+const temporaryPaths: string[] = [];
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  resetActiveAccountSettingsSnapshotForTests();
+  await Promise.all(temporaryPaths.splice(0).map(path => rm(path, { recursive: true, force: true })));
+});
+
+async function runtimeStoreWithState(state = createEmptyProviderRuntimeStateFileV1('machine-a')) {
+  const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-model-management-'));
+  temporaryPaths.push(happyHomeDir);
+  const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
+  await store.update(() => state);
+  return store;
+}
+
+function providerSnapshot(
+  providerSettings: ProviderSettingsV1,
+  savedSecretResources: ActiveAccountSettingsSnapshot['savedSecretResources'] = [],
+): ActiveAccountSettingsSnapshot {
+  const { catalog, defaults } = splitProviderSettingsV1(providerSettings);
+  return {
+    source: 'cache',
+    settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: defaults }),
+    providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+    savedSecretResources,
+    savedSecretCatalogState: 'ready',
+    settingsVersion: 1,
+    loadedAtMs: 1,
+    settingsSecretsReadKeys: [],
+    scopeKey: resolveAccountSettingsScopeKeyForToken('provider-model-snapshot-account'),
+  };
+}
+
 describe('runtime provider model-management composition', () => {
-  const successfulModelSettingsMutation = async (
-    intent: ProviderModelSettingsMutationIntent,
-  ) => ({ status: 'success' as const, action: intent.action });
+  const unexpectedModelSettingsMutation = async (
+    _intent: ProviderModelSettingsMutationIntent,
+  ): Promise<never> => {
+    throw new Error('Unexpected model-settings effect');
+  };
 
   it('resolves manual-model policy for a canonical-key connection through the registry', () => {
     const definition = ProviderContributionV1Schema.parse({
@@ -157,14 +205,14 @@ describe('runtime provider model-management composition', () => {
       }],
     });
     const resolved = resolveProviderConnectionForMachine({
-      connectionId, machineId: 'machine-a', accountSettings: { providerSettingsV1: base }, registry,
+      connectionId, machineId: 'machine-a', providerSettings: base, registry,
       dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
     });
     if (resolved.status !== 'resolved') throw new Error('Expected provider connection');
     const settings = ProviderSettingsV1Schema.parse({
       ...base,
       secretBindingsByConnectionId: {
-        [connectionId]: { account: { apiKey: 'secret-gateway' } },
+        [connectionId]: { account: { apiKey: formatSharedSavedSecretRefV1('secret-gateway') } },
       },
       accountGrants: [{
         v: 1, connectionId, connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1,
@@ -230,18 +278,17 @@ describe('runtime provider model-management composition', () => {
       release: vi.fn(async () => undefined),
     };
     let currentLease = lease;
-    const settingsSecretReadKey = new Uint8Array(32).fill(19);
-    const encryptedSecretValue = encryptSecretStringV1(
-      'gateway-secret',
-      settingsSecretReadKey,
-      (length) => new Uint8Array(length).fill(23),
-    );
+    const resourceId = 'secret-gateway';
+    const savedSecretResource = { resourceId, ownerAccountId: 'owner-account', displayName: 'Gateway key',
+      kind: 'apiKey' as const, encryptionMode: 'plain' as const, revision: 1, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+        content: { v: 1, name: 'Gateway key', kind: 'apiKey', value: 'gateway-secret' } }) };
+    const secretInspection = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
+      resources: [savedSecretResource] }).inspect(formatSharedSavedSecretRefV1(resourceId));
+    if (secretInspection.status !== 'ready') throw new Error('Expected captured Provider resource');
     const observationAuthorizationFingerprint = createProviderObservationAuthorizationFingerprintV1({
-      selectedSecretBindingId: 'secret-gateway',
-      selectedSecretRecordFingerprint: createProviderSavedSecretRecordFingerprintV1({
-        secretId: 'secret-gateway',
-        persistedEncryptedEnvelope: encryptedSecretValue,
-      }),
+      selectedSecretBindingId: formatSharedSavedSecretRefV1('secret-gateway'),
+      selectedSecretRecordFingerprint: secretInspection.fingerprint,
       credential: {
         selectedProtocol: 'openai-chat',
         selectedUse: 'probe',
@@ -281,7 +328,7 @@ describe('runtime provider model-management composition', () => {
       },
       lastAccessedAt: 30,
     };
-    let state = ProviderRuntimeStateFileV1Schema.parse({
+    const state = ProviderRuntimeStateFileV1Schema.parse({
       ...createEmptyProviderRuntimeStateFileV1('machine-a'),
       endpointHealth: [
         ProviderEndpointRuntimeStateRecordV1Schema.parse({
@@ -307,43 +354,40 @@ describe('runtime provider model-management composition', () => {
         }),
       ],
     });
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-state.json', read: vi.fn(async () => state),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => transform(state)),
+    const runtimeStore = await runtimeStoreWithState(state);
+    const token = 'provider-model-management-account';
+    const authorizedAccountSettings = { ...providerSnapshot(settings, [savedSecretResource]),
+      scopeKey: resolveAccountSettingsScopeKeyForToken(token) };
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token, encryption: null });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: { teams: { enabled: true } }, capabilities: {} }))));
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { resources: [{
+      resourceId, encryptionMode: 'plain', recipientEnvelope: null, storedContent: savedSecretResource.storedContent,
+      entry: { ref: formatSharedSavedSecretRefV1(resourceId), source: 'shared_resource', relationship: 'recipient',
+        name: 'Gateway key', kind: 'apiKey', ownerAccountId: 'owner-account', revision: savedSecretResource.revision, materialStatus: 'ready',
+        capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+    }] } });
+    const accountSettings = authorizedAccountSettings;
+    setActiveAccountSettingsSnapshot(authorizedAccountSettings);
+    const publishProviderSettings = (providerSettings: ProviderSettingsV1, revision: number) => {
+      const { catalog } = splitProviderSettingsV1(providerSettings);
+      if (!commitActiveProviderConnectionsCatalog({
+        scopeKey: authorizedAccountSettings.scopeKey,
+        lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+        catalog: { status: 'ready', revision, catalog },
+      })) throw new Error('Expected the captured Provider row update to be admitted');
     };
-    const authorizedAccountSettings = AccountSettingsSchema.parse({
-      providerSettingsV1: settings,
-      secrets: [{
-        id: 'secret-gateway',
-        name: 'Gateway key',
-        kind: 'apiKey',
-        encryptedValue: {
-          _isSecretValue: true,
-          encryptedValue: encryptedSecretValue,
-        },
-        createdAt: 1,
-        updatedAt: 1,
-      }],
-    });
-    let accountSettings = authorizedAccountSettings;
     const transport = vi.fn(async () => ({
       status: 200,
       headers: { 'content-type': 'application/json' },
       body: Buffer.from(JSON.stringify({ data: [{ id: 'same-id' }] }), 'utf8'),
     }));
-    const modelSettingsMutation = vi.fn(successfulModelSettingsMutation);
+    const modelSettingsMutation = unexpectedModelSettingsMutation;
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a', registry, runtimeStore,
       resolveRegistry: async () => preparedRegistry,
       resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => currentLease,
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: accountSettings,
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [settingsSecretReadKey], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
       featureGate: { isEnabled: () => true },
       modelSettingsMutation,
     });
@@ -372,7 +416,9 @@ describe('runtime provider model-management composition', () => {
           ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'same-id' },
           descriptor: { name: 'Provider Same' },
           compatibility: { result: { status: 'verified' }, confirmed: true },
-          endpointHealth: 'not_checked',
+          // The exact current unreachable observation beats a newer available
+          // observation for a different endpoint fingerprint.
+          endpointHealth: 'unreachable',
         }],
       }],
     });
@@ -562,7 +608,6 @@ describe('runtime provider model-management composition', () => {
       status: 'error',
       error: { code: 'provider_compatibility_unverified' },
     });
-    expect(modelSettingsMutation).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(transport).toHaveBeenCalled());
 
     const selection = {
@@ -571,7 +616,7 @@ describe('runtime provider model-management composition', () => {
     };
     const authorization = resolveProviderSpawnAuthorization({
       selection, machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
-      accountSettings, providerSettings: settings,
+      accountSettings: accountSettings.settings, savedSecretResources: accountSettings.savedSecretResources, providerSettings: settings,
       registry, dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]), lease,
     });
     if (!authorization.ok) throw new Error('Expected provider authorization');
@@ -600,7 +645,7 @@ describe('runtime provider model-management composition', () => {
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
       agentId: 'codex',
-      accountSettings,
+      accountSettings: accountSettings.settings, savedSecretResources: accountSettings.savedSecretResources,
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
@@ -618,7 +663,7 @@ describe('runtime provider model-management composition', () => {
         parser: 'openai-models',
         probeRequestFingerprint,
       },
-      accountSettings,
+      accountSettings: accountSettings.settings, savedSecretResources: accountSettings.savedSecretResources,
       providerSettings: settings,
       registry,
       dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
@@ -626,8 +671,8 @@ describe('runtime provider model-management composition', () => {
     if (!currentProbeAuthorization.ok) {
       throw new Error('Expected current probe authorization');
     }
-    state = ProviderRuntimeStateFileV1Schema.parse({
-      ...state,
+    await runtimeStore.update(current => (ProviderRuntimeStateFileV1Schema.parse({
+      ...current,
       catalogs: [{
         ...currentCatalogRecord,
         key: {
@@ -636,7 +681,7 @@ describe('runtime provider model-management composition', () => {
             currentProbeAuthorization.observationAuthorizationFingerprint,
         },
       }],
-    });
+    })));
     const activeProbeAuthorization = authorizePreviouslyCurrentProbe('probe-current');
     const disappearedProbeAuthorization = authorizePreviouslyCurrentProbe('probe-disappeared');
     if (!activeProbeAuthorization.ok || !disappearedProbeAuthorization.ok) {
@@ -718,12 +763,10 @@ describe('runtime provider model-management composition', () => {
       },
     });
     registry.providersByContributionKey.set(contributionKey, { ...contribution, definition: probeOnlyDefinition });
-    accountSettings = AccountSettingsSchema.parse({
-      providerSettingsV1: ProviderSettingsV1Schema.parse({
+    publishProviderSettings(ProviderSettingsV1Schema.parse({
         ...settings,
         accountGrants: [],
-      }),
-    });
+      }), 2);
     await expect(services.projectModels({
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
@@ -739,7 +782,7 @@ describe('runtime provider model-management composition', () => {
       currentSelectionRecovery: null,
     });
     registry.providersByContributionKey.set(contributionKey, contribution);
-    accountSettings = authorizedAccountSettings;
+    publishProviderSettings(settings, 3);
 
     registry.providersByContributionKey.delete(contributionKey);
     await expect(services.projectModels({
@@ -753,14 +796,12 @@ describe('runtime provider model-management composition', () => {
     });
     registry.providersByContributionKey.set(contributionKey, contribution);
 
-    accountSettings = AccountSettingsSchema.parse({
-      providerSettingsV1: ProviderSettingsV1Schema.parse({
+    publishProviderSettings(ProviderSettingsV1Schema.parse({
         ...DEFAULT_PROVIDER_SETTINGS_V1,
         connectionTombstones: [{
           v: 1, id: connectionId, contributionKey, lastDisplayName: 'Gateway', deletedAt: 3,
         }],
-      }),
-    });
+      }), 4);
     await expect(services.projectModels({
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
@@ -780,7 +821,7 @@ describe('runtime provider model-management composition', () => {
       registry: { providersByContributionKey: new Map() },
       getAccountSettingsSnapshot: () => null,
       featureGate: { isEnabled },
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     await expect(services.loadModel({
@@ -836,7 +877,7 @@ describe('runtime provider model-management composition', () => {
     const resolvedCold = resolveProviderConnectionForMachine({
       connectionId: 'pc_cold',
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: base },
+      providerSettings: base,
       registry,
       dnsEvidenceByEndpointUrl: new Map([['https://cold.example/v1', ['1.1.1.1']]]),
     });
@@ -893,18 +934,8 @@ describe('runtime provider model-management composition', () => {
       durableRevision: -1,
       release: vi.fn(async () => undefined),
     };
-    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-state.json',
-      read: vi.fn(async () => state),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => {
-        state = await transform(state);
-        return state;
-      }),
-    };
+    const state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore = await runtimeStoreWithState(state);
     const transport = vi.fn(async () => ({
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -917,16 +948,9 @@ describe('runtime provider model-management composition', () => {
       resolveAddresses: async () => ['1.1.1.1'],
       acquireRuntimeLease: async () => lease,
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     // Pool fanout is observation-only: it must neither await nor schedule a
@@ -958,9 +982,9 @@ describe('runtime provider model-management composition', () => {
     // Marking the retained snapshot stale makes the next read genuinely re-demand,
     // and the transport never answers — a projection that awaited warm connections
     // could not resolve, so a single dead endpoint would block every picker open.
-    state = {
-      ...state,
-      catalogs: state.catalogs.map((record) => (record.state.snapshot
+    await runtimeStore.update(current => ({
+      ...current,
+      catalogs: current.catalogs.map((record) => (record.state.snapshot
         ? {
             ...record,
             state: {
@@ -973,7 +997,7 @@ describe('runtime provider model-management composition', () => {
             },
           }
         : record)),
-    };
+    }));
     let releaseBlockedTransport!: () => void;
     const blockedTransport = new Promise<void>((resolve) => { releaseBlockedTransport = resolve; });
     transport.mockImplementation(async () => {
@@ -1002,7 +1026,7 @@ describe('runtime provider model-management composition', () => {
       headers: { 'content-type': 'application/json' },
       body: Buffer.from('{}', 'utf8'),
     }));
-    state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    await runtimeStore.update(current => (createEmptyProviderRuntimeStateFileV1('machine-a')));
     const failingCold = await services.projectModels({
       machineId: 'machine-a',
       agentTargetKey: 'agent:happier.agent.codex/codex',
@@ -1036,7 +1060,7 @@ describe('runtime provider model-management composition', () => {
     // Catalog success is authoritative model truth. A later health failure is
     // represented on row health and must not elevate the whole projection to a
     // catalog refresh failure.
-    state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    await runtimeStore.update(current => (createEmptyProviderRuntimeStateFileV1('machine-a')));
     transport
       .mockResolvedValueOnce({
         status: 200,
@@ -1129,7 +1153,7 @@ describe('runtime provider model-management composition', () => {
         const resolved = resolveProviderConnectionForMachine({
           connectionId: connection.id,
           machineId: 'machine-a',
-          accountSettings: { providerSettingsV1: base },
+          providerSettings: base,
           registry,
           dnsEvidenceByEndpointUrl,
         });
@@ -1185,18 +1209,8 @@ describe('runtime provider model-management composition', () => {
       durableRevision: -1,
       release: vi.fn(async () => undefined),
     };
-    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-state.json',
-      read: vi.fn(async () => state),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => {
-        state = await transform(state);
-        return state;
-      }),
-    };
+    const state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore = await runtimeStoreWithState(state);
     const catalogHosts = new Set<string>();
     const releases: Array<() => void> = [];
     let releaseAll = false;
@@ -1224,16 +1238,9 @@ describe('runtime provider model-management composition', () => {
         resolveAddresses: async () => ['1.1.1.1'],
         transport,
       }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     try {
@@ -1288,7 +1295,7 @@ describe('runtime provider model-management composition', () => {
       registry: { providersByContributionKey: new Map() },
       getAccountSettingsSnapshot: () => null,
       featureGate: { isEnabled: () => false },
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     expect(services).toMatchObject({
@@ -1301,23 +1308,16 @@ describe('runtime provider model-management composition', () => {
     });
   });
 
-  it('returns the exact runtime-state owner supplied to the one shared probe composition', () => {
-    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-state.json',
-      read: vi.fn(async () => state),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => transform(state)),
-    };
+  it('returns the exact runtime-state owner supplied to the one shared probe composition', async () => {
+    const state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore = await runtimeStoreWithState(state);
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a',
       registry: { providersByContributionKey: new Map() },
       getAccountSettingsSnapshot: () => null,
       featureGate: { isEnabled: () => false },
       runtimeStore,
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     expect(services.runtimeStore).toBe(runtimeStore);
@@ -1341,15 +1341,9 @@ describe('runtime provider model-management composition', () => {
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a',
       registry: { providersByContributionKey: new Map() },
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
-      modelSettingsMutation: successfulModelSettingsMutation,
+      modelSettingsMutation: unexpectedModelSettingsMutation,
     });
 
     await expect(services.mutateModelSettings({
@@ -1364,7 +1358,7 @@ describe('runtime provider model-management composition', () => {
     });
   });
 
-  it('routes revalidated model settings through the connection-service mutation transaction on CAS retry', async () => {
+  it('preserves the row CAS winner and revalidates a manual-model retry through the real connection service', async () => {
     const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
     const settings = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -1398,77 +1392,73 @@ describe('runtime provider model-management composition', () => {
         updatedAt: 2,
       }],
     });
-    let accountSettings = AccountSettingsSchema.parse({
-      providerSettingsV1: settings,
-      concurrentWinner: 0,
+    const credentials = { token: 'provider-model-row-cas', encryption: null };
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(credentials.token);
+    let preferences = { memoryUseInNewSessions: false, concurrentWinner: 0 };
+    let settingsVersion = 4;
+    let catalog = splitProviderSettingsV1(settings).catalog;
+    let revision = 7;
+    let conflictPending = true;
+    setActiveAccountSettingsSnapshot({ ...providerSnapshot(settings), scopeKey, source: 'network',
+      settings: AccountSettingsSchema.parse(preferences), rawSettings: preferences, settingsVersion,
+      providerConnectionsCatalog: { status: 'ready', revision, catalog } });
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, settingsVersion, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: {
+        status: 'present', revision, content: { t: 'plain', v: catalog } } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: settingsVersion, content: { t: 'plain', v: preferences } } };
+      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+      const history = emptyAccountSettingsHistoryCaptureResponse(path);
+      if (history) return history;
+      throw new Error('Unexpected Provider model CAS boundary: ' + path);
     });
-    const updateAccountSettings = vi.fn(async (
-      mutate: (
-        raw: Readonly<Record<string, unknown>>,
-      ) => Readonly<Record<string, unknown>>,
-    ) => {
-      mutate(accountSettings);
-      accountSettings = AccountSettingsSchema.parse({
-        ...accountSettings,
-        concurrentWinner: 1,
-      });
-      accountSettings = AccountSettingsSchema.parse(mutate(accountSettings));
-      return accountSettings;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const path = new URL(String(url)).pathname;
+      if (path !== '/v1/account/entity-rows/provider-connections') throw new Error('Unexpected Provider mutation: ' + path);
+      const mutation = ProviderConnectionsRowMutationV1Schema.parse(body);
+      if (conflictPending) {
+        conflictPending = false;
+        catalog = { ...catalog, manualModelsByConnectionId: { [connectionId]: [{ id: 'concurrent-model', addedAt: 99 }] } };
+        revision += 1;
+        preferences = { memoryUseInNewSessions: true, concurrentWinner: 1 };
+        settingsVersion += 1;
+        const current = getActiveAccountSettingsSnapshot();
+        if (!current) throw new Error('Expected admitted Provider Account');
+        setActiveAccountSettingsSnapshot({ ...current, settings: AccountSettingsSchema.parse(preferences),
+          rawSettings: preferences, settingsVersion });
+        return { status: 200, data: { status: 'conflict', revision } };
+      }
+      if (mutation.expectedRevision !== revision) return { status: 200, data: { status: 'conflict', revision } };
+      if (mutation.content?.t !== 'plain') throw new Error('Expected keyless Provider catalog');
+      catalog = mutation.content.v;
+      revision += 1;
+      return { status: 200, data: { status: 'updated', revision, cursor: revision } };
     });
     const featureGate = { isEnabled: () => true };
-    const connectionService = createProviderConnectionService({
-      machineId: 'machine-a',
-      featureGate,
-      loadSnapshot: async () => ({
-        accountSettings,
-        rawAccountSettings: accountSettings,
-        registry: { providersByContributionKey: new Map() },
-      }),
-      updateAccountSettings,
-      collectDnsEvidence: async () => new Map(),
-      resolveConnection: () => ({
-        status: 'missing',
-        connectionId,
-        diagnostics: [],
-      }),
-      runtimeSummary: async () => ({
-        summary: {
-          health: 'not_checked',
-          modelCount: null,
-          checkedAt: null,
-          endpoints: [],
-        },
-        probeObservationIdentity: null,
-      }),
-      now: () => 100,
-    });
-    const services = createRuntimeProviderModelManagementServices({
-      machineId: 'machine-a',
-      registry: { providersByContributionKey: new Map() },
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: accountSettings,
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
-      featureGate,
-      modelSettingsMutation: (intent) => connectionService.mutateModelSettings(intent),
-    });
-
-    await expect(services.mutateModelSettings({
-      action: 'manualAdd',
-      machineId: 'machine-a',
-      connectionId,
-      expectedConnectionRevision: 2,
-      models: [{ id: 'vendor/model' }],
-    })).resolves.toEqual({ status: 'success', action: 'manualAdd' });
-
-    expect(accountSettings.concurrentWinner).toBe(1);
-    expect(
-      readProviderSettingsFromAccountSettingsV1(accountSettings)
-        .settings.manualModelsByConnectionId[connectionId],
-    ).toMatchObject([{ id: 'vendor/model', addedAt: 100 }]);
+    const registry = { providersByContributionKey: new Map() };
+    const runtimeStore = await runtimeStoreWithState();
+    const runtime = createRuntimeProviderServices({ machineId: 'machine-a', registry, runtimeStore, featureGate,
+      resolveAddresses: async () => ['1.1.1.1'] });
+    const connectionServices = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
+      happyHomeDir: join(tmpdir(), 'provider-model-row-cas'), featureGate,
+      runtimeSummary: runtime.summary, resolveRegistry: async () => registry,
+      resolveAddresses: async () => ['1.1.1.1'], now: () => 100 });
+    const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', registry, runtimeStore,
+      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot, featureGate,
+      modelSettingsMutation: intent => connectionServices.service.mutateModelSettings(intent) });
+    const intent = { action: 'manualAdd' as const, machineId: 'machine-a', connectionId,
+      expectedConnectionRevision: 2, models: [{ id: 'vendor/model' }] };
+    await expect(services.mutateModelSettings(intent)).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_connection_changed' } });
+    expect(catalog.manualModelsByConnectionId[connectionId]).toEqual([{ id: 'concurrent-model', addedAt: 99 }]);
+    await expect(services.mutateModelSettings(intent)).resolves.toEqual({ status: 'success', action: 'manualAdd' });
+    expect(catalog.manualModelsByConnectionId[connectionId]).toMatchObject([
+      { id: 'concurrent-model', addedAt: 99 }, { id: 'vendor/model', addedAt: 100 }]);
+    expect(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(5);
+    expect(getActiveAccountSettingsSnapshot()?.settings.memoryUseInNewSessions).toBe(true);
+    expect(getActiveAccountSettingsSnapshot()?.rawSettings?.concurrentWinner).toBe(1);
   });
 });

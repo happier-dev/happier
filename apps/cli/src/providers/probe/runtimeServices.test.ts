@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
 import * as persistence from '@/persistence';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,15 +16,21 @@ import {
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
   createEmptyProviderRuntimeStateFileV1,
-  encryptSecretStringV1,
+  splitProviderSettingsV1,
+  formatSharedSavedSecretRefV1,
+  type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
-import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
+import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
+import { createDeferred } from '@/testkit/async/deferred';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
 import { createRuntimeProviderServices } from './runtimeServices';
 import {
@@ -31,6 +38,7 @@ import {
   type ProviderProbeTransportRequest,
 } from './client';
 import { PROVIDER_HEALTH_REFRESH_TTL_MS } from './scheduler';
+import { createProviderLocalCatalogFallbackRunner } from './localCommand';
 
 const temporaryPaths: string[] = [];
 afterEach(async () => {
@@ -73,6 +81,19 @@ const contribution: ResolvedProviderContribution = {
 };
 const registry = { providersByContributionKey: new Map([[contributionKey, contribution]]) };
 
+function providerSnapshot(providerSettings: ProviderSettingsV1): ActiveAccountSettingsSnapshot {
+  const { catalog, defaults } = splitProviderSettingsV1(providerSettings);
+  return {
+    source: 'cache',
+    settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: defaults }),
+    providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+    settingsVersion: 1,
+    loadedAtMs: 1,
+    settingsSecretsReadKeys: [],
+    scopeKey: resolveAccountSettingsScopeKeyForToken('provider-probe-snapshot-account'),
+  };
+}
+
 function grantedSettings(providerRegistry = registry) {
   const base = ProviderSettingsV1Schema.parse({
     ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -87,7 +108,7 @@ function grantedSettings(providerRegistry = registry) {
   const resolution = resolveProviderConnectionForMachine({
     connectionId,
     machineId: 'machine-a',
-    accountSettings: { providerSettingsV1: base },
+    providerSettings: base,
     registry: providerRegistry,
     dnsEvidenceByEndpointUrl: new Map([['https://models.example/v1', ['1.1.1.1']]]),
   });
@@ -104,10 +125,49 @@ function grantedSettings(providerRegistry = registry) {
 }
 
 describe('runtime provider services', () => {
+  it('spends the existing Provider operation deadline while opening a demanded Account catalog', async () => {
+    vi.useFakeTimers();
+    const credentials = { token: 'provider-catalog-deadline', encryption: null };
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token), providerConnectionsCatalog: { status: 'loading' } });
+    const rowEntered = createDeferred<void>();
+    const releaseRow = createDeferred<void>();
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, settingsVersion: 4, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/provider-connections') {
+        rowEntered.resolve();
+        await releaseRow.promise;
+        return { status: 200, data: { status: 'deleted', revision: 2 } };
+      }
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: {} } } };
+      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+      const history = emptyAccountSettingsHistoryCaptureResponse(path);
+      if (history) return history;
+      throw new Error(`Unexpected Provider deadline boundary: ${path}`);
+    });
+    const services = createRuntimeProviderServices({ machineId: 'machine-a', registry,
+      featureGate: { isEnabled: () => true } });
+    let observed: unknown;
+    const pending = services.resolveCatalogContext({ connectionId, machineId: 'machine-a' }, undefined,
+      { lifetime: { wallDeadlineAtMs: Date.now() + 25 } }).then(result => { observed = result; return result; });
+    try {
+      await rowEntered.promise;
+      await vi.advanceTimersByTimeAsync(26);
+      expect(observed).toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable' } });
+    } finally {
+      releaseRow.resolve();
+      await pending;
+    }
+  });
+
   it('refuses a newly revoked shared Provider credential on saved probe without an AccountChange', async () => {
     const token = 'provider-probe-account';
     const resourceId = 'provider-probe-resource';
-    const ref = `happier:shared-secret:v1:${resourceId}`;
+    const ref = formatSharedSavedSecretRefV1(resourceId);
     const credentialRegistry = { providersByContributionKey: new Map([[contributionKey, {
       ...contribution,
       definition: ProviderContributionV1Schema.parse({
@@ -119,13 +179,13 @@ describe('runtime provider services', () => {
       }),
     }]]) };
     setActiveAccountSettingsSnapshot({
-      source: 'network', settings: AccountSettingsSchema.parse({ providerSettingsV1: {
+      ...providerSnapshot(ProviderSettingsV1Schema.parse({
         ...grantedSettings(credentialRegistry),
         secretBindingsByConnectionId: { [connectionId]: {
-          account: { apiKey: 'unselected-personal-secret' },
+          account: { apiKey: formatSharedSavedSecretRefV1('unselected-resource') },
           byMachineId: { 'machine-a': { apiKey: ref } },
         } },
-      } }),
+      })), source: 'network',
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token),
     });
     const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
@@ -151,17 +211,15 @@ describe('runtime provider services', () => {
       status: 200, headers: { 'content-type': 'application/json' },
       body: Buffer.from(JSON.stringify({ data: [{ id: 'probe-a' }] })),
     }));
-    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-credential-admission-'));
+    temporaryPaths.push(happyHomeDir);
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
     const services = createRuntimeProviderServices({
       machineId: 'machine-a', registry: credentialRegistry,
       getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
       resolveAddresses: async () => ['1.1.1.1'], featureGate: { isEnabled: () => true },
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      runtimeStore: {
-        path: '/virtual/provider-admission.json', read: async () => state,
-        update: async (transform) => state = await transform(state),
-        updateTransientEndpointHealth: async (transform) => { state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] }; },
-      },
+      runtimeStore,
     });
 
     await expect(services.probe({ connectionId, machineId: 'machine-a' })).resolves.toMatchObject({
@@ -183,7 +241,7 @@ describe('runtime provider services', () => {
       headers: expect.objectContaining({ authorization: 'Bearer rotated-value' }),
     }));
     expect(get).toHaveBeenCalledTimes(3);
-    state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    await runtimeStore.update(() => createEmptyProviderRuntimeStateFileV1('machine-a'));
     await expect(services.scheduleDemandRefresh({ connectionId, machineId: 'machine-a' }, 'picker_open')).resolves.toBeNull();
     // Catalog and health are two requests in one admitted demand operation.
     expect(get).toHaveBeenCalledTimes(4);
@@ -206,14 +264,7 @@ describe('runtime provider services', () => {
         machineId: 'machine-a',
         registry,
         resolveAddresses: () => new Promise<readonly string[]>(() => {}),
-        getAccountSettingsSnapshot: () => ({
-          source: 'cache',
-          settings: AccountSettingsSchema.parse({ providerSettingsV1: grantedSettings() }),
-          settingsVersion: 1,
-          loadedAtMs: 1,
-          settingsSecretsReadKeys: [],
-          scopeKey: 'account-a',
-        }),
+        getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(grantedSettings()); return () => snapshot; })(),
         featureGate: { isEnabled: () => true },
       });
       const result = services.models({ connectionId, machineId: 'machine-a' });
@@ -260,7 +311,7 @@ describe('runtime provider services', () => {
       }],
     });
     const ungranted = resolveProviderConnectionForMachine({
-      connectionId: localConnectionId, machineId: 'machine-a', accountSettings: { providerSettingsV1: base },
+      connectionId: localConnectionId, machineId: 'machine-a', providerSettings: base,
       registry: localRegistry, dnsEvidenceByEndpointUrl: new Map(),
     });
     if (ungranted.status !== 'resolved') throw new Error('Expected local connection');
@@ -281,10 +332,7 @@ describe('runtime provider services', () => {
       machineId: 'machine-a', happyHomeDir, registry: localRegistry,
       resolveAddresses: async () => ['127.0.0.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['127.0.0.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
     });
 
@@ -360,26 +408,8 @@ describe('runtime provider services', () => {
     const transport = vi.fn(async () => {
       throw new Error('a revoked queued saved probe must not reach transport');
     });
-    let runtimeState = createEmptyProviderRuntimeStateFileV1('machine-a');
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-revoked-queue.json',
-      read: vi.fn(async () => runtimeState),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => {
-        runtimeState = await transform(runtimeState);
-        return runtimeState;
-      }),
-    };
-    const getAccountSettingsSnapshot = vi.fn(() => ({
-      source: 'cache' as const,
-      settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-      settingsVersion: 1,
-      loadedAtMs: 1,
-      settingsSecretsReadKeys: [],
-      scopeKey: 'account-a',
-    }));
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
+    const getAccountSettingsSnapshot = vi.fn((() => { const snapshot = providerSnapshot(settings); return () => snapshot; })());
     const resolveAddresses = vi.fn(async () => ['1.1.1.1']);
     const services = createRuntimeProviderServices({
       machineId: 'machine-a',
@@ -426,7 +456,7 @@ describe('runtime provider services', () => {
     expect(resolveAddresses).not.toHaveBeenCalled();
     expect(scheduled).toHaveBeenCalledTimes(4);
     expect(transport).not.toHaveBeenCalled();
-    expect(runtimeStore.update).not.toHaveBeenCalled();
+    expect(await runtimeStore.read()).toEqual(createEmptyProviderRuntimeStateFileV1('machine-a'));
   });
 
   it('detaches an aborted draft-probe caller while a second caller retains the shared transport', async () => {
@@ -448,10 +478,10 @@ describe('runtime provider services', () => {
       registry: { providersByContributionKey: new Map() },
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({}), settingsVersion: 1,
-        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => {
+        const snapshot = providerSnapshot(ProviderSettingsV1Schema.parse(DEFAULT_PROVIDER_SETTINGS_V1));
+        return () => snapshot;
+      })(),
       featureGate: { isEnabled: () => true },
     });
     const request = {
@@ -510,10 +540,7 @@ describe('runtime provider services', () => {
       machineId: 'machine-a', happyHomeDir, registry,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
     });
     const identity = { connectionId, machineId: 'machine-a' };
@@ -555,10 +582,7 @@ describe('runtime provider services', () => {
       machineId: 'machine-a', happyHomeDir, registry,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
     });
     const firstController = new AbortController();
@@ -604,18 +628,7 @@ describe('runtime provider services', () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-model-load-frontier-'));
     temporaryPaths.push(happyHomeDir);
     const settings = grantedSettings();
-    let runtimeState = createEmptyProviderRuntimeStateFileV1('machine-a');
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-model-load-frontier.json',
-      read: vi.fn(async () => runtimeState),
-      updateTransientEndpointHealth: vi.fn(async (transform) => {
-        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
-      }),
-      update: vi.fn(async (transform) => {
-        runtimeState = await transform(runtimeState);
-        return runtimeState;
-      }),
-    };
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
     let releaseDemandRefresh!: () => void;
     const demandRefreshGate = new Promise<void>((resolve) => { releaseDemandRefresh = resolve; });
     let transportCall = 0;
@@ -633,10 +646,7 @@ describe('runtime provider services', () => {
       runtimeStore,
       resolveAddresses: async () => ['1.1.1.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
     });
     const identity = { connectionId, machineId: 'machine-a' };
@@ -676,14 +686,7 @@ describe('runtime provider services', () => {
         transport,
       }),
       createObservationId: () => 'observation-a',
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       featureGate: { isEnabled: () => true },
     });
     const identity = { connectionId, machineId: 'machine-a' };
@@ -723,14 +726,7 @@ describe('runtime provider services', () => {
         resolveAddresses,
         transport: async () => ({ status: 401, headers: {}, body: Buffer.alloc(0) }),
       }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
     });
     await expect(noAuthUnauthorized.probe(identity)).resolves.toMatchObject({
       status: 'error', error: { code: 'provider_probe_response_invalid' },
@@ -740,7 +736,15 @@ describe('runtime provider services', () => {
   it('projects one opaque probe-observation identity from exact request, authorization, and grant facts', async () => {
     const identityConnectionId = ProviderConnectionIdSchema.parse('pc_observation_identity');
     const identityContributionKey = 'acme.identity/identity';
-    const secretKey = new Uint8Array(32).fill(7);
+    const token = 'provider-probe-observation-identity';
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const resourceDataKey = new Uint8Array(32).fill(7);
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({
+      token, encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(features))));
     const definitionForProbe = (path: string) => ProviderContributionV1Schema.parse({
       v: 1,
       id: 'identity',
@@ -793,11 +797,38 @@ describe('runtime provider services', () => {
         updatedAt: 1,
       }],
     }).connections[0]!;
-    let encryptedValue = encryptSecretStringV1(
-      'secret-one',
-      secretKey,
-      (length) => new Uint8Array(length).fill(3),
-    );
+    let secretValue = 'secret-one';
+    const savedSecretResource = () => ({ resourceId: 'secret-identity', ownerAccountId: 'owner-account',
+      displayName: 'Identity API key', kind: 'apiKey' as const, encryptionMode: 'e2ee' as const,
+      resourceDataKey: new Uint8Array(resourceDataKey),
+      revision: secretValue === 'secret-one' ? 1 : 2, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'secret-identity', mode: 'e2ee',
+        resourceDataKey, randomBytes: length => new Uint8Array(length).fill(secretValue === 'secret-one' ? 3 : 4),
+        content: { v: 1, name: 'Identity API key', kind: 'apiKey', value: secretValue } }) });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (new URL(String(url)).pathname !== '/v1/account/saved-secrets/resources/materials') {
+        throw new Error(`Unexpected observation-identity boundary: ${String(url)}`);
+      }
+      const resource = savedSecretResource();
+      return { status: 200, data: { resources: [{
+        resourceId: resource.resourceId,
+        encryptionMode: 'e2ee',
+        entry: {
+          ref: formatSharedSavedSecretRefV1(resource.resourceId), source: 'shared_resource', relationship: 'recipient',
+          name: resource.displayName, kind: resource.kind, ownerAccountId: resource.ownerAccountId,
+          revision: resource.revision, materialStatus: 'ready',
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
+        },
+        storedContent: resource.storedContent,
+        recipientEnvelope: {
+          encryptedDataKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+            dataKey: resourceDataKey, recipientPublicKey: publicKey,
+            randomBytes: length => new Uint8Array(length).fill(13),
+          })).toString('base64'),
+          recipientContentPublicKeyFingerprint: 'identity-account-content-key',
+        },
+      }] } };
+    });
     const dnsEvidence = new Map([
       ['https://identity.example/v1', ['1.1.1.1']],
       ['https://identity-override.example/v1', ['1.1.1.2']],
@@ -807,14 +838,14 @@ describe('runtime provider services', () => {
         ...DEFAULT_PROVIDER_SETTINGS_V1,
         connections: [connection],
         secretBindingsByConnectionId: {
-          [identityConnectionId]: { account: { apiKey: 'secret-identity' } },
+          [identityConnectionId]: { account: { apiKey: formatSharedSavedSecretRefV1('secret-identity') } },
         },
       });
       if (confirmedAt === null) return ungranted;
       const resolution = resolveProviderConnectionForMachine({
         connectionId: identityConnectionId,
         machineId: 'machine-a',
-        accountSettings: { providerSettingsV1: ungranted },
+        providerSettings: ungranted,
         registry: identityRegistry,
         dnsEvidenceByEndpointUrl: dnsEvidence,
       });
@@ -835,23 +866,12 @@ describe('runtime provider services', () => {
       headers: { 'content-type': 'application/json' },
       body: Buffer.from(JSON.stringify({ data: [{ id: 'model-a' }] }), 'utf8'),
     }));
-    let runtimeState = createEmptyProviderRuntimeStateFileV1('machine-a');
-    // Persistence is the genuine system boundary here; the identity contract
-    // exercises the real resolution, authorization, probe, and summary logic.
-    const runtimeStore: ProviderRuntimeStateStore = {
-      path: '/virtual/provider-runtime-state.json',
-      read: async () => runtimeState,
-      updateTransientEndpointHealth: async (transform) => {
-        runtimeState = { ...runtimeState, endpointHealth: [...await transform(runtimeState.endpointHealth)] };
-      },
-      update: async (transform) => {
-        runtimeState = await transform(runtimeState);
-        return runtimeState;
-      },
-    };
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-observation-identity-'));
+    temporaryPaths.push(happyHomeDir);
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
     const services = createRuntimeProviderServices({
       machineId: 'machine-a',
-      happyHomeDir: '/virtual/happier-provider-runtime-observation-identity',
+      happyHomeDir,
       runtimeStore,
       resolveRegistry: async () => identityRegistry,
       resolveAddresses: async (hostname) => hostname === 'identity-override.example' ? ['1.1.1.2'] : ['1.1.1.1'],
@@ -859,30 +879,23 @@ describe('runtime provider services', () => {
         resolveAddresses: async (hostname) => hostname === 'identity-override.example' ? ['1.1.1.2'] : ['1.1.1.1'],
         transport,
       }),
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache',
-        settings: AccountSettingsSchema.parse({
-          providerSettingsV1: settings,
-          secrets: [{
-            id: 'secret-identity',
-            name: 'Identity API key',
-            kind: 'apiKey',
-            encryptedValue: { _isSecretValue: true, encryptedValue },
-            createdAt: 1,
-            updatedAt: 1,
-          }],
-        }),
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [secretKey],
-        scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
       featureGate: { isEnabled: () => true },
     });
     const requestIdentity = { connectionId: identityConnectionId, machineId: 'machine-a' };
+    let publishedSettings: ProviderSettingsV1 | undefined;
+    let settingsVersion = 0;
+    const publishSettings = () => {
+      if (publishedSettings === settings) return;
+      settingsVersion += 1;
+      setActiveAccountSettingsSnapshot({ ...providerSnapshot(settings), source: 'network', settingsVersion,
+        scopeKey: resolveAccountSettingsScopeKeyForToken(token) });
+      publishedSettings = settings;
+    };
     const readIdentity = async (): Promise<string> => {
+      publishSettings();
       const result = await services.summary(requestIdentity);
-      expect(result).toMatchObject({
+      expect(result, JSON.stringify(result)).toMatchObject({
         status: 'success',
         probeObservationIdentity: expect.stringMatching(/^probe-observation:v1:/u),
       });
@@ -892,17 +905,8 @@ describe('runtime provider services', () => {
 
     const initialIdentity = await readIdentity();
     const initialProviderSettings = settings;
-    const initialAccountSettings = AccountSettingsSchema.parse({
-      providerSettingsV1: initialProviderSettings,
-      secrets: [{
-        id: 'secret-identity',
-        name: 'Identity API key',
-        kind: 'apiKey',
-        encryptedValue: { _isSecretValue: true, encryptedValue },
-        createdAt: 1,
-        updatedAt: 1,
-      }],
-    });
+    const initialAccountSettings = providerSnapshot(initialProviderSettings).settings;
+    const initialSavedSecretResources = [savedSecretResource()];
     const initialRegistry = {
       providersByContributionKey: new Map(identityRegistry.providersByContributionKey),
     };
@@ -911,7 +915,7 @@ describe('runtime provider services', () => {
     ]);
     const initialResolution = resolveProviderConnectionForMachine({
       ...requestIdentity,
-      accountSettings: initialAccountSettings,
+      providerSettings: initialProviderSettings,
       registry: initialRegistry,
       dnsEvidenceByEndpointUrl: initialDnsEvidenceByEndpointUrl,
     });
@@ -931,15 +935,12 @@ describe('runtime provider services', () => {
     settings = buildSettings(10);
     await expect(readIdentity()).resolves.toBe(initialIdentity);
 
-    encryptedValue = encryptSecretStringV1(
-      'secret-two',
-      secretKey,
-      (length) => new Uint8Array(length).fill(4),
-    );
+    secretValue = 'secret-two';
     const rotatedSecretIdentity = await readIdentity();
     expect(rotatedSecretIdentity).not.toBe(initialIdentity);
 
     settings = buildSettings(null);
+    publishSettings();
     await expect(services.summary(requestIdentity)).resolves.toMatchObject({
       status: 'error',
       error: { code: 'provider_connection_disabled' },
@@ -985,6 +986,8 @@ describe('runtime provider services', () => {
       ...requestIdentity,
       resolution: initialResolution,
       accountSettings: initialAccountSettings,
+      providerSettings: initialProviderSettings,
+      savedSecretResources: initialSavedSecretResources,
       registry: initialRegistry,
       dnsEvidence: initialDnsEvidenceByEndpointUrl,
       lifetime: { wallDeadlineAtMs: Date.now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs },
@@ -1052,7 +1055,7 @@ describe('runtime provider services', () => {
     const initial = resolveProviderConnectionForMachine({
       connectionId: localConnectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: base },
+      providerSettings: base,
       registry: localRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -1082,17 +1085,14 @@ describe('runtime provider services', () => {
       body: Buffer.from(JSON.stringify({ models: nativeModels }), 'utf8'),
     }));
     let observation = 0;
-    const accountSettings = AccountSettingsSchema.parse({ providerSettingsV1: settings });
+    const accountSnapshot = providerSnapshot(settings);
     const services = createRuntimeProviderServices({
       machineId: 'machine-a',
       happyHomeDir,
       registry: localRegistry,
       featureGate: { isEnabled: () => true },
       resolveAddresses: async () => ['127.0.0.1'],
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: accountSettings,
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: () => accountSnapshot,
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['127.0.0.1'],
         transport,
@@ -1207,7 +1207,7 @@ describe('runtime provider services', () => {
     const initial = resolveProviderConnectionForMachine({
       connectionId: localConnectionId,
       machineId: 'machine-a',
-      accountSettings: { providerSettingsV1: base },
+      providerSettings: base,
       registry: localRegistry,
       dnsEvidenceByEndpointUrl: new Map(),
     });
@@ -1221,36 +1221,38 @@ describe('runtime provider services', () => {
         confirmedAt: 1,
       }],
     });
-    const localCatalogFallback = vi.fn(async () => ({
-      status: 'success' as const,
-      models: [{ id: 'qwen3:8b', name: 'qwen3:8b' }],
+    const runSystemTool = vi.fn(async () => ({
+      ok: true as const,
+      exitCode: 0,
+      stdout: 'NAME ID SIZE MODIFIED\nqwen3:8b model-digest 5GB today\n',
+      stderr: '',
     }));
     const services = createRuntimeProviderServices({
       machineId: 'machine-a', happyHomeDir, registry: localRegistry,
       featureGate: { isEnabled: () => true },
       resolveAddresses: async () => ['127.0.0.1'],
-      getAccountSettingsSnapshot: () => ({
-        source: 'cache', settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
-        settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
-      }),
+      getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['127.0.0.1'],
         transport: async () => ({ status: 503, headers: {}, body: Buffer.alloc(0) }),
       }),
-      localCatalogFallback: { run: localCatalogFallback },
+      localCatalogFallback: createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } }),
       createObservationId: () => 'local-command-observation',
     });
 
     await expect(services.probe({ connectionId: localConnectionId, machineId: 'machine-a' }))
       .resolves.toMatchObject({ status: 'success', models: [{ id: 'qwen3:8b' }] });
-    expect(localCatalogFallback).toHaveBeenCalledWith({
-      descriptor: localDefinition.discovery?.catalogFallback,
-      endpointUrl: 'http://127.0.0.1:11434/',
-    });
+    expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
+      lookupNames: ['ollama'],
+      args: ['list'],
+      env: { OLLAMA_HOST: 'http://127.0.0.1:11434/' },
+    }));
     await expect(services.summary({ connectionId: localConnectionId, machineId: 'machine-a' }))
       .resolves.toMatchObject({
         status: 'success',
         summary: { health: 'unreachable', modelCount: 1 },
       });
+    // Join the real advisory demand before removing its runtime-store directory.
+    await services.scheduleDemandRefresh({ connectionId: localConnectionId, machineId: 'machine-a' }, 'detail_open');
   });
 });

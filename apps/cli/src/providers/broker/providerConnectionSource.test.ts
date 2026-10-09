@@ -7,16 +7,19 @@ import {
   ProviderConnectionSecurityFingerprintV1Schema,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
-  encryptSecretStringV1,
-  readProviderSettingsFromAccountSettingsV1,
+  formatSharedSavedSecretRefV1,
+  splitProviderSettingsV1,
+  type ProviderSettingsV1,
   sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
+import { readProviderSettingsForCli } from '@/providers/settings/read';
 import {
   createProviderConnectionBrokerSourceOpen,
   isProviderConnectionBrokerSourceCurrent,
@@ -91,7 +94,7 @@ const registry = {
   providerActivationOccurrenceIdsByPluginId: new Map([['acme.gateway', 'gateway-occurrence-1']]),
 };
 const dnsEvidenceByEndpointUrl = new Map([['https://gateway.example/v1', ['1.1.1.1']]]);
-const sharedSecretRef = 'happier:shared-secret:v1:resource-provider';
+const sharedSecretRef = formatSharedSavedSecretRefV1('resource-provider');
 const sharedSecretResource = {
   resourceId: 'resource-provider',
   ownerAccountId: 'owner-account',
@@ -117,12 +120,11 @@ function accountSettings(activeRegistry = registry) {
     }],
   });
   const resolution = resolveProviderConnectionForMachine({
-    connectionId, machineId: 'machine-a', accountSettings: { providerSettingsV1: initial },
+    connectionId, machineId: 'machine-a', providerSettings: initial,
     registry: activeRegistry, dnsEvidenceByEndpointUrl,
   });
   if (resolution.status !== 'resolved') throw new Error('expected resolved connection');
-  const settings = AccountSettingsSchema.parse({
-    providerSettingsV1: {
+  return snapshotFromProviderSettings(ProviderSettingsV1Schema.parse({
       ...initial,
       accountGrants: [{
         v: 1, connectionId,
@@ -131,39 +133,42 @@ function accountSettings(activeRegistry = registry) {
       }],
       secretBindingsByConnectionId: {
         [connectionId]: {
-          account: { apiKey: 'secret-a' },
-          byMachineId: { 'machine-a': { apiKey: 'secret-a' } },
+          account: { apiKey: formatSharedSavedSecretRefV1('secret-a') },
+          byMachineId: { 'machine-a': { apiKey: formatSharedSavedSecretRefV1('secret-a') } },
         },
       },
-    },
-    secrets: [{
-      id: 'secret-a',
-      name: 'Gateway key',
-      encryptedValue: {
-        _isSecretValue: true,
-        encryptedValue: encryptSecretStringV1(
-          'source-secret',
-          key,
-          (length) => new Uint8Array(length).fill(11),
-        ),
-      },
-    }],
-  });
-  const read = (settings as { providerSettingsV1?: unknown }).providerSettingsV1;
-  if (!read || typeof read !== 'object') throw new Error('provider settings missing');
-  return settings;
+  }));
 }
 
-function snapshot(settings = accountSettings()): ActiveAccountSettingsSnapshot {
+function providerSecret(value: string, revision = 1) {
+  return { ...sharedSecretResource, resourceId: 'secret-a', revision, displayName: 'Gateway key',
+    encryptionMode: 'e2ee' as const, resourceDataKey: key,
+    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'secret-a', mode: 'e2ee',
+      resourceDataKey: key, randomBytes: length => new Uint8Array(length).fill(revision + 10),
+      content: { v: 1, name: 'Gateway key', kind: 'apiKey', value } }) };
+}
+
+function snapshotFromProviderSettings(providerSettings: ProviderSettingsV1): ActiveAccountSettingsSnapshot {
+  const { catalog, defaults } = splitProviderSettingsV1(providerSettings);
   return {
-    source: 'cache', settings, settingsVersion: 1, loadedAtMs: 1,
-    settingsSecretsReadKeys: [key], scopeKey: 'account-a',
+    source: 'cache', settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: defaults }),
+    providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+    savedSecretResources: [providerSecret('source-secret')], savedSecretCatalogState: 'ready',
+    settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+    scopeKey: resolveAccountSettingsScopeKeyForToken('provider-broker-account'),
   };
+}
+
+function snapshot(settings = accountSettings()): ActiveAccountSettingsSnapshot { return settings; }
+
+function sourceFacts(settings: ActiveAccountSettingsSnapshot) {
+  return { accountSettings: settings.settings, providerSettings: readProviderSettingsForCli(settings).settings,
+    savedSecretResources: settings.savedSecretResources };
 }
 
 function resourceSource(settings = accountSettings(), activeRegistry = registry) {
   const resolution = resolveProviderConnectionForMachine({
-    connectionId, machineId: 'machine-a', accountSettings: settings,
+    connectionId, machineId: 'machine-a', providerSettings: readProviderSettingsForCli(settings).settings,
     registry: activeRegistry, dnsEvidenceByEndpointUrl,
   });
   if (resolution.status !== 'resolved') throw new Error('expected current connection');
@@ -499,7 +504,7 @@ describe('Provider Connection Team broker source', () => {
     const source = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings),
       machineId: 'machine-a', protocol: 'openai-responses', endpointTemplateId: 'responses',
-      accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!source.ok) throw new Error(JSON.stringify(source.error));
     expect(source).toMatchObject({
@@ -550,7 +555,7 @@ describe('Provider Connection Team broker source', () => {
       source: resourceSource(settings, ambiguousRegistry),
       machineId: 'machine-a', protocol: 'openai-responses', endpointTemplateId: 'responses',
       expectedCredentialTransport: ambiguousDefinition.credential!.transports[0]!,
-      accountSettings: settings, registry: ambiguousRegistry, dnsEvidenceByEndpointUrl,
+      ...sourceFacts(settings), registry: ambiguousRegistry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error(JSON.stringify(resolved.error));
 
@@ -574,7 +579,7 @@ describe('Provider Connection Team broker source', () => {
         credentialSlotId: 'apiKey',
       },
       machineId: 'machine-a', protocol: 'openai-responses', endpointTemplateId: 'responses',
-      accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
   });
 
@@ -582,23 +587,10 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected broker source snapshot');
-    const rotated = AccountSettingsSchema.parse({
-      ...settings,
-      secrets: [{
-        id: 'secret-a', name: 'Gateway key',
-        encryptedValue: {
-          _isSecretValue: true,
-          encryptedValue: encryptSecretStringV1(
-            'rotated-secret',
-            key,
-            (length) => new Uint8Array(length).fill(13),
-          ),
-        },
-      }],
-    });
+    const rotated = { ...settings, savedSecretResources: [providerSecret('rotated-secret', 2)] };
     await expect(materializeProviderConnectionBrokerSource({
       expected: resolved.snapshot, registry, dnsEvidenceByEndpointUrl,
       getAccountSettingsSnapshot: () => snapshot(rotated),
@@ -610,22 +602,18 @@ describe('Provider Connection Team broker source', () => {
 
   it('materializes a shared Saved Secret through the canonical catalog owner', async () => {
     const base = accountSettings();
-    const settings = AccountSettingsSchema.parse({
-      ...base,
-      providerSettingsV1: {
-        ...readProviderSettingsFromAccountSettingsV1(base).settings,
+    const settings = snapshotFromProviderSettings(ProviderSettingsV1Schema.parse({
+        ...readProviderSettingsForCli(base).settings,
         secretBindingsByConnectionId: {
           [connectionId]: { account: { apiKey: sharedSecretRef } },
         },
-      },
-      secrets: [],
-    });
+      }));
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings),
       machineId: 'machine-a',
       protocol: 'openai-responses',
       endpointTemplateId: 'responses',
-      accountSettings: settings,
+      ...sourceFacts(settings),
       savedSecretResources: [sharedSecretResource],
       registry,
       dnsEvidenceByEndpointUrl,
@@ -651,7 +639,7 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected broker source snapshot');
     await expect(materializeProviderConnectionBrokerSource({
@@ -666,7 +654,7 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected broker source snapshot');
     await expect(isProviderConnectionBrokerSourceCurrent({
@@ -697,33 +685,19 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected broker source snapshot');
-    const providerSettings = readProviderSettingsFromAccountSettingsV1(settings).settings;
-    const changedConnection = AccountSettingsSchema.parse({
-      ...settings,
-      providerSettingsV1: {
+    const providerSettings = readProviderSettingsForCli(settings).settings;
+    const changedConnection = snapshotFromProviderSettings(ProviderSettingsV1Schema.parse({
         ...providerSettings,
         connections: providerSettings.connections.map((connection) => (
           connection.id === connectionId
             ? { ...connection, revision: connection.revision + 1, displayName: 'Changed gateway' }
             : connection
         )),
-      },
-    });
-    const rotatedSecret = AccountSettingsSchema.parse({
-      ...settings,
-      secrets: [{
-        id: 'secret-a', name: 'Gateway key',
-        encryptedValue: {
-          _isSecretValue: true,
-          encryptedValue: encryptSecretStringV1(
-            'rotated-secret', key, (length) => new Uint8Array(length).fill(15),
-          ),
-        },
-      }],
-    });
+      }));
+    const rotatedSecret = { ...settings, savedSecretResources: [providerSecret('rotated-secret', 2)] };
     const changedDefinition = ProviderContributionV1Schema.parse({
       ...definition,
       endpointTemplates: definition.endpointTemplates.map((endpoint) => ({
@@ -761,22 +735,11 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionDirectSourceSnapshot({
       source: resourceSource(settings), machineId: 'machine-a',
-      accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected direct source snapshot');
-    const rotatedSecret = AccountSettingsSchema.parse({
-      ...settings,
-      secrets: [{
-        id: 'secret-a', name: 'Gateway key',
-        encryptedValue: {
-          _isSecretValue: true,
-          encryptedValue: encryptSecretStringV1(
-            'rotated-secret', key, (length) => new Uint8Array(length).fill(15),
-          ),
-        },
-      }],
-    });
-    for (const currentSettings of [rotatedSecret, AccountSettingsSchema.parse({ ...settings, secrets: [] })]) {
+    const rotatedSecret = { ...settings, savedSecretResources: [providerSecret('rotated-secret', 2)] };
+    for (const currentSettings of [rotatedSecret, { ...settings, savedSecretResources: [] }]) {
       await expect(isProviderConnectionDirectSourceCurrent({
         expected: resolved.snapshot,
         registry,
@@ -796,7 +759,7 @@ describe('Provider Connection Team broker source', () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', accountSettings: settings, registry, dnsEvidenceByEndpointUrl,
+      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
     });
     if (!resolved.ok) throw new Error('expected broker source snapshot');
     await expect(materializeProviderConnectionDirectCredential({
@@ -815,7 +778,7 @@ describe('Provider Connection Team broker source', () => {
     const resolved = resolveProviderConnectionDirectSourceSnapshot({
       source: resourceSource(settings),
       machineId: 'machine-a',
-      accountSettings: settings,
+      ...sourceFacts(settings),
       registry,
       dnsEvidenceByEndpointUrl,
     });
@@ -825,7 +788,7 @@ describe('Provider Connection Team broker source', () => {
       snapshot: {
         machineId: 'machine-a',
         endpoint: { endpointTemplateId: 'responses', protocol: 'openai-responses' },
-        credentialRef: { reference: { kind: 'apiKey', secretId: 'secret-a' } },
+        credentialRef: { reference: { kind: 'apiKey', secretId: formatSharedSavedSecretRefV1('secret-a') } },
       },
     });
   });
