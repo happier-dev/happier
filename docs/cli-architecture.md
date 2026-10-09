@@ -112,13 +112,23 @@ cannot borrow the daemon's full Account credential.
 
 In 0.3 development source, Source clone uses the contributed Git materializer
 and GitHub's existing REST metadata owner. Public GitHub repositories can be
-discovered anonymously for HTTPS cloning; inaccessible repositories still
-require the bound Connected Account, never ambient machine credentials.
+discovered anonymously for HTTPS cloning only when the credential owner reports
+no bound Connected Account. Missing credential services do not establish that
+fact. Metadata discovery prefers the requester's bound account; unavailable or
+rejected bound credentials do not fall back to anonymous or ambient machine
+credentials. The forge's observed public visibility, not the saved locator,
+authorizes no-auth cloning.
 Known failures before checkout publication refuse with their typed code.
 Unconfirmed publication, ref selection after clone, and Account row submission
 retain `outcomeUnknown` rather than authorizing replay. Open's existing redacting
 file logger records failed and uncertain settlements, including the underlying
-materialization error. These source contracts do not certify the loaded daemon.
+materialization error. Forge throttling stays `REMOTE_RATE_LIMITED` through SCM,
+Open and its retained draft, with `retryNotBeforeMs` only when supplied by the
+forge and a connect-account hint for anonymous requests. The person retries with
+a new explicit Open; there is no automatic retry. Compact Open pages expose the
+same cancellation path as desktop Cancel through the canonical page header,
+returning to the origin while retaining draft choices. These source contracts
+do not certify the loaded daemon.
 
 Git's `activate(api)` registration is captured by the SDK's existing static SCM
 snapshot owner, including entry history and commit capture/settlement handlers.
