@@ -32,6 +32,18 @@ export function resolveMachineAddPaths(input: MachineAddPathsInput): readonly Ma
     return paths;
 }
 
+/** Prefer this computer where supported; phones start with the link for another computer, not SSH. */
+export function resolveMachineAddInitialPath(paths: readonly MachineAddPath[], preferred?: MachineAddPathId, skipConnected = false): MachineAddPathId | null {
+    const available = skipConnected ? paths.filter((path) => !path.connectedMachineId) : paths;
+    // A joined desktop's Add another keeps the existing first unconnected choice. Phones never
+    // have thisComputer in the capability projection, and default to their other-computer link.
+    const anotherComputer = skipConnected && paths.some((path) => path.id === 'thisComputer')
+        ? null : available.find((path) => path.id === 'anotherComputer')?.id;
+    return available.find((path) => path.id === preferred)?.id
+        ?? available.find((path) => path.id === 'thisComputer')?.id
+        ?? anotherComputer ?? available[0]?.id ?? null;
+}
+
 /** Offline machines count; revoked machines do not. Unknown lists remain unknown. */
 export function homeHasMachine(machines: readonly Machine[] | null | undefined): boolean | null {
     if (!machines) return null;

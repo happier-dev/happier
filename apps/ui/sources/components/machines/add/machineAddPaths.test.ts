@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { homeHasMachine, isThisComputerMachineOfHome, resolveMachineAddPaths } from './machineAddPaths';
+import { homeHasMachine, isThisComputerMachineOfHome, resolveMachineAddInitialPath, resolveMachineAddPaths } from './machineAddPaths';
 
 const policy = { allowLocalMachineSetup: true, allowRemoteSshMachineSetup: true };
 const base = { policy, thisComputerJoined: false, nativeSshAvailable: false };
@@ -25,6 +25,21 @@ describe('machine add paths', () => {
             { id: 'ssh', runs: 'task' }, { id: 'anotherComputer', runs: 'command' },
         ]);
         expect(resolveMachineAddPaths({ ...base, device: 'desktop', policy: { allowLocalMachineSetup: false, allowRemoteSshMachineSetup: false } }).map((p) => p.id)).toEqual([]);
+    });
+    it('defaults by available capability, preserves an explicit path and supports SSH-only builds', () => {
+        const phone = resolveMachineAddPaths({ ...base, device: 'phone', nativeSshAvailable: true });
+        expect(resolveMachineAddInitialPath(phone)).toBe('anotherComputer');
+        expect(resolveMachineAddInitialPath(phone, 'ssh')).toBe('ssh');
+        expect(resolveMachineAddInitialPath(resolveMachineAddPaths({ ...base, device: 'browser' }))).toBe('thisComputer');
+        expect(resolveMachineAddInitialPath(resolveMachineAddPaths({ ...base, device: 'desktop' }))).toBe('thisComputer');
+        expect(resolveMachineAddInitialPath([{ id: 'ssh', runs: 'task' }])).toBe('ssh');
+        expect(resolveMachineAddInitialPath([])).toBeNull();
+    });
+    it('preserves the joined desktop Add another choice while excluding the connected computer', () => {
+        const desktop = resolveMachineAddPaths({ ...base, device: 'desktop', thisComputerJoined: true, thisComputerMachineId: 'local' });
+        expect(resolveMachineAddInitialPath(desktop, undefined, true)).toBe('ssh');
+        const phone = resolveMachineAddPaths({ ...base, device: 'phone', nativeSshAvailable: true });
+        expect(resolveMachineAddInitialPath(phone, undefined, true)).toBe('anotherComputer');
     });
     it('counts offline but not revoked machines and compares this computer by id', () => {
         const machine = createMachineFixture({ id: 'local', active: false });
