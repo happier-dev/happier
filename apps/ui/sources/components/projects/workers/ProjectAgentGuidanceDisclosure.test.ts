@@ -93,6 +93,8 @@ describe('describeProjectAgentGuidance', () => {
     const text = describeProjectAgentGuidance(facts, 'happier');
     expect(text).toContain('worker-b');
     expect(text).toContain('test: projectWorkers.defaultSummary {"destination":"worker-b"}');
+    expect(text.split('happier project compute exec -- <argv>')[1])
+      .toContain('projectWorkers.defaultSummary {"destination":"worker-b"}');
     expect(text).toContain('projectWorkers.notAccepting');
     expect(text).toContain('projectWorkers.notAcceptingDetail');
   });

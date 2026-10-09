@@ -112,6 +112,8 @@ export function describeProjectAgentGuidance(
     '',
     `${t('projectWorkers.guideOther')}  ${EXEC_COMMAND}`,
     `  · ${adHoc.status === 'resolved' ? t('projectWorkers.guideAdHocOn') : resolutionLabel(adHoc)}`,
+    ...(adHoc.status === 'resolved'
+      ? [`  · ${t('projectWorkers.defaultSummary', { destination: resolutionLabel(adHoc) })}`] : []),
   ].join('\n');
 }
 
