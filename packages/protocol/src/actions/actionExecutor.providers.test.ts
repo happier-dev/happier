@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { createProviderActionExecuteV1 } from '../providers/executeProviderActionV1.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
 import { applyProviderDefaultModelSelectionV1, SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
@@ -19,8 +21,11 @@ describe('Provider Settings Actions', () => {
     expect(spec.inputSchema.safeParse({ action: 'bindSecret', machineId: 'machine', connectionId: 'connection',
       credentialSlotId: 'apiKey', savedSecretId: null, scope: 'machine', accountId: 'foreign' }).success).toBe(false);
     const requests: unknown[] = [];
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
-      providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, setDefault: async () => {},
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+      approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    const executor = createActionExecutor({
+      isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
+      providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, setDefault: async () => ({ status: 'applied' }),
         rpc: async ({ request }) => {
           // Only the daemon RPC transport is replaced; parsing, dispatch and outcome handling remain real.
           requests.push(request);
@@ -30,7 +35,7 @@ describe('Provider Settings Actions', () => {
     });
     const input = { action: 'bindSecret', machineId: 'machine', connectionId: 'connection',
       credentialSlotId: 'apiKey', savedSecretId: null, scope: 'machine' };
-    await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({
+    await expect(executor.execute(actionId, input, { ...context, actionsSettings: settings })).resolves.toMatchObject({
       ok: false, errorCode: 'provider_rpc_mutation_outcome_unknown',
     });
     expect(requests).toEqual([{ actionId, input }]);
@@ -62,9 +67,9 @@ describe('Provider Settings Actions', () => {
     const raw = { unknownPreference: { retained: true }, providerDefaultModelSelectionsByAgentTargetKeyV1: { 'agent:claude': other } };
     let stored: Record<string, unknown> = raw;
     const { createActionExecutor } = await import('./actionExecutor.js');
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const executor = createActionExecutor({
       providerActionExecute: createProviderActionExecuteV1({ assertCurrent: () => {}, rpc: async () => { throw new Error('Default intent must not consult a daemon'); },
-        setDefault: async input => { stored = applyProviderDefaultModelSelectionV1(stored, input); },
+        setDefault: async input => { stored = applyProviderDefaultModelSelectionV1(stored, input); return { status: 'applied' }; },
       }),
     });
     expect(await executor.execute('providers.defaults.set', { agentTargetKey: 'agent:codex', selection }, context)).toEqual({ ok: true, result: { status: 'updated' } });
@@ -78,17 +83,21 @@ describe('Provider Settings Actions', () => {
     const { createActionExecutor } = await import('./actionExecutor.js');
     let current = true;
     let reply: unknown = { status: 'success', action: 'delete', deletedConnectionId: 'connection' };
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'providers.connections.delete': ['ui'] } });
+    const executor = createActionExecutor({
+      isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
       providerActionExecute: createProviderActionExecuteV1({
         assertCurrent: () => { if (!current) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' }); },
-        rpc: async () => { current = false; return reply; }, setDefault: async () => {},
+        rpc: async () => { current = false; return reply; }, setDefault: async () => ({ status: 'applied' }),
       }),
     });
-    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, context))
+    const waivedContext = { ...context, actionsSettings: settings };
+    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, waivedContext))
       .toEqual({ ok: true, result: reply });
     current = true;
     reply = { unrecognized: true };
-    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, context))
+    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, waivedContext))
       .toMatchObject({ ok: false, errorCode: 'provider_rpc_mutation_outcome_unknown' });
     current = true;
     reply = { status: 'error', error: createProviderErrorV1('agent_unavailable') };

@@ -6,8 +6,43 @@ import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailu
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, type ProviderActionRequestV1 } from './providerActionsV1.js';
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
+import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
 
-type RpcActionId = Exclude<ProviderActionIdV1, 'providers.defaults.set'>;
+type AccountActionId = 'providers.defaults.set' | 'providers.models.source_visibility.set';
+type RpcActionId = Exclude<ProviderActionIdV1, AccountActionId>;
+type RpcRequest = Exclude<ProviderActionRequestV1, { actionId: AccountActionId }>;
+
+function rpcErrorContext(request: RpcRequest) {
+  let connectionId: string | undefined;
+  switch (request.actionId) {
+    case 'providers.binding.status':
+      connectionId = request.input.launchBinding.connectionId;
+      break;
+    case 'providers.models.projection':
+    case 'providers.models.refresh':
+      connectionId = request.input.currentSelection?.providerConnectionId ?? undefined;
+      break;
+    case 'providers.models.visibility.set':
+      connectionId = request.input.ref.providerConnectionId ?? undefined;
+      break;
+    case 'providers.models.visibility.reset':
+      connectionId = request.input.scope.kind === 'connection' ? request.input.scope.connectionId : undefined;
+      break;
+    case 'providers.models.visibility.bulk': {
+      const first = request.input.changes[0]?.ref.providerConnectionId;
+      connectionId = first && request.input.changes.every(change => change.ref.providerConnectionId === first) ? first : undefined;
+      break;
+    }
+    default:
+      connectionId = 'connectionId' in request.input ? request.input.connectionId : undefined;
+  }
+  const input = readRecord(request.input);
+  return { machineId: request.input.machineId,
+    ...(connectionId ? { connectionId } : {}),
+    ...(typeof input.sourceProfileId === 'string' ? { sourceProfileId: input.sourceProfileId } : {}),
+  };
+}
+
 function rpcRoute(actionId: RpcActionId): Readonly<{ method: string; mutation: boolean }> {
   switch (actionId) {
     case 'providers.connections.describe': return { method: RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, mutation: false };
@@ -42,20 +77,31 @@ function rpcRoute(actionId: RpcActionId): Readonly<{ method: string; mutation: b
 export function createProviderActionExecuteV1(host: Readonly<{
   assertCurrent(context: ActionExecutorContext): void;
   rpc(input: Readonly<{ machineId: string; method: string; request: ProviderActionRequestV1; context: ActionExecutorContext }>): Promise<unknown>;
-  setDefault(input: ProviderDefaultModelSelectionMutationV1, context: ActionExecutorContext): Promise<void>;
+  setDefault(input: ProviderDefaultModelSelectionMutationV1, context: ActionExecutorContext): Promise<Pick<AccountSettingsMutationResult, 'status'>>;
+  /** Supplied by the Account catalog semantic Action owner, never by machine RPC. */
+  setSourceVisibility?(input: Extract<ProviderActionRequestV1, { actionId: 'providers.models.source_visibility.set' }>['input'],
+    context: ActionExecutorContext): Promise<ActionExecuteResult>;
 }>): NonNullable<ActionExecutorDeps['providerActionExecute']> {
   return async (request, context): Promise<ActionExecuteResult> => {
     host.assertCurrent(context);
+    if (request.actionId === 'providers.models.source_visibility.set') {
+      if (!host.setSourceVisibility) return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };
+      return host.setSourceVisibility(request.input, context);
+    }
     if (request.actionId === 'providers.defaults.set') {
-      await host.setDefault(request.input, context);
-      return { ok: true, result: { status: 'updated' } };
+      const outcome = await host.setDefault(request.input, context);
+      if (outcome.status === 'applied' || outcome.status === 'satisfied' || outcome.status === 'unchanged') {
+        return { ok: true, result: { status: 'updated' } };
+      }
+      const errorCode = outcome.status === 'outcomeUnknown'
+        ? 'account_settings_mutation_outcome_unknown'
+        : `account_settings_mutation_${outcome.status}`;
+      return { ok: false, errorCode, error: errorCode, details: outcome };
     }
     const { method, mutation } = rpcRoute(request.actionId);
     const schema = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[request.actionId];
     const input = readRecord(request.input);
-    const errorContext = { machineId: request.input.machineId,
-      ...(typeof input.connectionId === 'string' ? { connectionId: input.connectionId } : {}),
-      ...(typeof input.sourceProfileId === 'string' ? { sourceProfileId: input.sourceProfileId } : {}) };
+    const errorContext = rpcErrorContext(request);
     let result: unknown;
     try {
       result = await host.rpc({ machineId: request.input.machineId, method, request, context });
