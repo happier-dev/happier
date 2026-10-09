@@ -1,6 +1,7 @@
 import { happierPageTextMetrics, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import {
     isMemoryDocumentSearchHitV1,
+    type MemoryDocumentSearchCoverageV1,
     type MemoryDocumentSearchHitV1,
     type MemorySearchCorpusV1,
     type MemorySearchHitV1,
@@ -35,6 +36,7 @@ const MIN_QUERY_LENGTH = 2;
 type Results = Readonly<{
     query: string;
     status: 'searching' | 'ready' | 'failed';
+    documentsCoverage: MemoryDocumentSearchCoverageV1 | null;
     documents: readonly MemoryDocumentSearchHitV1[];
     sessions: readonly MemorySearchHitV1[];
 }>;
@@ -71,7 +73,8 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
         const controller = new AbortController();
         const timer = setTimeout(() => {
             // The last results stay on screen while the next query runs.
-            setResults((previous) => ({ query: normalized, status: 'searching', documents: previous?.documents ?? [], sessions: previous?.sessions ?? [] }));
+            setResults((previous) => ({ query: normalized, status: 'searching', documentsCoverage: previous?.documentsCoverage ?? null,
+                documents: previous?.documents ?? [], sessions: previous?.sessions ?? [] }));
             void (async () => {
                 try {
                     const result = await searchDaemonMemory({
@@ -80,17 +83,18 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                     });
                     if (controller.signal.aborted) return;
                     if (!result.ok) {
-                        setResults({ query: normalized, status: 'failed', documents: [], sessions: [] });
+                        setResults({ query: normalized, status: 'failed', documentsCoverage: null, documents: [], sessions: [] });
                         return;
                     }
                     setResults({
                         query: normalized,
                         status: 'ready',
+                        documentsCoverage: result.documents ?? { state: 'unavailable' },
                         documents: result.hits.filter(isMemoryDocumentSearchHitV1),
                         sessions: result.hits.filter((hit): hit is MemorySearchHitV1 => !isMemoryDocumentSearchHitV1(hit)),
                     });
                 } catch {
-                    if (!controller.signal.aborted) setResults({ query: normalized, status: 'failed', documents: [], sessions: [] });
+                    if (!controller.signal.aborted) setResults({ query: normalized, status: 'failed', documentsCoverage: null, documents: [], sessions: [] });
                 }
             })();
         }, SEARCH_SETTLE_MS);
@@ -129,6 +133,14 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
             ) : results?.status === 'failed' ? (
                 <SurfaceFreshnessLine testID={`${testID}.failed`} tone="warning" reason={t('memoryContext.memory.offline')} />
             ) : null}
+            {results?.documentsCoverage && results.documentsCoverage.state !== 'ready' ? (
+                <SurfaceFreshnessLine testID={`${testID}.documentsCoverage`}
+                    busy={results.documentsCoverage.state === 'pending'}
+                    tone={results.documentsCoverage.state === 'unavailable' ? 'warning' : 'neutral'}
+                    reason={results.documentsCoverage.state === 'pending'
+                        ? `${t('memoryContext.memory.remembered')} · ${t('common.loading')}`
+                        : t('memoryContext.memory.documentSearchUnavailable')} />
+            ) : null}
             {results && results.documents.length > 0 ? (
                 <>
                     <GroupLabel label={t('memoryContext.memory.remembered')} count={results.documents.length} />
@@ -164,7 +176,7 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                     ))}
                 </>
             ) : null}
-            {results?.status === 'ready' && count === 0 ? (
+            {results?.status === 'ready' && results.documentsCoverage?.state === 'ready' && count === 0 ? (
                 <Text testID={`${testID}.empty`} style={styles.hint}>{t('memoryContext.memory.noResults', { query: results.query })}</Text>
             ) : results === null && target !== null ? (
                 <Text style={styles.hint}>{t('memoryContext.memory.searchHint')}</Text>
