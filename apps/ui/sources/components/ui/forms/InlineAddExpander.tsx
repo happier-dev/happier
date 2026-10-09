@@ -15,6 +15,8 @@ export interface InlineAddExpanderProps {
     triggerTestID?: string;
 
     title: string;
+    /** A section can host the trigger itself; null leaves just the inline form. */
+    trigger?: React.ReactNode;
     subtitle?: string;
     icon?: React.ReactNode;
 
@@ -27,6 +29,8 @@ export interface InlineAddExpanderProps {
 
     cancelLabel: string;
     saveLabel: string;
+    cancelTestID?: string;
+    saveTestID?: string;
 
     autoFocusRef?: React.RefObject<React.ElementRef<typeof TextInput> | null>;
     expandedContainerStyle?: StyleProp<ViewStyle>;
@@ -37,6 +41,7 @@ export function InlineAddExpander({
     onOpenChange,
     triggerTestID,
     title,
+    trigger,
     subtitle,
     icon,
     helpText,
@@ -46,6 +51,8 @@ export function InlineAddExpander({
     saveDisabled = false,
     cancelLabel,
     saveLabel,
+    cancelTestID,
+    saveTestID,
     autoFocusRef,
     expandedContainerStyle,
 }: InlineAddExpanderProps) {
@@ -60,7 +67,7 @@ export function InlineAddExpander({
 
     return (
         <>
-            <Item
+            {trigger !== undefined ? trigger : <Item
                 testID={triggerTestID}
                 title={title}
                 subtitle={subtitle}
@@ -68,7 +75,7 @@ export function InlineAddExpander({
                 onPress={() => onOpenChange(!isOpen)}
                 showChevron={false}
                 showDivider={Boolean(isOpen)}
-            />
+            />}
 
             {isOpen ? (
                 <View style={[styles.expandedContainer, expandedContainerStyle]}>
@@ -88,6 +95,8 @@ export function InlineAddExpander({
                         primaryLabel={saveLabel}
                         onPrimaryPress={onSave}
                         primaryDisabled={saveDisabled}
+                        secondaryTestID={cancelTestID}
+                        primaryTestID={saveTestID}
                     />
                 </View>
             ) : null}
