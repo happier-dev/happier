@@ -258,8 +258,6 @@ describe('author signature closure source contract', () => {
         }
         expect(publicSource).not.toContain('MutableComposerTransactionV1');
 
-        expect(sourceText).toContain("from '@happier-dev/protocol/plugins/manifest';");
-
         const identitySchemaSignature = identitySchema?.type?.getText(sourceFile) ?? '';
         expect(identitySchemaSignature).toBe('ProtocolComposableSchema<PluginContributionIdentity>');
         expect(sourceText).not.toContain('PluginManifestComposableSchema');

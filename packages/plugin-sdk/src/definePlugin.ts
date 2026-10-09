@@ -476,11 +476,18 @@ export type PluginScmBackendDefinition = RuntimeContributionDefinition<
     'scmBackends',
     BackendRuntime
 >;
+// Author declarations may be shared immutable data. This projection does not
+// change the canonical parsed Protocol descriptor or its validation rules.
+export type ReadonlyAuthorDeclaration<T> = T extends readonly (infer TItem)[]
+    ? readonly ReadonlyAuthorDeclaration<TItem>[]
+    : T extends object
+        ? { readonly [TKey in keyof T]: ReadonlyAuthorDeclaration<T[TKey]> }
+        : T;
 export type PluginConnectedAccountDefinition = RuntimeContributionDefinition<
     'connectedAccountDescriptors',
     ConnectedAccountRuntime,
     'runtime',
-    DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>
+    ReadonlyAuthorDeclaration<DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>>
 >;
 export type PluginRequestInterceptorDefinition = RuntimeContributionDefinition<
     'requestInterceptors',
@@ -1092,10 +1099,7 @@ export type DefinePluginInput<
             >;
             runtime: BackendRuntime;
         }>>>;
-        connectedAccountDescriptors?: Readonly<Record<PluginContributionLocalId, Readonly<{
-            declaration: Omit<PluginConnectedAccountDescriptorContributionV2, 'id'>;
-            runtime: ConnectedAccountRuntime;
-        }>>>;
+        connectedAccountDescriptors?: Readonly<Record<PluginContributionLocalId, PluginConnectedAccountDefinition>>;
         composer?: PluginComposerDefinition;
     }>
     & {

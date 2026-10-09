@@ -3,6 +3,7 @@ export type { ComposerReferenceCandidatePageV1 } from './composerReferenceProvid
 export type { ComposerReferenceRuntime } from './activation.js';
 export type { PluginDragSourceRuntime, PluginDropTargetRuntime, EntityDragItemV1, EntityDragScopeV1, EntityDragKindV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropPreviewV1, EntityDropReasonV1, EntityDropOutcomeV1 } from './entityDragDrop.js';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from './manifest.js';
+export type { PluginProjectNativeAdapterContributionV1 } from './manifest.js';
 export { MAX_PLUGIN_SEARCH_ITEMS_V1 } from './searchProviders.js';
 export { MAX_PLUGIN_SEARCH_ITEM_ID_UTF8_BYTES_V1 } from './searchProviders.js';
 export { MAX_PLUGIN_SEARCH_QUERY_UTF8_BYTES_V1 } from './searchProviders.js';
@@ -82,6 +83,8 @@ export type {
     PluginComposerRegionDefinition,
 } from './definePlugin.js';
 export type { DefinePluginInput } from './definePlugin.js';
+export type { PluginConnectedAccountDefinition } from './definePlugin.js';
+export type { ReadonlyAuthorDeclaration } from './definePlugin.js';
 export type {
     ProtocolActionSchemaInput,
     ProtocolActionSchemaOutput,
@@ -138,6 +141,7 @@ export type { PluginReference } from './identity.js';
 export type { PluginRemediationData } from './availability.js';
 export type { PluginServiceId } from './services/index.js';
 export type { PluginServices } from './services/index.js';
+export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1 } from './services/machineProvisioners.js';
 export type {
     ComposerContentCapabilitiesV1,
     ComposerContentService,

@@ -1,4 +1,4 @@
-import type { EntityDragItemV1, EntityDropAdmissionV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
+import type { EntityDragItemV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { JsonValue } from './identity.js';
 import type { ComposerAttachmentAuthorValueV1 } from './ui/publicContract.js';
 
@@ -17,7 +17,7 @@ export type {
   PluginUiWatchEntityDragDropRequestV1,
   PluginUiEntityDragDropStateV1,
   PluginUiEntityDropDestinationV1,
-} from './actions/dtos/pluginActionDtoSupport.generated.js';
+} from '@happier-dev/protocol/plugins/ui/client';
 
 /** Synchronous client presentation; the host owns source identity and retirement. */
 export interface PluginDragSourceRuntime {

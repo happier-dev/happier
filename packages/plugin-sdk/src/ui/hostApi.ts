@@ -3,8 +3,8 @@ import type { WidgetSizeV1 as ProtocolWidgetSizeV1, WidgetSizeFootprintV1 as Pro
 /** Declaration-only projections; Protocol owns supported sizes and footprint policy. */
 export type WidgetSizeV1 = ProtocolWidgetSizeV1;
 export type WidgetSizeFootprintV1 = ProtocolWidgetSizeFootprintV1;
-import type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
-export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+import type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui/client';
+export type { PluginUiWidgetAreaRequestV1, PluginUiWidgetAreaResultV1, PluginUiWidgetAreaOperationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiReadEntityDragItemRequestV1,
     PluginUiUpdateEntityDragDropRequestV1,

@@ -22,6 +22,7 @@ import type {
 import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDtos.generated.js';
 import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+export type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 
 /** Canonical workflow grammar projected by the Protocol-owned Action DTO producer. */
 export type PluginWorkflowContributionV1 = Readonly<{

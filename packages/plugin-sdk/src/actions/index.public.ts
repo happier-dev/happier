@@ -58,6 +58,7 @@ export type { MachineAccessActionInputById, MachineAccessActionResultById } from
 export type { MachinePoolsActionInputById, MachinePoolsActionResultById } from './dtos/machinePoolsActionDtos.generated.js';
 export type { MachinePresetsActionInputById, MachinePresetsActionResultById } from './dtos/machinePresetsActionDtos.generated.js';
 export type { MachineWorkSummaryActionInputById, MachineWorkSummaryActionResultById } from './dtos/machineWorkSummaryActionDtos.generated.js';
+export type { McpServersActionInputById, McpServersActionResultById } from './dtos/mcpServersActionDtos.generated.js';
 export type { ManagedMachinesActionInputById, ManagedMachinesActionResultById } from './dtos/managedMachinesActionDtos.generated.js';
 export type { MemoryActionInputById, MemoryActionResultById } from './dtos/memoryActionDtos.generated.js';
 export type { MessagingActionInputById, MessagingActionResultById } from './dtos/messagingActionDtos.generated.js';
@@ -72,7 +73,9 @@ export type { PluginSettingsAdministrationActionInputById, PluginSettingsAdminis
 export type { PluginWebhooksActionInputById, PluginWebhooksActionResultById } from './dtos/pluginWebhooksActionDtos.generated.js';
 export type { PromptLibraryActionInputById, PromptLibraryActionResultById } from './dtos/promptLibraryActionDtos.generated.js';
 export type { PromptPickerActionInputById, PromptPickerActionResultById } from './dtos/promptPickerActionDtos.generated.js';
+export type { ProvidersActionInputById, ProvidersActionResultById } from './dtos/providersActionDtos.generated.js';
 export type { ReviewCommentsActionInputById, ReviewCommentsActionResultById } from './dtos/reviewCommentsActionDtos.generated.js';
+export type { RemoteHostsActionInputById, RemoteHostsActionResultById } from './dtos/remoteHostsActionDtos.generated.js';
 export type { RolesActionInputById, RolesActionResultById } from './dtos/rolesActionDtos.generated.js';
 export type { SavedSecretSharingActionInputById, SavedSecretSharingActionResultById } from './dtos/savedSecretSharingActionDtos.generated.js';
 export type { ScmDiffSummaryActionInputById, ScmDiffSummaryActionResultById } from './dtos/scmDiffSummaryActionDtos.generated.js';

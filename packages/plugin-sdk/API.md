@@ -89,6 +89,7 @@
 | `.` | `PluginComposerDefinition` | type | any |
 | `.` | `PluginComposerReferenceDefinition` | type | any |
 | `.` | `PluginComposerRegionDefinition` | type | any |
+| `.` | `PluginConnectedAccountDefinition` | type | any |
 | `.` | `PluginContributionLocalId` | type | any |
 | `.` | `PluginContributionRef` | type | any |
 | `.` | `PluginDaemonDatabaseDeclaration` | type | any |
@@ -113,17 +114,7 @@
 | `.` | `PluginMachineMaterializationRefV1` | type | daemon |
 | `.` | `PluginOperationAvailability` | type | any |
 | `.` | `PluginPath` | type | daemon |
-| `.` | `PluginProjectNativeAdapterDeclarationV1` | type | any |
-| `.` | `PluginProjectNativeAdapterDefinitionV1` | type | any |
-| `.` | `PluginProjectNativeAdapterRuntimeV1` | type | any |
-| `.` | `PluginProjectNativeCommandRequestV1` | type | any |
-| `.` | `PluginProjectNativeCommandResultV1` | type | any |
-| `.` | `PluginProjectNativeCommandV1` | type | any |
-| `.` | `PluginProjectNativeEnvironmentRequestV1` | type | any |
-| `.` | `PluginProjectNativeEnvironmentResultV1` | type | any |
-| `.` | `PluginProjectNativeFailureV1` | type | any |
-| `.` | `PluginProjectNativeFileFactV1` | type | any |
-| `.` | `PluginProjectNativeInspectionV1` | type | any |
+| `.` | `PluginProjectNativeAdapterContributionV1` | type | any |
 | `.` | `PluginReference` | type | any |
 | `.` | `PluginRemediationData` | type | any |
 | `.` | `PluginRequestInterceptorDefinition` | type | any |
@@ -144,12 +135,9 @@
 | `.` | `PluginSettingsSnapshot` | type | daemon |
 | `.` | `PluginSourceCustodyV1` | type | daemon |
 | `.` | `PluginWorkflowContributionV1` | type | any |
-| `.` | `ProjectDefinitionDetectionV1` | type | any |
-| `.` | `ProjectEnvironmentSelectionV1` | type | any |
-| `.` | `ProjectNativeAdapterRoleV1` | type | any |
-| `.` | `ProjectNativeRefV1` | type | any |
 | `.` | `ProtocolActionSchemaInput` | type | any |
 | `.` | `ProtocolActionSchemaOutput` | type | any |
+| `.` | `ReadonlyAuthorDeclaration` | type | any |
 | `.` | `TargetedContributionAdmittedEntry` | type | daemon |
 | `.` | `TargetedContributionObservation` | type | daemon |
 | `.` | `TargetedContributionPointRef` | type | daemon |
@@ -335,6 +323,8 @@
 | `./actions` | `MachineWorkSummaryActionResultById` | type | any |
 | `./actions` | `ManagedMachinesActionInputById` | type | any |
 | `./actions` | `ManagedMachinesActionResultById` | type | any |
+| `./actions` | `McpServersActionInputById` | type | any |
+| `./actions` | `McpServersActionResultById` | type | any |
 | `./actions` | `MemoryActionInputById` | type | any |
 | `./actions` | `MemoryActionResultById` | type | any |
 | `./actions` | `MessagingActionInputById` | type | any |
@@ -401,7 +391,11 @@
 | `./actions` | `PromptPickerActionInputById` | type | any |
 | `./actions` | `PromptPickerActionResultById` | type | any |
 | `./actions` | `ProviderCatalogParserV1` | type | any |
+| `./actions` | `ProvidersActionInputById` | type | any |
+| `./actions` | `ProvidersActionResultById` | type | any |
 | `./actions` | `QualifiedAudienceSelection` | type | any |
+| `./actions` | `RemoteHostsActionInputById` | type | any |
+| `./actions` | `RemoteHostsActionResultById` | type | any |
 | `./actions` | `ReviewCommentsActionInputById` | type | any |
 | `./actions` | `ReviewCommentsActionResultById` | type | any |
 | `./actions` | `RolesActionInputById` | type | any |
@@ -582,7 +576,6 @@
 | `./agents/runtime` | `AgentAcpToolUpdateContentSanitizer` | type | daemon |
 | `./agents/runtime` | `AgentAcpToolUpdatePolicy` | type | daemon |
 | `./agents/runtime` | `AgentAcpTransport` | type | daemon |
-| `./agents/runtime` | `AgentAcpUsageLimitDiagnosticDefinition` | type | daemon |
 | `./agents/runtime` | `AgentAuthorRestoreCheckpointResult` | type | daemon |
 | `./agents/runtime` | `AgentAuthoredSessionRuntimeCapabilities` | type | daemon |
 | `./agents/runtime` | `AgentCliAuthCommandResultV1` | type | daemon |
@@ -1254,7 +1247,6 @@
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalResumeChoice` | value | any |
 | `./first-party/claude` | `normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy` | value | any |
 | `./first-party/claude` | `readClaudeSettingSourcesV2` | value | any |
-| `./first-party/connected-accounts` | `ANTIGRAVITY_OAUTH_PROFILE` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_OAUTH_PROFILE` | value | any |
 | `./first-party/connected-accounts` | `CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1` | value | any |
@@ -1428,9 +1420,6 @@
 | `./managed-services` | `ManagedServiceLocalId` | type | daemon |
 | `./managed-services` | `ManagedServiceLocalIdSchema` | value | daemon |
 | `./managed-services` | `ManagedServiceMaterializationInjection` | type | daemon |
-| `./managed-services` | `ManagedServiceNativeInstanceV1` | type | daemon |
-| `./managed-services` | `ManagedServiceNativeLifecycleV1` | type | daemon |
-| `./managed-services` | `ManagedServiceNativeObservationV1` | type | daemon |
 | `./managed-services` | `ManagedServiceRequest` | type | daemon |
 | `./managed-services` | `ManagedServiceResponse` | type | daemon |
 | `./managed-services` | `ManagedServiceSnapshot` | type | daemon |

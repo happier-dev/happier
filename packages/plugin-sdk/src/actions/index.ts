@@ -140,6 +140,8 @@ export type { MachineWorkSummaryActionInputById } from './dtos/machineWorkSummar
 export type { MachineWorkSummaryActionResultById } from './dtos/machineWorkSummaryActionDtos.generated.js';
 export type { ManagedMachinesActionInputById } from './dtos/managedMachinesActionDtos.generated.js';
 export type { ManagedMachinesActionResultById } from './dtos/managedMachinesActionDtos.generated.js';
+export type { McpServersActionInputById } from './dtos/mcpServersActionDtos.generated.js';
+export type { McpServersActionResultById } from './dtos/mcpServersActionDtos.generated.js';
 export type { MemoryActionInputById } from './dtos/memoryActionDtos.generated.js';
 export type { MemoryActionResultById } from './dtos/memoryActionDtos.generated.js';
 export type { MessagingActionInputById } from './dtos/messagingActionDtos.generated.js';
@@ -206,7 +208,11 @@ export type { PromptLibraryActionResultById } from './dtos/promptLibraryActionDt
 export type { PromptPickerActionInputById } from './dtos/promptPickerActionDtos.generated.js';
 export type { PromptPickerActionResultById } from './dtos/promptPickerActionDtos.generated.js';
 export type { ProviderCatalogParserV1 } from './dtos/pluginActionDtoSupport.generated.js';
+export type { ProvidersActionInputById } from './dtos/providersActionDtos.generated.js';
+export type { ProvidersActionResultById } from './dtos/providersActionDtos.generated.js';
 export type { QualifiedAudienceSelection } from './dtos/pluginActionDtoSupport.generated.js';
+export type { RemoteHostsActionInputById } from './dtos/remoteHostsActionDtos.generated.js';
+export type { RemoteHostsActionResultById } from './dtos/remoteHostsActionDtos.generated.js';
 export type { ReviewCommentsActionInputById } from './dtos/reviewCommentsActionDtos.generated.js';
 export type { ReviewCommentsActionResultById } from './dtos/reviewCommentsActionDtos.generated.js';
 export type { RolesActionInputById } from './dtos/rolesActionDtos.generated.js';
