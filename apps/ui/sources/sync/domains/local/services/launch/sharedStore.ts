@@ -22,6 +22,8 @@ export type LocalServiceLauncherStoreKeyInput = Readonly<{
     sessionId?: string | null;
     scope?: 'workspace' | 'machine' | null;
     workspaceRoot?: string | null;
+    projection?: 'managed_bindings';
+    accountId?: string | null;
 }>;
 
 type NormalizedLocalServiceLauncherStoreKeyInput = Readonly<{
@@ -30,6 +32,8 @@ type NormalizedLocalServiceLauncherStoreKeyInput = Readonly<{
     sessionId: string | null;
     scope: 'workspace' | 'machine' | null;
     workspaceRoot: string | null;
+    projection: 'managed_bindings' | null;
+    accountId: string | null;
 }>;
 
 export const EMPTY_LOCAL_SERVICE_LAUNCHER_STATE: LocalServiceLauncherState = createLocalServiceLauncherState();
@@ -45,6 +49,8 @@ function normalizeInput(input: LocalServiceLauncherStoreKeyInput): NormalizedLoc
         sessionId: input.sessionId ?? null,
         scope: input.scope ?? null,
         workspaceRoot: input.workspaceRoot ?? null,
+        projection: input.projection ?? null,
+        accountId: input.accountId ?? null,
     };
 }
 
@@ -55,6 +61,8 @@ function storeKey(input: LocalServiceLauncherStoreKeyInput): string {
         input.sessionId ?? '',
         input.scope ?? '',
         input.workspaceRoot ?? '',
+        input.projection ?? '',
+        input.accountId ?? '',
     ].join('::');
 }
 
@@ -64,6 +72,8 @@ function entryMatches(
 ): boolean {
     const entry = normalizeInput(entryInput);
     return entry.machineId === publishInput.machineId
+        && entry.projection === (publishInput.projection ?? null)
+        && entry.accountId === (publishInput.accountId ?? null)
         && (publishInput.serverId === undefined || entry.serverId === (publishInput.serverId ?? null))
         && (publishInput.sessionId === undefined || entry.sessionId === (publishInput.sessionId ?? null))
         && (publishInput.scope === undefined || entry.scope === (publishInput.scope ?? null))
@@ -108,6 +118,8 @@ const store = createLocalServicesSharedSubscriptionStore<
             sessionId: normalized.sessionId,
             scope: normalized.scope,
             workspaceRoot: normalized.workspaceRoot,
+            ...(normalized.projection ? { projection: normalized.projection } : {}),
+            ...(normalized.accountId ? { accountId: normalized.accountId } : {}),
             signal,
         });
         return result.ok

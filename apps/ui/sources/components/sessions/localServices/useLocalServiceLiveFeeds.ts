@@ -1,4 +1,13 @@
 import * as React from 'react';
+import { observeProjectServicePlacementActualV1, type ProjectServicePlacementGetResultV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
+import { storage } from '@/sync/domains/state/storage';
+import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { getLocalServiceLauncherState, invalidateLocalServiceLauncherStore, subscribeLocalServiceLauncherStore,
+    type LocalServiceLauncherStoreKeyInput } from '@/sync/domains/local/services/launch/sharedStore';
+import { getLocalServiceInventoryState, invalidateLocalServiceInventoryStore, subscribeLocalServiceInventoryStore } from '@/sync/domains/local/services/inventory/sharedStore';
+import { applyLocalServiceLauncherSnapshot, selectLocalServiceLaunchTargets, snapshotFromLocalServiceLauncherState } from '@/sync/domains/local/services/launch';
 
 import {
     type LocalServiceLauncherSnapshotClient,
@@ -21,6 +30,8 @@ export type LocalServiceLiveFeedsInput = Readonly<{
     serverId: string | null;
     sessionId?: string;
     workspaceRoot?: string | null;
+    /** Accepted SOURCE ref; omitted for Session/Machine feeds that have no Project placement. */
+    workspaceRefId?: string | null;
     scope: 'workspace' | 'machine';
     /** Supplied state replaces the live feed (tests, previews); `undefined` reads live. */
     inventoryState?: LocalServiceInventoryState;
@@ -94,12 +105,91 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
     }, [inventorySupplied, refreshInventory, refreshLauncher]);
 
     const inventoryState = input.inventoryState ?? liveInventory.state;
-    const launcherState = input.launcherState !== undefined ? input.launcherState : liveLauncher.state;
+    const sourceLauncherState = input.launcherState !== undefined ? input.launcherState : liveLauncher.state;
+    const bindings = useProjectServiceBindings(input, sourceLauncherState);
+    const launcherState = bindings.state;
     const applyLauncherSnapshot = input.launcherState === undefined ? liveLauncher.applySnapshot : undefined;
     return React.useMemo(() => ({
         inventoryState,
         launcherState,
-        refresh,
+        refresh: refresh ? () => { refresh(); bindings.refresh(); } : undefined,
         applyLauncherSnapshot,
-    }), [applyLauncherSnapshot, inventoryState, launcherState, refresh]);
+    }), [applyLauncherSnapshot, bindings.refresh, inventoryState, launcherState, refresh]);
+}
+
+type ServiceActual = Extract<ProjectServicePlacementGetResultV1, { status: 'ready' }>['actual'];
+
+/** Projection only: reads the same launcher store and parked inventory watches as the SOURCE feed.
+ * The protocol observation owner selects accepted endpoints and proves native provenance. */
+function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceState: LocalServiceLauncherState | null) {
+    const enabled = input.launcherState === undefined && input.scope === 'workspace' && Boolean(input.workspaceRefId && input.serverId);
+    const { binding } = useServerCredentialAccountScopeBinding(enabled ? input.serverId ?? '' : '');
+    const rows = storage(state => enabled ? readCurrentProjectAccountRows(state) : null);
+    const sourceTargets = React.useMemo(() => sourceState ? selectLocalServiceLaunchTargets(sourceState) : [], [sourceState?.targetsById]);
+    const declarations = React.useMemo(() => sourceTargets.filter(target => target.declaration && target.declaration.workspaceRefId === input.workspaceRefId
+        && target.declaration.selection.kind === 'manifest'), [input.workspaceRefId, sourceTargets]);
+    const [change, observeAgain] = React.useReducer((value: number) => value + 1, 0);
+    const subscriptions = React.useMemo(() => new Map<string, Readonly<{ key: LocalServiceLauncherStoreKeyInput; dispose: () => void }>>(),
+        [binding, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, input.inventorySnapshotClient, rows]);
+    React.useEffect(() => () => { for (const subscription of subscriptions.values()) subscription.dispose(); subscriptions.clear(); }, [subscriptions]);
+    const [observation, setObservation] = React.useState<Readonly<{ subscriptions: typeof subscriptions; declarations: typeof declarations; values: ReadonlyMap<string, ServiceActual> }> | null>(null);
+    React.useEffect(() => {
+        let current = true;
+        if (!enabled || !binding?.isCurrent() || !rows || rows.status !== 'ready' || rows.coverage !== 'complete'
+            || rows.scope.accountId !== binding.accountId || !areServerProfileIdentifiersEquivalent(rows.scope.serverId, input.serverId ?? '')) return;
+        const isCurrent = () => current && binding.isCurrent() && readCurrentProjectAccountRows(storage.getState()) === rows;
+        void Promise.all(declarations.map(async target => {
+            const selection = target.declaration!.selection;
+            const serviceName = selection.kind === 'manifest' ? selection.name : target.id;
+            const actual = await observeProjectServicePlacementActualV1({ workspace: { serverId: input.serverId!, refId: input.workspaceRefId! }, serviceName,
+                workspaceRefs: rows.workspaceRefs, relationships: rows.relationships,
+                context: { normalizeServerId: resolveServerProfileScopeIdForIdentifier }, isCurrent,
+                readSnapshot: async request => {
+                    const key: LocalServiceLauncherStoreKeyInput = { machineId: request.machineId, serverId: input.serverId,
+                        accountId: binding.accountId, scope: 'workspace', workspaceRoot: request.workspaceRoot, projection: 'managed_bindings' };
+                    const id = JSON.stringify(key);
+                    if (!subscriptions.has(id)) {
+                        const disposeLauncher = subscribeLocalServiceLauncherStore(key, observeAgain,
+                            input.launcherSnapshotClient ? { snapshotClient: input.launcherSnapshotClient } : undefined);
+                        const inventoryKey = { machineId: key.machineId, serverId: key.serverId };
+                        let generatedAt = getLocalServiceInventoryState(inventoryKey).generatedAt;
+                        const disposeInventory = subscribeLocalServiceInventoryStore(inventoryKey, () => {
+                            const next = getLocalServiceInventoryState(inventoryKey).generatedAt;
+                            if (next === generatedAt) return;
+                            const previous = generatedAt;
+                            generatedAt = next;
+                            if (previous !== null) invalidateLocalServiceLauncherStore(key);
+                        }, input.inventorySnapshotClient ? { snapshotClient: input.inventorySnapshotClient } : undefined);
+                        subscriptions.set(id, { key, dispose: () => { disposeLauncher(); disposeInventory(); } });
+                    }
+                    const state = getLocalServiceLauncherState(key);
+                    const snapshot = snapshotFromLocalServiceLauncherState(state);
+                    if (!snapshot || state.refreshStatus === 'error') throw new Error('Service binding is unavailable');
+                    return { protocolVersion: 1, snapshot };
+                },
+            });
+            return [target.id, actual] as const;
+        })).then(values => { if (isCurrent()) setObservation({ subscriptions, declarations, values: new Map(values) }); });
+        return () => { current = false; };
+    }, [binding, change, declarations, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, input.inventorySnapshotClient, rows, subscriptions]);
+    const state = React.useMemo(() => {
+        if (!enabled || !sourceState || !declarations.length) return sourceState;
+        const values = observation?.subscriptions === subscriptions && observation.declarations === declarations ? observation.values : null;
+        const targets = sourceTargets.flatMap(target => {
+            if (!declarations.includes(target)) return [target];
+            const actual = values?.get(target.id);
+            if (actual?.status === 'present') return [actual.target];
+            if (actual?.status === 'ambiguous') return [...actual.targets];
+            if (actual?.status === 'absent') return [target];
+            // An unavailable binding is not a stopped suggestion or executable Start authority.
+            return [{ ...target, state: 'unavailable' as const, unavailableReason: 'project_service_binding_unavailable', actions: [] }];
+        });
+        return applyLocalServiceLauncherSnapshot(sourceState, { v: 1, machineId: sourceState.machineId!,
+            ...(sourceState.sessionId ? { sessionId: sourceState.sessionId } : {}), updatedAt: sourceState.updatedAt!, targets });
+    }, [declarations, enabled, observation, sourceState, sourceTargets, subscriptions]);
+    const refresh = React.useCallback(() => { for (const { key } of subscriptions.values()) {
+        invalidateLocalServiceLauncherStore(key);
+        invalidateLocalServiceInventoryStore({ serverId: key.serverId, machineId: key.machineId });
+    } }, [subscriptions]);
+    return { state, refresh };
 }

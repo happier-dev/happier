@@ -5,8 +5,8 @@ import type {
   ProjectServicePlacementGetResultV1,
   ProjectServicePlacementV1,
 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
-import { ProjectServiceRelocateResultV1Schema, type ProjectServiceRelocateResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol';
+import { executeServiceRelocationAction, type ServiceRelocationOutcome } from './serviceRelocationAction';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import {
@@ -20,6 +20,13 @@ import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
+import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { withDefaultActionExecuteContext } from '@/sync/ops/actions/defaultActionExecutor';
@@ -45,12 +52,13 @@ type ManagedActual = Extract<
 export function useProjectServicePlacement(
   source: ProjectServiceSource,
   serviceName: string,
+  options: Readonly<{ lifecycleKey?: string }> = {},
 ) {
   const address = React.useMemo(
     () => ({ serverId: source.serverId, refId: source.refId }),
     [source.serverId, source.refId],
   );
-  const setting = useObservedWorkerSetting<ReadyPlacement>({
+  const setting = useObservedWorkerSetting<ReadyPlacement, ProjectServicePlacementV1>({
     serverId: address.serverId,
     scopeKey: JSON.stringify([
       'projects.service.placement',
@@ -68,10 +76,26 @@ export function useProjectServicePlacement(
     observedFromReceipt: () => null,
   });
   const { mutate, refresh } = setting;
+  const lastLifecycle = React.useRef(options.lifecycleKey);
+  React.useEffect(() => {
+    if (lastLifecycle.current === options.lifecycleKey) return;
+    lastLifecycle.current = options.lifecycleKey;
+    refresh();
+  }, [options.lifecycleKey, refresh]);
+  const ready = setting.state.kind === 'ready' ? setting.state.value : null;
+  const actual = ready?.actual ?? null;
+  const desiredPlacement = ready?.placement ?? null;
+  const displayChoice: ProjectExecutionChoiceV1 | null = actual?.status === 'present'
+    ? actual.target.machineId === source.machineId ? { kind: 'primary' }
+      : { kind: 'workers', destination: { kind: 'machine', machineId: actual.target.machineId } }
+    : actual?.status === 'absent' ? desiredPlacement?.runsOn ?? null : null;
+  const canSaveNextStart = !setting.busy && actual?.status === 'absent';
+  const canMove = !setting.busy && actual?.status === 'present' && actual.target.serviceState === 'running';
   const save = React.useCallback(
     async (value: ProjectServicePlacementV1) => {
-      await mutate((accountId, current) =>
-        executeProjectWorkerActionV1(
+      await mutate((_accountId, current, approvalOptions) => current.actual.status !== 'absent'
+        ? Promise.resolve({ status: 'unavailable' })
+        : executeProjectWorkerActionV1(
           'projects.service.placement.set',
           {
             workspace: address,
@@ -83,14 +107,15 @@ export function useProjectServicePlacement(
                 : { kind: 'value', value: current.placement },
             value,
           },
-          { expectedAccountId: accountId },
+          approvalOptions,
         ),
+        value,
       );
       refresh();
     },
     [address, mutate, refresh, serviceName],
   );
-  return { ...setting, address, save };
+  return { ...setting, address, actual, desiredPlacement, displayChoice, canSaveNextStart, canMove, save };
 }
 
 function noticeText(notice: ObservedWorkerSettingNotice): string | null {
@@ -140,13 +165,15 @@ function choiceMatchesActual(
 type MoveState =
   | Readonly<{ phase: 'confirm'; destination: ProjectExecutionChoiceV1 }>
   | Readonly<{ phase: 'requesting'; destination: ProjectExecutionChoiceV1 }>
-  | Readonly<{ phase: 'refused'; text: string; code?: string }>
+  | Readonly<{ phase: 'approval'; destination: ProjectExecutionChoiceV1; artifactId: string }>
+  | Readonly<{ phase: 'operation'; destination: ProjectExecutionChoiceV1; operationId: string }>
+  | Readonly<{ phase: 'refused'; text: string; code?: string; settledMove?: true }>
   | null;
 
 /**
- * Runs `projects.service.relocate` through the canonical Action front door. The single reviewed
- * set-plus-Move producer (Main71) is not published: today the executor answers
- * `unsupported / service_relocation_unavailable`, which this surface reports as is.
+ * Runs `projects.service.relocate` through the canonical Action front door for the Account that
+ * showed the service. The single reviewed set-plus-Move producer (Main71) is not published: today
+ * the catalog keeps the Action off every surface, which this surface reports as is.
  */
 async function requestServiceRelocation(
   input: Readonly<{
@@ -154,12 +181,11 @@ async function requestServiceRelocation(
     serviceName: string;
     actual: ManagedActual;
     destination: ProjectExecutionChoiceV1;
+    expectedAccountId: string;
+    signal: AbortSignal;
+    onApprovalPending: (registration: ActionApprovalRegistration) => void;
   }>,
-): Promise<
-  | ProjectServiceRelocateResultV1
-  | Readonly<{ status: 'failed'; errorCode: string }>
-  | Readonly<{ status: 'approval' }>
-> {
+): Promise<ServiceRelocationOutcome> {
   const managedServiceId =
     input.actual.sourceClass?.kind === 'managed_service'
       ? input.actual.sourceClass.managedServiceId
@@ -168,12 +194,15 @@ async function requestServiceRelocation(
     return { status: 'refused', reasonCode: 'service_binding_unavailable' };
   return await withDefaultActionExecuteContext(
     undefined,
-    { serverId: input.address.serverId },
+    { serverId: input.address.serverId, expectedAccountId: input.expectedAccountId, signal: input.signal },
     async (executor, account) => {
       account.assertCurrent();
-      const outcome = await executor.execute(
-        'projects.service.relocate',
-        {
+      const result = await executeServiceRelocationAction({
+        execute: async request => {
+          const result = await executor.execute(request.actionId, request.input, request.context);
+          return result.ok ? result.result : result;
+        },
+        request: {
           workspace: input.address,
           serviceName: input.serviceName,
           requestId: randomUUID(),
@@ -181,159 +210,191 @@ async function requestServiceRelocation(
             kind: 'managed_service',
             managedServiceId,
             machineId: input.actual.machineId,
-            ...(input.actual.workspaceId
-              ? { workspaceId: input.actual.workspaceId }
-              : {}),
+            ...(input.actual.workspaceId ? { workspaceId: input.actual.workspaceId } : {}),
             ...(input.actual.cwd ? { cwd: input.actual.cwd } : {}),
-            ...(input.actual.declaration
-              ? { declaration: input.actual.declaration }
-              : {}),
+            ...(input.actual.declaration ? { declaration: input.actual.declaration } : {}),
           },
           destination: input.destination,
         },
-        {
+        context: {
           surface: 'ui',
           serverId: account.serverId,
           runtimeAccountId: account.accountId,
           actionRequestId: randomUUID(),
+          signal: input.signal,
         },
-      );
-      if (!outcome.ok)
-        return {
-          status: 'failed',
-          errorCode: outcome.errorCode ?? 'unsupported_action',
-        };
-      // Ask first: the reviewed request waits in its approval Artifact; nothing has moved yet.
-      if (ActionApprovalRequestCreatedResultSchema.safeParse(outcome.result).success) return { status: 'approval' };
-      const parsed = ProjectServiceRelocateResultV1Schema.safeParse(outcome.result);
-      return parsed.success ? parsed.data : { status: 'failed', errorCode: 'invalid_action_output' };
+        admission: { expectedAccountId: account.accountId, signal: input.signal,
+          isCurrent: account.accountLifetime.isCurrent, onApprovalPending: input.onApprovalPending },
+      });
+      account.assertCurrent();
+      return result;
     },
   );
 }
 
+/** The declaration facts the Services page knows for this service (plan 20s1 / 32s1). */
+export type ProjectServiceDeclarationFacts = Readonly<{
+  /** Only an explicitly portable declaration may run on a worker; anything else stays on the primary checkout. */
+  portable: boolean;
+  memoryDemand?: ProjectMemoryDemandV1;
+}>;
+
 /**
  * A service's "Runs on" and "If it can't run there" (32s1, lab `s-services RUNSON/PICK/MOVE/RUNSONp`),
- * shown in the service's expansion (desktop) or its pushed page (phone). For a stopped service a
- * choice saves where it starts next; for a running one a different choice opens the Move
- * confirmation in place and saves nothing until confirmed.
+ * shown in the service's expansion (desktop) or its pushed page (phone).
+ * - Running: the field names where it actually runs; a different choice opens the Move confirmation.
+ * - Stopped (observed absent): a choice saves where it starts next.
+ * - Unavailable / ambiguous custody: neither is assumed; the choice waits for a current observation.
  */
 export function ProjectServicePlacementControls(
   props: Readonly<{
     testID?: string;
     source: ProjectServiceSource;
     serviceName: string;
+    declaration?: ProjectServiceDeclarationFacts;
+    /** Changes whenever the Services feed observes this service's lifecycle; the binding is then re-read. */
+    lifecycleKey?: string;
   }>,
 ) {
-  const testID =
-    props.testID ?? `project-service-placement:${props.serviceName}`;
+  const testID = props.testID ?? `project-service-placement:${props.serviceName}`;
   const { theme } = useUnistyles();
   const compact = useViewportClass() === 'compact';
-  const placement = useProjectServicePlacement(
-    props.source,
-    props.serviceName,
-  );
+  const placement = useProjectServicePlacement(props.source, props.serviceName, { lifecycleKey: props.lifecycleKey });
+  const { refresh } = placement;
   const anchorRef = React.useRef<View>(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [move, setMove] = React.useState<MoveState>(null);
+  const { binding } = useServerCredentialAccountScopeBinding(props.source.serverId);
+  const moveRequest = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    setMove(null);
+    return () => { moveRequest.current?.abort(); };
+  }, [binding, props.source.serverId, props.source.refId, props.source.machineId, props.serviceName]);
+
   const state = placement.state;
   const ready = state.kind === 'ready' ? state.value : null;
+  const observed = ready?.actual ?? null;
+  const actual = observed?.status === 'present' ? observed.target : null;
   const runsOn = ready?.placement.runsOn ?? null;
-  const label = useWorkerDestinationLabel(
-    props.source.serverId,
-    runsOn,
-    props.source.machineId,
-  );
-  const sourceMachine = useServerScopedMachine(
-    props.source.serverId,
-    props.source.machineId,
-  );
-  const sourceName =
-    (sourceMachine ? getMachineDisplayName(sourceMachine) : null) ??
-    t('projectWorkers.primary');
-  const actual =
-    ready?.actual.status === 'present' ? ready.actual.target : null;
-  const actualMachine = useServerScopedMachine(
-    props.source.serverId,
-    actual?.machineId ?? '',
-  );
-  const pendingDestination =
-    move && move.phase !== 'refused' ? move.destination : null;
-  const pendingLabel = useWorkerDestinationLabel(
-    props.source.serverId,
-    pendingDestination,
-    props.source.machineId,
-  );
-  const disabled = !ready || placement.busy || move?.phase === 'requesting';
+  const portable = props.declaration?.portable === true;
+  const label = useWorkerDestinationLabel(props.source.serverId, runsOn, props.source.machineId);
+  const sourceMachine = useServerScopedMachine(props.source.serverId, props.source.machineId);
+  const sourceName = (sourceMachine ? getMachineDisplayName(sourceMachine) : null) ?? t('projectWorkers.primary');
+  const actualMachine = useServerScopedMachine(props.source.serverId, actual?.machineId ?? '');
+  const pendingDestination = move && move.phase !== 'refused' ? move.destination : null;
+  const pendingLabel = useWorkerDestinationLabel(props.source.serverId, pendingDestination, props.source.machineId);
+
+  const approval = useActionApprovalContinuation({
+    scopeKey: JSON.stringify(['projects.service.relocate', props.source.serverId, props.source.refId, props.serviceName]),
+    serverId: props.source.serverId,
+    onExecuted: refresh,
+  });
+  const operation = useActionOperation({
+    serverId: props.source.serverId,
+    operationId: move?.phase === 'operation' ? move.operationId : '',
+  });
+  const stop = useActionOperationStopControl(move?.phase === 'operation' ? operation : null);
+  const operationState = move?.phase === 'operation' ? operation?.snapshot.state ?? null : null;
+  React.useEffect(() => {
+    // The accepted Move is observed through its operation; its settlement re-reads the actual binding.
+    if (operationState === 'succeeded') { setMove(null); refresh(); }
+    else if (operationState === 'failed' || operationState === 'cancelled') {
+      setMove({ phase: 'refused', settledMove: true, text: t('projectServices.moveRefused'),
+        ...(operation?.snapshot.error ? { code: operation.snapshot.error.errorCode } : {}) });
+      refresh();
+    }
+  }, [operation?.snapshot.error, operationState, refresh]);
+
+  const custodyKnown = observed?.status === 'present' || observed?.status === 'absent';
+  const moving = move?.phase === 'requesting' || move?.phase === 'approval' || move?.phase === 'operation';
+  const disabled = !ready || placement.busy || moving || !custodyKnown || !portable;
   const notice = noticeText(placement.notice);
 
   if (state.kind === 'refused' || state.kind === 'error') {
     return (
-      <Item
-        testID={`${testID}.unavailable`}
-        title={t('projectServices.runsOn')}
-        subtitle={t('projectServices.settingsUnavailable')}
-        mode="info"
-        showChevron={false}
-      />
+      <Item testID={`${testID}.unavailable`} title={t('projectServices.runsOn')}
+        subtitle={t('projectServices.settingsUnavailable')} mode="info" showChevron={false} />
     );
   }
 
-  const value =
-    runsOn?.kind === 'primary'
+  const desiredName = runsOn?.kind === 'primary'
+    ? t('projectServices.thisMachine', { name: sourceName })
+    : runsOn?.kind === 'workers' && runsOn.destination.kind === 'pool'
+      ? [t('projectServices.anyWorker'), label.name].filter(Boolean).join(' · ')
+      : (label.name ?? (label.missing ? t('projectServices.destinationMissing') : null));
+  const actualName = actual
+    ? actual.machineId === props.source.machineId
       ? t('projectServices.thisMachine', { name: sourceName })
-      : runsOn?.kind === 'workers' && runsOn.destination.kind === 'pool'
-        ? [t('projectServices.anyWorker'), label.name].filter(Boolean).join(' · ')
-        : (label.name ??
-          (label.missing ? t('projectServices.destinationMissing') : null));
-  const hint = !runsOn
-    ? undefined
-    : runsOn.kind === 'primary'
-      ? t('projectServices.runsHere')
-      : label.name
-        ? t('projectServices.runsOnWorker', { name: label.name })
-        : undefined;
+      : (actualMachine ? getMachineDisplayName(actualMachine) : null) ?? t('projectServices.otherMachine')
+    : null;
+  // A live occurrence is named where it actually runs; desired intent only describes the next start.
+  const value = actualName ?? (observed?.status === 'ambiguous'
+      ? t('projectServices.actualAmbiguous')
+      : observed?.status === 'unavailable'
+        ? t('projectServices.actualUnavailable')
+        : observed?.status === 'absent'
+          ? !portable ? t('projectServices.thisMachine', { name: sourceName }) : desiredName
+          : null);
+  const hint = observed?.status === 'unavailable'
+      ? t('projectServices.actualUnavailable')
+      : observed?.status === 'ambiguous'
+        ? t('projectServices.actualAmbiguousDetail')
+        : !portable
+          ? t('projectServices.primaryOnly')
+          : move?.phase === 'refused' && move.settledMove && observed?.status === 'absent' && desiredName
+          ? t('projectServices.willStartOn', { name: desiredName })
+          : actual || !runsOn
+            ? undefined
+            : runsOn.kind === 'primary'
+              ? t('projectServices.runsHere')
+              : label.name ? t('projectServices.runsOnWorker', { name: label.name }) : undefined;
 
   const choose = (choice: ProjectExecutionChoiceV1) => {
     setPickerOpen(false);
-    if (!ready) return;
+    if (!ready || !custodyKnown || !portable || placement.busy || moving) return;
     if (actual) {
       // A running service never moves on selection: a different target asks first, the same one is a no-op.
-      if (!choiceMatchesActual(choice, actual, props.source.machineId))
-        setMove({ phase: 'confirm', destination: choice });
+      if (placement.canMove && !choiceMatchesActual(choice, actual, props.source.machineId)) setMove({ phase: 'confirm', destination: choice });
       return;
     }
-    if (sameChoice(choice, ready.placement.runsOn)) return;
+    if (!placement.canSaveNextStart || sameChoice(choice, ready.placement.runsOn)) return;
     void placement.save({ ...ready.placement, runsOn: choice });
   };
 
   const confirmMove = async (destination: ProjectExecutionChoiceV1) => {
-    if (!actual) return;
+    if (!actual || !placement.canMove || !portable || !binding?.isCurrent() || moveRequest.current) return;
+    const lifetime = new AbortController();
+    moveRequest.current = lifetime;
+    const retirement = binding.onRetire(() => lifetime.abort());
     setMove({ phase: 'requesting', destination });
     try {
       const result = await requestServiceRelocation({
-        address: placement.address,
-        serviceName: props.serviceName,
-        actual,
-        destination,
+        address: placement.address, serviceName: props.serviceName, actual, destination,
+        expectedAccountId: binding.accountId, signal: lifetime.signal,
+        onApprovalPending: registration => {
+          approval.requestApproval(registration);
+          setMove({ phase: 'approval', destination, artifactId: typeof registration === 'string' ? registration : registration.artifactId });
+        },
       });
-      if (
-        result.status === 'accepted' ||
-        result.status === 'moved' ||
-        result.status === 'unchanged'
-      ) {
+      if (lifetime.signal.aborted) return;
+      if (result.status === 'accepted') {
+        publishActionOperationObservation({ serverId: props.source.serverId, machineId: result.operation.scope.machineId,
+          observation: 'available', snapshots: [result.operation] });
+        setMove({ phase: 'operation', destination, operationId: result.operation.operationId });
+        return;
+      }
+      if (result.status === 'moved' || result.status === 'unchanged') {
         setMove(null);
-        placement.refresh();
+        refresh();
         return;
       }
       setMove({
         phase: 'refused',
         text:
-          result.status === 'approval'
-            ? t('projectWorkers.approvalPending')
-            // The relocation producer is not published yet: the executor answers `unsupported`, and
-            // the catalog keeps the Action off every surface (`action_disabled`). Both mean the same.
-            : result.status === 'unsupported' || (result.status === 'failed'
-                && (result.errorCode === 'action_disabled' || result.errorCode === 'unsupported_action'))
+          // The relocation producer is not published yet: the executor answers `unsupported`, and
+          // the catalog keeps the Action off every surface (`action_disabled`). Both mean the same.
+          result.status === 'unsupported' || (result.status === 'failed'
+            && (result.errorCode === 'action_disabled' || result.errorCode === 'unsupported_action'))
             ? t('projectServices.moveUnavailable')
             : result.status === 'refused'
               ? t('projectServices.moveRefused')
@@ -342,16 +403,17 @@ export function ProjectServicePlacementControls(
         ...('reasonCode' in result ? { code: result.reasonCode } : 'errorCode' in result ? { code: result.errorCode } : {}),
       });
     } catch (error) {
+      if (lifetime.signal.aborted) return;
       setMove({ phase: 'refused', text: t('projectServices.moveUnknown'),
         code: error instanceof Error ? error.message : 'move_failed' });
+    } finally {
+      retirement.dispose();
+      if (moveRequest.current === lifetime) moveRequest.current = null;
     }
   };
 
-  const actualName =
-    (actualMachine ? getMachineDisplayName(actualMachine) : null) ?? sourceName;
-  const toName =
-    pendingLabel.name ??
-    (pendingDestination?.kind === 'primary' ? sourceName : '');
+  const fromName = actualName ?? sourceName;
+  const toName = pendingLabel.name ?? (pendingDestination?.kind === 'primary' ? sourceName : '');
 
   return (
     <View testID={testID}>
@@ -359,12 +421,17 @@ export function ProjectServicePlacementControls(
         <Item
           testID={`${testID}.runsOn`}
           title={t('projectServices.runsOn')}
-          showChevron={compact}
+          subtitle={hint}
+          showChevron={compact && portable}
           accessoryLayout="adaptive"
           disabled={disabled}
           accessibilityExpanded={pickerOpen}
-          onPress={() => setPickerOpen(true)}
-          {...(compact
+          onPress={() => {
+            // Re-observe the binding before a lifecycle-sensitive choice.
+            refresh();
+            setPickerOpen(true);
+          }}
+          {...(compact || !portable
             ? { detail: value ?? undefined }
             : {
                 rightElement: renderDropdownItemTriggerRightElement({
@@ -372,22 +439,26 @@ export function ProjectServicePlacementControls(
                   open: pickerOpen,
                   detailColor: theme.colors.text.primary,
                   chevronColor: theme.colors.text.secondary,
-                  field: resolveFieldBoxColors(
-                    theme,
-                    label.missing ? 'invalid' : 'idle',
-                  ),
+                  field: resolveFieldBoxColors(theme, label.missing && !actual ? 'invalid' : 'idle'),
                   placeholder: t('common.loading'),
                   placeholderColor: theme.colors.input.placeholder,
                 }),
               })}
         />
       </View>
+      {observed?.status === 'unavailable' || observed?.status === 'ambiguous' ? (
+        <AttentionBanner
+          testID={`${testID}.custody`}
+          tone="neutral"
+          title={observed.status === 'ambiguous' ? t('projectServices.actualAmbiguous') : t('projectServices.actualUnavailable')}
+          action={{ label: t('common.retry'), testID: `${testID}.custody.retry`, onPress: refresh }}
+        />
+      ) : null}
       <SegmentedChoiceItem<'primary' | 'fail'>
         testIDPrefix={`${testID}.fallback`}
         title={t('projectServices.whenUnavailable')}
-        subtitle={hint}
         accessoryLayout={compact ? 'stacked' : 'adaptive'}
-        disabled={disabled}
+        disabled={!placement.canSaveNextStart || moving || !portable}
         value={ready?.placement.unavailable ?? 'fail'}
         options={[
           { id: 'primary', label: t('projectServices.fallbackPrimary') },
@@ -398,22 +469,12 @@ export function ProjectServicePlacementControls(
           void placement.save({ ...ready.placement, unavailable });
         }}
       />
-      {notice ? (
-        <AttentionBanner
-          testID={`${testID}.notice`}
-          tone="neutral"
-          title={notice}
-        />
-      ) : null}
-      {move && move.phase !== 'refused' ? (
+      {notice ? <AttentionBanner testID={`${testID}.notice`} tone="neutral" title={notice} /> : null}
+      {move?.phase === 'confirm' || move?.phase === 'requesting' ? (
         <AttentionBanner
           testID={`${testID}.move`}
           tone="neutral"
-          title={t('projectServices.moveConfirm', {
-            service: props.serviceName,
-            from: actualName,
-            to: toName,
-          })}
+          title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: toName })}
           description={t('projectServices.moveDetail')}
           action={{
             label: t('projectServices.move'),
@@ -430,19 +491,40 @@ export function ProjectServicePlacementControls(
           }}
         />
       ) : null}
+      {move?.phase === 'approval' ? (
+        <AttentionBanner testID={`${testID}.move.approval`} tone="neutral"
+          title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: toName })}
+          description={t('projectWorkers.approvalPending')} />
+      ) : null}
+      {move?.phase === 'operation' ? (
+        <AttentionBanner
+          testID={`${testID}.move.operation`}
+          tone="neutral"
+          title={stop.pending || stop.stopRequested ? t('projectServices.cancelPending')
+            : t('projectServices.moving', { service: props.serviceName, to: toName })}
+          action={{
+            label: t('projectServices.inspect'),
+            testID: `${testID}.move.inspect`,
+            onPress: () => openActionOperationDetail({ serverId: props.source.serverId, operationId: move.operationId }),
+          }}
+          secondaryAction={operation?.snapshot.cancellation === 'supported' ? {
+            label: t('common.cancel'),
+            testID: `${testID}.move.stop`,
+            disabled: stop.pending || stop.stopRequested,
+            onPress: stop.requestStop,
+          } : null}
+        />
+      ) : null}
       {move?.phase === 'refused' ? (
         <AttentionBanner
           testID={`${testID}.move.refused`}
           tone="warning"
           title={move.text}
           {...(move.code ? { details: [move.code] } : {})}
-          secondaryAction={{
-            label: t('common.ok'),
-            onPress: () => setMove(null),
-          }}
+          secondaryAction={{ label: t('common.ok'), onPress: () => setMove(null) }}
         />
       ) : null}
-      {ready ? (
+      {ready && portable ? (
         <WorkerDestinationPicker
           testID={`${testID}.picker`}
           open={pickerOpen}
@@ -453,12 +535,11 @@ export function ProjectServicePlacementControls(
           workspace={placement.address}
           sourceMachineId={props.source.machineId}
           subjectName={props.serviceName}
-          primary={{
-            title: t('projectServices.thisMachine', { name: sourceName }),
-          }}
+          {...(props.declaration?.memoryDemand ? { memoryDemand: props.declaration.memoryDemand } : {})}
+          primary={{ title: t('projectServices.thisMachine', { name: sourceName }) }}
           poolSelection="automatic"
           servicePresentation
-          selected={pendingDestination ?? ready.placement.runsOn}
+          selected={pendingDestination ?? placement.displayChoice}
           onChoose={choose}
         />
       ) : null}
@@ -472,6 +553,7 @@ export function ProjectServicePlacementControls(
  */
 export function createProjectServicePlacementRenderer(
   source: ProjectServiceSource | null,
+  declarations: Readonly<Record<string, ProjectServiceDeclarationFacts>> = {},
 ): ((row: ServiceRow) => React.ReactNode) | undefined {
   if (!source) return undefined;
   return (row) => {
@@ -481,6 +563,15 @@ export function createProjectServicePlacementRenderer(
     // declarations, or their copies running on a worker, show this checkout's Runs on.
     if (declaration.workspaceRefId !== source.refId && row.target.machineId === source.machineId) return null;
     // Placement lives on the SOURCE checkout's ref; a running worker copy carries its own ref.
-    return <ProjectServicePlacementControls source={source} serviceName={declaration.selection.name} />;
+    return (
+      <ProjectServicePlacementControls
+        source={source}
+        serviceName={declaration.selection.name}
+        declaration={declarations[declaration.selection.name]}
+        // The feed's observed lifecycle of this row re-reads the actual binding (Start/Stop/reconnect).
+        lifecycleKey={JSON.stringify([row.status, row.target.machineId, row.target.serviceState ?? '', row.target.id,
+          row.target.sourceClass?.kind === 'managed_service' ? row.target.sourceClass.managedServiceId : null])}
+      />
+    );
   };
 }

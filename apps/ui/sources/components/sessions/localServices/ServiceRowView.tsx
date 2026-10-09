@@ -17,6 +17,7 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { ServicesOpenInBrowserResult } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import type { ServiceRow, ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';
@@ -201,7 +202,7 @@ function ServiceRowTitle(props: Readonly<{
  * The address is text here; copying it is the expansion's job, so a collapsed row carries no
  * controls of its own. Lab `s-services`: `localhost:3005 · [project.json] on devbox`.
  */
-function resolveRowFacts(row: ServiceRow, machineName: string | null): Readonly<{
+function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByName: string | null): Readonly<{
     lead: readonly string[];
     tail: readonly string[];
     /** The tail is the reason the row cannot act (lab `db`: "Docker isn't available on devbox"). */
@@ -211,7 +212,12 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null): Readonly<
     const reason = row.reasonCode
         ? resolveReasonCopy({ reasonCode: row.reasonCode, kind: 'localServiceLauncher' })
         : null;
-    const on = machineName ? t('localServices.row.onMachine', { machine: machineName }) : null;
+    // Someone else's service names who started it (lab STATES 12); the viewer's own needs no byline.
+    const on = startedByName
+        ? machineName
+            ? t('localServices.row.startedByOn', { name: startedByName, machine: machineName })
+            : t('localServices.row.startedBy', { name: startedByName })
+        : machineName ? t('localServices.row.onMachine', { machine: machineName }) : null;
     // Offline: the host says so once, with Check again; the row keeps its last-known facts under
     // a "Last known" status instead of repeating the outage on every row.
     if (row.status === 'starting') {
@@ -234,9 +240,13 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null): Readonly<
     const where = row.scope === 'thisSession'
         ? t('localServices.session.thisSessionTitle')
         : on ?? (row.sourceBadge ? null : t(row.sourceLabel));
+    // How long it has run, from the feed's own start time (lab `42 min`): read at render, no timer.
+    const age = row.status === 'running' && typeof row.target.startedAtMs === 'number'
+        ? formatRelativeTimeShort(row.target.startedAtMs, Date.now())
+        : null;
     return {
         lead: [address].filter((part): part is string => Boolean(part)),
-        tail: [row.serviceLabel ?? row.processLabel, where].filter((part): part is string => Boolean(part)),
+        tail: [row.serviceLabel ?? row.processLabel, where, age].filter((part): part is string => Boolean(part)),
         tailReason: null,
         reason,
     };
@@ -245,11 +255,12 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null): Readonly<
 function ServiceRowFacts(props: Readonly<{
     row: ServiceRow;
     machineName: string | null;
+    startedByName: string | null;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
     const { row } = props;
-    const facts = resolveRowFacts(row, props.machineName);
+    const facts = resolveRowFacts(row, props.machineName, props.startedByName);
     const badge = row.sourceBadge ?? null;
     const lead = facts.lead.join(' · ');
     const tail = facts.tail.join(' · ');
@@ -353,6 +364,11 @@ export function ServiceRowView(props: Readonly<{
     /** The machine is unreachable: every fact on the row is last known. */
     offline?: boolean;
     /**
+     * Who started this service, already named by the account name owner — and only when that is
+     * someone other than the viewer. Never a name made from a bare id.
+     */
+    startedByName?: string | null;
+    /**
      * Where the service runs next (plan 32 "Runs on" / "If it can't run there"), drawn by its
      * placement owner inside the expansion under the row's controls. The row only hosts it.
      */
@@ -364,6 +380,12 @@ export function ServiceRowView(props: Readonly<{
     /** One expanded row at a time is the pane's decision; the row only asks. */
     expanded?: boolean;
     onExpandedChange?: (expanded: boolean) => void;
+    /**
+     * Phone (lab PAGEp): the row pushes its detail instead of growing in place. `detail` draws that
+     * pushed page: the same header and the same body, always open.
+     */
+    onOpenDetail?: () => void;
+    presentation?: 'row' | 'detail';
     showDivider?: boolean;
     animationEnabled?: boolean;
     testID: string;
@@ -423,12 +445,6 @@ export function ServiceRowView(props: Readonly<{
     const handleTerminate = React.useCallback(() => {
         void (async () => {
             if (!props.onTerminateDetectedService) return;
-            const confirmed = await Modal.confirm(
-                t('localServices.actions.terminateConfirmTitle'),
-                t('localServices.actions.terminateConfirmMessage', { service: row.title }),
-                { confirmText: t('localServices.actions.terminateConfirmCta'), destructive: true },
-            );
-            if (!confirmed) return;
             await runner.run({
                 id: menuPendingId,
                 failureTitle: t('localServices.actions.failureTitle.terminate', { service: row.title }),
@@ -440,12 +456,6 @@ export function ServiceRowView(props: Readonly<{
     const handleStop = React.useCallback(() => {
         void (async () => {
             if (!props.onStopManagedService) return;
-            const confirmed = await Modal.confirm(
-                t('localServices.actions.stopConfirmTitle'),
-                t('localServices.actions.stopConfirmMessage', { service: row.title }),
-                { confirmText: t('localServices.actions.stopConfirmCta'), destructive: true },
-            );
-            if (!confirmed) return;
             await runner.run({
                 id: menuPendingId,
                 failureTitle: t('localServices.actions.failureTitle.stop', { service: row.title }),
@@ -527,16 +537,18 @@ export function ServiceRowView(props: Readonly<{
     // grow into: it stays a plain row, with ▶ as its one control.
     const hasPublicLink = Boolean(props.publicPreviewState && props.publicPreviewActions)
         && hasLocalServicePublicPreviewSurface(row.target);
-    // A row grows only into what it has to show (its address, its link). A live service with no
-    // address — a queue worker — keeps its overflow on the row itself (lab s-services `jobs`).
-    const expandable = canOpen || Boolean(addressValue) || hasPublicLink;
+    // A row grows only into what it has to show: its address, its link, where it runs (plan 32: Runs
+    // on is reachable on every service, stopped or address-less). A live service with no address — a
+    // queue worker — keeps its overflow on the row itself (lab s-services `jobs`).
+    const hasPlacement = props.placement !== undefined && props.placement !== null && props.placement !== false;
+    const expandable = canOpen || Boolean(addressValue) || hasPublicLink || hasPlacement;
     const expanded = expandable && props.expanded === true;
     const onExpandedChange = props.onExpandedChange;
 
     const offline = props.offline === true;
     const machineName = props.machineName ?? null;
     const title = <ServiceRowTitle row={row} offline={offline} animationEnabled={props.animationEnabled} testID={props.testID} />;
-    const subtitle = <ServiceRowFacts row={row} machineName={machineName} testID={props.testID} />;
+    const subtitle = <ServiceRowFacts row={row} machineName={machineName} startedByName={props.startedByName ?? null} testID={props.testID} />;
     // A Project declaration is a service of this checkout (the Services page's own mark, lab
     // s-services); an undeclared script is a terminal command; a detected listener keeps its letter.
     const identity = row.target.declaration
@@ -583,6 +595,82 @@ export function ServiceRowView(props: Readonly<{
         />
     ) : null;
 
+
+    // With no address to copy and no Open or ▶ on the row, the overflow stays on the row (lab `jobs`).
+    const overflowOnRow = !addressValue && !openControl && !startControl;
+    const rowControl = openControl ?? startControl ?? (overflowOnRow ? overflowControl : null);
+    const actionBar = addressValue || (overflowControl && !overflowOnRow) ? (
+        <View style={styles.actions}>
+            {addressValue ? (
+                <CopyAddressButton
+                    addressValue={addressValue}
+                    target={row.target}
+                    onCopyServiceUrl={props.onCopyServiceUrl}
+                    testID={props.testID}
+                />
+            ) : null}
+            <View style={styles.actionsSpacer} />
+            {overflowOnRow ? null : overflowControl}
+        </View>
+    ) : null;
+    // One body for the desktop expansion and the phone's pushed detail; only the container differs.
+    const body = (
+        <View testID={`${props.testID}-expansion`} style={styles.expansion}>
+            <SurfaceCard padding="none">
+                {actionBar}
+                {props.placement}
+                <LocalServicePublicPreviewControls
+                    launchTargets={[row.target]}
+                    state={props.publicPreviewState}
+                    actions={props.publicPreviewActions}
+                    capabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
+                    testID={`${props.testID}-public-preview`}
+                />
+            </SurfaceCard>
+        </View>
+    );
+
+    if (props.presentation === 'detail') {
+        return (
+            <View testID={props.testID}>
+                <Item
+                    testID={`${props.testID}-item`}
+                    title={title}
+                    icon={identity}
+                    subtitle={subtitle}
+                    subtitleLines={2}
+                    mode="info"
+                    showChevron={false}
+                    showDivider={false}
+                    loading={pending}
+                    rightElement={rowControl}
+                />
+                {body}
+            </View>
+        );
+    }
+
+    const onOpenDetail = props.onOpenDetail;
+    if (expandable && onOpenDetail) {
+        return (
+            <View testID={props.testID}>
+                <Item
+                    testID={`${props.testID}-item`}
+                    title={title}
+                    icon={identity}
+                    subtitle={subtitle}
+                    subtitleLines={2}
+                    showDivider={props.showDivider}
+                    loading={pending}
+                    onPress={onOpenDetail}
+                    rightElement={rowControl}
+                    // Open, ▶ and a worker's overflow are their own buttons: never nest them in the row's press.
+                    rightElementOutsidePressable={rowControl !== null}
+                />
+            </View>
+        );
+    }
+
     if (!expandable || !onExpandedChange) {
         return (
             <View testID={props.testID}>
@@ -617,37 +705,14 @@ export function ServiceRowView(props: Readonly<{
                         subtitle={subtitle}
                         subtitleLines={2}
                         loading={pending}
-                        rightElement={openControl ?? startControl}
-                        // Open and ▶ are their own buttons: never nest them inside the row's press target.
-                        rightElementOutsidePressable={openControl !== null || startControl !== null}
+                        rightElement={rowControl}
+                        // Open, ▶ and a worker's overflow are their own buttons: never nest them in the row's press.
+                        rightElementOutsidePressable={rowControl !== null}
                     />
                 )}
             >
                 {/* The disclosure mounts this only while open (and through its collapse). */}
-                <View testID={`${props.testID}-expansion`} style={styles.expansion}>
-                    <SurfaceCard padding="none">
-                        <View style={styles.actions}>
-                            {addressValue ? (
-                                <CopyAddressButton
-                                    addressValue={addressValue}
-                                    target={row.target}
-                                    onCopyServiceUrl={props.onCopyServiceUrl}
-                                    testID={props.testID}
-                                />
-                            ) : null}
-                            <View style={styles.actionsSpacer} />
-                            {overflowControl}
-                        </View>
-                        {props.placement}
-                        <LocalServicePublicPreviewControls
-                            launchTargets={[row.target]}
-                            state={props.publicPreviewState}
-                            actions={props.publicPreviewActions}
-                            capabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
-                            testID={`${props.testID}-public-preview`}
-                        />
-                    </SurfaceCard>
-                </View>
+                {body}
             </ExpandableItem>
         </View>
     );

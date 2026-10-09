@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import { buildLocalServiceRows } from '@/sync/domains/local/services/serviceRow';
 
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -61,7 +62,16 @@ const base: WorkspaceExecutionSettingsV1 = {
   services: {},
 };
 
-async function setup(options: Readonly<{ running: boolean }>) {
+async function setup(options: Readonly<{
+  running: boolean;
+  /** The Machine that owns the service binding observation fails to answer. */
+  actualFails?: boolean;
+  saved?: WorkspaceExecutionSettingsV1['services'][string];
+  portable?: boolean;
+  modelOnly?: boolean;
+  /** Wait for an enabled Runs on (custody known); off for states that keep it disabled. */
+  waitEnabled?: boolean;
+}>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -73,7 +83,9 @@ async function setup(options: Readonly<{ running: boolean }>) {
     {
       handleRequest: async (path, init) => {
         if (path === '/v1/projects/execution/config/read')
-          return json({ status: 'absent' });
+          return json(options.saved
+            ? { status: 'present', revision: 1, content: { t: 'plain', v: { ...base, services: { server: options.saved } } } }
+            : { status: 'absent' });
         if (path === '/v1/projects/execution/config/mutate') {
           const request = JSON.parse(String(init?.body)) as {
             content: { v: WorkspaceExecutionSettingsV1 } | null;
@@ -141,7 +153,9 @@ async function setup(options: Readonly<{ running: boolean }>) {
     confidence: 'high',
     actions: ['manage'],
   };
-  remote.mockImplementation(async ({ machineId }) => ({
+  remote.mockImplementation(async ({ machineId }) => {
+    if (options.actualFails) throw new Error('owner_unavailable');
+    return {
     protocolVersion: 1,
     snapshot: {
       v: 1,
@@ -150,19 +164,35 @@ async function setup(options: Readonly<{ running: boolean }>) {
       targets:
         options.running && machineId === source.machineId ? [target] : [],
     },
-  }));
-  const { ProjectServicePlacementControls } =
+  };
+  });
+  let setLifecycle: (key: string) => void = () => {};
+  const { ProjectServicePlacementControls, useProjectServicePlacement } =
     await import('./ProjectServicePlacementControls');
+  let model: ReturnType<typeof useProjectServicePlacement> | null = null;
+  function ModelProbe() {
+    model = useProjectServicePlacement({ serverId, refId: source.id, machineId: source.machineId }, 'server');
+    return null;
+  }
   const { WorkerDestinationPicker } =
     await import('@/components/projects/workers/WorkerDestinationPicker');
-  const screen = await renderScreen(
-    <ProjectServicePlacementControls
-      testID="placement"
-      serviceName="server"
-      source={{ serverId, refId: source.id, machineId: source.machineId }}
-    />,
-  );
-  await vi.waitFor(() =>
+  function Host() {
+    const [lifecycleKey, setKey] = React.useState('initial');
+    setLifecycle = setKey;
+    if (options.modelOnly) return <ModelProbe />;
+    return (
+      <ProjectServicePlacementControls
+        testID="placement"
+        serviceName="server"
+        source={{ serverId, refId: source.id, machineId: source.machineId }}
+        declaration={{ portable: options.portable !== false }}
+        lifecycleKey={lifecycleKey}
+      />
+    );
+  }
+  const screen = await renderScreen(<Host />);
+  if (options.modelOnly) await vi.waitFor(() => expect(model?.state.kind).toBe('ready'));
+  else if (options.waitEnabled !== false) await vi.waitFor(() =>
     expect(screen.findAllByTestId('placement.runsOn')[0]?.props.disabled, JSON.stringify([fixture?.requests, screen.findAllByTestId('placement.unavailable').length])).toBe(false),
   );
   const choose = async (machineId: string) => {
@@ -175,10 +205,83 @@ async function setup(options: Readonly<{ running: boolean }>) {
         });
     });
   };
-  return { screen, writes, choose };
+  const runsOn = () => screen.findAllByTestId('placement.runsOn')[0]!;
+  return { screen, writes, choose, runsOn, model: () => model!, setLifecycle: (key: string) => setLifecycle(key) };
 }
 
 describe('Service Runs on through the placement and relocation Actions', () => {
+  it('passes the current declaration portability and memory to the row placement owner', async () => {
+    const { createProjectServicePlacementRenderer } = await import('./ProjectServicePlacementControls');
+    const facts = { portable: false, memoryDemand: { bytes: 2147483648 } };
+    const source = { serverId: 'home', machineId: 'devbox', refId: 'checkout' };
+    const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [{
+      id: 'declared', source: 'managed_service', machineId: 'devbox', title: 'server',
+      declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'server' } },
+      confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [],
+    }], sessionId: null, scope: 'workspace' });
+    const render = createProjectServicePlacementRenderer(source, { server: facts });
+    expect((render?.(row!) as React.ReactElement<{ declaration: typeof facts }>).props.declaration).toEqual(facts);
+  });
+  it('refreshes placement when a new native occurrence replaces one with the same row id and running state', async () => {
+    const { createProjectServicePlacementRenderer } = await import('./ProjectServicePlacementControls');
+    const target = { id: 'service', source: 'managed_service' as const, machineId: 'source',
+      sourceClass: { kind: 'managed_service' as const, managedServiceId: 'first' }, serviceState: 'running' as const,
+      declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest' as const, name: 'web' } },
+      confidence: 'high' as const, state: 'available' as const, title: 'web', actions: [] };
+    const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+    const render = createProjectServicePlacementRenderer({ serverId: 'home', refId: 'checkout', machineId: 'source' }, { web: { portable: true } });
+    const first = render?.(row!) as React.ReactElement<{ lifecycleKey: string }>;
+    const next = render?.({ ...row!, target: { ...target, sourceClass: { kind: 'managed_service', managedServiceId: 'replacement' } } }) as React.ReactElement<{ lifecycleKey: string }>;
+    expect(next.props.lifecycleKey).not.toBe(first.props.lifecycleKey);
+  });
+  it.each([false, true])('the placement model itself refuses a stopped save for uncertain or live custody (live=%s)', async running => {
+    const { model, writes } = await setup({ running, actualFails: !running, modelOnly: true });
+    expect(model()).toMatchObject({
+      actual: { status: running ? 'present' : 'unavailable' },
+      desiredPlacement: { runsOn: { kind: 'primary' } },
+      canSaveNextStart: false,
+      canMove: running,
+    });
+    await act(async () => { await model().save({ runsOn: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } }, unavailable: 'fail' }); });
+    expect(writes).toEqual([]);
+  });
+  it('displays the actual Machine rather than the differing desired placement for a live service', async () => {
+    const { model } = await setup({ running: true, modelOnly: true,
+      saved: { runsOn: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } }, unavailable: 'fail' } });
+    expect(model()).toMatchObject({ displayChoice: { kind: 'primary' },
+      desiredPlacement: { runsOn: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } } } });
+  });
+
+  it('does not treat an unobservable binding as stopped: no save, and a way to check again', async () => {
+    const { screen, writes, choose, runsOn } = await setup({ running: false, actualFails: true, waitEnabled: false });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.custody')).toBeTruthy());
+    expect(runsOn().props.disabled).toBe(true);
+    await choose('hz-build-1');
+    expect(writes).toEqual([]);
+  });
+
+  it('offers no workers for a primary-only service', async () => {
+    const { screen, runsOn } = await setup({ running: false, portable: false, waitEnabled: false });
+    await vi.waitFor(() => expect(String(runsOn().props.subtitle)).toBe('projectServices.primaryOnly'));
+    const { WorkerDestinationPicker } = await import('@/components/projects/workers/WorkerDestinationPicker');
+    expect(screen.tree.findAllByType(WorkerDestinationPicker)).toHaveLength(0);
+  });
+
+  it('does not claim primary-only custody when the actual binding is unavailable', async () => {
+    const { screen, runsOn } = await setup({ running: false, actualFails: true, portable: false, waitEnabled: false });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.custody')).toBeTruthy());
+    expect(runsOn().props.detail).toBe('projectServices.actualUnavailable');
+    expect(runsOn().props.subtitle).toBe('projectServices.actualUnavailable');
+  });
+
+  it('re-reads the binding when the Services feed observes a lifecycle change', async () => {
+    const { setLifecycle } = await setup({ running: false });
+    const reads = () => remote.mock.calls.length;
+    const before = reads();
+    await act(async () => { setLifecycle('running:devbox'); });
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before));
+  });
+
   it('saves a stopped service’s next start without opening a Move', async () => {
     const { screen, writes, choose } = await setup({ running: false });
     await choose('hz-build-1');

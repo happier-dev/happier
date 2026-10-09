@@ -16,13 +16,14 @@ const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'operati
 
 describe('Service Move Action result custody', () => {
   it('registers an exact Artifact continuation and retains the accepted operation from its durable result without replay', async () => {
-    let registration: ActionApprovalRegistration | null = null;
+    const registrations: ActionApprovalRegistration[] = [];
     // The already-admitted Action/RPC is a process boundary; approval parsing and continuation stay real.
     const execute = vi.fn(async () => ({ kind: 'approval_request_created', actionId: 'projects.service.relocate', artifactId: 'approval-1' }));
     const pending = executeServiceRelocationAction({ execute, request,
       context: { surface: 'ui', serverId: 'home-1' },
-      admission: { expectedAccountId: 'account-1', onApprovalPending: value => { registration = value; } } });
-    await vi.waitFor(() => expect(registration).toMatchObject({ artifactId: 'approval-1', onExecuted: expect.any(Function) }));
+      admission: { expectedAccountId: 'account-1', onApprovalPending: value => { registrations.push(value); } } });
+    await vi.waitFor(() => expect(registrations[0]).toMatchObject({ artifactId: 'approval-1', onExecuted: expect.any(Function) }));
+    const registration = registrations[0];
     if (!registration || typeof registration === 'string') throw new Error('expected exact result continuation');
     const approval: ApprovalRequestV2 = { v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
       createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId: 'projects.service.relocate', actionArgs: request,

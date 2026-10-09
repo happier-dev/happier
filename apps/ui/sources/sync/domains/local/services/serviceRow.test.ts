@@ -62,6 +62,13 @@ function packageTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Local
 }
 
 describe('buildLocalServiceRows', () => {
+    it('keeps unavailable native custody distinct from a stopped declaration and offers no Start', () => {
+        const target = packageTarget({ source: 'managed_service', workspace: { serverId: 'home', machineId: 'machine-a', workspaceId: 'checkout', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
+            unavailableReason: 'project_service_binding_unavailable' });
+        const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
+        expect(row).toMatchObject({ status: 'unavailable', primaryAction: null, reasonCode: 'project_service_binding_unavailable' });
+    });
     it('does not join an unrelated listener solely from a launcher display id', () => {
         const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [openableTarget({ sourceClass: undefined })], sessionId: 'session-a', scope: 'workspace' });
         expect(rows[0]?.listeningListenerKey).toBeUndefined();

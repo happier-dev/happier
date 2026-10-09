@@ -26,7 +26,8 @@ import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { ServiceRowOpenHandler } from './ServiceRowView';
 import { useLocalServiceLauncherStartAction } from './launcherStartAction';
-import type { LocalServiceActionAdmission } from './localServiceActionAdmission';
+import type { LocalServiceActionAdmission, LocalServiceEffectReview } from './localServiceActionAdmission';
+import { LocalServiceEffectReviewCard } from './LocalServiceEffectReviewCard';
 import {
     useDetectedLocalServiceForgetAction,
     useDetectedLocalServiceTerminateAction,
@@ -47,6 +48,7 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     sessionId?: string;
     /** Session-less project scoping by repo root (raw; canonicalized at the daemon boundary). */
     workspaceRoot?: string | null;
+    workspaceRefId?: string | null;
     /** Initial scope; defaults to 'workspace'. The toggle mutates local scope state. */
     scope?: 'workspace' | 'machine';
     inventoryState?: LocalServiceInventoryState;
@@ -56,8 +58,6 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
     runtimeActionExecute?: RuntimeActionExecute;
-    /** Explicit current-effect review UI; declining or retiring this scope never re-enters Start. */
-    reviewEffect?: LocalServiceActionAdmission['reviewEffect'];
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     /** Exact AppPane-admitted projection when a driver-owned surface supplies it. */
     pluginUiProjection?: PluginUiProjectionModel | null;
@@ -88,6 +88,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         serverId,
         sessionId,
         workspaceRoot,
+        workspaceRefId: props.workspaceRefId,
         scope,
         inventoryState: props.inventoryState,
         launcherState: props.launcherState,
@@ -121,12 +122,13 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const approval = useActionApprovalContinuation({ scopeKey: actionScopeKey, serverId: serverId ?? '', onExecuted: refreshAfterApproval });
     const isActionScopeCurrent = React.useCallback(() => Boolean(credentialBinding?.isCurrent()) && !cancellation.signal.aborted,
         [credentialBinding, cancellation]);
+    const effectReview = useLocalServiceEffectReview();
     const actionAdmission: LocalServiceActionAdmission = {
         expectedAccountId: credentialBinding?.accountId,
         signal: cancellation.signal,
         isCurrent: isActionScopeCurrent,
         onApprovalPending: approval.requestApproval,
-        reviewEffect: props.reviewEffect,
+        reviewEffect: effectReview.request,
     };
     const onTerminateDetectedService = useDetectedLocalServiceTerminateAction({
         ...actionAdmission,
@@ -239,8 +241,61 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             onRefresh={onRefresh}
             presentation={props.presentation}
             renderServicePlacement={props.renderServicePlacement}
+            viewerAccountId={credentialBinding?.accountId ?? null}
+            effectReview={effectReview.pending && serverId ? (
+                <LocalServiceEffectReviewCard
+                    review={effectReview.pending.review}
+                    serverId={serverId}
+                    machineId={machineId}
+                    onDecide={effectReview.pending.settle}
+                    testID={`${props.testID}-effect-review`}
+                />
+            ) : null}
             testID={props.testID}
             footer={pluginStack}
         />
     );
+}
+
+type PendingEffectReview = Readonly<{ review: LocalServiceEffectReview; settle: (accepted: boolean) => void }>;
+
+/**
+ * The one current-effect review of this Services surface: Start/Restart hand it the effect the
+ * daemon disclosed and wait for the person. Only an explicit Start/Restart rejoins the Action with
+ * that digest; Not now, a newer review or the scope's retirement (its Account, machine or checkout
+ * changing aborts the signal) settles it as declined, so nothing re-enters on its own.
+ */
+function useLocalServiceEffectReview(): Readonly<{
+    pending: PendingEffectReview | null;
+    request: (review: LocalServiceEffectReview) => Promise<boolean>;
+}> {
+    const [pending, setPending] = React.useState<PendingEffectReview | null>(null);
+    const current = React.useRef<PendingEffectReview | null>(null);
+    const request = React.useCallback((review: LocalServiceEffectReview) => new Promise<boolean>((resolve) => {
+        current.current?.settle(false);
+        if (review.signal?.aborted) {
+            resolve(false);
+            return;
+        }
+        let settled = false;
+        const onAbort = () => entry.settle(false);
+        const entry: PendingEffectReview = {
+            review,
+            settle: (accepted) => {
+                if (settled) return;
+                settled = true;
+                review.signal?.removeEventListener('abort', onAbort);
+                if (current.current === entry) {
+                    current.current = null;
+                    setPending(null);
+                }
+                resolve(accepted);
+            },
+        };
+        current.current = entry;
+        setPending(entry);
+        review.signal?.addEventListener('abort', onAbort, { once: true });
+    }), []);
+    React.useEffect(() => () => current.current?.settle(false), []);
+    return { pending, request };
 }

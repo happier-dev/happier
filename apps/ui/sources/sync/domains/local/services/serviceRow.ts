@@ -70,6 +70,7 @@ const SOURCE_LABEL_KEYS: Readonly<Record<LocalServiceLaunchTarget['source'], Tra
 };
 
 function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
+    if (target.unavailableReason === 'project_service_binding_unavailable') return 'unavailable';
     // Available means the script can be launched, never that a listener is running. Older
     // launcher snapshots may omit sourceClass; source already establishes this distinction.
     if (target.source === 'package_script') return 'stopped';
@@ -97,6 +98,7 @@ function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
 }
 
 function resolvePrimaryAction(target: LocalServiceLaunchTarget): ServiceRow['primaryAction'] {
+    if (target.unavailableReason === 'project_service_binding_unavailable') return null;
     // An unaccepted package is presentation only, not a Session terminal command.
     if (target.source === 'package_script' && !(target.workspace && target.declaration)) return null;
     // A target with private-preview registration is an Open intent. The shared action
