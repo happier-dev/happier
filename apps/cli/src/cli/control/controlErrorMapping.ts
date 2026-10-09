@@ -3,10 +3,10 @@ import { SessionControlErrorCodeSchema } from '@happier-dev/protocol/sessions/co
 export type ControlCliMappedError = Readonly<{ code: string; unexpected: boolean; message?: string }>;
 
 export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedError {
-  const anyErr = error as any;
-  const rawCode = typeof anyErr?.code === 'string' ? anyErr.code : null;
+  const errorRecord = typeof error === 'object' && error !== null ? error : null;
+  const rawCode = errorRecord && 'code' in errorRecord && typeof errorRecord.code === 'string' ? errorRecord.code : null;
 
-  const known = new Set(SessionControlErrorCodeSchema.options);
+  const known = new Set<string>(SessionControlErrorCodeSchema.options);
 
   if (rawCode && known.has(rawCode)) {
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
@@ -25,12 +25,15 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     || rawCode === 'unknown_subcommand'
     || rawCode === 'machine_inventory_unavailable'
     || rawCode === 'server_identity_unavailable'
+    || rawCode === 'mcp_catalog_unavailable'
+    || rawCode === 'invalid-mutation'
   ) {
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
   }
 
-  if (anyErr?.name === 'HappierTransportError') {
-    const statusCode = Number(anyErr?.statusCode ?? anyErr?.status);
+  if (errorRecord && 'name' in errorRecord && errorRecord.name === 'HappierTransportError') {
+    const statusCode = Number(('statusCode' in errorRecord ? errorRecord.statusCode : undefined)
+      ?? ('status' in errorRecord ? errorRecord.status : undefined));
     return {
       code: statusCode === 401 || statusCode === 403 ? 'not_authenticated' : 'server_unreachable',
       unexpected: false,
