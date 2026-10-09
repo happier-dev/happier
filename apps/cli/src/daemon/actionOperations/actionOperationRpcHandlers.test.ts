@@ -15,6 +15,77 @@ import { ActionOperationListV1ResponseSchema as PredecessorListSchema,
   ActionOperationGetV1ResponseSchema as PredecessorGetSchema } from './testFixtures/predecessorActionOperationV1';
 
 describe('action operation observation RPC handlers', () => {
+  it('keeps setup terminal output on the exact guest and current operation reader', async () => {
+    const store = createActionOperationStore({ now: () => 10 });
+    const scope = { accountId: 'account', machineId: 'guest' };
+    const domainRef = { kind: 'machineEnvironment' as const, serverId: 'home', machineId: 'guest',
+      preset: { id: 'preset', revision: 3 }, managedId: 'paid', terminalId: 'setup-output', exitCode: 0 };
+    store.project({ version: 1, operationId: 'setup', revision: 1, actionId: 'machines.environment.apply',
+      state: 'succeeded', scope, title: 'Set up', createdAt: 1, startedAt: 2, settledAt: 3,
+      cancellation: 'supported', domainRef });
+    const handlers = createActionOperationRpcHandlers({ store,
+      runner: createActionOperationRunner({ store, resolveAction: () => null }), machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId });
+    expect(await handlers.getV2({ operationId: 'setup' })).toMatchObject({ kind: 'found', operation: { domainRef } });
+    expect(PredecessorGetSchema.parse(await handlers.get({ operationId: 'setup' }))).not.toHaveProperty('operation.domainRef');
+    expect(store.get(scope, 'setup')?.domainRef).toEqual(domainRef);
+    const stranger = createActionOperationRpcHandlers({ store,
+      runner: createActionOperationRunner({ store, resolveAction: () => null }), machineId: scope.machineId,
+      resolveAccountId: async () => 'stranger' });
+    expect(await stranger.getV2({ operationId: 'setup' })).toEqual({ kind: 'not_found' });
+  });
+  it('refreshes held setup from its producer and resumes the original operation after remembered consent', async () => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'account', machineId: 'machine' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'held-script',
+      resolveAction: actionId => ({ actionId, title: 'Script', operation: {
+        version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
+      } }),
+    });
+    const details = (digest: string) => ({ kind: 'pendingApproval' as const, code: 'project_setup_consent_required' as const,
+      reviewedEffectDigest: digest, reviewedEffect: { commands: ['install'] } });
+    let currentDigest = 'displayed';
+    let trustedDigest: string | undefined;
+    let launches = 0;
+    let reads = 0;
+    await runner.observe({ actionId: 'projects.script.run', scope, requestId: 'original', input: { original: true },
+      cancellation: 'supported', execute: async context => {
+        context.publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+          machineId: scope.machineId, workspaceRefId: 'workspace', cwd: '/project' } });
+        try {
+          await context.operationReview.waitForResume(details('displayed'), { review: async () => {
+            reads++;
+            return trustedDigest === currentDigest ? null : details(currentDigest);
+          } });
+        } catch { return { ok: false, errorCode: 'cancelled', error: 'cancelled' }; }
+        launches++;
+        return { ok: true, result: {} };
+      },
+    });
+    const handlers = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId });
+    const outsider = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
+      resolveAccountId: async () => 'another-account' });
+    try {
+      currentDigest = 'current';
+      expect(await outsider.getV2({ operationId: 'held-script' })).toEqual({ kind: 'not_found' });
+      expect(reads).toBe(0);
+      expect(await handlers.getV2({ operationId: 'held-script' }))
+        .toMatchObject({ kind: 'found', operation: { setupReview: { reviewedEffectDigest: 'current' } } });
+      trustedDigest = 'displayed';
+      await handlers.getV2({ operationId: 'held-script' });
+      expect(launches).toBe(0);
+      trustedDigest = 'current';
+      await handlers.getV2({ operationId: 'held-script' });
+      await expect.poll(() => launches).toBe(1);
+      expect(await runner.waitForTerminal(scope, 'held-script')).toMatchObject({ state: 'succeeded', requestId: 'original' });
+      await handlers.getV2({ operationId: 'held-script' });
+      expect(launches).toBe(1);
+    } finally {
+      runner.cancel(scope, 'held-script');
+      await runner.waitForTerminal(scope, 'held-script');
+    }
+  });
   it('keeps predecessor list/get readers usable while the same owner exposes real managed references through v2', async () => {
     // These provenance-pinned wire times must stay inside the real store's
     // settled-retention window; the clock is the only substituted boundary.

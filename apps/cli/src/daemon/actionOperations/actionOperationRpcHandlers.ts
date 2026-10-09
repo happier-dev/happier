@@ -29,7 +29,7 @@ export async function resolveActionOperationScope(
 
 export function createActionOperationRpcHandlers(deps: Readonly<{
   store: ActionOperationStore;
-  runner: Pick<ActionOperationRunner, 'cancel'> & Partial<Pick<ActionOperationRunner, 'waitForTerminal'>>;
+  runner: Pick<ActionOperationRunner, 'cancel'> & Partial<Pick<ActionOperationRunner, 'waitForTerminal' | 'refreshSetupReview'>>;
   owner?: () => ActionOperationDomainOwner | null;
   machineId: string;
   resolveAccountId: () => Promise<string | null>;
@@ -83,6 +83,10 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
       }
       const inspected = deps.store.get(scope, request.operationId);
       if (inspected?.domainRef?.kind === 'projectCommand') deps.onInspection?.(inspected);
+      if (version === 2 && inspected?.setupReview && deps.runner.refreshSetupReview) {
+        await deps.runner.refreshSetupReview(scope, request.operationId);
+        await resolveScope(context);
+      }
       const operation = request.waitForTerminal && deps.runner.waitForTerminal
         ? await deps.runner.waitForTerminal(scope, request.operationId, context?.signal,
           request.includeSetupReview ? { includeSetupReview: true } : undefined)

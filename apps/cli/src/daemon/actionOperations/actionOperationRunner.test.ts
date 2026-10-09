@@ -6,6 +6,40 @@ import { createActionOperationStore } from './actionOperationStore';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it('returns recorded uncertainty to ordinary Wait while retirement still waits for physical settlement', async () => {
+    const store = createActionOperationStore();
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'uncertain-wait',
+      resolveAction: actionId => ({ actionId, title: 'Script', operation: {
+        version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
+      } }),
+    });
+    let publish!: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]['publishOwnerUpdate'];
+    let release!: () => void;
+    await runner.observe({ actionId: 'projects.script.run', scope, cancellation: 'supported', execute: async context => {
+      publish = context.publishOwnerUpdate;
+      context.publishOwnerUpdate({ domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+        machineId: scope.machineId, workspaceRefId: 'workspace', cwd: '/project' }, state: 'running' });
+      await new Promise<void>(resolve => { release = resolve; });
+      return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    } });
+    let observed: Awaited<ReturnType<typeof runner.waitForTerminal>> | undefined;
+    const waiting = runner.waitForTerminal(scope, 'uncertain-wait').then(value => { observed = value; return value; });
+    let retired = false;
+    const retirement = runner.retireProjectFiniteOperations().then(() => { retired = true; });
+    try {
+      publish({ observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' } });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(observed).toMatchObject({ state: 'running', observation: { kind: 'stop_unconfirmed' } });
+      expect(await runner.waitForTerminal(scope, 'uncertain-wait')).toEqual(observed);
+      expect(retired).toBe(false);
+      expect(store.get(scope, 'uncertain-wait')).not.toHaveProperty('settledAt');
+    } finally {
+      release();
+      await waiting;
+      await retirement;
+    }
+    expect(store.get(scope, 'uncertain-wait')).toMatchObject({ state: 'cancelled' });
+  });
   it('retains the original source Script and actual worker exit on failure without exposing native error details', async () => {
     const store = createActionOperationStore();
     const runner = createActionOperationRunner({ store, generateOperationId: () => 'script-failure',
@@ -324,6 +358,7 @@ describe('action operation canonical execution observer', () => {
     expect(store.get(scope, 'unconfirmed')).toMatchObject({ state: 'running', observation: update.observation });
     expect(store.get(scope, 'unconfirmed')).not.toHaveProperty('settledAt');
     release();
+    await expect.poll(() => store.get(scope, 'unconfirmed')?.state).toBe('cancelled');
     expect(await runner.waitForTerminal(scope, 'unconfirmed')).toMatchObject({ state: 'cancelled' });
     expect(store.get(scope, 'unconfirmed')).not.toHaveProperty('observation');
   });
