@@ -12,8 +12,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { randomUUID } from '@/platform/randomUUID';
-import { confirmLegacyProfileMigrationConflict, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { providerRetryRecoveryForError } from '@/providers/connection/recovery';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 
 const conflictTitleKey = (kind: ProviderSettingsMigrationPendingConflictV1['kinds'][number]) => {
@@ -32,6 +34,8 @@ export const LegacyProfileMigrationConflictReview = React.memo(function LegacyPr
     onConfirmed: (settingsVersion: number) => Promise<void>;
     onClose: () => void;
 }>) {
+    const initiatingLifetime = React.useRef(captureActiveServerAccountScopeLifetime()).current;
+    const { confirmLegacyProfileMigrationConflict } = useProviderActionClient(props.serverId, initiatingLifetime);
     const newConnectionId = React.useRef(ProviderConnectionIdSchema.parse(`pc_${randomUUID()}`)).current;
     const [displayName, setDisplayName] = React.useState(props.profileName);
     const [pendingDecision, setPendingDecision] = React.useState<'keep_existing' | 'create_named' | null>(null);
@@ -44,6 +48,7 @@ export const LegacyProfileMigrationConflictReview = React.memo(function LegacyPr
     }> | null>(null);
 
     const finishConfirmedMigration = React.useCallback(async (settingsVersion: number): Promise<void> => {
+        if (!initiatingLifetime?.isCurrent()) return;
         try {
             await props.onConfirmed(settingsVersion);
         } catch (caught) {
@@ -57,9 +62,10 @@ export const LegacyProfileMigrationConflictReview = React.memo(function LegacyPr
             });
             return;
         }
+        if (!initiatingLifetime.isCurrent()) return;
         setOperationError(null);
         props.onClose();
-    }, [props.conflict.sourceProfileId, props.machineId, props.onClose, props.onConfirmed]);
+    }, [initiatingLifetime, props.conflict.sourceProfileId, props.machineId, props.onClose, props.onConfirmed]);
 
     const submit = React.useCallback(async (
         decision: LegacyProfileMigrationConflictResolutionV1['decision'],
@@ -100,7 +106,7 @@ export const LegacyProfileMigrationConflictReview = React.memo(function LegacyPr
         } finally {
             setPendingDecision(null);
         }
-    }, [finishConfirmedMigration, props.conflict.candidateFingerprint, props.conflict.sourceProfileId, props.machineId, props.serverId]);
+    }, [confirmLegacyProfileMigrationConflict, finishConfirmedMigration, props.conflict.candidateFingerprint, props.conflict.sourceProfileId, props.machineId, props.serverId]);
 
     const trimmedDisplayName = displayName.trim();
     const hasModelConflict = props.conflict.kinds.includes('manual_model');

@@ -2,15 +2,20 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIBackendProfileSchema, createProviderErrorV1 } from '@happier-dev/protocol';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
+import { renderScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const preview = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn());
 
-installSettingsViewCommonModuleMocks();
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: (request: Readonly<{ method: string }>) => {
         if (request.method === 'daemon.providers.profileMigration.preview') return preview(request);
@@ -18,19 +23,30 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         throw new Error(`Unexpected Provider RPC method: ${request.method}`);
     },
 }));
-vi.mock('@/components/ui/forms/MachineSetupTextField', () => ({
-    MachineSetupTextField: (props: Record<string, unknown>) => React.createElement('MachineSetupTextField', props),
-}));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: Record<string, unknown>) => React.createElement('Item', props) }));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children),
-}));
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children),
-}));
+const account = createProviderSettingsAccountHarness();
+await loadSyncSingletonForTests();
+const [{ Item }, { DropdownMenu }, { ProviderErrorItems }] = await Promise.all([
+    import('@/components/ui/lists/Item'),
+    import('@/components/ui/forms/dropdown/DropdownMenu'),
+    import('@/components/settings/providers/ProviderErrorItems'),
+]);
+let serverId = '';
+
+async function pressRow(screen: RenderScreenResult, title: string) {
+    const row = screen.findAllByType(Item).find(item => item.props.title === title);
+    expect(row).toBeDefined();
+    expect(row?.props.disabled).not.toBe(true);
+    await React.act(async () => { row!.props.onPress(); });
+    await flushHookEffects();
+    await waitForHomeGovernance(() => expect(screen.findAllByType(Item).some(item => item.props.loading)).toBe(false));
+}
+
+async function pressRecovery(screen: RenderScreenResult) {
+    const error = screen.findByType(ProviderErrorItems).props.error;
+    await screen.pressByTestIdAsync(`provider-error-action:${error.code}`);
+    await flushHookEffects();
+    await waitForHomeGovernance(() => expect(screen.findAllByType(Item).some(item => item.props.loading)).toBe(false));
+}
 
 const profile = AIBackendProfileSchema.parse({
     id: 'legacy-a', name: 'Legacy A',
@@ -54,8 +70,11 @@ const multiCredentialProfile = AIBackendProfileSchema.parse({
 });
 
 describe('LegacyProfileMigrationReview', () => {
-    afterEach(standardCleanup);
-    beforeEach(() => { preview.mockReset(); confirm.mockReset(); vi.useRealTimers(); });
+    afterEach(async () => { vi.useRealTimers(); standardCleanup(); await account.reset(); });
+    beforeEach(async () => {
+        preview.mockReset(); confirm.mockReset(); vi.useRealTimers();
+        serverId = (await account.restore({ waivedActions: ['launch_profiles.legacy.convert'] })).serverId;
+    });
 
     it('requires a preview before confirm and rehydrates the acknowledged settings version after success', async () => {
         const fingerprint = `legacy-profile-migration-source:v1:${'a'.repeat(43)}`;
@@ -65,32 +84,31 @@ describe('LegacyProfileMigrationReview', () => {
         });
         const onConfirmed = vi.fn(async () => undefined);
         const onClose = vi.fn();
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(1_000);
         const { LegacyProfileMigrationReview } = await import('./LegacyProfileMigrationReview');
         const screen = await renderScreen(<LegacyProfileMigrationReview
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={onConfirmed}
             onClose={onClose}
         />);
 
-        expect(screen.findAllByType('Item').some((item) => item.props.title === 'settingsProviders.migration.confirm')).toBe(false);
-        const redactedFacts = screen.findAllByType('Item').map((item) => item.props.title);
+        expect(screen.findAllByType(Item).some((item) => item.props.title === 'settingsProviders.migration.confirm')).toBe(false);
+        const redactedFacts = screen.findAllByType(Item).map((item) => item.props.title);
         expect(redactedFacts).toEqual(expect.arrayContaining([
             'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'SAFE_LAUNCH_FLAG',
         ]));
-        const previewRows = JSON.stringify(screen.findAllByType('Item').map((item) => item.props));
+        const previewRows = JSON.stringify({ text: screen.getTextContent(), values: screen.findAll(node => typeof node.type === 'string' && typeof node.props.value === 'string').map(node => node.props.value) });
         expect(previewRows).not.toContain('private-value-never-rendered');
         expect(previewRows).not.toContain('saved-secret-id');
-        const previewAction = screen.findAllByType('Item').find((item) => item.props.title === 'settingsProviders.migration.preview');
-        await React.act(async () => { await previewAction?.props.onPress?.(); });
+        await pressRow(screen, 'settingsProviders.migration.preview');
         vi.setSystemTime(2_000);
-        const confirmAction = screen.findAllByType('Item').find((item) => item.props.title === 'settingsProviders.migration.confirm');
+        const confirmAction = screen.findAllByType(Item).find((item) => item.props.title === 'settingsProviders.migration.confirm');
         expect(confirmAction).toBeDefined();
-        await React.act(async () => { await confirmAction?.props.onPress?.(); });
+        await pressRow(screen, 'settingsProviders.migration.confirm');
 
         expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({ expectedSourceFingerprint: fingerprint }),
@@ -109,12 +127,11 @@ describe('LegacyProfileMigrationReview', () => {
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={onConfirmed}
             onClose={onClose}
         />);
-        const cancel = screen.findAllByType('Item').find((item) => item.props.title === 'common.cancel');
-        await React.act(async () => { cancel?.props.onPress?.(); });
+        await pressRow(screen, 'common.cancel');
         expect(preview).not.toHaveBeenCalled();
         expect(confirm).not.toHaveBeenCalled();
         expect(onConfirmed).not.toHaveBeenCalled();
@@ -134,17 +151,13 @@ describe('LegacyProfileMigrationReview', () => {
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={onConfirmed}
             onClose={vi.fn()}
         />);
-        await React.act(async () => {
-            await screen.findAllByType('Item').find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.onPress?.();
-        });
-        await React.act(async () => {
-            await screen.findAllByType('Item').find((item) => item.props.title === 'settingsProviders.migration.confirm')?.props.onPress?.();
-        });
-        expect(screen.findAllByType('Item').some((item) => item.props.title === 'settingsProviders.migration.preview')).toBe(true);
+        await pressRow(screen, 'settingsProviders.migration.preview');
+        await pressRow(screen, 'settingsProviders.migration.confirm');
+        expect(screen.findAllByType(Item).some((item) => item.props.title === 'settingsProviders.migration.preview')).toBe(true);
         expect(onConfirmed).not.toHaveBeenCalled();
     });
 
@@ -161,44 +174,44 @@ describe('LegacyProfileMigrationReview', () => {
                 COMPANY_GATEWAY_TOKEN: 'saved-company',
             }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={vi.fn(async () => undefined)}
             onClose={vi.fn()}
         />);
 
-        const previewActionBefore = screen.findAllByType('Item')
+        const previewActionBefore = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.migration.preview');
         expect(previewActionBefore?.props.disabled).toBe(true);
-        const initialRows = screen.findAllByType('Item').map((item) => item.props.title);
+        const initialRows = screen.findAllByType(Item).map((item) => item.props.title);
         expect(initialRows).toEqual(expect.arrayContaining(['OPENAI_API_KEY', 'COMPANY_GATEWAY_TOKEN']));
 
-        const credentialPicker = screen.findAllByType('DropdownMenu')
+        const credentialPicker = screen.findAllByType(DropdownMenu)
             .find((item) => item.props.itemTrigger?.title === 'settingsProviders.migration.credentialTitle');
         expect(credentialPicker?.props.items.map((item: { id: string }) => item.id))
             .toEqual(['__none__', 'COMPANY_GATEWAY_TOKEN', 'OPENAI_API_KEY']);
         await React.act(async () => { credentialPicker?.props.onSelect?.('__none__'); });
-        expect(screen.findAllByType('Item')
+        expect(screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.disabled).toBe(false);
         await React.act(async () => { credentialPicker?.props.onSelect?.('COMPANY_GATEWAY_TOKEN'); });
 
-        const previewActionWithoutFormat = screen.findAllByType('Item')
+        const previewActionWithoutFormat = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.migration.preview');
         expect(previewActionWithoutFormat?.props.disabled).toBe(true);
-        const stylePicker = screen.findAllByType('DropdownMenu')
+        const stylePicker = screen.findAllByType(DropdownMenu)
             .find((item) => item.props.itemTrigger?.title === 'settingsProviders.authoring.credentialStyleTitle');
         expect(stylePicker?.props.items.map((item: { id: string }) => item.id)).toEqual(['bearer', 'x-api-key']);
         await React.act(async () => { stylePicker?.props.onSelect?.('bearer'); });
 
-        const previewAction = screen.findAllByType('Item')
+        const previewAction = screen.findAllByType(Item)
             .find((item) => item.props.title === 'settingsProviders.migration.preview');
         expect(previewAction?.props.disabled).toBe(false);
-        await React.act(async () => { await previewAction?.props.onPress?.(); });
+        await pressRow(screen, 'settingsProviders.migration.preview');
         expect(preview.mock.calls[0]?.[0].payload.reviewedMapping.credentialMoves).toEqual([
             { legacyEnvVarName: 'COMPANY_GATEWAY_TOKEN', credentialSlotId: 'apiKey', credentialStyle: 'bearer' },
         ]);
         expect(preview.mock.calls[0]?.[0].payload.reviewedMapping.connection.source.template.credential)
             .toMatchObject({ transports: [{ destination: { name: 'authorization', format: 'bearer' } }] });
-        expect(JSON.stringify(screen.findAllByType('Item').map((item) => item.props)))
+        expect(JSON.stringify({ text: screen.getTextContent(), values: screen.findAll(node => typeof node.type === 'string' && typeof node.props.value === 'string').map(node => node.props.value) }))
             .not.toContain('saved-company');
     });
 
@@ -212,25 +225,20 @@ describe('LegacyProfileMigrationReview', () => {
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={vi.fn(async () => undefined)}
             onClose={vi.fn()}
         />);
 
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.onPress?.();
-        });
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toEqual(expect.arrayContaining([
-            'settingsProviders.errors.machineUnavailableTitle',
-            'settingsProviders.errors.actions.retry',
-        ]));
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.retry')?.props.onPress?.();
-        });
+        await pressRow(screen, 'settingsProviders.migration.preview');
+        expect(screen.findByType(ProviderErrorItems).props.error).toEqual(createProviderErrorV1('machine_offline', {
+            machineId: 'machine-a', sourceProfileId: profile.id,
+        }));
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.actions.retry');
+        await pressRecovery(screen);
         expect(preview).toHaveBeenCalledTimes(2);
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        expect(preview.mock.calls[1]?.[0].payload).toEqual(preview.mock.calls[0]?.[0].payload);
+        expect(screen.findAllByType(Item).map((item) => item.props.title))
             .toContain('settingsProviders.migration.confirm');
     });
 
@@ -243,34 +251,21 @@ describe('LegacyProfileMigrationReview', () => {
             status: 'success', sourceProfileId: 'legacy-a',
         });
         const { LegacyProfileMigrationReview } = await import('./LegacyProfileMigrationReview');
-        const { ProviderErrorItems } = await import('@/components/settings/providers/ProviderErrorItems');
         const screen = await renderScreen(<LegacyProfileMigrationReview
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={vi.fn(async () => undefined)}
             onClose={vi.fn()}
         />);
 
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.onPress?.();
-        });
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.migration.confirm')?.props.onPress?.();
-        });
-        expect(screen.findAllByType('Item').map((item) => item.props.title)).toEqual(expect.arrayContaining([
-            'settingsProviders.errors.mutationOutcomeUnknownTitle',
-            'settingsProviders.errors.actions.reviewCurrentState',
-        ]));
-        expect(screen.findByType(ProviderErrorItems.type).props.retry).toBeUndefined();
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.reviewCurrentState')
-                ?.props.onPress?.();
-        });
+        await pressRow(screen, 'settingsProviders.migration.preview');
+        await pressRow(screen, 'settingsProviders.migration.confirm');
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.mutationOutcomeUnknownTitle');
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.actions.reviewCurrentState');
+        expect(screen.findByType(ProviderErrorItems).props.retry).toBeUndefined();
+        await pressRecovery(screen);
         expect(confirm).toHaveBeenCalledOnce();
     });
 
@@ -291,26 +286,17 @@ describe('LegacyProfileMigrationReview', () => {
             profile={profile}
             secretBindings={{ ANTHROPIC_AUTH_TOKEN: 'saved-secret-id' }}
             machineId="machine-a"
-            serverId="server-a"
+            serverId={serverId}
             onConfirmed={onConfirmed}
             onClose={onClose}
         />);
 
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.onPress?.();
-        });
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.migration.confirm')?.props.onPress?.();
-        });
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
+        await pressRow(screen, 'settingsProviders.migration.preview');
+        await pressRow(screen, 'settingsProviders.migration.confirm');
+        expect(screen.getTextContent())
             .toContain('settingsProviders.errors.actions.retry');
 
-        await React.act(async () => {
-            await screen.findAllByType('Item')
-                .find((item) => item.props.title === 'settingsProviders.errors.actions.retry')?.props.onPress?.();
-        });
+        await pressRecovery(screen);
         expect(confirm).toHaveBeenCalledOnce();
         expect(onConfirmed).toHaveBeenCalledTimes(2);
         expect(onConfirmed).toHaveBeenNthCalledWith(1, 18);

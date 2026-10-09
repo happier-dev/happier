@@ -8,12 +8,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { randomUUID } from '@/platform/randomUUID';
-import {
-    confirmLegacyProfileMigration,
-    previewLegacyProfileMigration,
-    providerErrorFromRpcFailure,
-} from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { providerRetryRecoveryForError } from '@/providers/connection/recovery';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 
 import {
@@ -39,6 +37,8 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
     onConfirmed: (settingsVersion: number) => Promise<void>;
     onClose: () => void;
 }>) {
+    const initiatingLifetime = React.useRef(captureActiveServerAccountScopeLifetime()).current;
+    const { confirmLegacyProfileMigration, previewLegacyProfileMigration } = useProviderActionClient(props.serverId, initiatingLifetime);
     const connectionId = React.useRef(props.connectionId ?? `pc_${randomUUID()}`).current;
     const connectionCreatedAt = React.useRef(Date.now()).current;
     const [draft, setDraft] = React.useState<LegacyProfileMigrationDraft>(() =>
@@ -64,6 +64,7 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
         now: connectionCreatedAt,
     }), [connectionCreatedAt, connectionId, draft]);
     const finishConfirmedMigration = React.useCallback(async (settingsVersion: number): Promise<void> => {
+        if (!initiatingLifetime?.isCurrent()) return;
         try {
             await props.onConfirmed(settingsVersion);
         } catch (caught) {
@@ -77,9 +78,10 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
             });
             return;
         }
+        if (!initiatingLifetime.isCurrent()) return;
         setOperationError(null);
         props.onClose();
-    }, [props.machineId, props.onClose, props.onConfirmed, props.profile.id]);
+    }, [initiatingLifetime, props.machineId, props.onClose, props.onConfirmed, props.profile.id]);
 
     const preview = React.useCallback(async (): Promise<void> => {
         setPending('preview');
@@ -107,7 +109,7 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
         } finally {
             setPending(null);
         }
-    }, [buildMapping, props.machineId, props.profile.id, props.serverId]);
+    }, [buildMapping, previewLegacyProfileMigration, props.machineId, props.profile.id, props.serverId]);
 
     const confirm = React.useCallback(async (): Promise<void> => {
         if (!sourceFingerprint) return;
@@ -148,7 +150,7 @@ export const LegacyProfileMigrationReview = React.memo(function LegacyProfileMig
         } finally {
             setPending(null);
         }
-    }, [buildMapping, finishConfirmedMigration, props.machineId, props.profile.id, props.serverId, sourceFingerprint]);
+    }, [buildMapping, confirmLegacyProfileMigration, finishConfirmedMigration, props.machineId, props.profile.id, props.serverId, sourceFingerprint]);
 
     const protocols = React.useMemo<readonly DropdownMenuItem[]>(() => PROTOCOLS.map((protocol) => ({
         id: protocol,
