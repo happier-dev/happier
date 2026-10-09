@@ -8,6 +8,12 @@ add_library(happier_sherpa_jni SHARED
   HappierSherpaNativeJni.cpp
 )
 
+# NDK r27 and lower need explicit 16 KB LOAD and RELRO alignment.
+target_link_options(happier_sherpa_jni PRIVATE
+  "-Wl,-z,max-page-size=16384"
+  "-Wl,-z,common-page-size=16384"
+)
+
 target_include_directories(happier_sherpa_jni PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../../common/cpp

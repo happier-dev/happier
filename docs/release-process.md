@@ -477,6 +477,18 @@ distribution steps; no TestFlight group is required for production publication.
 upload from App Review, and [Apple's release options](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/select-an-app-store-version-release-option)
 describe automatic publication after approval.
 
+Android local AAB builds and every Android store submission use
+`scripts/pipeline/expo/verify-android-page-size.mjs` before artifact publication
+or upload. It checks every arm64-v8a and x86_64 ELF LOAD segment in all bundle
+modules and the APK alignment requested by `BundleConfig.pb`. Uncompressed
+libraries require `PAGE_ALIGNMENT_16K` or higher; AAB ZIP offsets themselves are
+not APK offsets. A failure lists the offending libraries and requires a native
+rebuild, not a store-only retry. See [Android's page-size guidance](https://developer.android.com/guide/practices/page-sizes).
+Nonproduction cloud submissions resolve latest to an immutable store-build ID;
+a pending build must finish before verification and submission can proceed.
+The Sherpa JNI CMake owner passes both max-page-size and common-page-size 16384
+to the linker; changing the NDK alone does not repair already built libraries.
+
 On Android, the submit owner validates the Play API credential and the bound
 notes before EAS upload. EAS stages the exact AAB as a production-track draft;
 the Play Publisher owner then commits its approved localized notes and
