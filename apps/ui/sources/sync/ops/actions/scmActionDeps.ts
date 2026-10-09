@@ -20,7 +20,8 @@ export function createUiScmAction(account?: LazyActionAccountContext): NonNullab
         const serverId = account?.serverId ?? context.serverId;
         const accountId = account?.accountId ?? context.runtimeAccountId;
         const target = context.externalActionTarget;
-        const machineInventory = actionId === 'scm.diffSummary.result.list' || actionId === 'scm.diffSummary.result.clear';
+        const machineInventory = actionId === 'scm.diffSummary.result.list' || actionId === 'scm.diffSummary.result.clear'
+            || actionId === 'scm.hostingRepository.resolveAddress';
         if (machineInventory && target?.kind !== 'machine') return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
         if (target?.kind === 'machine') {
             const cwd = actionId === 'scm.repository.clone' ? request.destinationParentPath : request.cwd;

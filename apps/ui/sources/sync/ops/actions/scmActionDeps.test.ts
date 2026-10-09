@@ -22,6 +22,15 @@ beforeEach(() => {
 });
 
 describe('SCM Action target binding', () => {
+    it('resolves an address on a Machine without a checkout or repository payload', async () => {
+        const result = { success: true, kind: 'unknown' };
+        rpc.mockResolvedValue(result);
+        expect(await createUiScmAction()({ actionId: 'scm.hostingRepository.resolveAddress', input: { address: 'forge.test/team/repo' },
+            context: { serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } }, executeCanonicalAction,
+        })).toEqual(result);
+        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine', serverId: 'home',
+            method: 'scm.hostingRepository.resolveAddress', payload: { address: 'forge.test/team/repo' } }));
+    });
     it('routes machine inventory without inventing a repository and rejects a Session inventory request', async () => {
         const inventory = { success: true, results: [], count: 0, bytes: 0,
             sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 } };

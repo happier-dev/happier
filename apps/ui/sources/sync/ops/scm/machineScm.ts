@@ -27,6 +27,8 @@ import type {
     ScmDiffSummaryResultClearInput,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmHistoryEntriesRequest,
+    ScmHistoryEntriesResponse,
     ScmPullRequestGetRequest,
     ScmPullRequestGetResponse,
     ScmPullRequestListRequest,
@@ -72,8 +74,8 @@ import type {
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol/scm';
-import { SCM_OPERATION_ERROR_CODES, ScmLogListResponseSchema } from '@happier-dev/protocol/scm';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SCM_OPERATION_ERROR_CODES, ScmLogListResponseSchema, ScmHistoryEntriesResponseSchema } from '@happier-dev/protocol/scm';
+import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { scmFallbackError, type ScmRpcFailure } from './scmRpcFailure';
 import { runScmRpcWithAdmission } from './scmRpcAdmission';
@@ -93,6 +95,7 @@ export type MachineScmCallOptions = Readonly<{
     serverId?: string | null;
     accountId?: string | null;
     signal?: AbortSignal;
+    authorization?: SocketRpcAuthorizationContext;
 }>;
 
 type MachineScmRpcRequest = Readonly<{
@@ -139,7 +142,7 @@ export async function runMachineScmRpc<
     request: R,
     options?: MachineScmCallOptions,
 ): Promise<T | ScmRpcFailure> {
-    const payload = method.startsWith('scm.diffSummary.') ? request : withScmBackendPreference({
+    const payload = method.startsWith('scm.diffSummary.') || method === 'scm.hostingRepository.resolveAddress' ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
         ...(method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { operationStateVersion: 1 as const } : {}),
@@ -153,6 +156,7 @@ export async function runMachineScmRpc<
             ...(options?.serverId ? { serverId: options.serverId } : {}),
             ...(options?.accountId ? { accountId: options.accountId } : {}),
             ...(options?.signal ? { signal: options.signal } : {}),
+            ...(options?.authorization ? { authorization: options.authorization } : {}),
             timeoutMs: resolveScmRpcTimeoutMs(rpcMethod),
         }),
     });
@@ -260,6 +264,16 @@ export async function machineScmLogList(
         options,
     );
     return ScmLogListResponseSchema.parse(response);
+}
+
+export async function machineScmHistoryEntries(
+    machineId: string,
+    request: ScmHistoryEntriesRequest,
+    options?: MachineScmCallOptions,
+): Promise<ScmHistoryEntriesResponse> {
+    return ScmHistoryEntriesResponseSchema.parse(await callMachineScm<ScmHistoryEntriesResponse, ScmHistoryEntriesRequest>(
+        machineId, RPC_METHODS.SCM_HISTORY_ENTRIES, request, options,
+    ));
 }
 
 export async function machineScmCommitBackout(
