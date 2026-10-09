@@ -1,5 +1,6 @@
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 import {
   MEMORY_ARCHIVE_TOPIC_TITLE_V1,
   type MemoryFactV1,
@@ -23,6 +24,8 @@ import { useSessionSelector } from '@/sync/domains/state/storage';
 import {
   memoryDocumentActions,
   readMemoryActionOutcome,
+  readMemoryCreationReceipt,
+  type MemoryCreationReceipt,
   type MemorySessionTarget,
 } from '@/sync/ops/promptLibrary/memoryDocuments';
 import { getPreferredLanguage, t } from '@/text';
@@ -75,6 +78,8 @@ export type MemoryDocumentBodyProps = Readonly<{
   onComposingChange: (open: boolean) => void;
   /** No document is attached yet: the first fact goes to the Session's own memory, which the host creates. */
   sessionTarget?: MemorySessionTarget | null;
+  scopeTarget?: MemoryScopeTargetV1;
+  onCreatedMemory?: (receipt: MemoryCreationReceipt) => void;
   emptyText: string;
   /** Opens the Session a fact came from, through the host's Session navigation owner. */
   onOpenSession?: (ref: Readonly<{ serverId: string; sessionId: string }>) => void;
@@ -92,7 +97,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   props: MemoryDocumentBodyProps,
 ) {
   const styles = stylesheet;
-  const { source, serverId, testID, onComposingChange } = props;
+  const { source, serverId, testID, onComposingChange, onCreatedMemory } = props;
   const router = useRouter();
   const view = source.view;
   const target = source.target;
@@ -119,16 +124,21 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
       setBusy(true);
       setNotice(null);
       try {
-        const outcome = readMemoryActionOutcome(await run());
+        const result = await run();
+        const outcome = readMemoryActionOutcome(result);
+        const receipt = readMemoryCreationReceipt(result);
         if (outcome === 'refused')
           Modal.alert(
             t('memoryContext.memory.title'),
             t('memoryContext.memory.refused'),
           );
         if (outcome === 'pending' || outcome === 'conflict') setNotice(outcome);
+        // An attachment conflict still saved this fact. Keep the exact document reachable,
+        // and close its draft so retrying cannot create a second copy of that fact.
+        if (receipt) onCreatedMemory?.(receipt);
         // A conflict hands back the current version; show it and keep what was typed.
         if (outcome !== 'refused') await refresh();
-        return outcome === 'applied';
+        return outcome === 'applied' || receipt !== null;
       } catch {
         Modal.alert(
           t('memoryContext.memory.title'),
@@ -139,7 +149,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         setBusy(false);
       }
     },
-    [refresh],
+    [onCreatedMemory, refresh],
   );
 
   const closeDraft = React.useCallback(() => {
@@ -150,12 +160,14 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   }, [onComposingChange]);
 
   const sessionTarget = props.sessionTarget ?? null;
+  const scopeTarget = props.scopeTarget;
+  const canCreate = source.status === 'none' && view === null && Boolean(scopeTarget || sessionTarget);
   const save = React.useCallback(() => {
     const text = draft.trim();
     if (!text) return;
     const named = draftTopic.trim();
     const fallback = sessionTarget;
-    if (!target && !fallback) return;
+    if (!target && !canCreate) return;
     fireAndForget(
       (async () => {
         const applied = await settle(() => {
@@ -164,13 +176,18 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
               factId: editingId,
               text,
             });
-          if (target || !fallback) {
-            if (!target) throw new Error('memory_target_unavailable');
+          if (target) {
             return memoryDocumentActions.remember(
               topic || !named ? target : { ...target, topic: named },
               { text },
             );
           }
+          if (scopeTarget)
+            return memoryDocumentActions.rememberInScope(scopeTarget, {
+              text,
+              ...(named ? { topic: named } : {}),
+            }, serverId);
+          if (!fallback) throw new Error('memory_target_unavailable');
           return memoryDocumentActions.rememberInSession(fallback, {
             text,
             ...(named ? { topic: named } : {}),
@@ -185,6 +202,9 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
     draft,
     draftTopic,
     editingId,
+    canCreate,
+    scopeTarget,
+    serverId,
     sessionTarget,
     settle,
     target,
@@ -366,7 +386,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
           }
         />
       ) : null}
-      {props.composing && !editingId && writable ? draftForm : null}
+      {props.composing && !editingId && writable && (target || canCreate) ? draftForm : null}
       {shown.map((fact) =>
         editingId === fact.id ? (
           <React.Fragment key={fact.id}>{draftForm}</React.Fragment>
@@ -430,9 +450,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
         />
       ))}
       {!view && status === 'none' ? (
-        props.composing && writable && sessionTarget ? (
-          draftForm
-        ) : (
+        props.composing && writable && canCreate ? null : (
           <Item
             testID={`${testID}.none`}
             mode="info"

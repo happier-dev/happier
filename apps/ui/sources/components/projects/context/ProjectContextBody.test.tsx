@@ -21,6 +21,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { ProjectContextBody } = await import('./ProjectContextBody');
+const baseline = storage.getState();
 
 const scope = { serverId: 'project-context-home', accountId: 'project-context-account' };
 const workspaceRef = { id: 'wr_1', serverId: scope.serverId, machineId: 'm1', rootPath: '/repo/happier', projectKey: 'happier', createdAtMs: 1 };
@@ -30,6 +31,7 @@ const artifact = (id: string, kind: string, title: string) => ({ id, title, head
 
 describe('ProjectContextBody', () => {
     beforeEach(() => {
+        storage.setState(baseline, true);
         storage.setState({ settings: settingsDefaults, settingsVersion: 7, settingsScope: scope, profileScope: scope, isDataReady: true });
         publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://project-context.invalid', generation: 1 });
         storage.getState().activateProjectAccountRowsScope(scope);
@@ -38,6 +40,17 @@ describe('ProjectContextBody', () => {
                 value: { promptStack: [entry('memory-entry', 'memory-1'), entry('guide-entry', 'guide-1'), entry('gone-entry', 'gone-1')] } }],
             revisionsByPhysicalKey: {} });
         storage.getState().applyArtifacts([artifact('memory-1', 'memory_doc.v1', 'Project memory'), artifact('guide-1', 'prompt_doc.v2', 'API style guide')]);
+    });
+
+    it('offers remember before the Project has a memory document', async () => {
+        storage.getState().applyArtifacts([artifact('guide-1', 'prompt_doc.v2', 'API style guide')]);
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete', workspaceRefs: [workspaceRef], relationships: [],
+            organizations: [{ key: { kind: 'project-organization', serverId: scope.serverId, projectKey: 'happier' }, revision: 4,
+                value: { promptStack: [entry('guide-entry', 'guide-1')] } }], revisionsByPhysicalKey: {} });
+        const screen = await renderScreen(<ProjectContextBody workspaceRef={workspaceRef} />);
+        expect(screen.findByTestId('project-context.memory.remember')).toBeTruthy();
+        await screen.pressByTestIdAsync('project-context.memory.remember');
+        expect(screen.findByTestId('project-context.memory.draft')).toBeTruthy();
     });
 
     it('draws the personal Project layer: memory in its own section, documents as rows, an unreadable one without its title', async () => {
@@ -58,5 +71,15 @@ describe('ProjectContextBody', () => {
         const actionIds = screen.findAllByType('ItemRowActions' as never).map((node) => (node.props.actions as { id: string }[]).map((action) => action.id));
         expect(actionIds).toContainEqual(['delete']);
         expect(actionIds).toContainEqual(['edit', 'moveUp', 'moveDown', 'delete']);
+    });
+
+    it('does not substitute personal memory for an unavailable Source-owned Project memory', async () => {
+        const screen = await renderScreen(<ProjectContextBody workspaceRef={{ ...workspaceRef,
+            source: { sourceId: 'source-1', revision: 1 },
+        }} />);
+        // Retained personal memory remains a personal document; it is not the Source's memory.
+        expect(Boolean(screen.findByTestId('project-context.personal.memory-entry'))).toBe(true);
+        expect(Boolean(screen.findByTestId('project-context.memory.detach'))).toBe(false);
+        expect(Boolean(screen.findByTestId('project-context.memory.remember'))).toBe(false);
     });
 });

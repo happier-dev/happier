@@ -3,9 +3,12 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { PromptStackEntryV1 } from '@happier-dev/protocol';
+import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 
 import { MemoryDocumentBody } from '@/components/memory/MemoryDocumentBody';
 import { useMemoryDocument } from '@/components/memory/useMemoryDocument';
+import type { MemoryCreationReceipt } from '@/sync/ops/promptLibrary/memoryDocuments';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -23,8 +26,7 @@ const LOAD_ALL = 'all';
  * A Context page's memory section (lab `c-ctx` A/P; D48): the layer's `memory_doc.v1` document drawn
  * by the shared memory renderer — key facts, then topics — with "+" to remember, the access line,
  * and "How much to load" for the layer that may set the entry's budget. With no memory document the
- * section says what will appear here; the first fact is written from a session (`memory.remember`
- * resolves and creates the target), so no "+" is offered that could not succeed.
+ * section offers the same lazy `memory.remember` Action for its Account or Project scope.
  */
 export const ContextMemorySection = React.memo(function ContextMemorySection(props: Readonly<{
     testID: string;
@@ -35,19 +37,33 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
     footer: string;
     emptyText: string;
     readOnly?: boolean;
+    scopeTarget?: MemoryScopeTargetV1;
     /** Takes the memory document out of this layer (the document itself stays in the library). */
     onDetach?: () => void;
     /** Sets or clears the entry's `maxChars`; omitted where this viewer cannot change the layer. */
     onBudgetChange?: (maxChars: number | null) => void;
 }>) {
     const { entry, serverId, onBudgetChange } = props;
+    const accountScope = useActiveServerAccountScope(serverId);
+    const scopeKey = JSON.stringify([serverId, accountScope?.accountId, props.scopeTarget]);
+    const [createdMemory, setCreatedMemory] = React.useState<Readonly<{ scopeKey: string; receipt: MemoryCreationReceipt }> | null>(null);
+    const receipt = createdMemory?.scopeKey === scopeKey ? createdMemory.receipt : null;
+    const unattached = receipt?.attachment === 'conflict';
+    const onCreatedMemory = React.useCallback((next: MemoryCreationReceipt) => {
+        setCreatedMemory({ scopeKey, receipt: next });
+    }, [scopeKey]);
+    // Once the canonical row publishes this attachment, it alone drives the display again.
+    React.useEffect(() => {
+        if (receipt && entry?.ref.artifactId === receipt.ref.artifactId) setCreatedMemory(null);
+    }, [entry?.ref.artifactId, receipt]);
     const ref = React.useMemo(
-        () => (entry && entry.ref.kind === 'doc'
+        () => (unattached ? receipt.ref : entry && entry.ref.kind === 'doc'
             ? { kind: 'doc' as const, artifactId: entry.ref.artifactId, serverId: entry.ref.serverId ?? serverId }
-            : null),
-        [entry, serverId],
+            : receipt?.ref ?? null),
+        [entry, receipt, serverId, unattached],
     );
     const source = useMemoryDocument({ ref, serverId });
+    const canRemember = !props.readOnly && Boolean(source.target || (!entry && source.status === 'none' && props.scopeTarget));
     const [composing, setComposing] = React.useState(false);
     const navigateToSession = useNavigateToSession();
     const openSession = React.useCallback((session: Readonly<{ serverId: string; sessionId: string }>) => {
@@ -70,9 +86,9 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
         <ItemGroup
             title={props.title}
             description={props.description}
-            action={(source.target && !props.readOnly) || props.onDetach ? (
+            action={canRemember || (!unattached && props.onDetach) ? (
                 <View style={styles.actions}>
-                    {source.target && !props.readOnly ? (
+                    {canRemember ? (
                         <IconButton
                             testID={`${props.testID}.remember`}
                             iconName="plus"
@@ -82,7 +98,7 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
                             onPress={() => setComposing(true)}
                         />
                     ) : null}
-                    {props.onDetach ? (
+                    {!unattached && props.onDetach ? (
                         <IconButton
                             testID={`${props.testID}.detach`}
                             iconName="link-break"
@@ -104,10 +120,12 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
                 readOnly={props.readOnly}
                 composing={composing}
                 onComposingChange={setComposing}
+                scopeTarget={props.scopeTarget}
+                onCreatedMemory={onCreatedMemory}
                 emptyText={props.emptyText}
                 onOpenSession={openSession}
             />
-            {entry && onBudgetChange ? (
+            {!unattached && entry && onBudgetChange ? (
                 <DropdownMenu
                     testID={`${props.testID}.load`}
                     open={budgetOpen}

@@ -6,6 +6,21 @@ import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/libra
 import { MEMORY_ARCHIVE_TOPIC_TITLE_V1 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import type { SessionContextIntentV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
+import { MemoryMutationResultV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
+
+export type MemoryCreationReceipt = Readonly<{
+  ref: PromptDocArtifactRefV1;
+  attachment: 'attached' | 'conflict';
+}>;
+
+/** Creation saves the fact before attachment CAS; retain its exact document even on conflict. */
+export function readMemoryCreationReceipt(result: ActionExecuteResult): MemoryCreationReceipt | null {
+  if (!result.ok) return null;
+  const parsed = MemoryMutationResultV1Schema.safeParse(result.result);
+  return parsed.success && parsed.data.ref && parsed.data.attachment
+    ? { ref: parsed.data.ref, attachment: parsed.data.attachment }
+    : null;
+}
 
 export type MemoryDocumentRevision = Readonly<{
   headerVersion: number;
@@ -39,6 +54,7 @@ export function readMemoryActionOutcome(
 ): MemoryActionOutcome {
   if (!result.ok)
     return result.errorCode === 'version_mismatch' ? 'conflict' : 'refused';
+  if (readMemoryCreationReceipt(result)?.attachment === 'conflict') return 'conflict';
   return ActionApprovalRequestCreatedResultSchema.safeParse(result.result)
     .success
     ? 'pending'

@@ -54,8 +54,8 @@ function readPersonalOutcome(result: ActionExecuteResult): ProjectContextOutcome
  * The two Project layers of Context for one Project (plan 65 §2; lab `c-ctx` P/R), read from their
  * owners and written only through their Actions: the Source's `context` attachments
  * (`projects.sources.update`, for those who can manage the Source) and the viewer's own organization
- * row (`projects.context.update`). The same data `readUiSessionProjectPromptStack` hands a session's
- * preparation, in the same order: shared first, then personal.
+ * row (`projects.context.update`). Session preparation uses the Source layer for a Source-backed
+ * Project and otherwise the viewer's organization row, through `readUiSessionProjectPromptStack`.
  */
 export function useProjectContext(workspaceRef: WorkspaceRefV1): ProjectContextModel {
     const serverId = workspaceRef.serverId;

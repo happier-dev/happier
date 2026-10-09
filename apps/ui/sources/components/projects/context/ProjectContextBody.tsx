@@ -1,5 +1,6 @@
 import type { PromptArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
+import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -62,6 +63,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   const testID = props.testID ?? 'project-context';
   const router = useRouter();
   const model = useProjectContext(props.workspaceRef);
+  const projectRef = React.useMemo(() => projectWorkspaceRefV1(props.workspaceRef), [props.workspaceRef]);
   const artifacts = useArtifacts();
   const projectName = resolveWorkspaceRefDisplayName(props.workspaceRef);
   const artifactsById = React.useMemo(() => {
@@ -76,7 +78,8 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
 
   const { shared, personal, teamName } = model;
   const hasSource = shared.status !== 'none';
-  // One memory per Project: the Source's when it has one, otherwise the viewer's own.
+  // Project memory follows the Action's owner: Source-bound Projects use the Source,
+  // even before it has memory or while it cannot be read. Other Projects use the viewer's row.
   const sharedMemory = React.useMemo(
     () =>
       shared.entries.find((entry) =>
@@ -91,8 +94,8 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
       ) ?? null,
     [artifactsById, personal.entries],
   );
-  const memory = sharedMemory ?? personalMemory;
-  const memoryLayer: Layer = sharedMemory ? 'shared' : 'personal';
+  const memory = hasSource ? sharedMemory : personalMemory;
+  const memoryLayer: Layer = hasSource ? 'shared' : 'personal';
   const sharedDocuments = React.useMemo(
     () => shared.entries.filter((entry) => entry.id !== memory?.id),
     [memory?.id, shared.entries],
@@ -416,6 +419,9 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         }
         serverId={model.serverId}
         entry={memory}
+        scopeTarget={(!hasSource && personal.available) || (hasSource && shared.canManage)
+          ? { scope: 'project', projectRef }
+          : undefined}
         footer={
           memoryShared
             ? `${t('contextPages.project.sharedWith', { team: teamName ?? '' })} · ${t('memoryContext.memory.writesAskFirst')}`
