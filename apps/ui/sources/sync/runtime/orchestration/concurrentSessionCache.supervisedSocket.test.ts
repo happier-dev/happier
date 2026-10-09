@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSocketIoManagerBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 import {
     createServerProfilesModuleMock,
@@ -8,6 +10,11 @@ import {
 } from '@/dev/testkit';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
+
+// Prepare the real graph before per-case module resets and transport fixtures.
+installDisconnectedServerSocketBoundary();
+const initialSync = await loadSyncSingletonForTests();
+initialSync.dispose();
 
 const ioSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.fn();

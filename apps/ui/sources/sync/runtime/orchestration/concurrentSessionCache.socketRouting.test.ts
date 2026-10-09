@@ -1,12 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSocketIoManagerBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: (text: string) => [{ text, revealed: true }],
 }));
 
 import { createServerProfilesModuleMock } from '@/dev/testkit';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { SessionListFetchResult } from '@/sync/engine/sessions/sessionSnapshot';
+
+const ACCOUNT_B_TOKEN = createAccountTokenForTests('account-b');
+const ACCOUNT_C_TOKEN = createAccountTokenForTests('account-c');
+
+// Prepare the real graph outside case-local fake clocks; no domain replacement.
+installDisconnectedServerSocketBoundary();
+const initialSync = await loadSyncSingletonForTests();
+initialSync.dispose();
 
 const ioSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.fn();
@@ -20,49 +31,8 @@ let previousTransferRoutePositiveTtlMs: string | undefined;
 const REFRESH_DEBOUNCE_TEST_MS = 600;
 type ConcurrentCacheStorage = typeof import('@/sync/domains/state/storageStore')['storage'];
 
-type SocketEventHandler = (...args: unknown[]) => void;
-
 function createSocketStub() {
-    const listeners = new Map<string, Set<SocketEventHandler>>();
-    const socket = {
-        io: createSocketIoManagerBoundaryStub(),
-        connected: false,
-        on: vi.fn((event: string, handler: SocketEventHandler) => {
-            const bucket = listeners.get(event) ?? new Set<SocketEventHandler>();
-            bucket.add(handler);
-            listeners.set(event, bucket);
-            return socket;
-        }),
-        off: vi.fn((event: string, handler?: SocketEventHandler) => {
-            if (!handler) {
-                listeners.delete(event);
-                return socket;
-            }
-            listeners.get(event)?.delete(handler);
-            return socket;
-        }),
-        onAny: vi.fn(),
-        connect: vi.fn(() => {
-            socket.connected = true;
-            for (const listener of listeners.get('connect') ?? []) {
-                listener();
-            }
-        }),
-        disconnect: vi.fn(() => {
-            const wasConnected = socket.connected;
-            socket.connected = false;
-            if (!wasConnected) {
-                return;
-            }
-            for (const listener of listeners.get('disconnect') ?? []) {
-                listener('io client disconnect');
-            }
-        }),
-        removeAllListeners: vi.fn(() => {
-            listeners.clear();
-        }),
-    };
-    return socket;
+    return createSocketIoBoundaryStub().socket;
 }
 
 function onlineState() {
@@ -198,7 +168,9 @@ beforeEach(() => {
 
 });
 
-afterEach(() => {
+afterEach(async () => {
+    const cache = await import('./concurrentSessionCache');
+    cache.stopConcurrentSessionCacheSync();
     vi.useRealTimers();
     delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
     if (previousTransferRoutePositiveTtlMs === undefined) {
@@ -217,7 +189,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -245,9 +217,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
 
         const seenExistingKeys: number[] = [];
@@ -326,7 +295,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -354,9 +323,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -465,7 +431,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -494,9 +460,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -598,7 +561,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -628,9 +591,6 @@ describe('concurrent session cache socket routing', () => {
                 create: async () => ({}) as unknown,
             },
         }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({
                 credentials,
@@ -648,7 +608,7 @@ describe('concurrent session cache socket routing', () => {
                 expect(includeActiveSessionRows).toBe(true);
                 expect(includeSessionListAttentionRows).toBe(true);
                 sessionRefreshCount += 1;
-                if (credentials.token !== 'token-b') {
+                if (credentials.token !== ACCOUNT_B_TOKEN) {
                     applySessionListRenderables([]);
                     return completeSessionListFetchResult();
                 }
@@ -695,7 +655,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applyMachines: (machines: unknown[]) => void;
             }) => {
-                if (credentials.token !== 'token-b') {
+                if (credentials.token !== ACCOUNT_B_TOKEN) {
                     applyMachines([]);
                     return;
                 }
@@ -786,7 +746,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -816,9 +776,6 @@ describe('concurrent session cache socket routing', () => {
                 create: async () => ({}) as unknown,
             },
         }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
 
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({
@@ -829,7 +786,7 @@ describe('concurrent session cache socket routing', () => {
                 applySessions: (sessions: unknown[]) => void;
             }) => {
                 sessionRefreshCount += 1;
-                if (credentials.token !== 'token-b') {
+                if (credentials.token !== ACCOUNT_B_TOKEN) {
                     applySessions([]);
                     return completeSessionListFetchResult();
                 }
@@ -860,7 +817,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applyMachines: (machines: unknown[]) => void;
             }) => {
-                if (credentials.token !== 'token-b') {
+                if (credentials.token !== ACCOUNT_B_TOKEN) {
                     applyMachines([]);
                     return;
                 }
@@ -928,7 +885,7 @@ describe('concurrent session cache socket routing', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -959,9 +916,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -1039,8 +993,8 @@ describe('concurrent session cache socket routing', () => {
         });
 
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
-            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
-            if (serverUrl === 'https://stack-c.example.test') return { token: 'token-c', secret: 'secret-c' };
+            if (serverUrl === 'https://stack-b.example.test') return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
+            if (serverUrl === 'https://stack-c.example.test') return { token: ACCOUNT_C_TOKEN, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' };
             return null;
         });
 
@@ -1070,9 +1024,6 @@ describe('concurrent session cache socket routing', () => {
                 create: async () => ({}) as unknown,
             },
         }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({
                 credentials,
@@ -1081,7 +1032,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applySessions: (sessions: unknown[]) => void;
             }) => {
-                if (credentials.token === 'token-b') {
+                if (credentials.token === ACCOUNT_B_TOKEN) {
                     applySessions([{
                         id: 'session-b',
                         seq: 1,
@@ -1125,7 +1076,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applyMachines: (machines: unknown[]) => void;
             }) => {
-                if (credentials.token === 'token-b') {
+                if (credentials.token === ACCOUNT_B_TOKEN) {
                     applyMachines([{
                         id: 'machine-b',
                         seq: 1,
@@ -1210,8 +1161,8 @@ describe('concurrent session cache socket routing', () => {
             if (serverUrl !== sharedServerUrl) {
                 return createSocketStub();
             }
-            if (options?.auth?.token === 'token-b') return fakeSocketB;
-            if (options?.auth?.token === 'token-c') return fakeSocketC;
+            if (options?.auth?.token === ACCOUNT_B_TOKEN) return fakeSocketB;
+            if (options?.auth?.token === ACCOUNT_C_TOKEN) return fakeSocketC;
             return createSocketStub();
         });
 
@@ -1223,12 +1174,12 @@ describe('concurrent session cache socket routing', () => {
                 return null;
             }
             if (options?.serverId === 'srv-b') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             if (options?.serverId === 'server-c') {
-                return { token: 'token-c', secret: 'secret-c' };
+                return { token: ACCOUNT_C_TOKEN, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' };
             }
-            return { token: 'token-c', secret: 'secret-c' };
+            return { token: ACCOUNT_C_TOKEN, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' };
         });
 
         listServerProfilesSpy.mockReturnValue([
@@ -1263,9 +1214,6 @@ describe('concurrent session cache socket routing', () => {
                 create: async () => ({}) as unknown,
             },
         }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({
                 credentials,
@@ -1274,7 +1222,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applySessions: (sessions: unknown[]) => void;
             }) => {
-                if (credentials.token === 'token-b') {
+                if (credentials.token === ACCOUNT_B_TOKEN) {
                     applySessions([{
                         id: 'session-b',
                         seq: 1,
@@ -1318,7 +1266,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applyMachines: (machines: unknown[]) => void;
             }) => {
-                if (credentials.token === 'token-b') {
+                if (credentials.token === ACCOUNT_B_TOKEN) {
                     applyMachines([{
                         id: 'machine-b',
                         seq: 1,
@@ -1407,8 +1355,8 @@ describe('concurrent session cache socket routing', () => {
         });
 
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
-            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
-            if (serverUrl === 'https://stack-c.example.test') return { token: 'token-c', secret: 'secret-c' };
+            if (serverUrl === 'https://stack-b.example.test') return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
+            if (serverUrl === 'https://stack-c.example.test') return { token: ACCOUNT_C_TOKEN, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' };
             return null;
         });
 
@@ -1437,9 +1385,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -1515,7 +1460,7 @@ describe('concurrent session cache socket routing', () => {
         });
 
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
-            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
+            if (serverUrl === 'https://stack-b.example.test') return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             return null;
         });
 
@@ -1544,9 +1489,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -1609,7 +1551,7 @@ describe('concurrent session cache socket routing', () => {
         });
 
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
-            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
+            if (serverUrl === 'https://stack-b.example.test') return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             return null;
         });
 
@@ -1637,9 +1579,6 @@ describe('concurrent session cache socket routing', () => {
             Encryption: {
                 create: async () => ({}) as unknown,
             },
-        }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
         }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
@@ -1727,7 +1666,6 @@ describe('concurrent session cache socket routing', () => {
             subscribeActiveServer: () => () => {},
         }));
         vi.doMock('@/sync/encryption/encryption', () => ({ Encryption: { create: async () => ({}) as unknown } }));
-        vi.doMock('@/encryption/base64', () => ({ decodeBase64: () => new Uint8Array(32) }));
         vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
             fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
                 applySessions([]);
@@ -1773,7 +1711,7 @@ describe('concurrent session cache socket routing', () => {
                 }],
             },
         }));
-        releaseCredentials({ token: 'stale-token-b', secret: 'stale-secret-b' });
+        releaseCredentials({ token: ACCOUNT_B_TOKEN, secret: 'AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM' });
         await Promise.resolve();
         await vi.advanceTimersByTimeAsync(1);
 
@@ -1795,7 +1733,7 @@ describe('concurrent session cache socket routing', () => {
         });
 
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
-            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
+            if (serverUrl === 'https://stack-b.example.test') return { token: ACCOUNT_B_TOKEN, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             return null;
         });
 
@@ -1824,9 +1762,6 @@ describe('concurrent session cache socket routing', () => {
                 create: async () => ({}) as unknown,
             },
         }));
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
 
         // Hold server-b's refresh in flight until the test releases it, so the
         // refresh completion lands after the entry has been torn down.
@@ -1842,7 +1777,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: { token: string };
                 applySessions: (sessions: unknown[]) => void;
             }) => {
-                if (credentials.token !== 'token-b') {
+                if (credentials.token !== ACCOUNT_B_TOKEN) {
                     applySessions([]);
                     return completeSessionListFetchResult();
                 }
