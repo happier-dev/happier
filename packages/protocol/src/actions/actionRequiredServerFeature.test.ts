@@ -27,10 +27,6 @@ describe('getActionRequiredServerFeatureId', () => {
       .toBe('teams.credentialResources.externalApi');
     expect(getActionRequiredServerFeatureId('teams.credentials.externalKeys.create'))
       .toBe('teams.credentialResources.externalApi');
-    // Shared Saved Secrets are registered on the Team route app, whose one
-    // decision is `teams` — not either credential-resource bit.
-    expect(getActionRequiredServerFeatureId('secrets.shared.list')).toBe('teams');
-    expect(getActionRequiredServerFeatureId('secrets.shared.update')).toBe('teams');
     expect(getActionRequiredServerFeatureId('teams.list')).toBe('teams');
     expect(getActionRequiredServerFeatureId('teams.invitations.create')).toBe('teams');
     expect(getActionRequiredServerFeatureId('session.follow.set')).toBe('sessions.following');
@@ -40,9 +36,21 @@ describe('getActionRequiredServerFeatureId', () => {
     expect(getActionRequiredServerFeatureId('session.public_link.create')).toBe('sharing.public');
     expect(getActionRequiredServerFeatureId('artifact.public_link.create')).toBe('sharing.public');
     expect(getActionRequiredServerFeatureId('machines.pools.create')).toBe('machines.pools');
+    for (const actionId of ['remote_hosts.list', 'remote_hosts.credential.change', 'remote_hosts.daemon.start']) {
+      expect(getActionRequiredServerFeatureId(actionId)).toBe('remoteHosts.management');
+    }
+    expect(getActionRequiredServerFeatureId('remote_hosts.unknown')).toBeNull();
     expect(getActionRequiredServerFeatureId('sessions.runner.activation.create'))
       .toBe('sessions.ephemeralRunner');
     expect(getActionRequiredServerFeatureId('account.apiTokens.create')).toBeNull();
     expect(getActionRequiredServerFeatureId('session.title.set')).toBeNull();
+  });
+  it('keeps private Saved Secret resource Actions available without Teams', () => {
+    for (const actionId of ['secrets.shared.list', 'secrets.shared.create', 'secrets.shared.promote',
+      'secrets.shared.update', 'secrets.shared.delete', 'secrets.shared.grants.set']) {
+      expect(getActionRequiredServerFeatureId(actionId)).toBeNull();
+    }
+    expect(getActionRequiredServerFeatureId('teams.list')).toBe('teams');
+    expect(getActionRequiredServerFeatureId('teams.credentials.create')).toBe('teams.credentialResources');
   });
 });

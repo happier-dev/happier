@@ -1,14 +1,13 @@
 import type { FeatureId } from '../features/catalog.js';
-import { ACTION_ID_FAMILIES_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, WorkflowActionIdV1Schema, isSessionAccessActionId } from './actionIds.js';
 import { isSessionBoardActionIdV1 } from '../sessions/board/actionIds.js';
 import { isSessionDiscussionActionIdV1 } from '../sessions/discussions/actionIds.js';
 import { TeamCredentialActionIdV1Schema } from '../teams/credentials/actionsV1.js';
 import { TeamActionIdV1Schema } from '../teams/actionsV1.js';
-import { SharedSavedSecretActionIdV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
-import { isSessionAccessActionIdV1 } from './sessionAccessActionFamily.js';
 import { MachinePoolActionIdV1Schema } from '../machines/pools/actionsV1.js';
 import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
+import { isRemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
 
 // Native navigation mutates the page just like the automation family. Human
 // sidecar commands are a separate entry point, not automation Actions.
@@ -31,6 +30,7 @@ const browserAutomationActionIds: ReadonlySet<string> = new Set([
  * Action adapter; this is availability only.
  */
 export function getActionRequiredServerFeatureId(actionId: string): FeatureId | null {
+  if (isRemoteHostActionIdV1(actionId)) return 'remoteHosts.management';
   if (browserAutomationActionIds.has(actionId)) return 'browser.automation';
   if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
   if (WorkflowActionIdV1Schema.safeParse(actionId).success) return 'workflows';
@@ -41,13 +41,11 @@ export function getActionRequiredServerFeatureId(actionId: string): FeatureId | 
       ? 'teams.credentialResources.externalApi'
       : 'teams.credentialResources';
   }
-  // Every Team family beyond credentials is served by `createTeamRouteApp`,
-  // whose one decision is `teams`. Shared Saved Secrets are registered on that
-  // same app, so they depend on `teams` and not on either credential bit.
+  // Team governance depends on Teams. Saved Secret resources are Account-owned;
+  // only an operation's actual Team audience depends on the Team service gate.
   if (TeamActionIdV1Schema.safeParse(actionId).success) return 'teams';
-  if (SharedSavedSecretActionIdV1Schema.safeParse(actionId).success) return 'teams';
   if (isSessionFollowActionIdV1(actionId)) return 'sessions.following';
-  if (isSessionAccessActionIdV1(actionId)) {
+  if (isSessionAccessActionId(actionId)) {
     // The public-link intents are served by the public-share routes, whose
     // availability owner is `sharing.public`; the grant, context and
     // responsibility intents are the collaboration routes, served wherever
