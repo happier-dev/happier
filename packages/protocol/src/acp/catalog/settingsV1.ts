@@ -1,48 +1,64 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { McpValueRefV1Schema, type McpValueRefV1 } from '../../mcp/servers/settingsV1.js';
+import { PluginAgentAcpStderrRulesV2Schema } from '../../plugins/contributions/agentAcpStderrRules.js';
 
 const ACP_CATALOG_ID_REGEX = /^[a-z0-9][a-z0-9._-]*$/;
 const ACP_ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 
-const AcpCatalogIdV1Schema = z.string().min(1).regex(ACP_CATALOG_ID_REGEX, 'Invalid ACP catalog id');
-const AcpEnvKeyV1Schema = z.string().regex(ACP_ENV_KEY_REGEX, 'Invalid environment variable name');
+const AcpCatalogIdV1Schema = lazyZodSchema(() => z.string().min(1).regex(ACP_CATALOG_ID_REGEX, 'Invalid ACP catalog id'));
+export const AcpEnvKeyV1Schema = lazyZodSchema(() => z.string().regex(ACP_ENV_KEY_REGEX, 'Invalid environment variable name'));
 
-export const AcpCatalogAuthSupportV1Schema = z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']);
+export const AcpCatalogAuthSupportV1Schema = lazyZodSchema(() => z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']));
 export type AcpCatalogAuthSupportV1 = z.infer<typeof AcpCatalogAuthSupportV1Schema>;
 
-export const AcpCatalogSupportHintV1Schema = z.enum(['unknown', 'yes', 'no']);
+export const AcpCatalogSupportHintV1Schema = lazyZodSchema(() => z.enum(['unknown', 'yes', 'no']));
 export type AcpCatalogSupportHintV1 = z.infer<typeof AcpCatalogSupportHintV1Schema>;
 
 
-export const AcpCatalogCommandV1Schema = z.object({
+export const AcpCatalogCommandV1Schema = lazyZodSchema(() => z.object({
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
-});
+}));
 
 export type AcpCatalogCommandV1 = z.infer<typeof AcpCatalogCommandV1Schema>;
 
-export const AcpBackendAuthConfigV1Schema = z.object({
+export const AcpBackendAuthConfigV1Schema = lazyZodSchema(() => z.object({
   support: AcpCatalogAuthSupportV1Schema,
   machineLoginKey: z.string().min(1).optional(),
   docsUrl: z.string().url().optional(),
   loginCommand: AcpCatalogCommandV1Schema.optional(),
   envVars: z.array(AcpEnvKeyV1Schema).optional(),
-});
+}));
 
 export type AcpBackendAuthConfigV1 = z.infer<typeof AcpBackendAuthConfigV1Schema>;
 
-export const AcpBackendCapabilitiesV1Schema = z.object({
+export const AcpBackendCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   supportsLoadSession: z.boolean().default(false),
   supportsModes: AcpCatalogSupportHintV1Schema.default('unknown'),
   supportsModels: AcpCatalogSupportHintV1Schema.default('unknown'),
   supportsConfigOptions: AcpCatalogSupportHintV1Schema.default('unknown'),
   promptImageSupport: AcpCatalogSupportHintV1Schema.default('unknown'),
-});
+}));
 
 export type AcpBackendCapabilitiesV1 = z.infer<typeof AcpBackendCapabilitiesV1Schema>;
 
-export const AcpBackendDefinitionV1Schema = z.object({
+export const AcpConfiguredRuntimeV1Schema = lazyZodSchema(() => z.object({
+  stderrRules: PluginAgentAcpStderrRulesV2Schema,
+}).strict());
+export type AcpConfiguredRuntimeV1 = z.infer<typeof AcpConfiguredRuntimeV1Schema>;
+
+/** Retained authored status metadata has no executable authority; the predecessor did not run it for configured Agents. */
+export const AcpBackendCompatibilityV1Schema = lazyZodSchema(() => z.object({
+  source: z.literal('acp-catalog-v2'),
+  authStatus: z.object({
+    statusCommand: z.array(z.string()).optional(),
+    parser: z.enum(['unknown', 'exitCodeOnly', 'stdoutNonEmpty', 'kiroWhoamiJson']).optional(),
+  }).strict(),
+}).strict());
+
+export const AcpBackendDefinitionV1Schema = lazyZodSchema(() => z.object({
   id: AcpCatalogIdV1Schema,
   name: AcpCatalogIdV1Schema,
   title: z.string().min(1),
@@ -51,6 +67,8 @@ export const AcpBackendDefinitionV1Schema = z.object({
   args: z.array(z.string()).default([]),
   env: z.record(AcpEnvKeyV1Schema, McpValueRefV1Schema).default({}),
   auth: AcpBackendAuthConfigV1Schema.optional(),
+  runtime: AcpConfiguredRuntimeV1Schema.optional(),
+  compatibility: AcpBackendCompatibilityV1Schema.optional(),
   defaultMode: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   capabilities: AcpBackendCapabilitiesV1Schema.default({
@@ -62,11 +80,11 @@ export const AcpBackendDefinitionV1Schema = z.object({
   }),
   createdAt: z.number(),
   updatedAt: z.number(),
-});
+}));
 
 export type AcpBackendDefinitionV1 = z.infer<typeof AcpBackendDefinitionV1Schema>;
 
-export const AcpCatalogSettingsV1Schema = z.preprocess(
+export const AcpCatalogSettingsV1Schema = lazyZodSchema(() => z.preprocess(
   (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     return raw;
@@ -93,7 +111,7 @@ export const AcpCatalogSettingsV1Schema = z.preprocess(
         }
       }
     }),
-);
+));
 
 export type AcpCatalogSettingsV1 = z.infer<typeof AcpCatalogSettingsV1Schema>;
 
