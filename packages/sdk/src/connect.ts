@@ -35,6 +35,7 @@ import {
   resolveMachineProtectedActionMaterial,
   type HappierMachine,
   type MachineListOptions,
+  type ProtectedActionMaterial,
 } from './machines.js';
 import {
   createTranscriptIterable,
@@ -583,7 +584,7 @@ function createClient(
       throw new HappierTransportError(`The Happier API returned HTTP ${response.statusCode}.`, {
         code: transportErrorCode(
           body,
-          params.protectedResponse
+          params.protectedResponse || (params.protectedResponse === false && credential.encryption)
             ? 'protected_action'
             : credential.encryption
               ? 'credential_bootstrap'
@@ -667,160 +668,183 @@ function createClient(
     };
 
     let protectedInvocation;
-    const encryption = credential.encryption;
-    if (encryption) {
-      const target = ExternalActionTargetV1Schema.safeParse(options.target ?? defaultTarget);
-      if (!target.success) throw new HappierTransportError('An encrypted Action requires an explicit target.', {
-        code: 'target_required', requestId,
-      });
-      const materialPromise = encryption.getMaterial(() => requestJson({
-        path: ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1.slice(1), method: 'POST', body: '{}',
-      }));
-      const accountMaterial = allowAfterClose ? await materialPromise : await waitForClientMaterial(
-        materialPromise, combinedSignal(options.signal, lifecycle.controller.signal),
-      );
-      // A restricted Runner holds no Account material: a request sealed with
-      // the Account key would be unreadable there. Its own Machine content key
-      // is the one thing that opens it, and that key is reachable only through
-      // the creator-signed published binding — so an unresolvable Runner target
-      // fails closed rather than downgrading to Account-only sealing.
-      // A Runner is named either by its Machine id or by the exact Session it
-      // was activated for; the Session spelling is accepted only through the
-      // Runner's activation-signed claim, verified by the same resolution. The
-      // two id spaces stay distinguishable in the per-credential memo key.
-      const runnerTargetKey = target.data.kind === 'machine'
-        ? `machine:${target.data.machineId}`
-        : `session:${target.data.sessionId}`;
-      // The bootstrap projection is what names a Runner target. When an
-      // endpoint does not serve it — a daemon-hosted Action API does not — the
-      // released Account sealing stands: that request is still readable only by
-      // an Account-material holder, so nothing is disclosed, and a Runner that
-      // cannot open it fails closed exactly as it did before. What must never
-      // happen is sealing a *known* Runner target with anything but that
-      // Runner's verified content key, and that resolution throws instead.
-      let material = accountMaterial;
-      try {
-        // The bootstrap read backs a promise shared by every caller targeting
-        // this Machine or Session, so it keeps the client's own lifetime
-        // exactly like the Account bootstrap above: one caller's cancellation
-        // must not cancel another caller's resolution, and a caller that
-        // cancels must still stop waiting.
-        const machineMaterialPromise = encryption.getMachineMaterial(runnerTargetKey, async () => {
-          const rows = parseMachineBootstrapRows(await requestJson({
-            path: 'v1/machines',
-            method: 'GET',
-            allowAfterClose,
-          }).catch((error: unknown) => {
-            throw isMachineBootstrapNotServed(error) ? MACHINE_BOOTSTRAP_UNAVAILABLE : error;
-          }));
-          const resolution = resolveMachineProtectedActionMaterial({
-            rows,
-            target: target.data,
-            homeServerIdentityId: encryption.pins.serverIdentityId,
-            accountId: encryption.pins.accountId,
-            accountMaterial,
+    let releaseMachineMaterial: (() => void) | undefined;
+    try {
+      const encryption = credential.encryption;
+      if (encryption) {
+        const target = ExternalActionTargetV1Schema.safeParse(options.target ?? defaultTarget);
+        if (!target.success) throw new HappierTransportError('An encrypted Action requires an explicit target.', {
+          code: 'target_required', requestId,
+        });
+        const getAccountMaterial = () => encryption.getMaterial(() => requestJson({
+          path: ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1.slice(1), method: 'POST', body: '{}',
+          allowAfterClose,
+        }));
+        // A shared Machine uses its current recipient content key; a Plain
+        // Machine selects the existing V1 envelope independently of Account mode.
+        // A restricted Runner holds no Account material: a request sealed with
+        // the Account key would be unreadable there. Its own Machine content key
+        // is the one thing that opens it, and that key is reachable only through
+        // the creator-signed published binding — so an unresolvable Runner target
+        // fails closed rather than downgrading to Account-only sealing.
+        // A Runner is named either by its Machine id or by the exact Session it
+        // was activated for; the Session spelling is accepted only through the
+        // Runner's activation-signed claim, verified by the same resolution. The
+        // two id spaces stay distinguishable in the per-credential memo key.
+        const runnerTargetKey = target.data.kind === 'machine'
+          ? `machine:${target.data.machineId}`
+          : `session:${target.data.sessionId}`;
+        // The bootstrap projection is what names a Runner target. When an
+        // endpoint does not serve it — a daemon-hosted Action API does not — the
+        // released Account sealing stands: that request is still readable only by
+        // an Account-material holder, so nothing is disclosed, and a Runner that
+        // cannot open it fails closed exactly as it did before. What must never
+        // happen is sealing a *known* Runner target with anything but that
+        // Runner's verified content key, and that resolution throws instead.
+        let material: ProtectedActionMaterial | undefined;
+        try {
+          // Concurrent bootstrap waiters share the network read, not cancellation.
+          // Only an immutable Runner selection is retained after it settles.
+          const machineMaterialPromise = encryption.getMachineMaterial(runnerTargetKey, async () => {
+            const rows = parseMachineBootstrapRows(await requestJson({
+              path: 'v1/machines',
+              method: 'GET',
+              allowAfterClose,
+            }).catch((error: unknown) => {
+              throw isMachineBootstrapNotServed(error) ? MACHINE_BOOTSTRAP_UNAVAILABLE : error;
+            }));
+            const resolveMaterial = (accountMaterial?: ProtectedActionMaterial) => resolveMachineProtectedActionMaterial({
+              rows,
+              target: target.data,
+              homeServerIdentityId: encryption.pins.serverIdentityId,
+              accountId: encryption.pins.accountId,
+              accountMaterial,
+            });
+            let resolution = resolveMaterial();
+            if (resolution.kind === 'account' || resolution.kind === 'needs_account_material') {
+              const accountMaterial = await getAccountMaterial();
+              resolution = resolveMaterial(accountMaterial);
+              if (resolution.kind === 'account') return { kind: 'account', material: accountMaterial };
+            }
+            if (resolution.kind === 'unavailable' || resolution.kind === 'needs_account_material') {
+              throw new HappierTransportError('The target Machine published no usable encryption key.', {
+                code: 'invalid_encrypted_envelope', requestId,
+              });
+            }
+            return resolution;
           });
-          if (resolution.kind === 'unavailable') {
-            throw new HappierTransportError('The target Machine published no usable encryption key.', {
+          try {
+            const resolved = allowAfterClose ? await machineMaterialPromise : await waitForClientMaterial(
+              machineMaterialPromise, combinedSignal(options.signal, lifecycle.controller.signal),
+            );
+            releaseMachineMaterial = () => encryption.releaseMachineMaterial(resolved);
+            material = resolved.kind === 'plain' ? undefined : resolved.material;
+          } catch (error) {
+            // A canceled waiter does not own the shared bootstrap's lifetime.
+            // Release its material when that bootstrap settles, without canceling peers.
+            void machineMaterialPromise.then(encryption.releaseMachineMaterial, () => undefined);
+            throw error;
+          }
+        } catch (error) {
+          if (error !== MACHINE_BOOTSTRAP_UNAVAILABLE) throw error;
+          const materialPromise = getAccountMaterial();
+          material = allowAfterClose ? await materialPromise : await waitForClientMaterial(
+            materialPromise, combinedSignal(options.signal, lifecycle.controller.signal),
+          );
+        }
+        if (material) {
+          const binding = { serverIdentityId: encryption.pins.serverIdentityId,
+            accountId: encryption.pins.accountId, credentialId: encryption.pins.tokenId,
+            actionId, requestId: requestId!, target: target.data };
+          try {
+            protectedInvocation = { material, binding, request: sealExternalActionRequestV2({ binding, input: requestInput, material,
+              randomBytes: (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)) }) };
+          } catch {
+            throw new HappierTransportError('The encrypted Action request could not be prepared.', {
               code: 'invalid_encrypted_envelope', requestId,
             });
           }
-          return resolution.kind === 'runner' ? resolution.material : accountMaterial;
+        }
+      }
+      const body = await requestJson({
+        path: `v1/actions/${encodeURIComponent(actionId)}`,
+        method: 'POST',
+        body: JSON.stringify(protectedInvocation?.request ?? requestBody),
+        requestId,
+        signal: options.signal,
+        allowAfterClose,
+        protectedResponse: protectedInvocation !== undefined,
+      });
+      const openedExecution = protectedInvocation
+        ? openExternalActionResponseV2({ ...protectedInvocation, envelope: body }) : undefined;
+      const externalActionResponse = protectedInvocation
+        ? (openedExecution ? { actionId, requestId, execution: openedExecution } : null)
+        : parseExternalActionResponseEnvelopeV1(body);
+      if (
+        !externalActionResponse
+        || externalActionResponse.actionId !== actionId
+        || externalActionResponse.requestId !== requestId
+      ) {
+        throw new HappierTransportError('The Happier Action API returned an invalid response envelope.', {
+          ...(protectedInvocation ? { code: 'invalid_encrypted_envelope' } : { details: body }),
+          requestId,
         });
-        material = allowAfterClose ? await machineMaterialPromise : await waitForClientMaterial(
-          machineMaterialPromise, combinedSignal(options.signal, lifecycle.controller.signal),
+      }
+      if (!externalActionResponse.execution.ok) {
+        throw new HappierActionError(
+          externalActionResponse.execution.errorCode,
+          externalActionResponse.execution.error,
+          externalActionResponse.execution.details,
+          requestId,
         );
-      } catch (error) {
-        if (error !== MACHINE_BOOTSTRAP_UNAVAILABLE) throw error;
       }
-      const binding = { serverIdentityId: encryption.pins.serverIdentityId,
-        accountId: encryption.pins.accountId, credentialId: encryption.pins.tokenId,
-        actionId, requestId: requestId!, target: target.data };
-      try {
-        protectedInvocation = { material, binding, request: sealExternalActionRequestV2({ binding, input: requestInput, material,
-          randomBytes: (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)) }) };
-      } catch {
-        throw new HappierTransportError('The encrypted Action request could not be prepared.', {
-          code: 'invalid_encrypted_envelope', requestId,
+      const deferredApproval = parseDeferredApprovalRequest(
+        externalActionResponse.execution.result,
+        actionId,
+        requestId,
+      );
+      if (preserveDeferredApproval === false && deferredApproval !== null) {
+        throw new HappierActionError(
+          'approval_required',
+          `The ${actionId} Action requires user approval before it can execute.`,
+          deferredApproval,
+          requestId,
+        );
+      }
+      if (
+        deferredApproval === null
+        && actionId === 'session.list'
+        && requiresSessionListQueryProof
+        && !parseSessionListQueryActionResultV1(externalActionResponse.execution.result)
+      ) {
+        throw new HappierActionError(
+          SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE,
+          SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE,
+          undefined,
+          requestId,
+        );
+      }
+      if (deferredApproval !== null) return deferredApproval as PublicActionExecutionResult<K>;
+      // A typed public result is a Protocol contract, not a transport promise.
+      // The declared output schema — the same one the executing daemon settles
+      // its result through — is what makes the returned value that type, so a
+      // response that does not satisfy it fails closed instead of being cast.
+      const output = PUBLIC_ACTION_OUTPUT_PARSERS[actionId].safeParse(
+        externalActionResponse.execution.result,
+      );
+      if (!output.success) {
+        // Protected clients expose only the bounded error vocabulary, never the
+        // response content that failed to parse.
+        throw new HappierTransportError(`The ${actionId} Action returned an invalid result.`, {
+          code: 'invalid_action_output',
+          requestId,
+          ...(credential.encryption ? {} : { details: externalActionResponse.execution.result }),
         });
       }
+      return output.data as PublicActionExecutionResult<K>;
+    } finally {
+      releaseMachineMaterial?.();
     }
-    const body = await requestJson({
-      path: `v1/actions/${encodeURIComponent(actionId)}`,
-      method: 'POST',
-      body: JSON.stringify(protectedInvocation?.request ?? requestBody),
-      requestId,
-      signal: options.signal,
-      allowAfterClose,
-      protectedResponse: protectedInvocation !== undefined,
-    });
-    const openedExecution = protectedInvocation
-      ? openExternalActionResponseV2({ ...protectedInvocation, envelope: body }) : undefined;
-    const externalActionResponse = protectedInvocation
-      ? (openedExecution ? { actionId, requestId, execution: openedExecution } : null)
-      : parseExternalActionResponseEnvelopeV1(body);
-    if (
-      !externalActionResponse
-      || externalActionResponse.actionId !== actionId
-      || externalActionResponse.requestId !== requestId
-    ) {
-      throw new HappierTransportError('The Happier Action API returned an invalid response envelope.', {
-        ...(protectedInvocation ? { code: 'invalid_encrypted_envelope' } : { details: body }),
-        requestId,
-      });
-    }
-    if (!externalActionResponse.execution.ok) {
-      throw new HappierActionError(
-        externalActionResponse.execution.errorCode,
-        externalActionResponse.execution.error,
-        externalActionResponse.execution.details,
-        requestId,
-      );
-    }
-    const deferredApproval = parseDeferredApprovalRequest(
-      externalActionResponse.execution.result,
-      actionId,
-      requestId,
-    );
-    if (preserveDeferredApproval === false && deferredApproval !== null) {
-      throw new HappierActionError(
-        'approval_required',
-        `The ${actionId} Action requires user approval before it can execute.`,
-        deferredApproval,
-        requestId,
-      );
-    }
-    if (
-      deferredApproval === null
-      && actionId === 'session.list'
-      && requiresSessionListQueryProof
-      && !parseSessionListQueryActionResultV1(externalActionResponse.execution.result)
-    ) {
-      throw new HappierActionError(
-        SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE,
-        SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE,
-        undefined,
-        requestId,
-      );
-    }
-    if (deferredApproval !== null) return deferredApproval as PublicActionExecutionResult<K>;
-    // A typed public result is a Protocol contract, not a transport promise.
-    // The declared output schema — the same one the executing daemon settles
-    // its result through — is what makes the returned value that type, so a
-    // response that does not satisfy it fails closed instead of being cast.
-    const output = PUBLIC_ACTION_OUTPUT_PARSERS[actionId].safeParse(
-      externalActionResponse.execution.result,
-    );
-    if (!output.success) {
-      // Protected clients expose only the bounded error vocabulary, never the
-      // response content that failed to parse.
-      throw new HappierTransportError(`The ${actionId} Action returned an invalid result.`, {
-        code: 'invalid_action_output',
-        requestId,
-        ...(credential.encryption ? {} : { details: externalActionResponse.execution.result }),
-      });
-    }
-    return output.data as PublicActionExecutionResult<K>;
   };
   const rawExecute: RawActionExecute = (actionId, input, options) => executeRequest(actionId, input, options);
   const executeCompletedRequest = async <K extends PublicActionId>(

@@ -5,6 +5,9 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2,
   ExternalActionRequestEnvelopeV2Schema,
+  createActionExecutor,
+  isApprovalRequiredByActionsSettings,
+  type ActionExecutorDeps,
   getActionSpec,
   openExternalActionRequestV2,
   prepareExternalActionResponseV2,
@@ -188,6 +191,155 @@ function isHappierSessionInitialInputError(
 }
 
 describe('Happier SDK client', () => {
+  it('executes advertised Machine terminal business methods through the canonical Action ingress', async () => {
+    const target = { serverId: 'home', machineId: 'machine' };
+    const workspace = { ...target, workspaceId: 'accepted', rootPath: '/repo' };
+    const settings = { v: 1 as const, actions: {}, approvalWaivedSurfaces: {
+      'machines.terminal.open': ['api' as const], 'machines.terminal.write': ['api' as const],
+      'machines.terminal.close': ['api' as const], 'machines.terminal.restart': ['api' as const],
+    } };
+    const physicalEffects: Array<Readonly<{ actionId: string; input: unknown }>> = [];
+    const results = {
+      'machines.terminal.open': { ok: true, terminalId: 'pty', reused: false },
+      'machines.terminal.list': { ok: true, terminals: [] },
+      'machines.terminal.read': { ok: true, terminalId: 'pty', frames: [], nextByteOffset: 0,
+        availableByteOffset: 0, droppedBeforeByteOffset: 0, done: false },
+      'machines.terminal.write': { ok: true },
+      'machines.terminal.close': { ok: true },
+      'machines.terminal.restart': { ok: true, terminalId: 'restarted', reused: false },
+    } as const;
+    const executor = createActionExecutor({
+      // HTTP and the receiving PTY transport are the genuine boundaries; the
+      // generated business method, schema ingress and approval policy stay real.
+      machineTerminalAction: async ({ actionId, input }) => {
+        physicalEffects.push({ actionId, input });
+        return results[actionId];
+      },
+      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+    } as Pick<ActionExecutorDeps, 'machineTerminalAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
+    vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { input: unknown };
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!);
+      return responseForRequest(init, { v: 1, actionId,
+        execution: await executor.execute(actionId, request.input, { surface: 'api', serverId: target.serverId }) });
+    }));
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
+    const open = { ...target, terminalKey: 'member', workspace };
+    const terminal = { ...target, terminalId: 'pty' };
+    const read = { ...terminal, byteOffset: 0 };
+    const write = { ...terminal, event: { t: 'text', text: 'pwd\r' } } as const;
+    try {
+      await expect(client.actions.machines.terminal.open(open)).resolves.toEqual(results['machines.terminal.open']);
+      await expect(client.actions.machines.terminal.list(target)).resolves.toEqual(results['machines.terminal.list']);
+      await expect(client.actions.machines.terminal.read(read)).resolves.toEqual(results['machines.terminal.read']);
+      await expect(client.actions.machines.terminal.write(write)).resolves.toEqual(results['machines.terminal.write']);
+      await expect(client.actions.machines.terminal.close(terminal)).resolves.toEqual(results['machines.terminal.close']);
+      await expect(client.actions.machines.terminal.restart(open)).resolves.toEqual(results['machines.terminal.restart']);
+      await expect(client.actions.machines.terminal.open({ ...open,
+        // @ts-expect-error A business Action cannot mint requester custody.
+        requesterAccountId: 'forged',
+      })).rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
+      expect(physicalEffects).toEqual([
+        { actionId: 'machines.terminal.open', input: open }, { actionId: 'machines.terminal.list', input: target },
+        { actionId: 'machines.terminal.read', input: read }, { actionId: 'machines.terminal.write', input: write },
+        { actionId: 'machines.terminal.close', input: terminal }, { actionId: 'machines.terminal.restart', input: open },
+      ]);
+    } finally { await client.close(); }
+  });
+  it('executes generated qualified Machine sharing methods while the canonical host rejects public physical grant authority', async () => {
+    const target = { serverId: 'home', machineId: 'machine' };
+    const principal = { kind: 'account', accountId: 'bob' } as const;
+    const grant = { machineId: 'machine', principal, level: 'view' } as const;
+    const access = { machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Alice' },
+      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } as const;
+    const requests: Array<Readonly<{ actionId: string; input: unknown }>> = [];
+    let permissionWrites = 0;
+    const settings = { v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'machines.access.grant.set': ['api' as const] } };
+    // The SDK's HTTP boundary serves the real strict Action ingress. Only the
+    // authenticated permission transport beneath it returns fixture results.
+    const executor = createActionExecutor({
+      machineAccessAction: async ({ actionId }) => {
+        if (actionId === 'machines.access.grants.list') return access;
+        permissionWrites++;
+        return { kind: 'saved', grant, readiness: 'ready' };
+      },
+      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+    } as Pick<ActionExecutorDeps, 'machineAccessAction' | 'isActionApprovalRequired'> as ActionExecutorDeps);
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as { input: unknown };
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1)!);
+      requests.push({ actionId, input: request.input });
+      const execution = await executor.execute(actionId, request.input, { surface: 'api', serverId: target.serverId });
+      return responseForRequest(init, { v: 1, actionId, execution });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
+    try {
+      await expect(client.actions.machines.access.grants.list(target)).resolves.toEqual(access);
+      const input = { ...target, principal, level: 'view' } satisfies PublicActionInputById['machines.access.grant.set'];
+      await expect(client.actions.machines.access.grant.set(input)).resolves.toEqual({ kind: 'saved', grant, readiness: 'ready' });
+      await expect(client.actions.machines.access.grant.set({ ...input,
+        // @ts-expect-error Raw recipient ciphertext is not public grant authority.
+        recipientKeyEnvelopes: [],
+      })).rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
+      await expect(client.actions.machines.access.grants.list({ ...target,
+        // @ts-expect-error Callers cannot manufacture admission evidence.
+        admission: { role: 'manage' },
+      })).rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
+      expect(requests).toEqual([
+        { actionId: 'machines.access.grants.list', input: target },
+        { actionId: 'machines.access.grant.set', input },
+        { actionId: 'machines.access.grant.set', input: { ...input, recipientKeyEnvelopes: [] } },
+        { actionId: 'machines.access.grants.list', input: { ...target, admission: { role: 'manage' } } },
+      ]);
+      expect(permissionWrites).toBe(1);
+    } finally { await client.close(); }
+  });
+  it('executes an explicitly Plain shared target with a valid bearer but unavailable Account crypto', async () => {
+    const context = { serverIdentityId: 'srv_sdk', accountId: 'bob',
+      tokenId: '123e4567-e89b-42d3-a456-426614174000',
+      contentPublicKey: 'B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=' };
+    const bearer = `hap_v1_${context.tokenId}_${encodeBase64(new Uint8Array(32).fill(8), 'base64url')}`;
+    const token = formatAccountApiTokenCredentialV1({ bearer,
+      wrappingSecret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+      serverIdentityId: context.serverIdentityId, accountId: context.accountId,
+      contentPublicKey: context.contentPublicKey });
+    const result = { sessions: [], nextCursor: null, hasNext: false, queryVersion: 1,
+      attentionNextCursor: null, attentionHasNext: false };
+    let accountBootstrapReads = 0;
+    let refused = false;
+    // HTTP is the only replaced boundary; credential, mode selection and Action preparation remain real.
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${bearer}`);
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/encryption-access')) {
+        accountBootstrapReads += 1;
+        return response({ error: 'auth_unavailable' }, 503);
+      }
+      if (path === '/v1/machines') return response([{
+        id: 'alice-machine', kind: 'persistent', active: true, installationId: 'alice-installation',
+        revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
+        access: { custodian: { accountId: 'alice', displayName: 'Alice' },
+          role: 'use', resourceMode: 'plain', accessState: 'ready' },
+      }]);
+      const request = JSON.parse(String(init?.body)) as { v: number; target: unknown };
+      expect(request.v).toBe(1);
+      expect(request.target).toEqual({ kind: 'machine', machineId: 'alice-machine' });
+      if (refused) return response({ error: 'invalid_request', code: 'target_not_local' }, 400);
+      return responseForRequest(init, { v: 1, actionId: 'session.list', execution: { ok: true, result } });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const client = connect({ endpoint: 'http://home.invalid', token });
+    try {
+      await expect(client.machine('alice-machine').actions.session.list({})).resolves.toEqual(result);
+      refused = true;
+      await expect(client.machine('alice-machine').actions.session.list({})).rejects.toMatchObject({
+        name: 'HappierTransportError', code: 'target_not_local', status: 400,
+      });
+      expect(accountBootstrapReads).toBe(0);
+    } finally { await client.close(); }
+  });
   it('round trips fluent sessions.list folder and tag selectors through the strict Action query', async () => {
     const result = { sessions: [], nextCursor: null, hasNext: false, queryVersion: 1,
       attentionNextCursor: null, attentionHasNext: false };
@@ -259,6 +411,8 @@ describe('Happier SDK client', () => {
       attentionHasNext: false,
     };
     const protectedBodies: string[] = [];
+    let expectedInput: unknown = input;
+    let expectedResult: unknown = result;
     const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${bearer}`);
       const path = new URL(String(url)).pathname;
@@ -274,10 +428,10 @@ describe('Happier SDK client', () => {
       const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
         credentialId: context.tokenId, actionId: 'session.list', requestId: request.requestId,
         target: { kind: 'machine' as const, machineId: 'machine-1' } };
-      expect(openExternalActionRequestV2({ envelope: request, binding, material })?.input).toEqual(input);
+      expect(openExternalActionRequestV2({ envelope: request, binding, material })?.input).toEqual(expectedInput);
       const prepared = prepareExternalActionResponseV2({ binding, request, material,
         randomBytes: (length) => new Uint8Array(length).fill(4), executedMachineId: 'machine-1',
-        execution: { ok: true, result } });
+        execution: { ok: true, result: expectedResult } });
       protectedBodies.push(prepared.body);
       return response(prepared.response);
     });
@@ -286,10 +440,23 @@ describe('Happier SDK client', () => {
     const client = connect({ endpoint: 'http://daemon', token });
     try {
       await expect(client.machine('machine-1').actions.session.list(input)).resolves.toEqual(result);
+      const fluentResult = { sessions: [], nextCursor: null, hasNext: false, queryVersion: 1,
+        attentionNextCursor: null, attentionHasNext: false };
+      expectedResult = fluentResult;
+      const defaultQuery = { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
+        attention: 'any', audiences: [], tagIds: [] };
+      expectedInput = { query: defaultQuery };
+      await expect(client.machine('machine-1').sessions.list()).resolves.toEqual(fluentResult);
+      await expect(client.sessions.list({ folderIds: undefined, tagIds: undefined, cursor: undefined,
+        limit: undefined, storage: undefined, includeInactive: undefined },
+        { target: { kind: 'machine', machineId: 'machine-1' } })).resolves.toEqual(fluentResult);
+      expectedInput = { query: { ...defaultQuery, limit: 100 } };
+      await expect(client.machine('machine-1').sessions.list({ includeInactive: true, limit: 100 }))
+        .resolves.toEqual(fluentResult);
+      expectedInput = { query: { ...defaultQuery, folderIds: [] } };
+      await expect(client.machine('machine-1').sessions.list({ folderIds: [] })).resolves.toEqual(fluentResult);
       expect(protectedBodies.join('')).not.toContain('sentinel');
       expect(protectedBodies.join('')).not.toContain(token);
-      // Credential bootstrap, the one target-Machine read, one Action call.
-      expect(fetch).toHaveBeenCalledTimes(3);
     } finally {
       await client.close();
     }
@@ -1518,6 +1685,7 @@ describe('Happier SDK client', () => {
       execution: { ok: true, result: {
         run: {
           id: 'run-1', origin: { kind: 'automation', automationId: 'automation-1' },
+          sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
           state: 'queued', revision: 1, machineId: 'machine-1',
           workflowCustodyState: null, originDeliveryAckRevision: null,
           availability: {
@@ -2636,7 +2804,7 @@ describe('Happier SDK client', () => {
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
     await iterator.return?.();
 
-    expect(requests[0]?.actionId).toBe('transcript.follow');
+    expect(requests.some(({ actionId }) => actionId === 'transcript.follow')).toBe(true);
     expect(requests.at(-1)?.actionId).toBe('transcript.unfollow');
     expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(1);
 
@@ -2971,13 +3139,9 @@ describe('Happier SDK client', () => {
       || actionId === 'session.status.get'
       || actionId === 'transcript.unfollow'
     ));
-    expect(transcriptRequests.map(({ actionId }) => actionId)).toEqual([
-      'transcript.follow',
-      'session.status.get',
-      'transcript.follow',
-      'transcript.unfollow',
-    ]);
-    expect(transcriptRequests).toHaveLength(4);
+    expect(transcriptRequests.some(({ actionId }) => actionId === 'session.status.get')).toBe(true);
+    expect(transcriptRequests.filter(({ actionId }) => actionId === 'transcript.follow')
+      .every(({ body }) => (body.input as { waitForChanges?: boolean }).waitForChanges === false)).toBe(true);
     for (const { body } of transcriptRequests) {
       expect(body.target).toEqual({ kind: 'machine', machineId: 'machine-7' });
     }

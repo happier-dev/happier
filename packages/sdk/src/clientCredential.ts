@@ -3,6 +3,11 @@ import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/api
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { HappierClientClosedError, HappierTransportError } from './errors.js';
+import type { ProtectedActionMaterial } from './machines.js';
+
+export type ClientMachineMaterial =
+  | Readonly<{ kind: 'plain' }>
+  | Readonly<{ kind: 'account' | 'runner' | 'machine'; material: ProtectedActionMaterial }>;
 
 /** One root-client secret lifetime, shared by every derived handle. */
 export function createClientCredential(token: string) {
@@ -20,14 +25,16 @@ export function createClientCredential(token: string) {
   let material: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | undefined;
   let initialization: Promise<NonNullable<typeof material>> | undefined;
   /**
-   * Sealing material for an exact Machine target, resolved once for this
-   * credential's lifetime exactly like the Account bootstrap above. A
+   * Only restricted Runner target selection has this credential lifetime. A
    * restricted Runner's content key is generated once for that Machine and
    * never rotated, and Machine ids are never reused, so a later request to the
    * same Machine reuses the resolved key instead of re-reading the bootstrap
    * projection.
    */
-  const machineMaterial = new Map<string, Promise<NonNullable<typeof material>>>();
+  const machineMaterial = new Map<string, Promise<ClientMachineMaterial>>();
+  // Shared Machine material lives only while an invocation uses it, so the next
+  // invocation sees recipient readiness and rotation from the current projection.
+  const activeSharedMaterial = new Map<ProtectedActionMaterial, number>();
   let disposed = false;
 
   const getMaterial = (retrieve: () => Promise<unknown>) => {
@@ -55,28 +62,53 @@ export function createClientCredential(token: string) {
   };
   const getMachineMaterial = (
     machineId: string,
-    resolve: () => Promise<NonNullable<typeof material>>,
+    resolve: () => Promise<ClientMachineMaterial>,
   ) => {
     if (disposed) return Promise.reject(new HappierClientClosedError());
     const resolved = machineMaterial.get(machineId);
-    if (resolved) return resolved;
-    const pending = resolve().catch((error: unknown) => {
+    const pending = resolved ?? resolve().then((result) => {
+      if (result.kind !== 'runner') machineMaterial.delete(machineId);
+      if (disposed) {
+        if (result.kind !== 'plain') result.material.machineKey.fill(0);
+        throw new HappierClientClosedError();
+      }
+      return result;
+    }).catch((error: unknown) => {
       machineMaterial.delete(machineId);
       throw error;
     });
-    machineMaterial.set(machineId, pending);
-    return pending;
+    if (!resolved) machineMaterial.set(machineId, pending);
+    return pending.then((result) => {
+      if (disposed) throw new HappierClientClosedError();
+      if (result.kind === 'machine') {
+        activeSharedMaterial.set(result.material, (activeSharedMaterial.get(result.material) ?? 0) + 1);
+      }
+      return result;
+    });
+  };
+  const releaseMachineMaterial = (resolved: ClientMachineMaterial) => {
+    if (resolved.kind !== 'machine') return;
+    const remaining = (activeSharedMaterial.get(resolved.material) ?? 1) - 1;
+    if (remaining > 0) activeSharedMaterial.set(resolved.material, remaining);
+    else {
+      activeSharedMaterial.delete(resolved.material);
+      resolved.material.machineKey.fill(0);
+    }
   };
   return {
     bearer,
-    encryption: { pins, getMaterial, getMachineMaterial },
+    encryption: { pins, getMaterial, getMachineMaterial, releaseMachineMaterial },
     dispose: () => {
       disposed = true;
       wrappingSecret.fill(0);
       material?.machineKey.fill(0);
       for (const pending of machineMaterial.values()) {
-        void pending.then((resolved) => resolved.machineKey.fill(0), () => undefined);
+        void pending.then((resolved) => {
+          if (resolved.kind !== 'plain') resolved.material.machineKey.fill(0);
+        }, () => undefined);
       }
+      for (const resolved of activeSharedMaterial.keys()) resolved.machineKey.fill(0);
+      activeSharedMaterial.clear();
       machineMaterial.clear();
       material = undefined;
       initialization = undefined;

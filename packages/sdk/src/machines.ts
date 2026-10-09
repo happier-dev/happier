@@ -18,7 +18,7 @@ export type MachineListOptions = Readonly<{
   signal?: AbortSignal;
 }>;
 
-/** Account E2EE material, and the Machine content key a Runner target needs. */
+/** Account E2EE material or the exact target's Machine content key. */
 export type ProtectedActionMaterial = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 
 export function parseMachineBootstrapRows(
@@ -45,9 +45,12 @@ export type MachineProtectedActionMaterialResolution =
   /** Not a restricted Runner: the released Account-material sealing applies. */
   | Readonly<{ kind: 'account' }>
   | Readonly<{ kind: 'runner'; material: ProtectedActionMaterial }>
+  | Readonly<{ kind: 'machine'; material: ProtectedActionMaterial }>
+  | Readonly<{ kind: 'plain' }>
+  | Readonly<{ kind: 'needs_account_material' }>
   | Readonly<{ kind: 'unavailable' }>;
 
-function openPublishedRunnerEnvelope(
+function openPublishedMachineEnvelope(
   published: string,
   accountContentSecret: Uint8Array,
 ): Uint8Array | null {
@@ -94,7 +97,7 @@ export function resolveMachineProtectedActionMaterial(params: Readonly<{
   target: ExternalActionTargetV1;
   homeServerIdentityId: string;
   accountId: string;
-  accountMaterial: ProtectedActionMaterial;
+  accountMaterial?: ProtectedActionMaterial;
 }>): MachineProtectedActionMaterialResolution {
   const target = params.target;
   let row: ExternalActionMachineBootstrapV1 | undefined;
@@ -108,9 +111,40 @@ export function resolveMachineProtectedActionMaterial(params: Readonly<{
     if (claimed.length > 1) return { kind: 'unavailable' };
     row = claimed[0];
   }
-  if (!row || row.kind !== 'ephemeral_session_runner') return { kind: 'account' };
+  if (!row) return { kind: 'account' };
+  if (row.kind !== 'ephemeral_session_runner') {
+    const shared = row.access !== undefined && row.access !== null
+      && row.access.custodian.accountId !== params.accountId;
+    // Resource mode, not actor/custodian equality, decides a Plain invocation.
+    // Older rows without an access projection retain released Account sealing.
+    if (!shared && row.access?.resourceMode !== 'plain') return { kind: 'account' };
+    if (row.access?.accessState !== 'ready'
+      || !row.installationId || row.revokedAt !== null || row.replacedByMachineId !== null) {
+      return { kind: 'unavailable' };
+    }
+    if (row.access.resourceMode === 'plain') {
+      const resolution = resolvePublishedMachineDataEncryptionKeyV1({
+        machine: row, openedDataEncryptionKey: null, viewerAccountId: params.accountId,
+      });
+      return resolution.status === 'plain' ? { kind: 'plain' } : { kind: 'unavailable' };
+    }
+    if (!params.accountMaterial) return { kind: 'needs_account_material' };
+    const openedDataEncryptionKey = typeof row.dataEncryptionKey === 'string'
+      ? openPublishedMachineEnvelope(row.dataEncryptionKey, params.accountMaterial.machineKey)
+      : null;
+    const resolution = resolvePublishedMachineDataEncryptionKeyV1({
+      machine: row,
+      openedDataEncryptionKey,
+      expectedAccountMode: 'e2ee',
+      viewerAccountId: params.accountId,
+    });
+    return resolution.status === 'e2ee'
+      ? { kind: 'machine', material: { type: 'dataKey', machineKey: resolution.dataKey } }
+      : { kind: 'unavailable' };
+  }
+  if (!params.accountMaterial) return { kind: 'needs_account_material' };
   const openedDataEncryptionKey = typeof row.dataEncryptionKey === 'string'
-    ? openPublishedRunnerEnvelope(row.dataEncryptionKey, params.accountMaterial.machineKey)
+    ? openPublishedMachineEnvelope(row.dataEncryptionKey, params.accountMaterial.machineKey)
     : null;
   const resolution = resolvePublishedMachineDataEncryptionKeyV1({
     machine: {
