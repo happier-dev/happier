@@ -37,7 +37,21 @@ on:
         default: ""
         type: string
       resume_run_id:
-        description: "Completed nightly run — Reuse its unsigned desktop candidates for the exact source"
+        description: "Completed origin run — Reuse its admitted desktop artifacts for the exact source"
+        required: false
+        default: ""
+        type: string
+      resume_workflow:
+        description: "Recovery — Workflow that produced the origin's desktop artifacts"
+        required: false
+        default: nightly-dev.yml
+        type: choice
+        options:
+          - nightly-dev.yml
+          - release.yml
+          - release-preview-and-production.yml
+      resume_operation_id:
+        description: "Recovery — Exact conductor operation ID for a release origin (empty for nightly)"
         required: false
         default: ""
         type: string
@@ -178,9 +192,11 @@ jobs:
     uses: ./.github/workflows/resolve-release-resume.yml
     with:
       origin_run_id: ${{ inputs.resume_run_id }}
-      expected_workflow: .github/workflows/nightly-dev.yml
+      expected_workflow: ${{ format('.github/workflows/{0}', inputs.resume_workflow || 'nightly-dev.yml') }}
       expected_channel: ${{ inputs.environment }}
       expected_source_sha: ${{ inputs.source_ref }}
+      expected_operation_id: ${{ inputs.resume_operation_id || '' }}
+      status_artifact_name: ${{ inputs.resume_workflow == 'release-preview-and-production.yml' && inputs.environment == 'preview' && 'happier-release-status-preview' || 'happier-release-status' }}
 
   resolve_source:
     name: Resolve source ref to SHA
