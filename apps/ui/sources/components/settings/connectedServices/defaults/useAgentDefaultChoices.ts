@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { useApplySettings } from '@/sync/store/settingsWriters';
-import { useSettingsSelector } from '@/sync/store/hooks';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import {
@@ -13,6 +13,7 @@ import {
 } from './agentDefaultChoices';
 
 const NO_AGENTS: readonly AgentDefaultChoiceAgent[] = [];
+const NO_CHOICES: readonly AgentDefaultChoice[] = [];
 
 /**
  * The ★ menu's data for one account or pool: the agents that sign in through its service (from the
@@ -21,26 +22,21 @@ const NO_AGENTS: readonly AgentDefaultChoiceAgent[] = [];
  */
 export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeBindingTargetV1): Readonly<{
     choices: readonly AgentDefaultChoice[];
-    setDefault: (agentId: string, makeDefault: boolean) => void;
+    setDefault: (agentId: string, makeDefault: boolean) => Promise<void>;
+    disabledReason: string | undefined;
 }> {
     const { agentEntries, agentsKnown } = useConnectedServicesIndex({ agents: 'cached' });
-    const settings = useSettingsSelector((settings) => ({
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    }));
-    const applySettings = useApplySettings();
-    const defaultSettings = React.useMemo(() => ({
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    }), [settings.connectedAccountPurposeBindingsV1, settings.connectedServicesDefaultAuthByAgentIdV1]);
+    const { catalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const agents = agentsKnown ? agentEntries : NO_AGENTS;
     const choices = React.useMemo(
-        () => buildAgentDefaultChoices({ agents, settings: defaultSettings, target }),
-        [agents, defaultSettings, target],
+        () => catalog.value ? buildAgentDefaultChoices({ agents, settings: legacySettings, purposeBindings: catalog.value, target }) : NO_CHOICES,
+        [agents, catalog.value, legacySettings, target],
     );
-    const setDefault = React.useCallback((agentId: string, makeDefault: boolean) => {
-        const written = writeAgentDefaultChoice({ agents, settings: defaultSettings, target, agentId, makeDefault });
-        if (written) applySettings(written);
-    }, [agents, applySettings, defaultSettings, target]);
-    return React.useMemo(() => ({ choices, setDefault }), [choices, setDefault]);
+    const setDefault = React.useCallback(async (agentId: string, makeDefault: boolean) => {
+        if (!agentsKnown) throw new Error('agent_catalog_unavailable');
+        await mutateDefaults((purposeBindings, settings) => writeAgentDefaultChoice({ agents, settings, purposeBindings, target, agentId, makeDefault }));
+    }, [agents, agentsKnown, mutateDefaults, target]);
+    const disabledReason = !agentsKnown || catalog.status === 'loading' ? t('common.loading')
+        : catalog.status !== 'ready' || catalog.stale ? t('common.unavailable') : undefined;
+    return React.useMemo(() => ({ choices, setDefault, disabledReason }), [choices, setDefault, disabledReason]);
 }
