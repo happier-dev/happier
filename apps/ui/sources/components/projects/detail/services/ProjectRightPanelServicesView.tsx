@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices';
 import { createProjectServicePlacementRenderer } from './ProjectServicePlacementControls';
+import { ProjectServicePlacementObservationProvider } from './projectServicePlacementObservation';
 import { useProjectDefinitionInspection } from '@/components/projects/projectSetup/useProjectDefinitionInspection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -44,12 +45,12 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
         return document?.status === 'valid' ? Object.fromEntries(Object.entries(document.manifest.services ?? {}).map(([name, service]) =>
             [name, { portable: service.execution === 'portable', ...(service.memoryDemand ? { memoryDemand: service.memoryDemand } : {}) }])) : {};
     }, [inspection.read]);
-    const renderServicePlacement = React.useMemo(() => createProjectServicePlacementRenderer(
-        props.serverId && props.machineId && props.workspaceRefId
-            ? { serverId: props.serverId, machineId: props.machineId, refId: props.workspaceRefId } : null,
-        declarations,
-    ), [declarations, props.machineId, props.serverId, props.workspaceRefId]);
-    return (
+    const placementSource = React.useMemo(() => props.serverId && props.machineId && props.workspaceRefId
+        ? { serverId: props.serverId, machineId: props.machineId, refId: props.workspaceRefId } : null,
+    [props.machineId, props.serverId, props.workspaceRefId]);
+    const renderServicePlacement = React.useMemo(() => createProjectServicePlacementRenderer(placementSource, declarations),
+        [declarations, placementSource]);
+    const body = (
         <LocalServicesSurfaceHost
             machineId={props.machineId}
             serverId={props.serverId}
@@ -68,4 +69,5 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
             testID={props.testID ?? 'project-rightpanel-services'}
         />
     );
+    return placementSource ? <ProjectServicePlacementObservationProvider source={placementSource}>{body}</ProjectServicePlacementObservationProvider> : body;
 }

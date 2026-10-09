@@ -7,6 +7,9 @@ import { buildLocalServiceRows } from '@/sync/domains/local/services/serviceRow'
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 const remote = vi.hoisted(() => vi.fn());
 // The addressed daemons are the network boundary; placement, relocation and Action policy stay real.
@@ -51,6 +54,7 @@ afterEach(() => {
   fixture = undefined;
   remote.mockReset();
   storage.getState().clearProjectAccountRowsScope();
+  actionOperationStore.reset();
   vi.restoreAllMocks();
 });
 
@@ -71,8 +75,10 @@ async function setup(options: Readonly<{
   modelOnly?: boolean;
   /** Wait for an enabled Runs on (custody known); off for states that keep it disabled. */
   waitEnabled?: boolean;
+  sharedObservation?: boolean;
 }>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
+  let placementReadsFail = false;
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -82,6 +88,7 @@ async function setup(options: Readonly<{
     'https://service-placement-ui.test',
     {
       handleRequest: async (path, init) => {
+        if (path === '/v1/projects/execution/config/read' && placementReadsFail) return json({ error: 'unavailable' }, 503);
         if (path === '/v1/projects/execution/config/read')
           return json(options.saved
             ? { status: 'present', revision: 1, content: { t: 'plain', v: { ...base, services: { server: options.saved } } } }
@@ -106,7 +113,7 @@ async function setup(options: Readonly<{
   const settingsScope = storage.getState().settingsScope;
   if (!settingsScope) throw new Error('expected_settings_scope');
   storage.getState().applySettingsForScope(settingsScope, settingsParse({ ...storage.getState().settings,
-    actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.service.placement.set': ['ui'], 'projects.service.relocate': ['ui'] } },
+    actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.service.placement.set': ['ui'], 'projects.service.relocate': ['ui'], 'action.operations.cancel': ['ui'] } },
   }), (storage.getState().settingsVersion ?? 0) + 1);
   const serverId = fixture.home.id;
   const scope = { serverId, accountId: 'artifact-account' };
@@ -153,7 +160,8 @@ async function setup(options: Readonly<{
     confidence: 'high',
     actions: ['manage'],
   };
-  remote.mockImplementation(async ({ machineId }) => {
+  remote.mockImplementation(async ({ machineId, method }) => {
+    if (method === 'actionOperation.cancel.v1') return { kind: 'requested' };
     if (options.actualFails) throw new Error('owner_unavailable');
     return {
     protocolVersion: 1,
@@ -167,8 +175,22 @@ async function setup(options: Readonly<{
   };
   });
   let setLifecycle: (key: string) => void = () => {};
-  const { ProjectServicePlacementControls, useProjectServicePlacement } =
+  const placementOwner =
     await import('./ProjectServicePlacementControls');
+  const { ProjectServicePlacementControls, useProjectServicePlacement } = placementOwner;
+  // This consumer contract deliberately stays below the disabled Move producer.
+  // Its real caller attaches the accepted Action receipt, not a fabricated runtime outcome.
+  const observationOwner = options.sharedObservation
+    ? await import('./projectServicePlacementObservation') : null;
+  let attach: ((operation: ActionOperationSnapshotV1) => void) | undefined;
+  let setDetail: ((open: boolean) => void) | undefined;
+  let setSourceRef: ((refId: string) => void) | undefined;
+  function ObservationProbe() {
+    const observation = observationOwner!.useProjectServicePlacementObservation('server');
+    attach = operation => observation.attach({ operationId: operation.operationId,
+      destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } } });
+    return null;
+  }
   let model: ReturnType<typeof useProjectServicePlacement> | null = null;
   function ModelProbe() {
     model = useProjectServicePlacement({ serverId, refId: source.id, machineId: source.machineId }, 'server');
@@ -178,17 +200,28 @@ async function setup(options: Readonly<{
     await import('@/components/projects/workers/WorkerDestinationPicker');
   function Host() {
     const [lifecycleKey, setKey] = React.useState('initial');
+    const [detail, setDetailOpen] = React.useState(false);
+    const [refId, setRefId] = React.useState(source.id);
+    setDetail = setDetailOpen;
+    setSourceRef = setRefId;
     setLifecycle = setKey;
     if (options.modelOnly) return <ModelProbe />;
-    return (
+    const control = (
       <ProjectServicePlacementControls
+        key={options.sharedObservation ? 'list' : detail ? 'detail' : 'list'}
         testID="placement"
         serviceName="server"
-        source={{ serverId, refId: source.id, machineId: source.machineId }}
+        source={{ serverId, refId, machineId: source.machineId }}
         declaration={{ portable: options.portable !== false }}
         lifecycleKey={lifecycleKey}
       />
     );
+    if (!observationOwner) return control;
+    const Provider = observationOwner.ProjectServicePlacementObservationProvider;
+    return <Provider source={{ serverId, refId, machineId: source.machineId }}><ObservationProbe />{control}
+      {detail ? <ProjectServicePlacementControls testID="detail.placement" serviceName="server"
+        source={{ serverId, refId, machineId: source.machineId }} declaration={{ portable: options.portable !== false }} lifecycleKey={lifecycleKey} /> : null}
+    </Provider>;
   }
   const screen = await renderScreen(<Host />);
   if (options.modelOnly) await vi.waitFor(() => expect(model?.state.kind).toBe('ready'));
@@ -206,10 +239,118 @@ async function setup(options: Readonly<{
     });
   };
   const runsOn = () => screen.findAllByTestId('placement.runsOn')[0]!;
-  return { screen, writes, choose, runsOn, model: () => model!, setLifecycle: (key: string) => setLifecycle(key) };
+  return { screen, writes, choose, runsOn, model: () => model!, serverId,
+    failPlacementReads: () => { placementReadsFail = true; },
+    setLifecycle: (key: string) => setLifecycle(key), setDetail: (open: boolean) => setDetail!(open),
+    setSourceRef: (refId: string) => setSourceRef!(refId), attach: (operation: ActionOperationSnapshotV1) => attach!(operation) };
 }
 
 describe('Service Runs on through the placement and relocation Actions', () => {
+  it.each(['failed', 'cancelled'] as const)('retains the accepted Move through list/detail remounts, copying settlement (%s) and Source retirement', async terminalState => {
+    // Count live subscriptions, not calls: remounting two presentation bodies must
+    // retain one accepted-operation observer and one Cancel continuation owner.
+    const subscribe = actionOperationStore.subscribe;
+    let observers = 0;
+    vi.spyOn(actionOperationStore, 'subscribe').mockImplementation(listener => {
+      observers += 1;
+      const unsubscribe = subscribe(listener);
+      return () => { observers -= 1; unsubscribe(); };
+    });
+    const { screen, serverId, attach, setDetail, setSourceRef, writes } = await setup({ running: true, sharedObservation: true });
+    const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-service-move', revision: 1,
+      actionId: 'projects.service.relocate', state: 'running', scope: { accountId: 'artifact-account', machineId: 'devbox' },
+      title: 'Move server', createdAt: 1, startedAt: 2, cancellation: 'supported',
+      domainRef: { kind: 'projectService', purpose: 'relocation', workspace: {
+        serverId, machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/happier' },
+      declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'server' } } },
+      progress: { kind: 'phase', phase: 'copying', label: 'Copying current files' } };
+    await act(async () => {
+      publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [operation] });
+      attach(operation);
+      setDetail(true);
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeTruthy());
+    expect(screen.findByTestId('detail.placement.move.inspect')).toBeTruthy();
+    expect(observers).toBe(1);
+    expect(screen.getTextContent()).toContain('Copying current files');
+    await screen.pressByTestIdAsync('placement.move.stop');
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('projectServices.cancelPending'));
+    expect(actionOperationStore.getSnapshot().operationsByKey.values().next().value?.snapshot.state).toBe('running');
+    await act(async () => { setDetail(false); });
+    expect(screen.findByTestId('detail.placement.move.inspect')).toBeNull();
+    expect(screen.findByTestId('placement.move.inspect')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('projectServices.cancelPending');
+    expect(observers).toBe(1);
+    // The native feed corroborates the operation's already-confirmed stop.
+    remote.mockImplementation(async ({ machineId }) => ({ protocolVersion: 1,
+      snapshot: { v: 1, machineId, updatedAt: 3, targets: [] } }));
+    await act(async () => {
+      publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [{
+        ...operation, revision: 2, state: terminalState, settledAt: 3,
+        ...(terminalState === 'failed' ? { error: { errorCode: 'service_preparation_failed', error: 'Preparation failed' } } : {}),
+      }] });
+      setDetail(true);
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeTruthy());
+    expect(screen.findByTestId('detail.placement.move.inspect')).toBeTruthy();
+    expect(screen.findByTestId('placement.move.refused')).toBeNull();
+    expect(screen.findByTestId('placement.move.stop')).toBeNull();
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(
+      terminalState === 'failed' ? 'projectServices.moveFailedStopped' : 'projectServices.moveCancelledStopped'));
+    expect(screen.findAllByTestId('placement.runsOn')[0]?.props.disabled).toBe(false);
+    expect(screen.findAllByTestId('placement.picker')[0]?.props.selected).toEqual({ kind: 'primary' });
+    expect(writes).toEqual([]);
+    await act(async () => { setSourceRef('another-checkout'); });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeNull());
+    expect(observers).toBe(0);
+  });
+
+  it('shows canonical uncertain-start observation and retains Inspect without inferring stopped recovery', async () => {
+    const { screen, serverId, attach, runsOn, choose, writes, failPlacementReads, setLifecycle } = await setup({ running: false, sharedObservation: true });
+    const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'uncertain-service-move', revision: 1,
+      actionId: 'projects.service.relocate', state: 'running', scope: { accountId: 'artifact-account', machineId: 'devbox' },
+      title: 'Move server', createdAt: 1, startedAt: 2, cancellation: 'supported',
+      domainRef: { kind: 'projectService', purpose: 'relocation', workspace: {
+        serverId, machineId: 'hz-build-1', workspaceId: 'worker-checkout', rootPath: '/worker/happier' },
+      declaration: { workspaceRefId: 'worker-checkout', selection: { kind: 'manifest', name: 'server' } } },
+      progress: { kind: 'phase', phase: 'starting', label: 'Starting service' },
+      observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } };
+    await act(async () => {
+      publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [operation] });
+      attach(operation);
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeTruthy());
+    expect(screen.getTextContent()).toContain('projectServices.moveUnknown');
+    expect(screen.getTextContent()).toContain('Starting service');
+    expect(runsOn().props.disabled).toBe(true);
+    expect(runsOn().props.subtitle).not.toBe('projectServices.moveFailedStopped');
+    await choose('hz-build-1');
+    expect(writes).toEqual([]);
+    failPlacementReads();
+    await act(async () => { setLifecycle('settings-unavailable'); });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.unavailable')).toBeTruthy());
+    expect(screen.findByTestId('placement.move.inspect')).toBeTruthy();
+  });
+  it.each(['stopping', 'starting'])('retains a failed %s operation without treating terminal state and absence as safe recovery', async phase => {
+    const { screen, serverId, attach, runsOn, choose, writes } = await setup({ running: false, sharedObservation: true });
+    const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'unproven-service-move', revision: 1,
+      actionId: 'projects.service.relocate', state: 'failed', scope: { accountId: 'artifact-account', machineId: 'devbox' },
+      title: 'Move server', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+      domainRef: { kind: 'projectService', purpose: 'relocation', workspace: {
+        serverId, machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/happier' },
+      declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'server' } } },
+      progress: { kind: 'phase', phase, label: 'Move phase' }, error: { errorCode: 'move_failed', error: 'Move failed' } };
+    await act(async () => {
+      publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [operation] });
+      attach(operation);
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeTruthy());
+    expect(screen.getTextContent()).toContain('projectServices.moveUnknown');
+    expect(screen.findByTestId('placement.move.refused')).toBeNull();
+    expect(runsOn().props.disabled).toBe(true);
+    await choose('hz-build-1');
+    expect(writes).toEqual([]);
+  });
   it('passes the current declaration portability and memory to the row placement owner', async () => {
     const { createProjectServicePlacementRenderer } = await import('./ProjectServicePlacementControls');
     const facts = { portable: false, memoryDemand: { bytes: 2147483648 } };

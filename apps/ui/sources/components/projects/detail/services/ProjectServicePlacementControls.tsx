@@ -6,6 +6,8 @@ import type {
   ProjectServicePlacementV1,
 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import { executeServiceRelocationAction, type ServiceRelocationOutcome } from './serviceRelocationAction';
+import { ProjectServiceRelocateResultV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { ProjectServicePlacementObservationProvider, useProjectServicePlacementObservation } from './projectServicePlacementObservation';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
@@ -22,9 +24,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
-import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import { randomUUID } from '@/platform/randomUUID';
@@ -166,8 +166,7 @@ type MoveState =
   | Readonly<{ phase: 'confirm'; destination: ProjectExecutionChoiceV1 }>
   | Readonly<{ phase: 'requesting'; destination: ProjectExecutionChoiceV1 }>
   | Readonly<{ phase: 'approval'; destination: ProjectExecutionChoiceV1; artifactId: string }>
-  | Readonly<{ phase: 'operation'; destination: ProjectExecutionChoiceV1; operationId: string }>
-  | Readonly<{ phase: 'refused'; text: string; code?: string; settledMove?: true }>
+  | Readonly<{ phase: 'refused'; text: string; code?: string }>
   | null;
 
 /**
@@ -256,6 +255,12 @@ export function ProjectServicePlacementControls(
     lifecycleKey?: string;
   }>,
 ) {
+  const observation = useProjectServicePlacementObservation(props.serviceName);
+  return observation.hasOwner ? <ProjectServicePlacementControlsBody {...props} />
+    : <ProjectServicePlacementObservationProvider source={props.source}><ProjectServicePlacementControlsBody {...props} /></ProjectServicePlacementObservationProvider>;
+}
+
+function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof ProjectServicePlacementControls>) {
   const testID = props.testID ?? `project-service-placement:${props.serviceName}`;
   const { theme } = useUnistyles();
   const compact = useViewportClass() === 'compact';
@@ -263,7 +268,9 @@ export function ProjectServicePlacementControls(
   const { refresh } = placement;
   const anchorRef = React.useRef<View>(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const [move, setMove] = React.useState<MoveState>(null);
+  const [requestedMove, setMove] = React.useState<MoveState>(null);
+  const observation = useProjectServicePlacementObservation(props.serviceName);
+  const move = observation.attachment ? { phase: 'operation' as const, ...observation.attachment } : requestedMove;
   const { binding } = useServerCredentialAccountScopeBinding(props.source.serverId);
   const moveRequest = React.useRef<AbortController | null>(null);
   React.useEffect(() => {
@@ -289,31 +296,62 @@ export function ProjectServicePlacementControls(
     serverId: props.source.serverId,
     onExecuted: refresh,
   });
-  const operation = useActionOperation({
-    serverId: props.source.serverId,
-    operationId: move?.phase === 'operation' ? move.operationId : '',
-  });
-  const stop = useActionOperationStopControl(move?.phase === 'operation' ? operation : null);
+  const operation = observation.operation;
+  const stop = observation.stop;
   const operationState = move?.phase === 'operation' ? operation?.snapshot.state ?? null : null;
+  const terminal = operationState === 'succeeded' || operationState === 'failed' || operationState === 'cancelled';
   React.useEffect(() => {
-    // The accepted Move is observed through its operation; its settlement re-reads the actual binding.
-    if (operationState === 'succeeded') { setMove(null); refresh(); }
-    else if (operationState === 'failed' || operationState === 'cancelled') {
-      setMove({ phase: 'refused', settledMove: true, text: t('projectServices.moveRefused'),
-        ...(operation?.snapshot.error ? { code: operation.snapshot.error.errorCode } : {}) });
-      refresh();
+    // A terminal Action state alone says nothing about native service custody.
+    if (!terminal) return;
+    refresh();
+    if (operationState === 'succeeded') {
+      const result = ProjectServiceRelocateResultV1Schema.safeParse(operation?.snapshot.result);
+      if (result.success && (result.data.status === 'moved' || result.data.status === 'unchanged')) observation.clear();
     }
-  }, [operation?.snapshot.error, operationState, refresh]);
+  }, [observation.clear, operation?.snapshot.result, operationState, refresh, terminal]);
+  const phase = operation?.snapshot.progress?.kind === 'phase' ? operation.snapshot.progress.phase : null;
+  const outcomeUncertain = operation?.snapshot.observation?.kind === 'outcome_uncertain'
+    || operation?.snapshot.error?.errorCode === 'outcome_uncertain';
+  // The canonical relocation producer reports copying only after native Stop confirms;
+  // the Action operation owner retains its final phase on failure/cancellation.
+  // Absence is separately observed, so neither generic terminal state nor a lost feed proves Stop.
+  const stoppedBeforeStart = terminal && phase === 'copying' && !outcomeUncertain
+    && operation?.observation === 'available' && observed?.status === 'absent';
 
   const custodyKnown = observed?.status === 'present' || observed?.status === 'absent';
-  const moving = move?.phase === 'requesting' || move?.phase === 'approval' || move?.phase === 'operation';
+  const moving = move?.phase === 'requesting' || move?.phase === 'approval' || (move?.phase === 'operation' && !stoppedBeforeStart);
   const disabled = !ready || placement.busy || moving || !custodyKnown || !portable;
   const notice = noticeText(placement.notice);
+  const toName = pendingLabel.name ?? (pendingDestination?.kind === 'primary' ? sourceName : '');
+  const operationBanner = move?.phase === 'operation' ? (
+    <AttentionBanner
+      testID={`${testID}.move.operation`}
+      tone={terminal || outcomeUncertain ? 'warning' : 'neutral'}
+      title={operation?.observation !== 'available' || outcomeUncertain ? t('projectServices.moveUnknown')
+        : operation?.snapshot.observation?.kind === 'stop_unconfirmed' || operation?.snapshot.error?.errorCode === 'stop_unconfirmed'
+          ? t('project.run.stopUnconfirmed')
+          : stoppedBeforeStart ? t(operationState === 'cancelled' ? 'projectServices.moveCancelledStopped' : 'projectServices.moveFailedStopped')
+            : terminal ? t('projectServices.moveUnknown')
+              : stop?.pending || stop?.stopRequested ? t('projectServices.cancelPending')
+                : t('projectServices.moving', { service: props.serviceName, to: toName })}
+      description={operation?.snapshot.progress?.label}
+      {...(operation?.snapshot.error ? { details: [operation.snapshot.error.errorCode] } : {})}
+      action={{ label: t('projectServices.inspect'), testID: `${testID}.move.inspect`,
+        onPress: () => openActionOperationDetail({ serverId: props.source.serverId, operationId: move.operationId }) }}
+      secondaryAction={!terminal && operation?.observation === 'available' && operation?.snapshot.cancellation === 'supported' && stop ? {
+        label: t('common.cancel'), testID: `${testID}.move.stop`, disabled: stop.pending || stop.stopRequested,
+        onPress: stop.requestStop,
+      } : null}
+    />
+  ) : null;
 
   if (state.kind === 'refused' || state.kind === 'error') {
     return (
-      <Item testID={`${testID}.unavailable`} title={t('projectServices.runsOn')}
-        subtitle={t('projectServices.settingsUnavailable')} mode="info" showChevron={false} />
+      <View testID={testID}>
+        <Item testID={`${testID}.unavailable`} title={t('projectServices.runsOn')}
+          subtitle={t('projectServices.settingsUnavailable')} mode="info" showChevron={false} />
+        {operationBanner}
+      </View>
     );
   }
 
@@ -341,7 +379,7 @@ export function ProjectServicePlacementControls(
         ? t('projectServices.actualAmbiguousDetail')
         : !portable
           ? t('projectServices.primaryOnly')
-          : move?.phase === 'refused' && move.settledMove && observed?.status === 'absent' && desiredName
+          : stoppedBeforeStart && desiredName
           ? t('projectServices.willStartOn', { name: desiredName })
           : actual || !runsOn
             ? undefined
@@ -380,7 +418,8 @@ export function ProjectServicePlacementControls(
       if (result.status === 'accepted') {
         publishActionOperationObservation({ serverId: props.source.serverId, machineId: result.operation.scope.machineId,
           observation: 'available', snapshots: [result.operation] });
-        setMove({ phase: 'operation', destination, operationId: result.operation.operationId });
+        setMove(null);
+        observation.attach({ destination, operationId: result.operation.operationId });
         return;
       }
       if (result.status === 'moved' || result.status === 'unchanged') {
@@ -413,7 +452,6 @@ export function ProjectServicePlacementControls(
   };
 
   const fromName = actualName ?? sourceName;
-  const toName = pendingLabel.name ?? (pendingDestination?.kind === 'primary' ? sourceName : '');
 
   return (
     <View testID={testID}>
@@ -496,25 +534,7 @@ export function ProjectServicePlacementControls(
           title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: toName })}
           description={t('projectWorkers.approvalPending')} />
       ) : null}
-      {move?.phase === 'operation' ? (
-        <AttentionBanner
-          testID={`${testID}.move.operation`}
-          tone="neutral"
-          title={stop.pending || stop.stopRequested ? t('projectServices.cancelPending')
-            : t('projectServices.moving', { service: props.serviceName, to: toName })}
-          action={{
-            label: t('projectServices.inspect'),
-            testID: `${testID}.move.inspect`,
-            onPress: () => openActionOperationDetail({ serverId: props.source.serverId, operationId: move.operationId }),
-          }}
-          secondaryAction={operation?.snapshot.cancellation === 'supported' ? {
-            label: t('common.cancel'),
-            testID: `${testID}.move.stop`,
-            disabled: stop.pending || stop.stopRequested,
-            onPress: stop.requestStop,
-          } : null}
-        />
-      ) : null}
+      {operationBanner}
       {move?.phase === 'refused' ? (
         <AttentionBanner
           testID={`${testID}.move.refused`}
@@ -539,7 +559,7 @@ export function ProjectServicePlacementControls(
           primary={{ title: t('projectServices.thisMachine', { name: sourceName }) }}
           poolSelection="automatic"
           servicePresentation
-          selected={pendingDestination ?? placement.displayChoice}
+          selected={stoppedBeforeStart ? placement.displayChoice : pendingDestination ?? placement.displayChoice}
           onChoose={choose}
         />
       ) : null}
