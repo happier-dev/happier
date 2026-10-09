@@ -1,4 +1,8 @@
 import axios from 'axios';
+import nacl from 'tweetnacl';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { chmod, copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -143,7 +147,8 @@ describe('accepted Project Service declaration starter', () => {
         } }, stopProcessTree: async () => {}, probeProcessGroup: () => 'absent',
             config: { maxSessions: 10, idleTimeoutMs: 60_000, bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
                 bufferRetentionMs: 600_000, urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 }, env: {}, platform: 'linux' });
-        const operationRuntime = createHostActionOperationRuntime({ machineId: targetWorkspace.machineId, resolveAccountId: async () => 'owner',
+        const operationRuntime = createHostActionOperationRuntime({ machineId: targetWorkspace.machineId,
+            custodyBinding: { serverId: 'home', installationId: 'installation' }, resolveAccountId: async () => 'owner',
             ...(workerExecution ? { generateOperationId: () => 'setup-operation' } : {}) });
         const owner = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
             // Plugin dependency installation is unreachable for literal Project commands.
@@ -219,6 +224,47 @@ describe('accepted Project Service declaration starter', () => {
             trustSetupDigest(value: string) { trustedSetupDigest = value; },
             retireRegistryProjection() { projectionLifetime.abort(); } };
     }
+
+    it('starts a reviewed Service for an admitted restricted requester without owner credentials', async () => {
+        const h = await fixture();
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+            accountId: 'bob', principalId: 'bob', credentialId: 'pat', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+            serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation', actionId: 'localServices.launcher.start',
+            requestId: 'service-request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+            grant: { v: 1, actions: { families: [], ids: ['localServices.launcher.start'] }, targets: { sessions: [], machines: ['machine'] },
+                approve: false, origins: [], models: null, permissionModes: null, create: null },
+        } });
+        vi.mocked(axios.get).mockImplementation(async url => {
+            if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+            if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+            return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        });
+        const admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: 'bob', encryption: null },
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+        if (!admitted) throw new Error('Requester custody not admitted');
+        const rowPost = h.post.getMockImplementation()!;
+        h.post.mockImplementation(async (url, body, options) => String(url).endsWith('/verify')
+            ? { status: 200, data: { ok: true } } : rowPost(url, body, options));
+        const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', target: authorization.binding.target,
+            installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey, isCurrent: admitted.isCurrent });
+        if (!carrier) throw new Error('Requester HTTP custody not admitted');
+        // This replaces constructor state, not admission or native review logic.
+        Reflect.deleteProperty(h.runtime, 'credentials');
+        Object.assign(h.runtime, { accountId: 'bob', accountAuthorization: carrier, isCurrent: admitted.isCurrent });
+        const ingress = { ...h.ingress, callerInputAuthorization: carrier, callerInputConstraints: { models: null, permissionModes: null },
+            machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'bob' } };
+        const review = await h.routes.startTarget!(h.request, ingress, h.context);
+        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, ingress, h.context))
+            .toMatchObject({ status: 'succeeded' });
+        const handle = h.owner.listProjectServices()[0]!;
+        expect(handle.requester.accountId).toBe('bob');
+        await admitted.dispose();
+        // Installed requester invocation retirement does not revoke custody of its already-running Service.
+        expect(handle.isCurrent()).toBe(true);
+        await handle.stop();
+    });
 
     it('reviews fresh accepted bytes, starts a URL-less owned process through final Exec, and retains exact requester custody', async () => {
         const h = await fixture();
