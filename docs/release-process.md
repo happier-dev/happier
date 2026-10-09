@@ -299,6 +299,18 @@ publication. Full release callers forward the canonical resolver's admitted
 artifact maps and original run number; standalone nightly recovery retains its
 legacy single-channel artifact admission.
 
+When only desktop publication remains, an authorized maintainer can dispatch
+`build-tauri.yml` from corrected `dev` control with `source_ref` set to the exact
+approved candidate, `resume_run_id` set to its terminal original run, and
+`release_notes_id` set to the approved notes. For a release origin, also set
+`resume_workflow=release.yml` or `release-preview-and-production.yml` and
+`resume_operation_id` to the exact conductor operation. `environment` selects
+the channel's status and artifacts; the canonical resolver still verifies the
+operation, source, run, and archive digests. `candidate_cli_version` can pin the
+immutable CLI used by the production setup gate. All available finalized
+platforms skip builds, signing, and notarization. This desktop-only recovery
+does not run mobile flows or change the failed parent operation's status.
+
 For the same-source origin, the canonical resume resolver can also retain accepted
 OTA, native iOS/Android, and APK flows from exact channel-scoped successful jobs
 and their decisive successful steps. The original Expo action remains unchanged;
