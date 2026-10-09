@@ -307,6 +307,7 @@ function describeNoWorkerReason(reason: ProjectWorkerNoAcceptanceFailureDetailsV
     case 'draining': return t('projectWorkers.draining');
     case 'unsupported': return t('projectWorkers.unsupported');
     case 'forbidden': return t('projectWorkers.accessRefused');
+    case 'worker_copy_missing':
     case 'workspace_unavailable': return t('projectWorkers.workspaceUnavailable');
     case 'memory_insufficient': return t('projectWorkers.tooSmallGeneric');
   }

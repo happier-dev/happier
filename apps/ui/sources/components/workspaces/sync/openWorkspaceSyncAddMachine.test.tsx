@@ -28,7 +28,8 @@ installSessionHandoffCommonModuleMocks({
         return createStorageModuleStub({
             useMachineListByServerId: () => ({ server_a: machines }),
             useMachineRecordValues: () => machines,
-            useSetting: (key: string) => key === 'workspaceRefsV1' || key === 'workspaceSyncRelationshipsV1' ? [] : undefined,
+            useWorkspaceRefs: () => [],
+            useWorkspaceSyncRelationships: () => [],
         });
     },
 });
@@ -94,6 +95,42 @@ async function startAddMachineLink(configure?: (screen: Awaited<ReturnType<typeo
 }
 
 describe('Project Add machine modal', () => {
+    it('opens a missing-worker-copy refusal in the existing create flow, leaving the path for the user to choose', async () => {
+        shownModal.mockReset();
+        createLink.mockReset();
+        const pending = deferred<unknown>();
+        createLink.mockReturnValue(pending.promise);
+        const owner = await import('./openWorkspaceSyncAddMachine');
+        // This is the same non-visual recovery port U3 binds to its Run-on refusal action.
+        expect(owner.openWorkspaceSyncWorkerCopySetup({ serverId: 'server_a', machineId: 'machine_source',
+            workspaceId: 'source_ref', rootPath: '/source' }, { kind: 'no_worker_can_accept', reason: 'worker_copy_missing', unavailable: 'ask',
+            workerCopy: { serverId: 'server_a', sourceWorkspaceRefId: 'source_ref', sourceMachineId: 'machine_source', targetMachineId: 'machine_target' } }, vi.fn())).toBe(true);
+        const config = shownModal.mock.calls[0]?.[0];
+        const setChrome = vi.fn();
+        const screen = await renderScreen(React.createElement(config.component, { ...config.props, onClose: vi.fn(), setChrome }));
+        expect(screen.findByType('MachineSelector').props.selectedMachine?.id).toBe('machine_target');
+        expect(screen.findByType('PathSelectionList').props.initialValue).toBe('');
+        expect(createLink).not.toHaveBeenCalled();
+        await act(async () => invokeTestInstanceHandler(screen.findByType('PathSelectionList'), 'onCommit', '/chosen-worker'));
+        const footer = setChrome.mock.lastCall?.[0]?.footer as React.ReactElement<{ children?: React.ReactNode }>;
+        const submit = React.Children.toArray(footer.props.children).find(child => React.isValidElement(child)
+            && (child.props as { testID?: string }).testID === 'workspace-sync-add-machine-submit') as React.ReactElement<{ onPress: () => void }>;
+        await act(async () => submit.props.onPress());
+        expect(createLink.mock.calls[0]?.[0]?.input).toMatchObject({ sourceWorkspaceRefId: 'source_ref', targetMachineId: 'machine_target',
+            targetPath: '/chosen-worker', purpose: 'worker_clean_copy', mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+        await act(async () => { pending.resolve({ kind: 'approval_required', artifactId: 'worker-approval' }); await pending.promise; });
+        expect(confirmModal).toHaveBeenCalled();
+    });
+
+    it('does not open setup for stale source facts or an unrelated refusal', async () => {
+        shownModal.mockReset();
+        const { openWorkspaceSyncWorkerCopySetup } = await import('./openWorkspaceSyncAddMachine');
+        const source = { serverId: 'server_a', machineId: 'machine_source', workspaceId: 'source_ref', rootPath: '/source' };
+        expect(openWorkspaceSyncWorkerCopySetup(source, { kind: 'no_worker_can_accept', reason: 'not_accepting', unavailable: 'ask' }, vi.fn())).toBe(false);
+        expect(openWorkspaceSyncWorkerCopySetup(source, { kind: 'no_worker_can_accept', reason: 'worker_copy_missing', unavailable: 'ask',
+            workerCopy: { serverId: 'another-home', sourceWorkspaceRefId: 'source_ref', sourceMachineId: 'machine_source', targetMachineId: 'machine_target' } }, vi.fn())).toBe(false);
+        expect(shownModal).not.toHaveBeenCalled();
+    });
     it('names the source folder relative to its machine home, never as a raw absolute path', async () => {
         shownModal.mockReset();
         const { openWorkspaceSyncAddMachine } = await import('./openWorkspaceSyncAddMachine');

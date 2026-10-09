@@ -94,6 +94,7 @@ export function describeMachineDestinationWorkerFacts(
         case 'draining': return t('projectWorkers.draining');
         case 'policy_unavailable': return t('projectWorkers.policyUnavailable');
         case 'forbidden': return t('projectWorkers.accessRefused');
+        case 'worker_copy_missing':
         case 'workspace_unavailable': return t('projectWorkers.workspaceUnavailable');
         case 'unsupported':
         case 'capability_unknown': return t('projectWorkers.unsupported');
