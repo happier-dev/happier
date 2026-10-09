@@ -1,13 +1,20 @@
 import { readStoredCredentials } from '@/persistence';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { readAcpCatalogSettingsFromAccountSettings } from '@/agent/acp/catalog/readAcpCatalogSettingsFromAccountSettings';
-import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
-import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
-import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import {
-  normalizeConfiguredAcpDefinition,
-  resolveAcpRuntimeLaunch,
-} from '@/agent/acp/runtime/definition';
+  refreshSavedSecretCatalogForOperation,
+  SavedSecretOperationAdmissionError,
+  savedSecretOperationAdmissionStatus,
+  type SavedSecretOperationContextV1,
+} from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
+import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
+import { AcpCatalogUnavailableError, requireReadyAcpCatalog, resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
+import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
+import { normalizeConfiguredAcpDefinition } from '@/agent/acp/runtime/definition/configured';
+import { resolveAcpRuntimeLaunch } from '@/agent/acp/runtime/definition/launch';
 import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntimeContextV1,
@@ -28,36 +35,37 @@ const ACCOUNT_CONFIGURED_ACP_SOURCE = Object.freeze({ kind: 'configured' as cons
 
 export async function resolveAccountConfiguredAcpBackend(
   backendId: string,
+  savedSecretOperationContext?: SavedSecretOperationContextV1,
 ): Promise<EngineAdapterResolution | null> {
-  const accountSnapshot = getActiveAccountSettingsSnapshot();
-  if (!accountSnapshot) {
-    return null;
-  }
+  const readSnapshot = () => savedSecretOperationContext ? savedSecretOperationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+  let accountSnapshot = readSnapshot();
+  if (!accountSnapshot?.scopeKey || accountSnapshot.source === 'none') throw new AcpCatalogUnavailableError('account-settings-unavailable');
+  const scopeKey = accountSnapshot.scopeKey;
+  const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const assertAccountCurrent = async () => {
+    if (savedSecretOperationContext && !await savedSecretOperationContext.isCurrent()
+      || readSnapshot()?.scopeKey !== scopeKey || !savedSecretOperationContext && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
+      throw new AcpCatalogUnavailableError('scope-retired');
+    }
+  };
+  const credentials = savedSecretOperationContext?.credentials ?? await readStoredCredentials();
+  await assertAccountCurrent();
+  const credentialScope = credentials && (savedSecretOperationContext
+    ? runWithServerHttpBaseUrl(savedSecretOperationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(credentials))
+    : resolveAccountSettingsScopeKey(credentials));
+  if (!credentials || credentialScope !== scopeKey) throw new AcpCatalogUnavailableError('credentials-unavailable');
+  if (accountSnapshot.acpCatalog?.status !== 'ready') await refreshActiveAcpCatalog({ credentials, operationContext: savedSecretOperationContext });
+  await assertAccountCurrent();
+  accountSnapshot = readSnapshot()!;
+  if (accountSnapshot.source === 'none') throw new AcpCatalogUnavailableError('account-settings-unavailable');
+  const catalog = requireReadyAcpCatalog(accountSnapshot.acpCatalog);
   const settings = accountSnapshot.settings;
-
-  const catalogSettings = readAcpCatalogSettingsFromAccountSettings(settings);
-  if (!catalogSettings.backends.some((backend) => backend.id === backendId)) {
-    return null;
-  }
-
-  const credentials = await readStoredCredentials();
-  if (!credentials) {
-    throw new Error('Account-configured ACP backends require credentials to resolve launch environment');
-  }
-
-  const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(settings, backendId);
+  const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(settings, backendId, catalog);
   if (!configuredBackend) {
     return null;
   }
-  const launchEnv = materializeConfiguredAcpEnvironment({
-    backend: configuredBackend,
-    accountSettings: settings,
-    credentials,
-    savedSecretResources: accountSnapshot.savedSecretResources,
-  });
   const definition = normalizeConfiguredAcpDefinition({
     backend: configuredBackend,
-    launchEnv,
   });
   const agentId = `acp:${configuredBackend.backendId}`;
   const backend: EngineResolutionBackend = Object.freeze({
@@ -110,6 +118,7 @@ export async function resolveAccountConfiguredAcpBackend(
     }),
     definition: Object.freeze({
       mcp: definition.mcp,
+      ...(definition.stderrRules ? { stderrRules: definition.stderrRules } : {}),
     }),
   });
   const runtime: AgentRuntime = Object.freeze({
@@ -152,14 +161,11 @@ export async function resolveAccountConfiguredAcpBackend(
       pluginVersion: '0.0.0',
       agentId,
       localAgentId: configuredBackend.backendId,
-      occurrenceId: `account-configured:${configuredBackend.backendId}:${accountSnapshot.settingsVersion}`,
+      occurrenceId: `account-configured:${configuredBackend.backendId}:${scopeKey}:${savedSecretOperationContext ? 'invocation' : lifetimeToken}:${catalog.revision}:${catalog.revision === 'absent' ? catalog.sourceSettingsVersion : ''}`,
       isCurrent: () => {
-        const currentSnapshot = getActiveAccountSettingsSnapshot();
-        return currentSnapshot?.settingsVersion === accountSnapshot.settingsVersion
-          && resolveConfiguredAcpBackendFromAccountSettings(
-            currentSnapshot.settings,
-            configuredBackend.backendId,
-          ) !== null;
+        const currentSnapshot = readSnapshot();
+        return currentSnapshot?.scopeKey === scopeKey && (savedSecretOperationContext !== undefined || getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken)
+          && currentSnapshot.acpCatalog === catalog && currentSnapshot.source !== 'none';
       },
     }),
     nativeAgentPolicyAgentId: configuredBackend.backendId,
@@ -177,10 +183,50 @@ export async function resolveAccountConfiguredAcpBackend(
     }),
     nativeAgentSessionCapabilities: sessionCapabilities,
     resolveNativeAgentAcpHostLaunch: async (request) => {
+      await assertAccountCurrent();
+      if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
+      const references = Object.values(configuredBackend.env)
+        .flatMap(value => value.t === 'savedSecret' ? [{ ref: value.secretId }] : []);
+      if (references.length > 0) {
+        try {
+          const refresh = () => refreshSavedSecretCatalogForOperation({
+            expectedScopeKey: scopeKey,
+            references,
+            operationContext: savedSecretOperationContext,
+          });
+          await (savedSecretOperationContext
+            ? runWithServerHttpBaseUrl(savedSecretOperationContext.serverHttpBaseUrl, refresh)
+            : refresh());
+        } catch (error) {
+          if (!(error instanceof SavedSecretOperationAdmissionError)) throw error;
+          const field = Object.entries(configuredBackend.env)
+            .find(([, value]) => value.t === 'savedSecret' && value.secretId === error.reference)?.[0];
+          throw new SavedSecretResolutionError({
+            status: savedSecretOperationAdmissionStatus(error.reason),
+            reference: error.reference,
+            consumer: 'acp',
+            field: `env:${field ?? error.reference}`,
+          });
+        }
+      }
+      await assertAccountCurrent();
+      const launchSnapshot = readSnapshot();
+      if (launchSnapshot?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
+      const launchDefinition = normalizeConfiguredAcpDefinition({
+        backend: configuredBackend,
+        launchEnv: materializeConfiguredAcpEnvironment({
+          backend: configuredBackend,
+          accountSettings: launchSnapshot.settings,
+          credentials,
+          savedSecretResources: launchSnapshot.savedSecretResources,
+        }),
+      });
       const launch = await resolveAcpRuntimeLaunch({
-        definition,
+        definition: launchDefinition,
         cwd: request.cwd,
       });
+      await assertAccountCurrent();
+      if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
       return Object.freeze({
         command: launch.command,
         args: Object.freeze([...launch.args]),
@@ -203,6 +249,8 @@ export async function resolveAccountConfiguredAcpBackend(
   if (!engineAdapter) {
     throw new Error(`Account-configured ACP backend '${configuredBackend.backendId}' has no canonical runtime owner`);
   }
+  await assertAccountCurrent();
+  if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
 
   return Object.freeze({
     backendId: configuredBackend.backendId,
