@@ -69,3 +69,12 @@ test('the configured bundled registry source contains projected plugin ids', () 
   const ids = readBundledPluginIds(readFileSync(BUNDLED_PLUGIN_REGISTRY_PATH, 'utf8'));
   assert.ok(ids.has('happier.channels'));
 });
+
+test('the bundled Machine family is categorized without dropping its plugins', () => {
+  const plugins = [...readBundledPluginIds(readFileSync(BUNDLED_PLUGIN_REGISTRY_PATH, 'utf8'))]
+    .map((id) => plugin(id, id));
+  const machines = plugins.filter((entry) => entry.id.startsWith('happier.machine.'));
+  assert.ok(machines.length > 0);
+  const section = categorize(plugins).find((entry) => entry.prefix === 'happier.machine.');
+  assert.deepEqual(section?.plugins, machines);
+});

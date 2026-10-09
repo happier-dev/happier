@@ -75,6 +75,11 @@ const CATEGORIES = [
     title: 'Conversation channels',
     blurb: 'Places a session can talk to people outside Happier.',
   },
+  {
+    prefix: 'happier.machine.',
+    title: 'Managed machines',
+    blurb: 'Machine provisioning plugins in the 0.3 development source.',
+  },
 ];
 
 /** Everything that is not part of a family. Named explicitly so a new one fails the build. */
