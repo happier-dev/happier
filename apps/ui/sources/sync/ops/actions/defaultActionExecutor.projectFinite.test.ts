@@ -25,6 +25,7 @@ import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/acti
 import { createProjectManifestActionClient } from '@/components/projects/projectSetup/projectManifestActionClient';
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 // Component probes retain the real controller/Actions; only native rendering is substituted.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -109,6 +110,25 @@ function ownFiniteRelayRequests(actionId: keyof typeof PROJECT_FINITE_ACTION_RPC
         return { ...record, input: request.envelope };
     });
 }
+function answerExplicitScriptWorkerPlacement(): void {
+    const inspectionMethod = getActionSpec('projects.inspect').bindings?.rpcMethod;
+    const statusMethod = getActionSpec('projects.worker.status').bindings?.rpcMethod;
+    if (!inspectionMethod || !statusMethod) throw new Error('Missing canonical project placement RPC binding');
+    // Current SOURCE permission and worker eligibility are separate read replies,
+    // not the finite Action's later setup-review or completion receipt.
+    rpcResponses.set(`source:${inspectionMethod}`, ProjectDefinitionInspectOutputSchema.parse({
+        definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
+            version: 1, scripts: { check: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
+        })) },
+        detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+    }));
+    homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
+        content: { t: 'plain', v: createDefaultWorkspaceExecutionSettingsV1() },
+    } });
+    rpcResponses.set(`selected-worker:${statusMethod}`, {
+        eligible: true, candidate: { serverId, machineId: 'selected-worker' }, load: { kind: 'unknown' }, explanation: 'load_unknown',
+    });
+}
 beforeEach(async () => {
     installDisconnectedServerSocketBoundary(configureRelay);
     await homes.reset(); await loadSyncSingletonForTests(); calls.length = 0; rpcResponses.clear(); consumeAcknowledgement = undefined;
@@ -117,6 +137,9 @@ beforeEach(async () => {
         accountId: 'requester', currentAccount: true, active: false, machinePoolsEnabled: true });
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     serverId = resolveServerProfileScopeIdForIdentifier(requesterHomeId);
+    // Exact worker preflight now reads receiving eligibility through the canonical status Action.
+    rpcResponses.set('selected-worker:projects.worker.status', { eligible: true,
+        candidate: { serverId, machineId: 'selected-worker' }, load: { kind: 'unknown' }, explanation: 'eligible' });
     await homes.addHome({ name: 'Focused custodian', serverUrl: 'https://finite-custodian.test', accountId: 'custodian' });
     homes.answer(requesterHomeId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     answerOwnMachineActions(requesterHomeId, 'requester');
@@ -153,19 +176,37 @@ describe('Project finite delivery through the default UI Action host', () => {
             content: { t: 'plain', v: { enabled, destination: { kind: 'machine', machineId: 'selected-worker' }, unavailable: 'ask',
                 allowAdHoc: false, scriptOverrides: { check: enabled ? 'primary' : 'workers' }, services: {} } },
         } });
+        const inspection = await createProjectManifestActionClient({ workspace, expectedAccountId: 'requester' }).inspect();
+        expect(inspection.definition.document).toMatchObject({ status: 'valid', manifest: {
+            workspace: { memoryDemand: workspaceDemand }, scripts: { check: { memoryDemand: scriptDemand } },
+        } });
         const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'widget', testID: 'scripts' }));
         try {
             await vi.waitFor(() => expect(screen.findAllByType(ProjectScriptRow)[0]?.props.defaultChoice).toEqual(enabled
                 ? { kind: 'primary' } : { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } }));
-            expect(screen.findAllByType(ProjectScriptRow)[0]?.props.memoryDemand).toEqual(workspaceDemand);
+            await vi.waitFor(() => expect(screen.findAllByType(ProjectScriptRow)[0]?.props.memoryDemand).toEqual(workspaceDemand));
+            if (!enabled) {
+                rpcResponses.set('selected-worker:projects.worker.status', { eligible: false, candidate: null, explanation: 'memory_insufficient',
+                    observedMemory: { totalBytes: 4 * 1024 ** 3, availableBytes: 1024 ** 3 },
+                    load: { kind: 'known', running: 1, queued: 0, accepting: true, runAtMost: 1 } });
+                await screen.pressByTestIdAsync('scripts.script:check.run');
+                await vi.waitFor(() => expect(screen.findAllByType(ProjectScriptRow)[0]?.props.workerRefusal)
+                    .toMatchObject({ reason: 'memory_insufficient' }));
+                expect(calls.find(call => call.request.method === 'selected-worker:projects.worker.status')?.request.params)
+                    .toMatchObject({ memoryDemand: workspaceDemand });
+                expect(ownFiniteRelayRequests('projects.script.run')).toEqual([]);
+            }
         } finally { await act(async () => screen.unmount()); disposeExecutor(); }
     });
 
-    it('retains an Ask-each-time Run intent, cancels without dispatch, and resumes with a chosen exact Machine', async () => {
+    it('retains an Ask-each-time Run intent, cancels without dispatch, and resumes with a chosen exact Machine', async () => withPopoverWebGlobals(async () => {
         const { useProjectScriptsController } = await import('@/components/projects/projectSetup/useProjectScriptsController');
         const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { ProjectScriptsBody } = await import('@/components/projects/projectSetup/ProjectScriptsBody');
+        const { WorkerDestinationPicker } = await import('@/components/projects/workers/WorkerDestinationPicker');
         const disposeExecutor = await installRealActionExecutorModuleLoader();
         const workspace = { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
+        answerExplicitScriptWorkerPlacement();
         const inspectionMethod = getActionSpec('projects.inspect').bindings!.rpcMethod!;
         rpcResponses.set(`source:${inspectionMethod}`, ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
@@ -193,12 +234,34 @@ describe('Project finite delivery through the default UI Action host', () => {
             response = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'exact-current-effect' };
             const exact = { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } as const;
             await act(async () => { await hook.getCurrent().chooseForRun(exact); });
+            expect(hook.getCurrent().failure, JSON.stringify(hook.getCurrent().failure)).toBeNull();
             expect(ownFiniteRelayRequests('projects.script.run')).toEqual([expect.objectContaining({ input: expect.objectContaining({
                 target: { kind: 'machine', machineId: 'selected-worker' }, input: { workspace, selection: { kind: 'named', name: 'check' }, choice: exact },
             }) })]);
             expect(hook.getCurrent().choiceRequired).toBeNull();
-        } finally { await hook.unmount(); disposeExecutor(); }
-    });
+        } finally { await hook.unmount(); }
+        const screen = await renderScreen(React.createElement(ProjectScriptsBody, { workspace, presentation: 'widget', testID: 'scripts' }));
+        try {
+            await vi.waitFor(() => expect(screen.findAllByTestId('scripts.script:check.run').length).toBeGreaterThan(0));
+            await screen.pressByTestIdAsync('scripts.script:check.run');
+            await vi.waitFor(() => expect(screen.findAllByType(WorkerDestinationPicker)[0]?.props.open).toBe(true));
+            expect(screen.findAllByType(WorkerDestinationPicker)[0]?.props.exactTargetOnly).toBe(true);
+            expect(screen.findAllByType(WorkerDestinationPicker)[0]?.props.poolSelection).toBe('ask');
+            const before = ownFiniteRelayRequests('projects.script.run').length;
+            await act(async () => { screen.findAllByType(WorkerDestinationPicker)[0]?.props.onRequestClose(); });
+            expect(screen.findAllByType(WorkerDestinationPicker)[0]?.props.open).toBe(false);
+            expect(ownFiniteRelayRequests('projects.script.run')).toHaveLength(before);
+            await screen.pressByTestIdAsync('scripts.script:check.run');
+            await vi.waitFor(() => expect(screen.findAllByType(WorkerDestinationPicker)[0]?.props.open).toBe(true));
+            const exact = { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } as const;
+            await act(async () => { screen.findAllByType(WorkerDestinationPicker)[0]?.props.onChoose(exact); });
+            await vi.waitFor(() => expect(ownFiniteRelayRequests('projects.script.run')).toHaveLength(before + 1));
+            expect(ownFiniteRelayRequests('projects.script.run').at(-1)?.input).toMatchObject({
+                target: { kind: 'machine', machineId: 'selected-worker' },
+                input: { workspace, selection: { kind: 'named', name: 'check' }, choice: exact },
+            });
+        } finally { await act(async () => screen.unmount()); disposeExecutor(); }
+    }));
 
     it.each([
         { actionId: 'projects.prepare', managedWake: false, guestOwned: false },
@@ -539,6 +602,7 @@ describe('Project finite delivery through the default UI Action host', () => {
     });
 
     it('preserves immutable SOURCE intent and exact worker routing while returning the actual strict D18 failure', async () => {
+        answerExplicitScriptWorkerPlacement();
         const input = { workspace: { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' },
             selection: { kind: 'named', name: 'check' }, choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } };
         const details = { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'current-effect', reviewedEffect: { commands: ['setup'] } };
@@ -554,8 +618,6 @@ describe('Project finite delivery through the default UI Action host', () => {
         expect(ownFiniteRelayRequests('projects.script.run')).toEqual([expect.objectContaining({ serverUrl, token: requesterToken,
             input: { v: 1, target: { kind: 'machine', machineId: 'selected-worker' }, input, requestId: 'original-script' },
         })]);
-        expect(calls).toEqual([]);
-        expect(homes.requestsFor('/v1/machines/source')).toEqual([]);
     });
 
     it('honors configured Ask first before any finite dispatch', async () => {
@@ -571,6 +633,7 @@ describe('Project finite delivery through the default UI Action host', () => {
     });
 
     it('preserves immutable SOURCE input while enforcing an explicit external target restriction', async () => {
+        answerExplicitScriptWorkerPlacement();
         const input = { workspace: { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' },
             selection: { kind: 'named', name: 'check' }, choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } };
         response = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'current-effect' };

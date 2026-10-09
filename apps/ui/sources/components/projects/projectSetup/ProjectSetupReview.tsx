@@ -12,7 +12,11 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { describeProjectCommandSource } from './projectScriptPresentation';
-import { listReviewedSetupCommands } from './projectSetupEffectPresentation';
+import {
+  listReviewedSetupCommands,
+  readProjectSetupReviewPresentation,
+  type ProjectSetupReviewPresentation,
+} from './projectSetupEffectPresentation';
 
 export type ProjectSetupScope = 'thisTime' | 'untilChanged';
 
@@ -22,6 +26,8 @@ type EffectLine = Readonly<{
   value: string;
   note?: string;
   mono: boolean;
+  /** Safe producer identity for U5's personal/shared binding presentation. */
+  binding?: ProjectSetupReviewPresentation['bindings'][number];
 }>;
 
 /** The exact declared setup effect, in run order (lab `s-scripts` SETUP: Tools, Step N, Values). */
@@ -59,6 +65,20 @@ export function listProjectSetupEffect(
       mono: true,
     });
   });
+  const presentation = readProjectSetupReviewPresentation(reviewedEffect);
+  if (presentation) {
+    for (const binding of presentation.bindings) {
+      lines.push({
+        key: `binding:${binding.name}`,
+        label: binding.name,
+        value: binding.displayName ?? binding.name,
+        note: binding.revision === undefined ? binding.ref : `${binding.ref} · r${binding.revision}`,
+        mono: false,
+        binding,
+      });
+    }
+    return lines;
+  }
   const names = (manifest.environmentVariables ?? []).map(
     (variable) => variable.name,
   );
@@ -72,6 +92,31 @@ export function listProjectSetupEffect(
     });
   }
   return lines;
+}
+
+/**
+ * Where the reviewed file came from, as the producer observed it (lab `s-scripts` SETUP: "at a41c9e2
+ * on v0.3"). The repository's commit is context, never proof the file is committed: a modified,
+ * untracked or unknown file says so.
+ */
+function describeSetupProvenance(presentation: ProjectSetupReviewPresentation | null): string | null {
+  const provenance = presentation?.provenance;
+  if (!provenance || provenance.kind === 'unavailable') return null;
+  if (provenance.kind === 'nonRepository') return ` · ${t('projects.scripts.setup.provenanceNotRepository')}`;
+  const commit = provenance.headCommit?.slice(0, 7);
+  const at = commit
+    ? provenance.branch
+      ? t('projects.scripts.setup.provenanceAtBranch', { commit, branch: provenance.branch })
+      : t('projects.scripts.setup.provenanceAt', { commit })
+    : null;
+  const state = provenance.fileState === 'modified'
+    ? t('projects.scripts.setup.provenanceModified')
+    : provenance.fileState === 'untracked'
+      ? t('projects.scripts.setup.provenanceUntracked')
+      : provenance.fileState === 'absent'
+        ? t('projects.scripts.setup.provenanceAbsent')
+        : t('projects.scripts.setup.provenanceUnknown');
+  return [at ? ` ${at}` : '', ` · ${state}`].join('');
 }
 
 /**
@@ -100,6 +145,10 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
   const effect = React.useMemo(
     () => listProjectSetupEffect(props.manifest, props.reviewedEffect),
     [props.manifest, props.reviewedEffect],
+  );
+  const provenance = React.useMemo(
+    () => describeSetupProvenance(readProjectSetupReviewPresentation(props.reviewedEffect)),
+    [props.reviewedEffect],
   );
   const tabs = React.useMemo(
     () => [
@@ -185,6 +234,11 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
           >
             .happier/project.json
           </Text>
+          {provenance ? (
+            <Text testID={`${props.testID}.provenance`} style={[styles.meta, { color: theme.colors.text.tertiary }]}>
+              {provenance}
+            </Text>
+          ) : null}
         </Text>
         <RoundButton
           size="small"

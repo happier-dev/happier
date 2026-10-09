@@ -24,6 +24,8 @@ import {
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { rememberProjectSetupConsent } from './projectSetupConsentDecision';
+import { useProjectSetupRun } from './projectScriptRuns';
+import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 
 /** The setup review a preparation or run asked for: its digest, the safe resolved effect and any requested scope. */
 export type ProjectSetupConsent = Pick<ProjectSetupConsentRequiredV1, 'code' | 'reviewedEffectDigest'>
@@ -34,6 +36,7 @@ function readConsentDetails(error: unknown): ProjectSetupConsentFailureDetailsV1
 }
 type Pending = Readonly<{ key: string }> | null;
 type Failure = Readonly<{ key: string; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }> | null;
+type RunChoiceRequest = Readonly<{ scopeKey: string; key: string; selection: ProjectScriptSelection }>;
 
 /** The accepted snapshot the Action returned joins the operation store at once (daemon state stays canonical). */
 function publishAcceptedOperation(binding: ServerCredentialAccountScopeBinding | null, operation: ActionOperationSnapshotV1): void {
@@ -61,6 +64,8 @@ export function useProjectScriptsController(
   binding: ServerCredentialAccountScopeBinding | null,
 ) {
   const accountId = binding?.isCurrent() ? binding.accountId : null;
+  const setupOperation = useProjectSetupRun(workspace, accountId);
+  const setupStop = useActionOperationStopControl(setupOperation);
   const scopeKey = JSON.stringify([
     workspace.serverId,
     accountId,
@@ -79,14 +84,18 @@ export function useProjectScriptsController(
   requestApprovalRef.current = approval.requestApproval;
   const [pending, setPending] = React.useState<Pending>(null);
   const [failure, setFailure] = React.useState<Failure>(null);
+  const [choiceRequest, setChoiceRequest] = React.useState<RunChoiceRequest | null>(null);
   const [consent, setConsent] = React.useState<
     (ProjectSetupConsent & Readonly<{ scopeKey: string }>) | null
   >(null);
+  const [reviewOpenScope, setReviewOpenScope] = React.useState<string | null>(null);
+  const openSetupReview = React.useCallback(() => setReviewOpenScope(scopeKey), [scopeKey]);
+  const dismissConsent = React.useCallback(() => { setConsent(null); setReviewOpenScope(null); }, []);
   const lifetime = React.useMemo(() => new AbortController(), [binding, scopeKey]);
 
   React.useEffect(() => {
     const retirement = binding?.onRetire(() => {
-      lifetime.abort(); setPending(null); setFailure(null); setConsent(null);
+      lifetime.abort(); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null);
     });
     return () => { retirement?.dispose(); lifetime.abort(); };
   }, [binding, lifetime]);
@@ -106,7 +115,7 @@ export function useProjectScriptsController(
   );
 
   const dispatch = React.useCallback(
-    async <T>(key: string, call: () => Promise<T>): Promise<T | null> => {
+    async <T>(key: string, call: () => Promise<T>, runSelection?: ProjectScriptSelection): Promise<T | null> => {
       if (!client || !binding?.isCurrent() || lifetime.signal.aborted) return null;
       const signal = lifetime.signal;
       setPending({ key });
@@ -124,7 +133,10 @@ export function useProjectScriptsController(
           const worker = ProjectWorkerNoAcceptanceFailureDetailsV1Schema.safeParse(
             error && typeof error === 'object' && 'workerRefusal' in error ? error.workerRefusal : undefined,
           );
-          setFailure({ key, code: readErrorCode(error), ...(worker.success ? { workerRefusal: worker.data } : {}) });
+          const code = readErrorCode(error);
+          if (code === 'choice_required' && runSelection && !worker.success)
+            setChoiceRequest({ scopeKey, key, selection: runSelection });
+          else setFailure({ key, code, ...(worker.success ? { workerRefusal: worker.data } : {}) });
         }
         return null;
       } finally {
@@ -138,7 +150,8 @@ export function useProjectScriptsController(
   const run = React.useCallback(
     async (key: string, selection: ProjectScriptSelection, choice?: ProjectExecutionChoiceV1) => {
       if (!client) return;
-      const result = await dispatch(key, () => client.runScript(selection, choice));
+      setChoiceRequest(null);
+      const result = await dispatch(key, () => client.runScript(selection, choice), selection);
       if (!result) return;
       if ('operation' in result) {
         publishAcceptedOperation(binding, result.operation);
@@ -152,6 +165,14 @@ export function useProjectScriptsController(
     },
     [binding, client, dispatch, scopeKey],
   );
+
+  const choiceRequired = choiceRequest?.scopeKey === scopeKey ? choiceRequest : null;
+  const dismissChoice = React.useCallback(() => setChoiceRequest(null), []);
+  const chooseForRun = React.useCallback(async (choice: ProjectExecutionChoiceV1) => {
+    if (!choiceRequired || lifetime.signal.aborted || !binding?.isCurrent()) return;
+    if (choice.kind === 'workers' && choice.destination.kind !== 'machine') return;
+    await run(choiceRequired.key, choiceRequired.selection, choice);
+  }, [binding, choiceRequired, lifetime, run]);
 
   const prepare = React.useCallback(
     async (expectedEffectDigest?: string, consentScope?: ProjectSetupConsentFailureDetailsV1['consentScope']) => {
@@ -207,15 +228,22 @@ export function useProjectScriptsController(
 
   return {
     accountId,
+    setupOperation,
+    setupStop,
+    setupReviewOpen: reviewOpenScope === scopeKey || consent?.scopeKey === scopeKey,
+    openSetupReview,
     ready: client !== null,
     client,
     add,
     run,
+    choiceRequired,
+    dismissChoice,
+    chooseForRun,
     prepare,
     pendingKey: pending?.key ?? null,
     failure,
     consent: consent?.scopeKey === scopeKey ? consent : null,
-    dismissConsent: React.useCallback(() => setConsent(null), []),
+    dismissConsent,
     approvalId: approval.approvalId,
   };
 }
