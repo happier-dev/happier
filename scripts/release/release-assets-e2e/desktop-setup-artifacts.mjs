@@ -103,19 +103,24 @@ export async function downloadReleaseAssets({ repo, tag, names, destDir, token }
 }
 
 /**
- * The newest published stable baseline, pinned to its immutable tags: the rolling `cli-stable` /
- * `ui-desktop-stable` releases only say which version is current.
+ * The published stable desktop baseline and the CLI from that desktop's immutable source.
+ * The rolling CLI can already have advanced while this desktop's release gate is running.
  * @param {{ repo: string; token?: string }} params
  */
 export async function resolvePublishedStableBaseline({ repo, token }) {
-  const cliTag = await resolvePublishedCliTag({ repo, channel: 'stable', token }).catch(() => null);
-  const cliVersion = cliTag?.slice('cli-v'.length);
   const desktopNames = (await listReleaseAssets({ repo, tag: 'ui-desktop-stable', token })).map((asset) => asset.name);
   const desktopVersion = desktopNames.map((name) => DESKTOP_DEB_SHA_RE.exec(name)?.[1]).find(Boolean);
-  if (!cliVersion || !desktopVersion) {
-    throw new Error(`could not resolve the published stable baseline (cli=${cliVersion ?? 'none'}, desktop=${desktopVersion ?? 'none'})`);
-  }
-  return { cliTag: `cli-v${cliVersion}`, desktopTag: `ui-desktop-v${desktopVersion}` };
+  if (!desktopVersion) throw new Error('could not resolve the published stable desktop baseline');
+  const desktopTag = `ui-desktop-v${desktopVersion}`;
+  const response = await githubRequest({
+    url: `https://api.github.com/repos/${repo}/contents/apps/cli/package.json?ref=${encodeURIComponent(desktopTag)}`,
+    token,
+    accept: 'application/vnd.github.raw+json',
+  });
+  const manifest = await response.json();
+  const cliVersion = typeof manifest?.version === 'string' ? manifest.version : '';
+  if (!new RegExp(`^${VERSION_RE_SOURCE}$`, 'u').test(cliVersion)) throw new Error(`invalid CLI version in ${desktopTag}'s source`);
+  return { cliTag: `cli-v${cliVersion}`, desktopTag };
 }
 
 /**

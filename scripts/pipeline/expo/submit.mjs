@@ -489,6 +489,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(JSON.stringify({ status: 'publication_failed', code: error.code ?? 'submit_failed', message: error.message }));
+  console.error(JSON.stringify({ status: 'publication_failed', code: error.code ?? 'submit_failed', message: error.message, httpStatus: error.httpStatus, operation: error.operation, apiStatus: error.apiStatus }));
   process.exitCode = 1;
 });

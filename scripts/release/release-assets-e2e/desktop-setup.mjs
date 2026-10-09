@@ -14,7 +14,7 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -123,6 +123,22 @@ export function evaluateUpgrade(observed) {
     { check: 'systemd user service still active', pass: observed.systemd.active === 'active', detail: observed.systemd },
     { check: 'upgraded daemon answers through the relay (INV10)', pass: observed.finalProbe?.ok === true && observed.finalProbe?.machineId === previousMachineId, detail: observed.finalProbe },
   ];
+}
+
+/**
+ * Observe the installed Linux unit reported by the CLI, rather than its daemon ownership label.
+ * @param {{ serviceStatus: { installed?: boolean; installedPath?: string } | null; run: (command: string) => { stdout: string } }} options
+ */
+export function readSystemdState({ serviceStatus, run }) {
+  if (serviceStatus?.installed !== true || typeof serviceStatus.installedPath !== 'string' || !serviceStatus.installedPath.endsWith('.service')) {
+    throw new Error('CLI service status did not report an installed systemd unit');
+  }
+  const unit = basename(serviceStatus.installedPath);
+  return {
+    unit,
+    active: run(`systemctl --user is-active '${unit}'`).stdout.trim(),
+    enabled: run(`systemctl --user is-enabled '${unit}'`).stdout.trim(),
+  };
 }
 
 function createCompose({ projectName, envFile }) {
@@ -314,14 +330,10 @@ async function main() {
     const out = execAs(machine, `node /opt/happier-npm-e2e/bin/machine-rpc-probe.mjs --relay-url ${RELAY_URL} --machine-id '${status?.auth?.machineId ?? ''}' --server-id '${status?.server?.activeServerId ?? ''}'`, { allowFailure: true });
     return parseLastJsonObject(out.stdout);
   };
-  const systemdState = (/** @type {string} */ machine, /** @type {any} */ status) => {
-    const unit = `${status?.daemon?.serviceLabel ?? status?.service?.label ?? 'missing-service-label'}.service`;
-    return {
-      unit,
-      active: execAs(machine, `systemctl --user is-active '${unit}'`, { allowFailure: true }).stdout.trim(),
-      enabled: execAs(machine, `systemctl --user is-enabled '${unit}'`, { allowFailure: true }).stdout.trim(),
-    };
-  };
+  const systemdState = (/** @type {string} */ machine) => readSystemdState({
+    serviceStatus: parseLastJsonObject(execAs(machine, '"$HOME/.happier/bin/happier" service status --json', { allowFailure: true }).stdout),
+    run: (command) => execAs(machine, command, { allowFailure: true }),
+  });
 
   let exitCode = 0;
   try {
@@ -398,7 +410,7 @@ async function main() {
         pathCommandResolved: pathCommand ? execAs(machine, `readlink -f '${pathCommand}'`).stdout.trim() : '',
         pathVersion: execAs(machine, 'happier --version 2>/dev/null | head -n 1 || true').stdout.trim(),
         status,
-        systemd: systemdState(machine, status),
+        systemd: systemdState(machine),
         probe: probe(machine, status),
       };
       const checks = evaluateFreshSetup(observed);
@@ -439,7 +451,7 @@ async function main() {
         newSetup,
         update,
         finalStatus,
-        systemd: systemdState(machine, finalStatus),
+        systemd: systemdState(machine),
         finalProbe: probe(machine, finalStatus),
       };
       const checks = evaluateUpgrade(observed);

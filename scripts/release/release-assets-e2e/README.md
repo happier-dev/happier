@@ -128,8 +128,9 @@ node scripts/release/release-assets-e2e/desktop-setup.mjs --desktop-artifact <de
   `daemon status` `runtimeConvergence` is fully true (INV8), `happier` on a login PATH is
   `~/.happier/bin/happier`, and the machine answers a relay-routed `capabilities.describe` RPC with an
   empty payload (INV10; `bin/machine-rpc-probe.mjs`).
-- **upgrade** (desktop2): the previous published stable desktop + CLI (resolved from `ui-desktop-stable`
-  / `cli-stable`, then pinned to their immutable `ui-desktop-v*` / `cli-v*` tags; override with
+- **upgrade** (desktop2): the published stable desktop is pinned from `ui-desktop-stable` to its
+  immutable `ui-desktop-v*` tag; its source CLI manifest selects the matching immutable `cli-v*`
+  baseline, so an already-advanced `cli-stable` feed cannot replace the predecessor (override with
   `--upgrade-from-desktop-tag` / `--upgrade-from-cli-tag`) set the machine up; then the new hsetup's
   setup and `cli.update.v1` run. The daemon must end on the new CLI (`cliVersionMatches`), as the same
   machine, still answering through the relay. The daemon version between the new setup and the update

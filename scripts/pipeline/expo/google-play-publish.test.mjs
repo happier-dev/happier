@@ -13,7 +13,7 @@ function boundary({ releases = [previous, target], failAt, invalidUpdate = false
   const fetchImpl = async (url, init = {}) => {
     const call = { url, ...init };
     calls.push(call);
-    if (failAt === calls.length) return new Response(JSON.stringify({ error: { message: 'private server detail' } }), { status: 403 });
+    if (failAt === calls.length) return new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED', message: 'private server detail' } }), { status: 403 });
     if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fixture-token', token_type: 'Bearer' });
     assert.equal(init.headers.Authorization, 'Bearer fixture-token');
     if (url.endsWith('/edits')) return Response.json({ id: 'edit-1', expiryTimeSeconds: '123' });
@@ -87,9 +87,9 @@ test('the exact version must be present once and alone in its release before cha
 });
 
 test('API permission and commit failures retain honest errors without exposing response details', async () => {
-  for (const failAt of [1, 3, 5]) {
+  for (const [failAt, operation] of [[1, 'authorize'], [3, 'read_track'], [5, 'commit_edit']]) {
     const { fetchImpl } = boundary({ failAt });
-    await assert.rejects(publishGooglePlayProduction({ ...input, fetchImpl }), (error) => error.code === 'play_api_error' && error.httpStatus === 403 && !error.message.includes('private server detail'));
+    await assert.rejects(publishGooglePlayProduction({ ...input, fetchImpl }), (error) => error.code === 'play_api_error' && error.httpStatus === 403 && error.operation === operation && error.apiStatus === 'PERMISSION_DENIED' && !error.message.includes('private server detail'));
   }
 });
 

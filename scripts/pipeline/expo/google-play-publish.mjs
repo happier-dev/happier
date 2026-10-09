@@ -4,13 +4,17 @@ import { createPrivateKey, sign } from 'node:crypto';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const PUBLISHER_URL = 'https://androidpublisher.googleapis.com/androidpublisher/v3';
 const SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
+// Google RPC's public status codes; arbitrary response messages and details stay private.
+const API_STATUSES = new Set(['CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND', 'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION', 'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS', 'UNAUTHENTICATED']);
 
 export class GooglePlayPublicationError extends Error {
-  constructor(code, message, httpStatus) {
+  constructor(code, message, httpStatus, operation, apiStatus) {
     super(message);
     this.name = 'GooglePlayPublicationError';
     this.code = code;
     this.httpStatus = httpStatus;
+    this.operation = operation;
+    this.apiStatus = apiStatus;
   }
 }
 
@@ -60,13 +64,15 @@ export async function publishGooglePlayProduction(options) {
     throw new GooglePlayPublicationError('invalid_play_notes', 'The approved playStore.whatsNew projection is required (maximum 500 characters).');
   }
   const fetchImpl = options.fetchImpl ?? fetch;
-  async function request(url, init = {}) {
+  async function request(operation, url, init = {}) {
     let response;
     try { response = await fetchImpl(url, init); } catch {
-      throw new GooglePlayPublicationError('play_transport_error', 'Google Play request failed; retry publication without re-uploading the binary.');
+      throw new GooglePlayPublicationError('play_transport_error', `Google Play ${operation} failed; retry publication without re-uploading the binary.`, undefined, operation);
     }
     if (!response.ok) {
-      throw new GooglePlayPublicationError('play_api_error', `Google Play request failed (HTTP ${response.status}); retry publication without re-uploading the binary.`, response.status);
+      const body = await response.json().catch(() => null);
+      const apiStatus = API_STATUSES.has(body?.error?.status) ? body.error.status : undefined;
+      throw new GooglePlayPublicationError('play_api_error', `Google Play ${operation} failed (HTTP ${response.status}${apiStatus ? `, ${apiStatus}` : ''}); retry publication without re-uploading the binary.`, response.status, operation, apiStatus);
     }
     if (response.status === 204) return null;
     try { return await response.json(); } catch { return invalidResponse('Google Play returned invalid JSON.'); }
@@ -77,18 +83,18 @@ export async function publishGooglePlayProduction(options) {
     iss: credential.clientEmail, scope: SCOPE, aud: TOKEN_URL, iat: issuedAt, exp: issuedAt + 3600,
   })}`;
   const assertion = `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), credential.privateKey).toString('base64url')}`;
-  const token = await request(TOKEN_URL, {
+  const token = await request('authorize', TOKEN_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString(),
   });
   if (typeof token?.access_token !== 'string' || !token.access_token) invalidResponse('Google OAuth returned no access token.');
   const headers = { Authorization: `Bearer ${token.access_token}`, 'Content-Type': 'application/json' };
   const base = `${PUBLISHER_URL}/applications/${encodeURIComponent(options.packageName)}/edits`;
-  const edit = await request(base, { method: 'POST', headers, body: '{}' });
+  const edit = await request('create_edit', base, { method: 'POST', headers, body: '{}' });
   if (typeof edit?.id !== 'string' || !edit.id) invalidResponse('Google Play returned no edit identity.');
   const editUrl = `${base}/${encodeURIComponent(edit.id)}`;
   const trackUrl = `${editUrl}/tracks/production`;
-  const track = await request(trackUrl, { headers });
+  const track = await request('read_track', trackUrl, { headers });
   if (track?.track !== 'production' || !Array.isArray(track.releases)) invalidResponse('Google Play returned an invalid production track.');
   const matching = track.releases.filter((release) => Array.isArray(release.versionCodes) && release.versionCodes.includes(versionCode));
   if (matching.length !== 1) {
@@ -104,20 +110,20 @@ export async function publishGooglePlayProduction(options) {
   const alreadySubmitted = target.status === 'completed' && target.userFraction === undefined && target.countryTargeting === undefined
     && englishNotes.length === 1 && englishNotes[0].text === options.whatsNew;
   if (alreadySubmitted) {
-    await request(editUrl, { method: 'DELETE', headers });
+    await request('discard_edit', editUrl, { method: 'DELETE', headers });
   } else {
     const { userFraction: _userFraction, countryTargeting: _countryTargeting, ...release } = target;
     const releases = track.releases.map((entry) => entry === target ? {
       ...release, status: 'completed',
       releaseNotes: [...currentNotes.filter((note) => note.language !== 'en-US'), { language: 'en-US', text: options.whatsNew }],
     } : entry);
-    const updated = await request(trackUrl, { method: 'PUT', headers, body: JSON.stringify({ track: 'production', releases }) });
+    const updated = await request('update_track', trackUrl, { method: 'PUT', headers, body: JSON.stringify({ track: 'production', releases }) });
     const actual = updated?.releases?.find((entry) => entry.versionCodes?.includes(versionCode));
     if (updated?.track !== 'production' || actual?.status !== 'completed' || actual.userFraction !== undefined || actual.countryTargeting !== undefined
       || !actual.releaseNotes?.some((note) => note.language === 'en-US' && note.text === options.whatsNew)) {
       invalidResponse('Google Play did not accept the exact completed release and approved notes.');
     }
-    const committed = await request(`${editUrl}:commit`, { method: 'POST', headers, body: '{}' });
+    const committed = await request('commit_edit', `${editUrl}:commit`, { method: 'POST', headers, body: '{}' });
     if (committed?.id !== edit.id) invalidResponse('Google Play did not acknowledge the committed edit.');
   }
   return {

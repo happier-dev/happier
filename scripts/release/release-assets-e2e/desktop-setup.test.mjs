@@ -5,9 +5,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveChannelForCliVersion, resolvePublishedCliTag, stageCliReleaseAssets } from './desktop-setup-artifacts.mjs';
+import { resolveChannelForCliVersion, resolvePublishedCliTag, resolvePublishedStableBaseline, stageCliReleaseAssets } from './desktop-setup-artifacts.mjs';
 import { planPromptResponse, runHsetupTask } from './desktop-setup-driver.mjs';
 import { evaluateFreshSetup, evaluateUpgrade } from './desktop-setup.mjs';
+import * as desktopSetup from './desktop-setup.mjs';
 
 function withTempDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'desktop-setup-test-'));
@@ -132,6 +133,38 @@ const FRESH_OK = () => ({
   },
   systemd: { active: 'active', enabled: 'enabled' },
   probe: { ok: true, machineId: 'm1' },
+});
+
+test('systemd observation uses the CLI installed unit path instead of its cross-platform daemon label', () => {
+  const units = [];
+  const observed = desktopSetup.readSystemdState({
+    serviceStatus: { installed: true, installedPath: '/home/happy/.config/systemd/user/happier-daemon.default.service', owner: { serviceLabel: 'com.happier.cli.daemon.default' } },
+    run: (command) => {
+      units.push(command);
+      return { stdout: command.includes('is-enabled') ? 'enabled\n' : 'active\n' };
+    },
+  });
+  assert.deepEqual(observed, { unit: 'happier-daemon.default.service', active: 'active', enabled: 'enabled' });
+  assert.ok(units.every((command) => command.includes("'happier-daemon.default.service'")));
+  assert.throws(() => desktopSetup.readSystemdState({ serviceStatus: { installed: false }, run: () => { throw new Error('must not probe a guessed unit'); } }), /installed systemd unit/);
+});
+
+test('the upgrade baseline binds the CLI from the immutable desktop source, even after cli-stable advances', async () => {
+  const realFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    if (String(url).endsWith('/ui-desktop-stable')) return Response.json({ assets: [{ name: 'happier-ui-desktop-linux-x86_64-v0.2.12.deb.sha256' }] });
+    if (String(url).endsWith('/contents/apps/cli/package.json?ref=ui-desktop-v0.2.12')) return Response.json({ version: '0.2.12' });
+    if (String(url).endsWith('/cli-stable')) return Response.json({ assets: [{ name: 'checksums-happier-v0.2.16.txt' }] });
+    throw new Error(`Unexpected GitHub boundary request: ${url}`);
+  };
+  try {
+    assert.deepEqual(await resolvePublishedStableBaseline({ repo: 'o/r' }), { cliTag: 'cli-v0.2.12', desktopTag: 'ui-desktop-v0.2.12' });
+    assert.equal(requested.some((url) => url.endsWith('/cli-stable')), false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test('fresh setup passes only when every user-visible outcome holds', () => {
