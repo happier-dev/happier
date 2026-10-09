@@ -1,18 +1,20 @@
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { createScmBackendRegistry } from '@/scm/registry';
-import { readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
+import { computeWorkspaceSyncRootFingerprint, readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries } from './workspaceExportArtifacts';
 import {
     beginWorkspaceTargetMaterialization,
+    inspectCommittedWorkspaceTargetMaterialization,
     materializeWorkspaceExportArtifactsWithScmWorkspace,
     recoverInterruptedWorkspaceTargetMaterialization,
     rehydrateWorkspaceTargetMaterialization,
+    removeCommittedWorkspaceTargetMaterialization,
     type WorkspaceTargetMaterializationReceiptV1,
 } from './workspaceExportMaterialization';
 
@@ -33,6 +35,118 @@ const naming = {
 } as const;
 const registry = createScmBackendRegistry([]);
 describe('workspace export materialization custody', () => {
+    it('observes current regular-file bytes in the owned copy including nested warm caches without following outside symlinks', async () => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-owned-size-')));
+        try {
+            const target = join(fixture, 'copy');
+            const receiptPath = join(fixture, 'receipt.json');
+            const materialization = await beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
+            await mkdir(target);
+            await writeFile(join(target, 'copy.txt'), 'copy');
+            await materialization.custody.bindPromotedTarget();
+            await materialization.custody.commit();
+            const receiptBytes = await readFile(receiptPath, 'utf8');
+            // Measurement is passive and demand-local, not another persisted receipt field.
+            const request = { targetPath: target, receiptPath, measureSize: true as const };
+            await expect(inspectCommittedWorkspaceTargetMaterialization(request)).resolves.toMatchObject({ sizeBytes: 4 });
+            await mkdir(join(target, 'nested'));
+            await writeFile(join(target, 'nested', 'binary.bin'), Buffer.from([0, 1, 2, 3, 4]));
+            await mkdir(join(target, '.cache', 'compiler'), { recursive: true });
+            await writeFile(join(target, '.cache', 'compiler', 'warm.bin'), Buffer.alloc(17));
+            const outside = join(fixture, 'outside');
+            await mkdir(outside);
+            await writeFile(join(outside, 'private.bin'), Buffer.alloc(4096));
+            await symlink(outside, join(target, 'outside-directory'), process.platform === 'win32' ? 'junction' : 'dir');
+            if (process.platform !== 'win32') {
+                await symlink(join(outside, 'private.bin'), join(target, 'outside-file'));
+            }
+            await expect(inspectCommittedWorkspaceTargetMaterialization(request)).resolves.toMatchObject({ sizeBytes: 26 });
+            expect(await readFile(receiptPath, 'utf8')).toBe(receiptBytes);
+            expect(await readFile(join(outside, 'private.bin'))).toEqual(Buffer.alloc(4096));
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
+    it('removes only the reviewed committed copy while preserving sibling and user-created roots', async () => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-reviewed-removal-')));
+        try {
+            const target = join(fixture, 'copy');
+            const sibling = join(fixture, 'copy-other');
+            const receiptPath = join(fixture, 'receipt.json');
+            await mkdir(sibling);
+            await writeFile(join(sibling, 'user.txt'), 'user');
+            const materialization = await beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
+            await mkdir(target);
+            await writeFile(join(target, 'copy.txt'), 'copy');
+            await materialization.custody.bindPromotedTarget();
+            await materialization.custody.commit();
+            const rootFingerprint = await computeWorkspaceSyncRootFingerprint(target);
+            await materialization.custody.abort();
+            await expect(readFile(join(target, 'copy.txt'), 'utf8')).resolves.toBe('copy');
+            await expect(removeCommittedWorkspaceTargetMaterialization({ targetPath: sibling, receiptPath, rootFingerprint }))
+                .rejects.toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });
+            await expect(removeCommittedWorkspaceTargetMaterialization({ targetPath: sibling, receiptPath: join(fixture, 'absent.json'), rootFingerprint }))
+                .rejects.toMatchObject({ code: 'workspace_copy_not_owned' });
+            await removeCommittedWorkspaceTargetMaterialization({ targetPath: target, receiptPath, rootFingerprint });
+            await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(join(sibling, 'user.txt'), 'utf8')).resolves.toBe('user');
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
+
+    it.each(['replacement', 'symlink'] as const)('refuses committed-copy removal after a %s replaces the root', async (change) => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-stale-removal-')));
+        try {
+            const target = join(fixture, 'copy');
+            const original = join(fixture, 'original');
+            const receiptPath = join(fixture, 'receipt.json');
+            const materialization = await beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
+            await mkdir(target);
+            await writeFile(join(target, 'copy.txt'), 'copy');
+            await materialization.custody.bindPromotedTarget();
+            await materialization.custody.commit();
+            const rootFingerprint = await computeWorkspaceSyncRootFingerprint(target);
+            await rename(target, original);
+            if (change === 'symlink') await symlink(original, target, 'dir');
+            else await mkdir(target);
+            const inspection = { targetPath: target, receiptPath, rootFingerprint, measureSize: true as const };
+            await expect(inspectCommittedWorkspaceTargetMaterialization(inspection))
+                .rejects.toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });
+            await expect(removeCommittedWorkspaceTargetMaterialization({ targetPath: target, receiptPath, rootFingerprint }))
+                .rejects.toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });
+            await expect(readFile(join(original, 'copy.txt'), 'utf8')).resolves.toBe('copy');
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
+
+    it('retains the exact moved copy for inspection after failed removal and refuses a blind replay', async () => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-unknown-removal-')));
+        try {
+            const target = join(fixture, 'copy');
+            const receiptPath = join(fixture, 'receipt.json');
+            const materialization = await beginWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
+            await mkdir(target);
+            await writeFile(join(target, 'copy.txt'), 'copy');
+            await materialization.custody.bindPromotedTarget();
+            await materialization.custody.commit();
+            const request = { targetPath: target, receiptPath, rootFingerprint: await computeWorkspaceSyncRootFingerprint(target) };
+            await expect(removeCommittedWorkspaceTargetMaterialization(request, {
+                removeTarget: async () => { throw Object.assign(new Error('filesystem refused removal'), { code: 'EACCES' }); },
+            })).rejects.toMatchObject({ code: 'EACCES' });
+            const receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as WorkspaceTargetMaterializationReceiptV1;
+            expect(receipt.removalTargetName).toBeDefined();
+            const removalPath = join(fixture, receipt.removalTargetName!);
+            await expect(readFile(join(removalPath, 'copy.txt'), 'utf8')).resolves.toBe('copy');
+            await expect(removeCommittedWorkspaceTargetMaterialization(request)).rejects.toMatchObject({
+                code: 'workspace_copy_removal_unknown', targetPath: target, removalPath,
+            });
+            await expect(readFile(join(removalPath, 'copy.txt'), 'utf8')).resolves.toBe('copy');
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
     it('fails closed when an admitted empty target becomes non-empty immediately before replacement', async () => {
         const fixture = await mkdtemp(join(tmpdir(), 'workspace-export-target-fence-'));
         try {
@@ -504,7 +618,9 @@ describe('workspace export materialization custody', () => {
             await materialized.custody.commit();
             await expect(readFile(join(target, 'new.txt'), 'utf8')).resolves.toBe('new');
             expect((await readdir(fixture)).some((name) => name.startsWith('.backup.'))).toBe(false);
-            await expect(access(receiptPath)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ committed: { canonicalRoot: target } });
+            await recoverInterruptedWorkspaceTargetMaterialization({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
+            await expect(readFile(join(target, 'new.txt'), 'utf8')).resolves.toBe('new');
         } finally {
             await rm(fixture, { recursive: true, force: true });
         }

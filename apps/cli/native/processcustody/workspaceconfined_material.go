@@ -105,6 +105,18 @@ func workspaceConfinedObservedResult(expectation workspaceConfinedExpectation) w
 	return workspaceConfinedResult{V: 1, T: "workspace-confined-result", Status: "observed", Expectation: &expectation}
 }
 
+func workspaceConfinedMeasuredResult(sizeBytes uint64) workspaceConfinedResult {
+	return workspaceConfinedResult{V: 1, T: "workspace-confined-result", Status: "measured", SizeBytes: &sizeBytes}
+}
+
+func addWorkspaceConfinedMeasuredBytes(total *uint64, size uint64) *workspaceConfinedDomainError {
+	if ^uint64(0)-*total < size {
+		return workspaceConfinedError("workspace_file_unsupported", "workspace size cannot be represented")
+	}
+	*total += size
+	return nil
+}
+
 func workspaceConfinedCapturedResult(expectation workspaceConfinedExpectation, materialPath *string) workspaceConfinedResult {
 	material := json.RawMessage("null")
 	if materialPath != nil {

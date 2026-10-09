@@ -459,6 +459,33 @@ func TestDarwinWorkspaceConfinedObserveCaptureApplyAndRecover(t *testing.T) {
 	}
 }
 
+func TestDarwinWorkspaceConfinedObserveMeasuresRegularFilesWithoutFollowingSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "copy", ".cache", "compiler"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "copy", "source"), []byte("copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "copy", ".cache", "compiler", "warm"), make([]byte, 17), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "private"), make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "copy", "outside")); err != nil {
+		t.Fatal(err)
+	}
+	reader, input, done := beginDarwinWorkspaceConfinedExchange(t, workspaceConfinedObserveCommand, map[string]any{
+		"v": 1, "rootPath": root, "relativePath": "copy", "measureSize": true,
+	})
+	measured := decideDarwinWorkspaceConfinedExchange(t, reader, input, done, "commit")
+	if measured["status"] != "measured" || measured["sizeBytes"] != float64(21) || measured["expectation"] != nil {
+		t.Fatalf("unexpected passive measurement: %#v", measured)
+	}
+}
+
 func TestDarwinWorkspaceConfinedRecoverRetainsChangedDisplacedEntry(t *testing.T) {
 	root := t.TempDir()
 	recovery := t.TempDir()

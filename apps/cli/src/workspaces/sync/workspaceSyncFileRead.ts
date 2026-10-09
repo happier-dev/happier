@@ -9,8 +9,14 @@ import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncEntryExpectationV1S
 import type { ReadWorkspaceSyncFileResultV1, WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { withConfinedWorkspaceSyncParent } from './workspaceSyncConfinedFileSystem';
 import {
+  workspaceSyncRootObjectIdentityFromStat,
+  workspaceSyncRootObjectIdentitiesEqual,
+  type WorkspaceSyncRootObjectIdentityV1,
+} from './workspaceSyncRootIdentity';
+import {
   runNativeConfinedWorkspaceSyncRead,
   runNativeConfinedWorkspaceSyncObserve,
+  runNativeConfinedWorkspaceSyncMeasure,
   type RunNativeConfinedReadInput,
 } from './workspaceSyncNativeConfinedFileSystem';
 
@@ -92,13 +98,24 @@ async function hashOpenFile(handle: Awaited<ReturnType<typeof open>>): Promise<R
   };
 }
 
-async function observeAtDescriptorPath(path: string): Promise<WorkspaceSyncEntryExpectationV1> {
+async function observeAtDescriptorPath(
+  path: string,
+  measureSize = false,
+  expectedRootIdentity?: WorkspaceSyncRootObjectIdentityV1,
+): Promise<WorkspaceSyncEntryExpectationV1 | number> {
   const admitted = await lstat(path).catch((error: unknown) => {
     if (isMissing(error)) return null;
     throw error;
   });
-  if (!admitted) return { kind: 'missing' };
+  if (!admitted) {
+    if (measureSize) throw changed('workspace entry disappeared during measurement');
+    return { kind: 'missing' };
+  }
+  if (expectedRootIdentity && !admitted.isDirectory()) {
+    throw Object.assign(new Error('Workspace copy root identity changed before measurement'), { code: 'root_changed' });
+  }
   if (admitted.isSymbolicLink()) {
+    if (measureSize) return 0;
     const rawTarget = await readlink(path, { encoding: 'buffer' });
     const target = rawTarget.toString('utf8');
     if (!Buffer.from(target, 'utf8').equals(rawTarget)) {
@@ -121,6 +138,17 @@ async function observeAtDescriptorPath(path: string): Promise<WorkspaceSyncEntry
       throw error;
     });
     try {
+      if (measureSize) {
+        const current = await handle.stat();
+        if (!current.isFile() || admitted.dev !== current.dev || admitted.ino !== current.ino
+          || admitted.size !== current.size || admitted.mtimeMs !== current.mtimeMs) {
+          throw changed('workspace file changed during measurement');
+        }
+        if (!Number.isSafeInteger(current.size) || current.size < 0) {
+          throw Object.assign(new Error('workspace file size cannot be represented'), { code: 'workspace_file_unsupported' });
+        }
+        return current.size;
+      }
       const observed = await hashOpenFile(handle);
       return { kind: 'file', ...observed };
     } finally {
@@ -138,6 +166,11 @@ async function observeAtDescriptorPath(path: string): Promise<WorkspaceSyncEntry
   });
   try {
     const before = await directory.stat();
+    if (expectedRootIdentity && !workspaceSyncRootObjectIdentitiesEqual(
+      expectedRootIdentity, workspaceSyncRootObjectIdentityFromStat(before),
+    )) {
+      throw Object.assign(new Error('Workspace copy root identity changed before measurement'), { code: 'root_changed' });
+    }
     const descriptorPath = `/proc/self/fd/${directory.fd}`;
     const rawNames = (await readdir(descriptorPath, { encoding: 'buffer' })).sort(Buffer.compare);
     const names = rawNames.map((rawName) => {
@@ -148,10 +181,19 @@ async function observeAtDescriptorPath(path: string): Promise<WorkspaceSyncEntry
       return name;
     });
     const entries: Array<readonly [string, WorkspaceSyncEntryExpectationV1]> = [];
+    let sizeBytes = 0;
     // Traverse sequentially so a large valid tree cannot exhaust this process's
     // descriptor budget merely because every sibling was opened concurrently.
     for (const name of names) {
-      entries.push([name, await observeAtDescriptorPath(resolve(descriptorPath, name))]);
+      const observed = await observeAtDescriptorPath(resolve(descriptorPath, name), measureSize);
+      if (typeof observed === 'number') {
+        sizeBytes += observed;
+        if (!Number.isSafeInteger(sizeBytes)) {
+          throw Object.assign(new Error('workspace copy size cannot be represented'), { code: 'workspace_file_unsupported' });
+        }
+      } else {
+        entries.push([name, observed]);
+      }
     }
     const after = await directory.stat();
     if (
@@ -160,11 +202,30 @@ async function observeAtDescriptorPath(path: string): Promise<WorkspaceSyncEntry
       || before.mtimeMs !== after.mtimeMs
       || before.ctimeMs !== after.ctimeMs
     ) throw changed('workspace directory changed during observation');
+    if (measureSize) return sizeBytes;
     const fingerprint = createHash('sha256').update(JSON.stringify({ v: 1, entries })).digest('hex');
     return { kind: 'directory', fingerprint };
   } finally {
     await directory.close();
   }
+}
+
+/** Passive logical regular-file bytes; the same confined traversal does not hash content in this mode. */
+export async function measureWorkspaceSyncRegularFileBytesAtRoot(input: ObserveWorkspaceSyncEntryAtRootInput & Readonly<{
+  /** Linux compares the opened target fstat. Native platforms use the prepared authority callback and held-name revalidation. */
+  expectedRootIdentity?: WorkspaceSyncRootObjectIdentityV1;
+}>): Promise<number> {
+  if (process.platform !== 'linux') return await runNativeConfinedWorkspaceSyncMeasure(input);
+  const observed = await withConfinedWorkspaceSyncParent({
+    rootPath: input.rootPath,
+    relativePath: input.relativePath,
+    ...(input.assertCurrentAuthority ? { assertCurrentAuthority: input.assertCurrentAuthority } : {}),
+    run: async ({ parentHandlePath, finalName }) => await observeAtDescriptorPath(
+      resolve(parentHandlePath, finalName), true, input.expectedRootIdentity,
+    ),
+  });
+  if (typeof observed !== 'number') throw unsafePath('workspace measurement returned an invalid result');
+  return observed;
 }
 
 /** Canonical complete observation used by both reviewed comparison and mutation. */

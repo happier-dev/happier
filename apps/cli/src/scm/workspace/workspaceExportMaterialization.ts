@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { access, readFile, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import { access, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 
 import type { ScmBackendRegistry } from '../registry';
@@ -20,6 +20,7 @@ import {
     resolveContainedWorkspaceMaterializationPath,
 } from './workspaceMaterializationSafety';
 import { resolveWorkspaceMaterializationTargetPath } from './workspaceMaterializationTargetPath';
+import { measureWorkspaceSyncRegularFileBytesAtRoot } from '@/workspaces/sync/workspaceSyncFileRead';
 
 import {
     assertPortableWorkspaceEntriesWithScmWorkspace,
@@ -31,6 +32,7 @@ import {
     isWorkspaceSyncRootObjectIdentityV1,
     readWorkspaceSyncRootObjectIdentity,
     workspaceSyncRootObjectIdentitiesEqual,
+    computeWorkspaceSyncRootFingerprint,
     type WorkspaceSyncRootObjectIdentityV1,
 } from '@/workspaces/sync/workspaceSyncRootIdentity';
 
@@ -46,6 +48,10 @@ export type WorkspaceTargetMaterializationReceiptV1 = Readonly<{
     originalTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     promotedTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     expectedBackupIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
+    /** Settled promotion custody; rollback must never delete this copy. */
+    committed?: Readonly<{ canonicalRoot: string; rootFingerprint: string }>;
+    /** Explicit removal began; retain the exact moved name for inspection, never blind replay. */
+    removalTargetName?: string;
 }>;
 
 export type WorkspaceExportMaterializationCustody = Readonly<{
@@ -75,7 +81,7 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
     try {
         const value = JSON.parse(raw) as unknown;
         if (!value || typeof value !== 'object' || Array.isArray(value)
-            || Object.keys(value).sort().join('\0') !== [
+            || Object.keys(value).filter((key) => key !== 'committed' && key !== 'removalTargetName').sort().join('\0') !== [
                 'expectedBackupIdentity',
                 'originalTargetIdentity',
                 'previousTargetName',
@@ -91,6 +97,7 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
                 || isWorkspaceSyncRootObjectIdentityV1(candidate.originalTargetIdentity))
             || !(candidate.promotedTargetIdentity === null
                 || isWorkspaceSyncRootObjectIdentityV1(candidate.promotedTargetIdentity))
+            || !isCommittedTarget(candidate.committed) || !isRemovalTargetName(candidate.removalTargetName)
             || !(candidate.expectedBackupIdentity === null
                 || isWorkspaceSyncRootObjectIdentityV1(candidate.expectedBackupIdentity))) {
             throw new Error('invalid receipt');
@@ -103,6 +110,28 @@ async function readMaterializationReceipt(path: string): Promise<WorkspaceTarget
 
 function materializationRecoveryError(message: string): Error {
     return Object.assign(new Error(message), { code: 'workspace_target_materialization_manual_recovery' });
+}
+
+function isCommittedTarget(value: unknown): boolean {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const candidate = value as Record<string, unknown>;
+    return Object.keys(candidate).sort().join('\0') === ['canonicalRoot', 'rootFingerprint'].join('\0')
+        && typeof candidate.canonicalRoot === 'string' && candidate.canonicalRoot === resolve(candidate.canonicalRoot)
+        && typeof candidate.rootFingerprint === 'string' && /^[a-f0-9]{64}$/u.test(candidate.rootFingerprint);
+}
+
+function isRemovalTargetName(value: unknown): boolean {
+    return value === undefined || (typeof value === 'string'
+        && /^\.happier-sync-backup\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value));
+}
+
+async function committedReceipt(targetPath: string, receipt: WorkspaceTargetMaterializationReceiptV1): Promise<WorkspaceTargetMaterializationReceiptV1> {
+    const canonicalRoot = await realpath(targetPath);
+    return Object.freeze({ ...receipt, committed: {
+        canonicalRoot,
+        rootFingerprint: await computeWorkspaceSyncRootFingerprint(canonicalRoot),
+    } });
 }
 
 async function readObjectIdentityOrAbsent(path: string): Promise<WorkspaceSyncRootObjectIdentityV1 | null> {
@@ -151,6 +180,7 @@ export async function prepareWorkspaceTargetMaterializationReceipt(input: Readon
 }>): Promise<WorkspaceTargetMaterializationReceiptV1> {
     const existing = await readMaterializationReceipt(input.receiptPath);
     if (existing) {
+        if (existing.committed) throw materializationRecoveryError('Workspace target already has committed materialization custody');
         if ((existing.previousTargetName !== null) !== input.originalTargetExists) {
             throw materializationRecoveryError('Workspace target materialization receipt does not match the observed target state');
         }
@@ -290,7 +320,8 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
                     await rm(previousTargetPath, { recursive: true, force: true });
                 }
             }
-            if (input.receiptPath) await rm(input.receiptPath, { force: true });
+            receipt = await committedReceipt(input.targetPath, receipt);
+            if (input.receiptPath) await writeJsonAtomic(input.receiptPath, receipt);
             settled = true;
         },
         abort: async () => {
@@ -328,7 +359,7 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
 }>): Promise<WorkspaceExportMaterializationCustody | null> {
     const receipt = input.receipt as unknown;
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
-        || Object.keys(receipt).sort().join('\0') !== [
+        || Object.keys(receipt).filter((key) => key !== 'committed' && key !== 'removalTargetName').sort().join('\0') !== [
             'expectedBackupIdentity',
             'originalTargetIdentity',
             'previousTargetName',
@@ -338,7 +369,7 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
         throw materializationRecoveryError('Unsupported partial workspace target materialization receipt');
     }
     const candidate = receipt as Record<string, unknown>;
-    if (candidate.v !== 1
+    if (candidate.v !== 1 || !isCommittedTarget(candidate.committed) || !isRemovalTargetName(candidate.removalTargetName)
         || !(candidate.previousTargetName === null || typeof candidate.previousTargetName === 'string')
         || !(candidate.originalTargetIdentity === null || isWorkspaceSyncRootObjectIdentityV1(candidate.originalTargetIdentity))
         || !(candidate.promotedTargetIdentity === null || isWorkspaceSyncRootObjectIdentityV1(candidate.promotedTargetIdentity))
@@ -347,6 +378,13 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
     }
     const validatedReceipt = candidate as WorkspaceTargetMaterializationReceiptV1;
     const targetPath = resolve(input.targetPath);
+    if (validatedReceipt.committed) {
+        await inspectCommittedWorkspaceTargetMaterialization({
+            targetPath, receipt: validatedReceipt,
+            rootFingerprint: validatedReceipt.committed.rootFingerprint,
+        });
+        return null;
+    }
     const expectedPrefix = `${input.backupDirectoryPrefix}.`;
     const previousTargetName = validatedReceipt.previousTargetName;
     if (previousTargetName !== null && (
@@ -380,9 +418,12 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
     }
     // Once the verified backup object is absent, the destructive commit
     // boundary has already crossed. Recovery never deletes the target in this
-    // state; it only clears the now-settled receipt.
+    // state; retain promotion evidence for separately reviewed removal.
     if (previousTargetPath && !backupIdentity && (targetIsOriginal || targetIsPromoted)) {
-        if (input.receiptPath) await rm(input.receiptPath, { force: true });
+        if (input.receiptPath) {
+            if (targetIsPromoted) await writeJsonAtomic(input.receiptPath, await committedReceipt(targetPath, validatedReceipt));
+            else await rm(input.receiptPath, { force: true });
+        }
         return null;
     }
 
@@ -413,7 +454,7 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
                 await assertObjectIdentity(previousTargetPath, validatedReceipt.expectedBackupIdentity);
                 await rm(previousTargetPath, { recursive: true, force: true });
             }
-            if (input.receiptPath) await rm(input.receiptPath, { force: true });
+            if (input.receiptPath) await writeJsonAtomic(input.receiptPath, await committedReceipt(targetPath, validatedReceipt));
             settled = true;
         },
         abort: async () => {
@@ -442,6 +483,78 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
             settled = true;
         },
     });
+}
+
+/** Sole committed-copy evidence comes from this materialization owner's settled promotion. */
+export async function inspectCommittedWorkspaceTargetMaterialization(input: Readonly<{
+    targetPath: string;
+    /** Omitted only for passive discovery; the physical root still must match committed custody. */
+    rootFingerprint?: string;
+    /** Display-only observed bytes, never stored in committed custody. */
+    measureSize?: true;
+}> & ({ receiptPath: string; receipt?: never } | { receipt: WorkspaceTargetMaterializationReceiptV1; receiptPath?: never })): Promise<WorkspaceTargetMaterializationReceiptV1 & Readonly<{
+    committed: NonNullable<WorkspaceTargetMaterializationReceiptV1['committed']>;
+    sizeBytes?: number;
+}>> {
+    const receipt = input.receipt ?? await readMaterializationReceipt(input.receiptPath);
+    if (!receipt?.committed || !receipt.promotedTargetIdentity) {
+        throw Object.assign(new Error('Workspace target has no committed owned-copy evidence'), { code: 'workspace_copy_not_owned' });
+    }
+    const targetPath = resolve(input.targetPath);
+    if (receipt.removalTargetName) {
+        throw Object.assign(new Error('Workspace copy removal requires inspection'), {
+            code: 'workspace_copy_removal_unknown',
+            targetPath: receipt.committed.canonicalRoot,
+            removalPath: join(dirname(receipt.committed.canonicalRoot), receipt.removalTargetName),
+        });
+    }
+    if (targetPath === parse(targetPath).root) throw materializationRecoveryError('Workspace copy root is unsafe');
+    await assertObjectIdentity(targetPath, receipt.promotedTargetIdentity);
+    const canonicalRoot = await realpath(targetPath);
+    if (canonicalRoot !== receipt.committed.canonicalRoot
+        || (input.rootFingerprint !== undefined && input.rootFingerprint !== receipt.committed.rootFingerprint)
+        || await computeWorkspaceSyncRootFingerprint(canonicalRoot) !== receipt.committed.rootFingerprint) {
+        throw Object.assign(new Error('Workspace copy removal approval is stale'), { code: 'root_changed' });
+    }
+    if (!input.measureSize) return { ...receipt, committed: receipt.committed };
+    const { measureSize: _measureSize, ...identityInput } = input;
+    const committedRootFingerprint = receipt.committed.rootFingerprint;
+    const inspectCurrent = async () => await inspectCommittedWorkspaceTargetMaterialization({
+        ...identityInput, rootFingerprint: committedRootFingerprint,
+    });
+    let sizeBytes: number | undefined;
+    try {
+        sizeBytes = await measureWorkspaceSyncRegularFileBytesAtRoot({
+            rootPath: dirname(canonicalRoot), relativePath: basename(canonicalRoot),
+            expectedRootIdentity: receipt.promotedTargetIdentity,
+            assertCurrentAuthority: async () => { await inspectCurrent(); },
+        });
+    } catch {
+        // Incomplete or unsupported observations are unknown, not a fabricated zero.
+    }
+    const current = await inspectCurrent();
+    return { ...current, ...(sizeBytes === undefined ? {} : { sizeBytes }) };
+}
+
+/** Explicit reviewed removal is distinct from ownership release and pre-commit rollback. */
+export async function removeCommittedWorkspaceTargetMaterialization(input: Readonly<{
+    targetPath: string;
+    receiptPath: string;
+    rootFingerprint: string;
+    signal?: AbortSignal;
+}>, dependencies: Readonly<{ removeTarget?: typeof rm }> = {}): Promise<void> {
+    input.signal?.throwIfAborted();
+    const receipt = await inspectCommittedWorkspaceTargetMaterialization(input);
+    input.signal?.throwIfAborted();
+    const canonicalRoot = receipt.committed!.canonicalRoot;
+    const removalPath = join(dirname(canonicalRoot), `.happier-sync-backup.${randomUUID()}`);
+    await writeJsonAtomic(input.receiptPath, { ...receipt, removalTargetName: basename(removalPath) } satisfies WorkspaceTargetMaterializationReceiptV1);
+    await rename(canonicalRoot, removalPath);
+    // Verify the moved object before recursive deletion. A replacement raced at
+    // the old name stays inspectable rather than being mistaken for our copy.
+    await assertObjectIdentity(removalPath, receipt.promotedTargetIdentity!);
+    await (dependencies.removeTarget ?? rm)(removalPath, { recursive: true });
+    await rm(input.receiptPath);
 }
 
 /**

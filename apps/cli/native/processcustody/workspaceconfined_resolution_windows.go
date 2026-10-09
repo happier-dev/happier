@@ -14,7 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type workspaceConfinedWindowsObserveOperation struct{ path *workspaceConfinedHeldPath }
+type workspaceConfinedWindowsObserveOperation struct {
+	path        *workspaceConfinedHeldPath
+	measureSize bool
+}
 type workspaceConfinedWindowsCaptureOperation struct {
 	path    *workspaceConfinedHeldPath
 	request workspaceConfinedCaptureRequest
@@ -33,7 +36,7 @@ func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (w
 	if err != nil {
 		return nil, err
 	}
-	return &workspaceConfinedWindowsObserveOperation{path: held}, nil
+	return &workspaceConfinedWindowsObserveOperation{path: held, measureSize: request.measureSize}, nil
 }
 func prepareWorkspaceConfinedCapture(request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 	held, err := openWorkspaceConfinedHeldPath(request.rootPath, request.relativePath, false)
@@ -86,9 +89,20 @@ func (o *workspaceConfinedWindowsObserveOperation) commit() workspaceConfinedRes
 	if err := o.path.revalidate(); err != nil {
 		return err.result()
 	}
-	expectation, err := observeWorkspaceConfinedWindowsHeldPath(o.path)
+	var sizeBytes uint64
+	var measurement *uint64
+	if o.measureSize {
+		measurement = &sizeBytes
+	}
+	expectation, err := observeWorkspaceConfinedWindowsHeldPathMode(o.path, measurement)
 	if err != nil {
 		return err.result()
+	}
+	if o.measureSize {
+		if err := o.path.revalidate(); err != nil {
+			return err.result()
+		}
+		return workspaceConfinedMeasuredResult(sizeBytes)
 	}
 	return workspaceConfinedObservedResult(expectation)
 }
@@ -349,18 +363,33 @@ func windowsWorkspaceConfinedIdentity(handle workspaceConfinedHandle) string {
 	return strconv.FormatUint(handle.identity.volumeSerial, 10) + ":" + hex.EncodeToString(handle.identity.fileID[:])
 }
 func observeWorkspaceConfinedWindowsHeldPath(path *workspaceConfinedHeldPath) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
+	return observeWorkspaceConfinedWindowsHeldPathMode(path, nil)
+}
+
+func observeWorkspaceConfinedWindowsHeldPathMode(path *workspaceConfinedHeldPath, measurement *uint64) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
 	if path.missingIndex >= 0 {
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace entry disappeared during measurement")
+		}
 		return workspaceConfinedExpectation{Kind: workspaceConfinedKindMissing}, nil
 	}
-	return observeWorkspaceConfinedWindowsEntry(path.final())
+	return observeWorkspaceConfinedWindowsEntryMode(path.final(), measurement)
 }
 func observeWorkspaceConfinedWindowsEntry(entry workspaceConfinedHandle) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
+	return observeWorkspaceConfinedWindowsEntryMode(entry, nil)
+}
+
+// One traversal owns both complete effect expectations and passive metadata-only measurements.
+func observeWorkspaceConfinedWindowsEntryMode(entry workspaceConfinedHandle, measurement *uint64) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
 	current, err := inspectWorkspaceConfinedHandle(entry.handle)
 	if err != nil || current.identity != entry.identity || current.kind != entry.kind {
 		return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace entry changed during observation")
 	}
 	switch entry.kind {
 	case workspaceConfinedKindFile:
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, addWorkspaceConfinedMeasuredBytes(measurement, workspaceConfinedFileSize(current.info))
+		}
 		digest, _, size, readErr := readWorkspaceConfinedFile(entry, false, 0)
 		if readErr != nil {
 			return workspaceConfinedExpectation{}, readErr
@@ -368,6 +397,9 @@ func observeWorkspaceConfinedWindowsEntry(entry workspaceConfinedHandle) (worksp
 		executable := false
 		return workspaceConfinedExpectation{Kind: entry.kind, Digest: digest, Executable: &executable, Size: &size}, nil
 	case workspaceConfinedKindSymlink:
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
+		}
 		path, err := workspaceConfinedPhysicalPath(entry.handle)
 		if err != nil {
 			return workspaceConfinedExpectation{}, workspaceConfinedError("workspace_file_unsupported", "workspace reparse target could not be resolved")
@@ -394,16 +426,21 @@ func observeWorkspaceConfinedWindowsEntry(entry workspaceConfinedHandle) (worksp
 			if err != nil {
 				return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace directory changed during observation")
 			}
-			childExpectation, childErr := observeWorkspaceConfinedWindowsEntry(child)
+			childExpectation, childErr := observeWorkspaceConfinedWindowsEntryMode(child, measurement)
 			_ = windows.CloseHandle(child.handle)
 			if childErr != nil {
 				return workspaceConfinedExpectation{}, childErr
 			}
-			fingerprint.add(name, childExpectation)
+			if measurement == nil {
+				fingerprint.add(name, childExpectation)
+			}
 		}
 		after, err := inspectWorkspaceConfinedHandle(entry.handle)
 		if err != nil || !workspaceConfinedSameFileObservation(before, after.info) {
 			return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace directory changed during observation")
+		}
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
 		}
 		return workspaceConfinedExpectation{Kind: entry.kind, Fingerprint: fingerprint.finish()}, nil
 	default:

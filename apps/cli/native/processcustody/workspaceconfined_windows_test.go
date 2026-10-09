@@ -533,6 +533,33 @@ func TestWindowsWorkspaceConfinedObserveCaptureApplyAndRecover(t *testing.T) {
 	}
 }
 
+func TestWindowsWorkspaceConfinedObserveMeasuresCurrentNestedRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "copy", ".cache", "compiler"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "copy", "source"), []byte("copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "copy", ".cache", "compiler", "warm"), make([]byte, 17), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "private"), make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "copy", "outside")); err != nil {
+		t.Fatalf("create required Windows symlink fixture: %v", err)
+	}
+	reader, input, done := beginWorkspaceConfinedExchange(t, workspaceConfinedObserveCommand, map[string]any{
+		"v": 1, "rootPath": root, "relativePath": "copy", "measureSize": true,
+	})
+	measured := commitWorkspaceConfinedExchange(t, reader, input, done)
+	if measured["status"] != "measured" || measured["sizeBytes"] != float64(21) || measured["expectation"] != nil {
+		t.Fatalf("unexpected passive measurement: %#v", measured)
+	}
+}
+
 func TestWindowsWorkspaceConfinedRecoverRetainsChangedDisplacedEntry(t *testing.T) {
 	root := t.TempDir()
 	recovery := t.TempDir()

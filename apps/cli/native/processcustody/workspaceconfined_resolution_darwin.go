@@ -16,7 +16,8 @@ import (
 )
 
 type workspaceConfinedDarwinObserveOperation struct {
-	path *workspaceConfinedDarwinHeldPath
+	path        *workspaceConfinedDarwinHeldPath
+	measureSize bool
 }
 type workspaceConfinedDarwinCaptureOperation struct {
 	path    *workspaceConfinedDarwinHeldPath
@@ -36,7 +37,7 @@ func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (w
 	if err != nil {
 		return nil, err
 	}
-	return &workspaceConfinedDarwinObserveOperation{path: held}, nil
+	return &workspaceConfinedDarwinObserveOperation{path: held, measureSize: request.measureSize}, nil
 }
 
 func prepareWorkspaceConfinedCapture(request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
@@ -88,9 +89,20 @@ func (o *workspaceConfinedDarwinObserveOperation) commit() workspaceConfinedResu
 	if err := o.path.revalidate(); err != nil {
 		return err.result()
 	}
-	expectation, err := observeWorkspaceConfinedDarwinHeldPath(o.path)
+	var sizeBytes uint64
+	var measurement *uint64
+	if o.measureSize {
+		measurement = &sizeBytes
+	}
+	expectation, err := observeWorkspaceConfinedDarwinHeldPathMode(o.path, measurement)
 	if err != nil {
 		return err.result()
+	}
+	if o.measureSize {
+		if err := o.path.revalidate(); err != nil {
+			return err.result()
+		}
+		return workspaceConfinedMeasuredResult(sizeBytes)
 	}
 	return workspaceConfinedObservedResult(expectation)
 }
@@ -348,20 +360,38 @@ func darwinWorkspaceConfinedIdentity(handle workspaceConfinedDarwinHandle) strin
 }
 
 func observeWorkspaceConfinedDarwinHeldPath(path *workspaceConfinedDarwinHeldPath) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
+	return observeWorkspaceConfinedDarwinHeldPathMode(path, nil)
+}
+
+func observeWorkspaceConfinedDarwinHeldPathMode(path *workspaceConfinedDarwinHeldPath, measurement *uint64) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
 	if path.missingIndex >= 0 {
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace entry disappeared during measurement")
+		}
 		return workspaceConfinedExpectation{Kind: workspaceConfinedKindMissing}, nil
 	}
 	parent, name, target := darwinHeldParentNameTarget(path)
-	return observeWorkspaceConfinedDarwinEntry(parent.fd, name, *target)
+	return observeWorkspaceConfinedDarwinEntryMode(parent.fd, name, *target, measurement)
 }
 
 func observeWorkspaceConfinedDarwinEntry(parent int, name string, entry workspaceConfinedDarwinHandle) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
+	return observeWorkspaceConfinedDarwinEntryMode(parent, name, entry, nil)
+}
+
+// One traversal owns both complete effect expectations and passive metadata-only measurements.
+func observeWorkspaceConfinedDarwinEntryMode(parent int, name string, entry workspaceConfinedDarwinHandle, measurement *uint64) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
 	current, err := inspectWorkspaceConfinedDarwinFD(entry.fd)
 	if err != nil || !sameWorkspaceConfinedDarwinObject(current, entry) {
 		return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace entry changed during observation")
 	}
 	switch entry.kind {
 	case workspaceConfinedKindFile:
+		if measurement != nil {
+			if current.stat.Size < 0 {
+				return workspaceConfinedExpectation{}, workspaceConfinedError("workspace_file_unsupported", "workspace file size cannot be represented")
+			}
+			return workspaceConfinedExpectation{}, addWorkspaceConfinedMeasuredBytes(measurement, uint64(current.stat.Size))
+		}
 		digest, _, size, readErr := readWorkspaceConfinedDarwinFile(entry, false, 0)
 		if readErr != nil {
 			return workspaceConfinedExpectation{}, readErr
@@ -369,6 +399,9 @@ func observeWorkspaceConfinedDarwinEntry(parent int, name string, entry workspac
 		executable := current.stat.Mode&0o111 != 0
 		return workspaceConfinedExpectation{Kind: entry.kind, Digest: digest, Executable: &executable, Size: &size}, nil
 	case workspaceConfinedKindSymlink:
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
+		}
 		buffer := make([]byte, 4096)
 		count, err := unix.Readlinkat(parent, name, buffer)
 		if err != nil || count < 0 || count > len(buffer) {
@@ -393,16 +426,21 @@ func observeWorkspaceConfinedDarwinEntry(parent int, name string, entry workspac
 			if err != nil {
 				return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace directory changed during observation")
 			}
-			childExpectation, childErr := observeWorkspaceConfinedDarwinEntry(entry.fd, childName, child)
+			childExpectation, childErr := observeWorkspaceConfinedDarwinEntryMode(entry.fd, childName, child, measurement)
 			_ = unix.Close(child.fd)
 			if childErr != nil {
 				return workspaceConfinedExpectation{}, childErr
 			}
-			fingerprint.add(childName, childExpectation)
+			if measurement == nil {
+				fingerprint.add(childName, childExpectation)
+			}
 		}
 		after, err := inspectWorkspaceConfinedDarwinFD(entry.fd)
 		if err != nil || !sameWorkspaceConfinedDarwinFileObservation(before, after.stat) {
 			return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace directory changed during observation")
+		}
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
 		}
 		return workspaceConfinedExpectation{Kind: entry.kind, Fingerprint: fingerprint.finish()}, nil
 	default:

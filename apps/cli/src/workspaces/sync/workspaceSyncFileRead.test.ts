@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { observeWorkspaceSyncEntryAtRoot, readWorkspaceSyncFileAtRoot } from './workspaceSyncFileRead';
+import { measureWorkspaceSyncRegularFileBytesAtRoot, observeWorkspaceSyncEntryAtRoot, readWorkspaceSyncFileAtRoot } from './workspaceSyncFileRead';
+import { readWorkspaceSyncRootObjectIdentity } from './workspaceSyncRootIdentity';
 
 describe('readWorkspaceSyncFileAtRoot', () => {
   afterEach(() => {
@@ -182,6 +183,29 @@ describe('readWorkspaceSyncFileAtRoot', () => {
 });
 
 describe('observeWorkspaceSyncEntryAtRoot', () => {
+  it.skipIf(process.platform !== 'linux')('does not disclose replacement-root size when custody changes at the authority boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workspace-sync-measure-root-race-'));
+    try {
+      await mkdir(join(root, 'copy'));
+      await writeFile(join(root, 'copy', 'owned'), 'copy');
+      const expectedRootIdentity = await readWorkspaceSyncRootObjectIdentity(join(root, 'copy'));
+      await mkdir(join(root, 'replacement'));
+      await writeFile(join(root, 'replacement', 'private'), Buffer.alloc(4096));
+      const request = {
+        rootPath: root,
+        relativePath: 'copy',
+        expectedRootIdentity,
+        assertCurrentAuthority: async () => {
+          await rename(join(root, 'copy'), join(root, 'retained'));
+          await rename(join(root, 'replacement'), join(root, 'copy'));
+        },
+      };
+      await expect(measureWorkspaceSyncRegularFileBytesAtRoot(request)).rejects.toMatchObject({ code: 'root_changed' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform !== 'linux')('does not authorize a directory containing an unrepresentable filename', async () => {
     const root = await mkdtemp(join(tmpdir(), 'workspace-sync-observe-invalid-name-'));
     await mkdir(join(root, 'tree'));

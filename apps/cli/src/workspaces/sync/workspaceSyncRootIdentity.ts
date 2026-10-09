@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Stats } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 
 export type WorkspaceSyncRootObjectIdentityV1 = Readonly<{
@@ -22,9 +23,8 @@ export function isWorkspaceSyncRootObjectIdentityV1(value: unknown): value is Wo
       || (typeof candidate.birthtimeMs === 'string' && /^\d+(?:\.\d+)?$/u.test(candidate.birthtimeMs)));
 }
 
-/** Path-independent identity for one real filesystem object. */
-export async function readWorkspaceSyncRootObjectIdentity(path: string): Promise<WorkspaceSyncRootObjectIdentityV1> {
-  const objectStat = await lstat(path);
+/** One identity projection for both pathname admission and retained directory handles. */
+export function workspaceSyncRootObjectIdentityFromStat(objectStat: Stats): WorkspaceSyncRootObjectIdentityV1 {
   if (objectStat.isSymbolicLink() || !objectStat.isDirectory()
     || !Number.isSafeInteger(objectStat.dev) || objectStat.dev < 0
     || !Number.isSafeInteger(objectStat.ino) || objectStat.ino <= 0) {
@@ -38,6 +38,11 @@ export async function readWorkspaceSyncRootObjectIdentity(path: string): Promise
       ? String(objectStat.birthtimeMs)
       : null,
   });
+}
+
+/** Path-independent identity for one real filesystem object. */
+export async function readWorkspaceSyncRootObjectIdentity(path: string): Promise<WorkspaceSyncRootObjectIdentityV1> {
+  return workspaceSyncRootObjectIdentityFromStat(await lstat(path));
 }
 
 export function workspaceSyncRootObjectIdentitiesEqual(

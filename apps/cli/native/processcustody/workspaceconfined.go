@@ -54,6 +54,7 @@ type workspaceConfinedDeleteRequest struct {
 type workspaceConfinedObserveRequest struct {
 	rootPath     string
 	relativePath string
+	measureSize  bool
 }
 
 type workspaceConfinedCaptureRequest struct {
@@ -96,6 +97,7 @@ type workspaceConfinedResult struct {
 	Status        string                        `json:"status"`
 	ActualDigest  string                        `json:"actualDigest,omitempty"`
 	Size          *uint64                       `json:"size,omitempty"`
+	SizeBytes     *uint64                       `json:"sizeBytes,omitempty"`
 	Digest        string                        `json:"digest,omitempty"`
 	ContentBase64 *string                       `json:"contentBase64,omitempty"`
 	Code          string                        `json:"code,omitempty"`
@@ -300,7 +302,7 @@ func decodeWorkspaceConfinedOperationID(fields map[string]json.RawMessage) (stri
 }
 
 func decodeWorkspaceConfinedObserveRequest(encoded []byte) (workspaceConfinedObserveRequest, error) {
-	fields, err := decodeClosedWorkspaceConfinedObject(encoded, map[string]bool{"v": true, "rootPath": true, "relativePath": true})
+	fields, err := decodeClosedWorkspaceConfinedObject(encoded, map[string]bool{"v": true, "rootPath": true, "relativePath": true, "measureSize": true})
 	if err != nil || decodeVersion(fields) != nil {
 		return workspaceConfinedObserveRequest{}, fmt.Errorf("invalid observe request")
 	}
@@ -312,7 +314,13 @@ func decodeWorkspaceConfinedObserveRequest(encoded []byte) (workspaceConfinedObs
 	if err != nil {
 		return workspaceConfinedObserveRequest{}, err
 	}
-	return workspaceConfinedObserveRequest{rootPath: rootPath, relativePath: relativePath}, nil
+	measureSize := false
+	if encoded, present := fields["measureSize"]; present {
+		if err := json.Unmarshal(encoded, &measureSize); err != nil || !measureSize {
+			return workspaceConfinedObserveRequest{}, fmt.Errorf("invalid passive measurement mode")
+		}
+	}
+	return workspaceConfinedObserveRequest{rootPath: rootPath, relativePath: relativePath, measureSize: measureSize}, nil
 }
 
 func decodeWorkspaceConfinedCaptureRequest(encoded []byte) (workspaceConfinedCaptureRequest, error) {

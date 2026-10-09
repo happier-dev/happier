@@ -11,6 +11,7 @@ import {
   runNativeConfinedWorkspaceSyncCapture,
   runNativeConfinedWorkspaceSyncDelete,
   runNativeConfinedWorkspaceSyncObserve,
+  runNativeConfinedWorkspaceSyncMeasure,
   runNativeConfinedWorkspaceSyncRead,
   runNativeConfinedWorkspaceSyncRecover,
   type WorkspaceSyncNativeConfinedChild,
@@ -57,6 +58,25 @@ function createHarness(result: Readonly<Record<string, unknown>>) {
 }
 
 describe('workspaceSyncNativeConfinedFileSystem', () => {
+  it('projects only a closed passive byte observation, including an actually empty owned tree', async () => {
+    for (const sizeBytes of [0, 21]) {
+      const harness = createHarness({ v: 1, t: 'workspace-confined-result', status: 'measured', sizeBytes });
+      await expect(runNativeConfinedWorkspaceSyncMeasure({ rootPath: 'C:\\work', relativePath: 'copy' }, harness.dependencies))
+        .resolves.toBe(sizeBytes);
+      expect(harness.writes[0]).toEqual({ v: 1, rootPath: 'C:\\work', relativePath: 'copy', measureSize: true });
+    }
+    for (const result of [
+      { status: 'measured', sizeBytes: -1 },
+      { status: 'measured', sizeBytes: Number.MAX_SAFE_INTEGER + 1 },
+      { status: 'measured', sizeBytes: 21, expectation: { kind: 'missing' } },
+      { status: 'observed', expectation: { kind: 'directory', fingerprint: 'a'.repeat(64) } },
+    ]) {
+      const harness = createHarness({ v: 1, t: 'workspace-confined-result', ...result });
+      await expect(runNativeConfinedWorkspaceSyncMeasure({ rootPath: 'C:\\work', relativePath: 'copy' }, harness.dependencies))
+        .rejects.toMatchObject({ code: 'workspace_root_unsafe' });
+    }
+  });
+
   it('allows a native operation to finish preparing beyond fifteen seconds', async () => {
     vi.useFakeTimers();
     try {

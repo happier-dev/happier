@@ -252,6 +252,17 @@ function parseObserveResult(line: string): WorkspaceSyncEntryExpectationV1 {
   return parseExpectation(record.expectation);
 }
 
+function parseMeasureResult(line: string): number {
+  const record = parseRecord(line);
+  if (record.v === 1 && record.t === 'workspace-confined-result' && record.status === 'error') throw nativeDomainError(record);
+  if (!exactKeys(record, ['sizeBytes', 'status', 't', 'v']) || record.v !== 1
+    || record.t !== 'workspace-confined-result' || record.status !== 'measured'
+    || typeof record.sizeBytes !== 'number' || !Number.isSafeInteger(record.sizeBytes) || record.sizeBytes < 0) {
+    throw unsafe('native workspace confinement returned an invalid size measurement');
+  }
+  return record.sizeBytes;
+}
+
 function parseCaptureResult(line: string): NativeConfinedCapturedEntry {
   const record = parseRecord(line);
   if (record.v === 1 && record.t === 'workspace-confined-result' && record.status === 'error') {
@@ -485,6 +496,19 @@ export async function runNativeConfinedWorkspaceSyncObserve(
     request: { v: 1, rootPath: input.rootPath, relativePath: input.relativePath },
     ...(input.assertCurrentAuthority ? { assertCurrentAuthority: input.assertCurrentAuthority } : {}),
     parseResult: parseObserveResult,
+    dependencies,
+  });
+}
+
+export async function runNativeConfinedWorkspaceSyncMeasure(
+  input: WorkspaceSyncNativeConfinedCommonInput,
+  dependencies: WorkspaceSyncNativeConfinedDependencies = {},
+): Promise<number> {
+  return await runExchange({
+    command: 'workspace-confined-observe',
+    request: { v: 1, rootPath: input.rootPath, relativePath: input.relativePath, measureSize: true },
+    ...(input.assertCurrentAuthority ? { assertCurrentAuthority: input.assertCurrentAuthority } : {}),
+    parseResult: parseMeasureResult,
     dependencies,
   });
 }
