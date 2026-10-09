@@ -25,6 +25,7 @@ export function formatPathRelativeToHome(path: string, homeDir?: string): string
 
 /** Session workspace labels share one home-directory rule, including the composer chip. */
 export function formatSessionPath(path: string, homeDir?: string): string {
-    const relativePath = formatPathRelativeToHome(path, homeDir);
-    return homeDir && relativePath === '~' ? t('sessions.workspace.noFolder') : relativePath;
+    // Literal home aliases remain meaningful before the machine's home metadata hydrates.
+    const relativePath = formatPathRelativeToHome(path, homeDir || '~');
+    return relativePath === '~' ? t('sessions.workspace.noFolder') : relativePath;
 }

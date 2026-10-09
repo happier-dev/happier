@@ -31,12 +31,16 @@ describe('formatPathRelativeToHome', () => {
 });
 
 describe('formatSessionPath', () => {
-    it('labels only the known machine home as No folder, leaving generic filesystem labels intact', () => {
+    it('labels the machine home and literal home aliases as No folder, leaving generic filesystem labels intact', () => {
         expect(formatSessionPath('~\\', 'C:\\Users\\alice\\\\')).toBe('No folder');
         expect(formatSessionPath('/home/alice/', '/home/alice')).toBe('No folder');
         expect(formatSessionPath('/home/alice/repo', '/home/alice')).toBe('~/repo');
         expect(formatSessionPath('C:\\Users\\alice2', 'C:\\Users\\alice')).toBe('C:\\Users\\alice2');
-        expect(formatSessionPath('~', undefined)).toBe('~');
+        for (const alias of ['~', '~/', '~\\']) {
+            expect(formatSessionPath(alias, undefined)).toBe('No folder');
+        }
+        expect(formatSessionPath('~/', '')).toBe('No folder');
+        expect(formatSessionPath('/home/alice', undefined)).toBe('/home/alice');
         expect(formatPathRelativeToHome('/home/alice', '/home/alice')).toBe('~');
     });
 });
