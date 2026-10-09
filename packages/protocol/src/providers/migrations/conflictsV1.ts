@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { createProviderFingerprintV1 } from '../fingerprints.js';
@@ -8,11 +9,11 @@ import {
 } from '../contributionIdentityV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
-import { readProviderSettingsFromAccountSettingsV1 } from '../settings/readFromAccountSettingsV1.js';
 import type {
   ProviderSettingsMigrationConflictKindV1,
   ProviderSettingsMigrationModelChoiceV1,
   ProviderSettingsMigrationPendingConflictV1,
+  ProviderSettingsV1,
 } from '../settings/v1.js';
 import { ProviderMigrationSourceProfileIdSchema } from '../settings/v1.js';
 import type {
@@ -22,11 +23,11 @@ import type {
 
 type ConnectionCandidate = Extract<ProviderAccountSettingsMigrationCandidateV1, { kind: 'connection' }>;
 
-const LegacyProfileConflictFingerprintV1Schema = z.string()
+const LegacyProfileConflictFingerprintV1Schema = lazyZodSchema(() => z.string()
   .startsWith('legacy-profile-migration-conflict:v1:')
-  .max(256);
+  .max(256));
 
-export const LegacyProfileMigrationConflictResolutionV1Schema = z.object({
+export const LegacyProfileMigrationConflictResolutionV1Schema = lazyZodSchema(() => z.object({
   sourceProfileId: ProviderMigrationSourceProfileIdSchema,
   expectedCandidateFingerprint: LegacyProfileConflictFingerprintV1Schema,
   decision: z.discriminatedUnion('kind', [
@@ -44,7 +45,7 @@ export const LegacyProfileMigrationConflictResolutionV1Schema = z.object({
       displayName: z.string().trim().min(1).max(128),
     }).strict(),
   ]),
-}).strict();
+}).strict());
 export type LegacyProfileMigrationConflictResolutionV1 = z.infer<
   typeof LegacyProfileMigrationConflictResolutionV1Schema
 >;
@@ -98,7 +99,7 @@ function pairConflictKinds(left: ConnectionCandidate, right: ConnectionCandidate
 function persistedWinnerConflict(input: Readonly<{
   candidate: ConnectionCandidate;
   winnerId: string;
-  settings: ReturnType<typeof readProviderSettingsFromAccountSettingsV1>['settings'];
+  settings: ProviderSettingsV1;
 }>): Readonly<{
   kinds: ProviderSettingsMigrationConflictKindV1[];
   facts: unknown;
@@ -154,7 +155,6 @@ function persistedWinnerConflict(input: Readonly<{
       defaultSelection: relevantDefault,
     },
     modelChoices: (() => {
-      if (!kinds.has('manual_model')) return [];
       const choices = [existingModelChoice, legacyModelChoice(input.candidate)]
         .filter((choice): choice is ProviderSettingsMigrationModelChoiceV1 => choice !== null);
       const seen = new Set<string>();
@@ -205,12 +205,14 @@ export function createLegacyProfileMigrationPendingConflictV1(input: Readonly<{
 
 /** Removes unsafe automatic candidates and emits bounded, non-secret review records. */
 export function classifyLegacyProfileMigrationConflictsV1(
-  rawSettings: Readonly<Record<string, unknown>>,
+  settings: ProviderSettingsV1,
   context: ProviderAccountSettingsMigrationContextV1,
 ): ProviderAccountSettingsMigrationContextV1 {
-  const settings = readProviderSettingsFromAccountSettingsV1(rawSettings).settings;
   const connectionCandidates = context.candidates.filter(
     (candidate): candidate is ConnectionCandidate => candidate.kind === 'connection' && contributionKey(candidate) !== null,
+  );
+  const persistedBySource = new Map(
+    (settings.migration?.pendingConflicts ?? []).map((conflict) => [conflict.sourceProfileId, conflict] as const),
   );
   const kindsBySource = new Map<string, Set<ProviderSettingsMigrationConflictKindV1>>();
   const existingConnectionIdBySource = new Map<string, string | null>();
@@ -223,7 +225,7 @@ export function classifyLegacyProfileMigrationConflictsV1(
     comparisonFact: unknown,
     modelChoices: readonly ProviderSettingsMigrationModelChoiceV1[] = [],
   ) => {
-    if (kinds.length === 0) return;
+    if (kinds.length === 0 && !persistedBySource.has(candidate.sourceProfileId)) return;
     const set = kindsBySource.get(candidate.sourceProfileId) ?? new Set();
     kinds.forEach((kind) => set.add(kind));
     kindsBySource.set(candidate.sourceProfileId, set);
@@ -264,14 +266,14 @@ export function classifyLegacyProfileMigrationConflictsV1(
     add(candidate, persisted.kinds, winner.id, persisted.facts, persisted.modelChoices);
   }
 
-  if (kindsBySource.size === 0) return { ...context, pendingConflicts: [] };
-  const persistedBySource = new Map(
-    (settings.migration?.pendingConflicts ?? []).map((conflict) => [conflict.sourceProfileId, conflict] as const),
-  );
-  const pendingBySource = new Map<string, ProviderSettingsMigrationPendingConflictV1>();
+  const pendingBySource = new Map(persistedBySource);
   for (const candidate of connectionCandidates) {
-    const kinds = kindsBySource.get(candidate.sourceProfileId);
-    if (!kinds) continue;
+    const persisted = persistedBySource.get(candidate.sourceProfileId);
+    const kinds = new Set([
+      ...(persisted?.kinds ?? []),
+      ...(kindsBySource.get(candidate.sourceProfileId) ?? []),
+    ]);
+    if (kinds.size === 0) continue;
     const next = createLegacyProfileMigrationPendingConflictV1({
       candidate,
       kinds: [...kinds],
@@ -279,9 +281,8 @@ export function classifyLegacyProfileMigrationConflictsV1(
       detectedAt: context.migratedAt,
       comparisonFacts: (comparisonFactsBySource.get(candidate.sourceProfileId) ?? [])
         .sort((left, right) => compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right))),
-      modelChoices: modelChoicesBySource.get(candidate.sourceProfileId) ?? [],
+      modelChoices: kinds.has('manual_model') ? modelChoicesBySource.get(candidate.sourceProfileId) ?? [] : [],
     });
-    const persisted = persistedBySource.get(candidate.sourceProfileId);
     pendingBySource.set(
       candidate.sourceProfileId,
       persisted?.candidateFingerprint === next.candidateFingerprint ? persisted : next,
@@ -289,7 +290,7 @@ export function classifyLegacyProfileMigrationConflictsV1(
   }
   return {
     ...context,
-    candidates: context.candidates.filter((candidate) => !kindsBySource.has(candidate.sourceProfileId)),
+    candidates: context.candidates.filter((candidate) => !pendingBySource.has(candidate.sourceProfileId)),
     pendingConflicts: [...pendingBySource.values()].sort((left, right) =>
       compareProviderCanonicalStringsV1(left.sourceProfileId, right.sourceProfileId)),
   };
@@ -305,7 +306,7 @@ export type ResolveLegacyProfileMigrationConflictResultV1 =
  * conflicts that protocol-pure persisted-state comparison cannot reproduce.
  */
 export function applyReviewedLegacyProfileMigrationConflictV1(
-  rawSettings: Readonly<Record<string, unknown>>,
+  settings: ProviderSettingsV1,
   baseContext: ProviderAccountSettingsMigrationContextV1,
   authoritativeContext: ProviderAccountSettingsMigrationContextV1,
   rawResolution: LegacyProfileMigrationConflictResolutionV1,
@@ -331,7 +332,6 @@ export function applyReviewedLegacyProfileMigrationConflictV1(
     if (conflict.existingConnectionId !== existingConnectionId) {
       return { ok: false, reason: 'migration_conflict_changed' };
     }
-    const settings = readProviderSettingsFromAccountSettingsV1(rawSettings).settings;
     const existing = settings.connections.find((connection) =>
       connection.id === existingConnectionId
       && connection.role === 'default'

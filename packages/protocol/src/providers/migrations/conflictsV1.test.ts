@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_PROVIDER_SETTINGS_V1 } from '../settings/v1.js';
-import { readProviderSettingsFromAccountSettingsV1 } from '../settings/readFromAccountSettingsV1.js';
+import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, type ProviderSettingsV1 } from '../settings/v1.js';
 import type { ProviderAccountSettingsMigrationContextV1 } from './accountSettingsV1.js';
 import { migrateProviderAccountSettingsV1 } from './accountSettingsV1.js';
 import { migrateLegacyAiLaunchProfilesV1 } from './legacyProfilesV1.js';
@@ -36,14 +35,14 @@ function context(candidates: ProviderAccountSettingsMigrationContextV1['candidat
 }
 
 function applyProtocolPureReviewedConflict(
-  rawSettings: Readonly<Record<string, unknown>>,
+  providerSettings: ProviderSettingsV1,
   baseContext: ProviderAccountSettingsMigrationContextV1,
   resolution: Parameters<typeof applyReviewedLegacyProfileMigrationConflictV1>[3],
 ) {
   return applyReviewedLegacyProfileMigrationConflictV1(
-    rawSettings,
+    providerSettings,
     baseContext,
-    classifyLegacyProfileMigrationConflictsV1(rawSettings, baseContext),
+    classifyLegacyProfileMigrationConflictsV1(providerSettings, baseContext),
     resolution,
   );
 }
@@ -53,7 +52,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     ['forward', ['source-a', 'pc-a', 'secret-a'], ['source-b', 'pc-b', 'secret-b']],
     ['reverse', ['source-b', 'pc-b', 'secret-b'], ['source-a', 'pc-a', 'secret-a']],
   ] as const)('classifies same-batch credential conflicts independently of candidate order (%s)', (_label, left, right) => {
-    const result = classifyLegacyProfileMigrationConflictsV1({}, context([
+    const result = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, context([
       candidate(...left),
       candidate(...right),
     ]));
@@ -68,21 +67,19 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
   });
 
   it('classifies persisted winner credential and model conflicts without exposing secret ids', () => {
-    const rawSettings = {
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{
-          ...candidate('winner', 'pc-existing', 'existing-secret').connection,
-          id: 'pc-existing',
-        }],
-        secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
-        manualModelsByConnectionId: {
-          'pc-existing': [{ id: 'deepseek-reasoner', name: 'Existing name', addedAt: 1 }],
-        },
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        ...candidate('winner', 'pc-existing', 'existing-secret').connection,
+        id: 'pc-existing',
+      }],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
+      manualModelsByConnectionId: {
+        'pc-existing': [{ id: 'deepseek-reasoner', name: 'Existing name', addedAt: 1 }],
       },
-    };
+    });
     const result = classifyLegacyProfileMigrationConflictsV1(
-      rawSettings,
+      providerSettings,
       context([candidate('deepseek', 'pc-candidate', 'legacy-secret', 'Legacy name')]),
     );
     expect(result.candidates).toEqual([]);
@@ -99,7 +96,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
   });
 
   it('keeps identical same-batch facts eligible for deterministic merge', () => {
-    const result = classifyLegacyProfileMigrationConflictsV1({}, context([
+    const result = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, context([
       candidate('source-a', 'pc-a', 'same-secret'),
       candidate('source-b', 'pc-b', 'same-secret'),
     ]));
@@ -107,27 +104,87 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     expect(result.candidates).toHaveLength(2);
   });
 
+  it('keeps a persisted unresolved conflict pending when ordinary source facts become eligible, until exact review', () => {
+    const original = candidate('deepseek', 'pc-candidate', 'legacy-secret');
+    const existing = candidate('winner', 'pc-existing', 'existing-secret').connection;
+    const firstSettings = { ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [existing],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } } };
+    const first = classifyLegacyProfileMigrationConflictsV1(firstSettings, context([original]));
+    const conflict = first.pendingConflicts?.[0];
+    if (!conflict) throw new Error('Expected an unresolved credential conflict');
+    const settings = { ...firstSettings,
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'legacy-secret' } } },
+      migration: { v: 1 as const, completedSources: [], pendingCustomProfileIds: [], pendingConflicts: [conflict] } };
+    const currentContext = context([original]);
+    const ordinary = classifyLegacyProfileMigrationConflictsV1(settings, currentContext);
+    expect(ordinary.candidates).toEqual([]);
+    const currentConflict = ordinary.pendingConflicts?.[0];
+    if (!currentConflict) throw new Error('Expected current unresolved review facts');
+    expect(currentConflict).toMatchObject({ sourceProfileId: conflict.sourceProfileId, kinds: conflict.kinds });
+    expect(currentConflict.candidateFingerprint).not.toBe(conflict.candidateFingerprint);
+    expect(applyReviewedLegacyProfileMigrationConflictV1(settings, currentContext, ordinary, {
+      sourceProfileId: conflict.sourceProfileId, expectedCandidateFingerprint: conflict.candidateFingerprint,
+      decision: { kind: 'keep_existing', existingConnectionId: existing.id },
+    })).toMatchObject({ ok: false, reason: 'migration_conflict_changed' });
+    const unreviewed = migrateProviderAccountSettingsV1(settings, ordinary);
+    expect(unreviewed.ok).toBe(true);
+    if (!unreviewed.ok) throw new Error('Expected a retained pending migration');
+    expect(unreviewed.outcomes).toEqual([]);
+    expect(unreviewed.providerSettings.migration?.pendingConflicts).toEqual([currentConflict]);
+    const reviewed = applyReviewedLegacyProfileMigrationConflictV1(settings, currentContext, ordinary, {
+      sourceProfileId: conflict.sourceProfileId, expectedCandidateFingerprint: currentConflict.candidateFingerprint,
+      decision: { kind: 'keep_existing', existingConnectionId: existing.id },
+    });
+    expect(reviewed.ok).toBe(true);
+    if (!reviewed.ok) throw new Error('Expected an exact reviewed resolution');
+    const resolved = migrateProviderAccountSettingsV1(settings, reviewed.context);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error('Expected reviewed completion');
+    expect(resolved.outcomes).toMatchObject([{ sourceProfileId: 'deepseek', kind: 'connection', connectionId: existing.id }]);
+    expect(resolved.providerSettings.migration?.pendingConflicts).toEqual([]);
+
+  });
+
+  it('refuses an old review fingerprint after eligible source model facts change', () => {
+    const original = candidate('deepseek', 'pc-candidate', 'legacy-secret');
+    const existing = candidate('winner', 'pc-existing', 'existing-secret').connection;
+    const firstSettings = { ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [existing],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } } };
+    const conflict = classifyLegacyProfileMigrationConflictsV1(firstSettings, context([original])).pendingConflicts?.[0];
+    if (!conflict) throw new Error('Expected an unresolved credential conflict');
+    const settings = { ...firstSettings,
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'legacy-secret' } } },
+      migration: { v: 1 as const, completedSources: [], pendingCustomProfileIds: [], pendingConflicts: [conflict] } };
+    const changedSource = { ...original,
+      manualModels: [{ id: 'deepseek-chat', name: 'Chat', addedAt: 10 }],
+      selectedModel: { agentTargetKey: 'agent:claude', modelId: 'deepseek-chat' } };
+    const changedContext = context([changedSource]);
+    expect(applyReviewedLegacyProfileMigrationConflictV1(settings, changedContext,
+      classifyLegacyProfileMigrationConflictsV1(settings, changedContext), {
+        sourceProfileId: conflict.sourceProfileId, expectedCandidateFingerprint: conflict.candidateFingerprint,
+        decision: { kind: 'keep_existing', existingConnectionId: existing.id },
+      })).toMatchObject({ ok: false, reason: 'migration_conflict_changed' });
+  });
+
   it('converges a legacy source on a persisted winner when both bind the same saved-secret id', () => {
-    const rawSettings = {
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{ ...candidate('winner', 'pc-existing', 'same-secret').connection, id: 'pc-existing' }],
-        secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'same-secret' } } },
-      },
-    };
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{ ...candidate('winner', 'pc-existing', 'same-secret').connection, id: 'pc-existing' }],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'same-secret' } } },
+    });
     const classified = classifyLegacyProfileMigrationConflictsV1(
-      rawSettings,
+      providerSettings,
       context([candidate('deepseek', 'pc-candidate', 'same-secret')]),
     );
 
     expect(classified.pendingConflicts).toEqual([]);
-    const migrated = migrateProviderAccountSettingsV1(rawSettings, classified);
+    const migrated = migrateProviderAccountSettingsV1(providerSettings, classified);
     expect(migrated.ok).toBe(true);
     if (!migrated.ok) throw new Error('expected same-secret migration convergence');
     expect(migrated.outcomes).toContainEqual(expect.objectContaining({
       sourceProfileId: 'deepseek', kind: 'connection', connectionId: 'pc-existing',
     }));
-    expect(readProviderSettingsFromAccountSettingsV1(migrated.settings).settings).toMatchObject({
+    expect(migrated.providerSettings).toMatchObject({
       connections: [{ id: 'pc-existing' }],
       secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'same-secret' } } },
     });
@@ -143,14 +200,14 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
         source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' },
       },
     };
-    const result = classifyLegacyProfileMigrationConflictsV1({}, context([first, canonical]));
+    const result = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, context([first, canonical]));
 
     expect(result.candidates).toEqual([]);
     expect(result.pendingConflicts?.map((entry) => entry.sourceProfileId)).toEqual(['source-a', 'source-b']);
   });
 
   it('is stable across independent coordinator invocations with new losing ids and timestamps', () => {
-    const firstContext = classifyLegacyProfileMigrationConflictsV1({}, {
+    const firstContext = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
       migratedAt: 20,
       candidates: [
         candidate('source-a', 'pc-first-a', 'secret-a'),
@@ -158,11 +215,11 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       ],
       pendingCustomProfileIds: [],
     });
-    const first = migrateProviderAccountSettingsV1({}, firstContext);
+    const first = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, firstContext);
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error('expected first conflict persistence');
 
-    const secondContext = classifyLegacyProfileMigrationConflictsV1(first.settings, {
+    const secondContext = classifyLegacyProfileMigrationConflictsV1(first.providerSettings, {
       migratedAt: 999,
       candidates: [
         candidate('source-b', 'pc-second-b', 'secret-b'),
@@ -171,46 +228,43 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       pendingCustomProfileIds: [],
     });
     expect(secondContext.pendingConflicts).toEqual(firstContext.pendingConflicts);
-    expect(migrateProviderAccountSettingsV1(first.settings, secondContext)).toMatchObject({
+    expect(migrateProviderAccountSettingsV1(first.providerSettings, secondContext)).toMatchObject({
       ok: true,
       changed: false,
     });
   });
 
-  it('removes a stale pending conflict when the source is no longer an eligible candidate', () => {
-    const firstContext = classifyLegacyProfileMigrationConflictsV1({}, context([
+  it('retains exact pending facts when the source is no longer an eligible candidate', () => {
+    const firstContext = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, context([
       candidate('source-a', 'pc-a', 'secret-a'),
       candidate('source-b', 'pc-b', 'secret-b'),
     ]));
-    const first = migrateProviderAccountSettingsV1({}, firstContext);
+    const first = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, firstContext);
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error('expected first migration');
-    const reconciled = classifyLegacyProfileMigrationConflictsV1(first.settings, context([]));
-    expect(reconciled.pendingConflicts).toEqual([]);
-    const cleared = migrateProviderAccountSettingsV1(first.settings, reconciled);
-    expect(cleared.ok).toBe(true);
-    if (!cleared.ok) throw new Error('expected stale conflict cleanup');
-    expect(readProviderSettingsFromAccountSettingsV1(cleared.settings).settings.migration?.pendingConflicts)
-      .toEqual([]);
+    const reconciled = classifyLegacyProfileMigrationConflictsV1(first.providerSettings, context([]));
+    expect(reconciled.pendingConflicts).toEqual(firstContext.pendingConflicts);
+    const retained = migrateProviderAccountSettingsV1(first.providerSettings, reconciled);
+    expect(retained).toMatchObject({ ok: true, changed: false });
+    if (!retained.ok) throw new Error('expected retained pending facts');
+    expect(retained.providerSettings.migration?.pendingConflicts).toEqual(firstContext.pendingConflicts);
   });
 
   it('applies an exact-fingerprint keep-existing credential decision while preserving non-conflicting model intent', () => {
-    const rawSettings = {
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{ ...candidate('winner', 'pc-existing', 'existing-secret').connection, id: 'pc-existing' }],
-        secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
-      },
-    };
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{ ...candidate('winner', 'pc-existing', 'existing-secret').connection, id: 'pc-existing' }],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
+    });
     const base = context([{
       ...candidate('deepseek', 'pc-loser', 'legacy-secret'),
       removedEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
       movedSecretBindingEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
     }]);
-    const classified = classifyLegacyProfileMigrationConflictsV1(rawSettings, base);
+    const classified = classifyLegacyProfileMigrationConflictsV1(providerSettings, base);
     const conflict = classified.pendingConflicts?.[0];
     expect(conflict).toBeDefined();
-    const resolved = applyProtocolPureReviewedConflict(rawSettings, base, {
+    const resolved = applyProtocolPureReviewedConflict(providerSettings, base, {
       sourceProfileId: 'deepseek',
       expectedCandidateFingerprint: conflict!.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
@@ -231,8 +285,8 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       selectedModel: { agentTargetKey: 'agent:claude', modelId: 'deepseek-reasoner' },
     });
 
-    const changedWinner = structuredClone(rawSettings);
-    changedWinner.providerSettingsV1.secretBindingsByConnectionId['pc-existing']!.account.apiKey = 'third-secret';
+    const changedWinner = structuredClone(providerSettings);
+    changedWinner.secretBindingsByConnectionId['pc-existing']!.account!.apiKey = 'third-secret';
     expect(applyProtocolPureReviewedConflict(changedWinner, base, {
       sourceProfileId: 'deepseek',
       expectedCandidateFingerprint: conflict!.candidateFingerprint,
@@ -241,24 +295,22 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
   });
 
   it('requires an explicit reviewed model outcome when keep-existing resolves a model conflict', () => {
-    const rawSettings = {
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{ ...candidate('winner', 'pc-existing', 'same-secret').connection, id: 'pc-existing' }],
-        manualModelsByConnectionId: {
-          'pc-existing': [{ id: 'deepseek-reasoner', name: 'Existing', addedAt: 1 }],
-        },
-        defaultsByAgentTargetKey: {
-          'agent:claude': {
-            v: 1,
-            ref: { agentTargetKey: 'agent:claude', providerConnectionId: 'pc-existing', modelId: 'existing-model' },
-            updatedAt: 1,
-          },
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{ ...candidate('winner', 'pc-existing', 'same-secret').connection, id: 'pc-existing' }],
+      manualModelsByConnectionId: {
+        'pc-existing': [{ id: 'deepseek-reasoner', name: 'Existing', addedAt: 1 }],
+      },
+      defaultsByAgentTargetKey: {
+        'agent:claude': {
+          v: 1,
+          ref: { agentTargetKey: 'agent:claude', providerConnectionId: 'pc-existing', modelId: 'existing-model' },
+          updatedAt: 1,
         },
       },
-    };
+    });
     const base = context([candidate('deepseek', 'pc-loser', 'same-secret', 'Legacy')]);
-    const classified = classifyLegacyProfileMigrationConflictsV1(rawSettings, base);
+    const classified = classifyLegacyProfileMigrationConflictsV1(providerSettings, base);
     const conflict = classified.pendingConflicts![0]!;
     expect(conflict.modelChoices).toEqual([
       {
@@ -271,11 +323,11 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
         label: 'Legacy',
       },
     ]);
-    expect(applyProtocolPureReviewedConflict(rawSettings, base, {
+    expect(applyProtocolPureReviewedConflict(providerSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
     })).toMatchObject({ ok: false, reason: 'migration_conflict_resolution_invalid' });
-    const resolved = applyProtocolPureReviewedConflict(rawSettings, base, {
+    const resolved = applyProtocolPureReviewedConflict(providerSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
         kind: 'keep_existing', existingConnectionId: 'pc-existing',
@@ -285,19 +337,19 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
     expect(resolved).toMatchObject({ ok: true, context: { candidates: [{
       selectedModel: { agentTargetKey: 'agent:claude', modelId: 'existing-model' },
     }] } });
-    expect(applyProtocolPureReviewedConflict(rawSettings, base, {
+    expect(applyProtocolPureReviewedConflict(providerSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
         kind: 'keep_existing', existingConnectionId: 'pc-existing',
         modelSelection: { agentTargetKey: 'agent:claude', modelId: 'arbitrary-unreviewed-model' },
       },
     })).toMatchObject({ ok: false, reason: 'migration_conflict_resolution_invalid' });
-    const timestampOnly = structuredClone(rawSettings);
-    timestampOnly.providerSettingsV1.defaultsByAgentTargetKey['agent:claude']!.updatedAt = 999;
+    const timestampOnly = structuredClone(providerSettings);
+    timestampOnly.defaultsByAgentTargetKey['agent:claude']!.updatedAt = 999;
     expect(classifyLegacyProfileMigrationConflictsV1(timestampOnly, base).pendingConflicts?.[0]?.candidateFingerprint)
       .toBe(conflict.candidateFingerprint);
-    const changedWinner = structuredClone(rawSettings);
-    changedWinner.providerSettingsV1.manualModelsByConnectionId['pc-existing']![0]!.name = 'Changed after review';
+    const changedWinner = structuredClone(providerSettings);
+    changedWinner.manualModelsByConnectionId['pc-existing']![0]!.name = 'Changed after review';
     expect(applyProtocolPureReviewedConflict(changedWinner, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: {
@@ -318,25 +370,25 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       favoriteProfiles: ['deepseek'],
       lastUsedProfile: 'deepseek',
       secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 'legacy-secret' } },
-      providerSettingsV1: {
-        ...DEFAULT_PROVIDER_SETTINGS_V1,
-        connections: [{ ...candidate('winner', 'pc-existing', 'existing-secret').connection, id: 'pc-existing' }],
-        secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
-      },
     };
+    const providerSettings = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{ ...candidate('winner', 'pc-existing', 'existing-secret').connection, id: 'pc-existing' }],
+      secretBindingsByConnectionId: { 'pc-existing': { account: { apiKey: 'existing-secret' } } },
+    });
     const base = context([{
       ...candidate('deepseek', 'pc-loser', 'legacy-secret'),
       removedEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
       movedSecretBindingEnvironmentVariableNames: ['DEEPSEEK_AUTH_TOKEN'],
     }]);
-    const conflict = classifyLegacyProfileMigrationConflictsV1(rawSettings, base).pendingConflicts![0]!;
-    const reviewed = applyProtocolPureReviewedConflict(rawSettings, base, {
+    const conflict = classifyLegacyProfileMigrationConflictsV1(providerSettings, base).pendingConflicts![0]!;
+    const reviewed = applyProtocolPureReviewedConflict(providerSettings, base, {
       sourceProfileId: 'deepseek', expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'keep_existing', existingConnectionId: 'pc-existing' },
     });
     expect(reviewed.ok).toBe(true);
     if (!reviewed.ok) throw new Error('expected reviewed resolution');
-    const migrated = migrateLegacyAiLaunchProfilesV1(rawSettings, reviewed.context, { lastUsedProfile: 'deepseek' });
+    const migrated = migrateLegacyAiLaunchProfilesV1(rawSettings, providerSettings, reviewed.context, { lastUsedProfile: 'deepseek' });
     expect(migrated.ok).toBe(true);
     if (!migrated.ok) throw new Error('expected migration');
     expect(migrated.settings.favoriteProfiles).toEqual([]);
@@ -350,8 +402,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       }),
     })]);
     expect(migrated.settings.secretBindingsByProfileId).toEqual({});
-    expect(readProviderSettingsFromAccountSettingsV1(migrated.settings).settings
-      .secretBindingsByConnectionId['pc-existing'])
+    expect(migrated.providerSettings.secretBindingsByConnectionId['pc-existing'])
       .toEqual({ account: { apiKey: 'existing-secret' } });
   });
 
@@ -360,9 +411,9 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       candidate('source-a', 'pc-a', 'secret-a'),
       candidate('source-b', 'pc-b', 'secret-b'),
     ]);
-    const classified = classifyLegacyProfileMigrationConflictsV1({}, base);
+    const classified = classifyLegacyProfileMigrationConflictsV1(DEFAULT_PROVIDER_SETTINGS_V1, base);
     const conflict = classified.pendingConflicts!.find((entry) => entry.sourceProfileId === 'source-a')!;
-    const resolved = applyProtocolPureReviewedConflict({}, base, {
+    const resolved = applyProtocolPureReviewedConflict(DEFAULT_PROVIDER_SETTINGS_V1, base, {
       sourceProfileId: 'source-a',
       expectedCandidateFingerprint: conflict.candidateFingerprint,
       decision: { kind: 'create_named', connectionId: 'pc-reviewed', displayName: 'Legacy DeepSeek' },
@@ -374,7 +425,7 @@ describe('classifyLegacyProfileMigrationConflictsV1', () => {
       connection: expect.objectContaining({ id: 'pc-reviewed', role: 'named', displayName: 'Legacy DeepSeek' }),
       secretBindings: { account: { apiKey: 'secret-a' } },
     }));
-    expect(applyProtocolPureReviewedConflict({}, base, {
+    expect(applyProtocolPureReviewedConflict(DEFAULT_PROVIDER_SETTINGS_V1, base, {
       sourceProfileId: 'source-a',
       expectedCandidateFingerprint: 'legacy-profile-migration-conflict:v1:stale',
       decision: { kind: 'create_named', connectionId: 'pc-reviewed', displayName: 'Legacy DeepSeek' },
