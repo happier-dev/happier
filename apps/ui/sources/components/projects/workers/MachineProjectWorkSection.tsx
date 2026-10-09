@@ -7,7 +7,6 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectWorkerActionOutputV1 } from '@happier-dev/protocol';
-import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -20,16 +19,11 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
-import { Modal } from '@/modal';
 import { useActiveActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { useProjectAccountRows } from '@/sync/store/hooks';
-import { readMachineFreshCopies } from '@/sync/store/domains/projectAccountRows';
-import {
-  executeProjectWorkerActionV1,
-  ProjectWorkerActionError,
-} from '@/sync/ops/actions/projectWorkerActions';
+import { useMachineFreshCopies } from './useMachineFreshCopies';
+import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { formatRunClock } from '@/components/projects/projectSetup/projectScriptPresentation';
@@ -103,38 +97,6 @@ export function useMachineWorkerPolicy(serverId: string, machineId: string) {
     [machineId, mutate, serverId],
   );
   return { ...setting, save };
-}
-
-type FreshCopy = Readonly<{
-  relationship: WorkspaceSyncRelationshipV1;
-  sourceRefId: string;
-  name: string;
-  sourceMachineId: string;
-}>;
-
-function basename(path: string): string {
-  const parts = path.split(/[\\/]+/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
-/** Present only canonical worker targets from the current Account/Home row observation. */
-function useFreshCopies(
-  serverId: string,
-  machineId: string,
-): readonly FreshCopy[] | null {
-  const rows = useProjectAccountRows();
-  return React.useMemo(() => {
-    if (!rows) return null;
-    const copies = readMachineFreshCopies({ projectAccountRows: rows }, {
-      scope: { accountId: rows.scope.accountId, serverId }, machineId,
-    });
-    return copies?.map(({ relationship, source }) => ({
-      relationship,
-      sourceRefId: source.id,
-      name: source.label ?? basename(source.rootPath),
-      sourceMachineId: source.machineId,
-    })) ?? null;
-  }, [machineId, rows, serverId]);
 }
 
 function RunningHereRow(
@@ -226,62 +188,12 @@ export function MachineProjectWorkSection(
   const compact = useViewportClass() === 'compact';
   const capacityAnchor = React.useRef<View>(null);
   const [capacityOpen, setCapacityOpen] = React.useState(false);
-  const copies = useFreshCopies(props.serverId, props.machineId);
+  const { copies: visibleCopies, remove, notice: copyNotice } = useMachineFreshCopies(props.serverId, props.machineId);
   const machines = useAllMachines();
-  const [retired, setRetired] = React.useState<ReadonlySet<string>>(new Set());
-  const [copyNotice, setCopyNotice] = React.useState<Readonly<{
-    relationshipId: string;
-    text: string;
-  }> | null>(null);
-  const visibleCopies = copies?.filter(
-    (copy) => !retired.has(copy.relationship.relationshipId),
-  ) ?? null;
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   const disabled = !value || policy.busy;
   const notice = noticeText(policy.notice);
-
-  const remove = async (copy: FreshCopy) => {
-    const confirmed = await Modal.confirm(
-      t('projectWorkers.removeConfirm', {
-        name: copy.name,
-        machine: props.machineName,
-      }),
-      t('projectWorkers.removeDetail'),
-      { confirmText: t('projectWorkers.removeAction') },
-    );
-    if (!confirmed) return;
-    setCopyNotice(null);
-    try {
-      const result = await executeProjectWorkerActionV1(
-        'projects.worker.copy.retire',
-        {
-          workspace: { serverId: props.serverId, refId: copy.sourceRefId },
-          machineId: copy.relationship.controllerMachineId,
-          expectedRelationship: copy.relationship,
-        },
-      );
-      if (result.status === 'retired') {
-        setRetired(
-          (current) => new Set([...current, copy.relationship.relationshipId]),
-        );
-      }
-    } catch (error) {
-      const code =
-        error instanceof ProjectWorkerActionError ? error.errorCode : '';
-      setCopyNotice({
-        relationshipId: copy.relationship.relationshipId,
-        text:
-          code === 'approval_required'
-            ? t('projectWorkers.approvalPending')
-            : code === 'outcome_unknown' || code === 'outcomeUnknown'
-              ? t('projectWorkers.removeUnknown')
-              : code.includes('in_use') || code.includes('dependen')
-                ? t('projectWorkers.removeInUse')
-                : t('projectWorkers.removeFailed'),
-      });
-    }
-  };
 
   return (
     <>
