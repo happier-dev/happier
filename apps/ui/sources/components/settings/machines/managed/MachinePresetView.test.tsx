@@ -339,9 +339,7 @@ describe('reachable preset detail', () => {
         const serverId = await seed();
         const scopeId = await seedConfiguration(serverId);
         const picker = await renderSettingsView(<MachineProvisionerPicker serverId={scopeId} presetOnly />);
-        await waitForHomeGovernance(() => expect(picker.findByTestId('managed-picker.controller:controller')).not.toBeNull());
-        expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toEqual([]);
-        await act(async () => picker.pressByTestId('managed-picker.controller:controller'));
+        // The Home's one controller is preselected, so its catalog is the first frame.
         const providerKey = buildQualifiedPluginContributionKey(preset.recipe.provider);
         const actionId = `managed-picker.provisioners.cloud.${providerKey}.action`;
         const rowId = `managed-picker.provisioners.cloud.${providerKey}`;
@@ -471,6 +469,10 @@ describe('reachable preset detail', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId(`settings.machines.preset.${scopeId}.preset`)).not.toBeNull());
         await act(async () => screen.pressByTestId(`settings.machines.preset.${scopeId}.preset`));
         expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`);
+        // The group creates a preset from its header "+"; no separate "New preset" row repeats it.
+        expect(screen.getTextContent()).not.toContain(t('machinePresets.newPreset'));
+        await act(async () => screen.pressByTestId(`settings.machines.presets.new.${scopeId}`));
+        expect(route.push).toHaveBeenLastCalledWith(`/settings/machines/presets/new?serverId=${encodeURIComponent(scopeId)}`);
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
     });
 

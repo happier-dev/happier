@@ -210,21 +210,32 @@ function ReceiptCost(props: Readonly<{ cost: ManagedReceiptCost }>) {
     );
   }
   if (cost.kind === 'price') {
+    // One hero price, later prices as a sentence ("About €7.49 a month while it exists"), one source line.
+    const [hero, ...more] = cost.prices;
+    const label = (price: (typeof cost.prices)[number]) =>
+      price.label === undefined ? null : typeof price.label === 'string' ? price.label : price.label.fallback;
     return (
       <View style={styles.cost}>
-        {cost.prices.map((price, index) => (
-          <View key={index} style={styles.cost}>
-            {price.label !== undefined ? (
-              <Text style={styles.quietLine}>{typeof price.label === 'string' ? price.label : price.label.fallback}</Text>
-            ) : null}
-            <View style={styles.bigRow}>
-              <Text style={index === 0 ? styles.big : styles.quietLine}>{formatProviderAmount(price)}</Text>
-              <Text style={index === 0 ? styles.bigUnit : styles.quietLine}>{formatPriceUnit(price.unit)}</Text>
-            </View>
-            <View style={styles.source}>
-              <Icon name="clock" size={13} color={theme.colors.text.tertiary} />
-              <Text style={styles.sourceText}>{formatPriceSource(price)}</Text>
-            </View>
+        {hero && label(hero) !== null ? <Text style={styles.quietLine}>{label(hero)}</Text> : null}
+        {hero ? (
+          <View style={styles.bigRow}>
+            <Text style={styles.big}>{formatProviderAmount(hero)}</Text>
+            <Text style={styles.bigUnit}>{formatPriceUnit(hero.unit)}</Text>
+          </View>
+        ) : null}
+        {more.map((price, index) => (
+          <Text key={index} style={styles.quietLine}>
+            {/* The hero's own monthly equivalent reads as a sentence; other line items keep their label. */}
+            {price.unit === 'month' && label(price) === label(hero!)
+              ? t('managedMachines.price.aboutMonthly', { amount: formatProviderAmount(price) })
+              : [label(price), `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`].filter(Boolean).join(' · ')}
+          </Text>
+        ))}
+        {/* Provenance once per source, not under every price. */}
+        {cost.prices.filter((price, index) => cost.prices.findIndex((other) => other.source === price.source) === index).map((price) => (
+          <View key={price.source} style={styles.source}>
+            <Icon name="clock" size={13} color={theme.colors.text.tertiary} />
+            <Text style={styles.sourceText}>{formatPriceSource(price)}</Text>
           </View>
         ))}
         {cost.billedTo ? (

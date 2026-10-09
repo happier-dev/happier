@@ -27,7 +27,19 @@ describe('managed creation presentation', () => {
         expect(describeManagedCreation({ ...machine, observation: { availability: 'unavailable', observedAt: 1 } }).line)
             .not.toBe(t('managedPower.resourceAbsent'));
         expect(describeManagedCreation({ ...machine, allocation: 'may-exist', resource: undefined }).line)
-            .toBe(t('managedMachines.creation.unknown', { name: 'Guest' }));
+            .toBe(`${t('managedMachines.creation.unknownCause', { name: 'Guest' })} ${t('managedMachines.creation.unknownDetail')}`);
+    });
+    it('waits for an offline controller by name before anything is created, and names the provider it confirms with', () => {
+        const unsubmitted = { ...machine, allocation: 'unsubmitted' as const, resource: undefined };
+        expect(managedCreationState(unsubmitted, { controller: { name: 'MacBook Pro', online: false }, provider: 'Hetzner' }))
+            .toEqual({ kind: 'controllerWaiting', name: 'Guest', controller: 'MacBook Pro', provider: 'Hetzner' });
+        expect(managedCreationState(unsubmitted, { controller: { name: 'MacBook Pro', online: true }, provider: 'Hetzner' }))
+            .toEqual({ kind: 'creationWaiting', name: 'Guest' });
+        expect(managedCreationState(unsubmitted)).toEqual({ kind: 'creationWaiting', name: 'Guest' });
+        const starting: ManagedMachineV1 = { ...machine, desired: 'start',
+            submittedNativeEffect: { intentRevision: 1, requestId: 'start-request', intent: 'start', controller: machine.controller },
+            observation: { availability: 'present', observedAt: 10, power: 'stopped', storage: 'retained' } };
+        expect(managedCreationState(starting, { provider: 'Hetzner' })).toMatchObject({ kind: 'powerPending', provider: 'Hetzner' });
     });
     it('keeps cancellation cleanup visible and only treats confirmed absence as ended', () => {
         const canceled = { ...machine, creationState: 'canceled' as const, cleanup: { disposition: 'pending' as const, reason: 'late_allocation' } };

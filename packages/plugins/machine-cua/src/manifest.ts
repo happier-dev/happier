@@ -120,7 +120,7 @@ const byoc = remoteRoles('byoc');
 const fleet = remoteRoles('fleet');
 function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinitionV1 {
     const prefix = id === 'local-space' ? 'space' : 'sandbox';
-    return { title: id === 'local-space' ? 'Cua local Space' : 'Cua local sandbox', icon: 'server',
+    return { title: id === 'local-space' ? 'Cua local Space' : 'Cua local sandbox', icon: 'desktop',
         resourceKind: id === 'local-space' ? 'cua-local-space' : 'cua-local-sandbox', schemaVersion: 1,
         kindTitle: machinePresentationLabel(id === 'local-space' ? 'spaceKind' : 'kind'),
         description: machinePresentationLabel(id === 'local-space' ? 'spaceDescription' : 'description'),

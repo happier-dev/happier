@@ -12,6 +12,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SetupPathPanel, type SetupPath } from '@/components/ui/setupBlocks/SetupPathPanel';
 import { Text } from '@/components/ui/text/Text';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
@@ -29,15 +30,13 @@ import {
     MachineWatchLine,
 } from './MachineAddPanes';
 import { useMachineAddFlow } from './useMachineAddFlow';
+import { updateMachineAddFlowDraft, useMachineAddFlowDraftSelector } from './machineAddFlowStore';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisComputerAgentsPane';
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
-import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 export type MachineAddFormLayout = 'page' | 'panel';
@@ -83,16 +82,17 @@ export function MachineAddForm(props: Readonly<{
     onStartSession: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
     /** "New machine pool", when the Home supports pools. */
     onNewPool?: (() => void) | null;
+    /** `page` only: this Home's Account allows Create one (the page reads it once, for its header too). */
+    canCreate?: boolean;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>) {
     const { theme } = useUnistyles();
     const phone = useViewportClass() === 'compact';
     const flow = useMachineAddFlow({ initialPath: props.initialPath });
-    const [mode, setMode] = React.useState<'connect' | 'create'>('connect');
-    const accountScope = useServerCredentialAccountScopeBinding(props.layout === 'page' ? flow.serverId : undefined);
-    const accountSettings = useManagedMachineAccountSettings(accountScope.binding ?? undefined);
-    const canCreate = accountSettings.settings?.managedMachineCreationEnabled === true;
+    // "Create one" is the fourth way to add a machine, beside the paths (lab `m-add`), when this Home allows it.
+    const creating = useMachineAddFlowDraftSelector((draft) => draft.creating);
+    const setCreating = React.useCallback((next: boolean) => updateMachineAddFlowDraft((draft) => draft.creating === next ? draft : { ...draft, creating: next }), []);
     const arrivedMachineId = flow.arrived?.machineId ?? null;
     const { onArrived } = props;
     const reportedArrivalRef = React.useRef<string | null>(null);
@@ -108,25 +108,26 @@ export function MachineAddForm(props: Readonly<{
     })), [flow.paths, theme.colors.text.secondary]);
     const active = flow.path ?? resolveMachineAddInitialPath(flow.paths, props.initialPath);
 
-    const modeTabs = props.layout === 'page' && canCreate ? <SegmentedTabBar tabs={[
-        { id: 'connect' as const, label: t('managedMachines.add.connect') },
-        { id: 'create' as const, label: t('managedMachines.add.create') },
-    ]} activeTabId={mode} onSelectTab={setMode} testIDPrefix={`${props.testID}.mode`} /> : null;
-    if (props.layout === 'page' && canCreate && mode === 'create') return <View testID={props.testID} style={styles.page}>
-        {modeTabs}<MachineProvisionerPicker serverId={flow.serverId} />
-    </View>;
+    const offerCreate = props.layout === 'page' && props.canCreate === true;
+    const showCreate = offerCreate && (creating || paths.length === 0 || active === null);
+    const { choosePath } = flow;
+    const setUpThisComputer = React.useCallback(() => {
+        setCreating(false);
+        choosePath('thisComputer');
+    }, [choosePath, setCreating]);
 
-    if (paths.length === 0 || active === null) {
+    if (!offerCreate && (paths.length === 0 || active === null)) {
         return (
             <View testID={`${props.testID}.fromComputer`} style={styles.fallback}>
-                {modeTabs}
                 <Text style={styles.fallbackTitle}>{t('settingsMachines.addFromComputerTitle')}</Text>
                 <Text style={styles.fallbackBody}>{t('settingsMachines.addFromComputerDescription')}</Text>
             </View>
         );
     }
 
-    const pane = <MachineAddPane flow={flow} pathId={active} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
+    const pane = showCreate || active === null
+        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} />
+        : <MachineAddPane flow={flow} pathId={active} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
             {t('addFlows.machinePoolPrompt')}{' '}
@@ -136,7 +137,7 @@ export function MachineAddForm(props: Readonly<{
         </Text>
     ) : null;
 
-    if (props.layout === 'panel') {
+    if (props.layout === 'panel' && active !== null) {
         return (
             <SetupPathPanel
                 testID={props.testID}
@@ -151,20 +152,30 @@ export function MachineAddForm(props: Readonly<{
         );
     }
 
+    // Page sections own the page edge: the paths and a connect pane sit in edge-only groups, and Create
+    // one's own sections render at page level so they line up with the title (anatomy: no nested insets).
     return (
-        <View testID={props.testID} style={styles.page}>
-            {modeTabs}
-            <SelectionTiles<MachineAddPathId>
+        <View testID={props.testID}>
+            <ItemGroup surface="none">
+            <SelectionTiles<MachineAddPathId | 'create'>
                 testIdPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('settings.addMachine')}
                 density="compact"
-                minimumColumns={phone ? 1 : Math.min(3, paths.length)}
+                minimumColumns={phone ? 1 : Math.min(4, paths.length + (offerCreate ? 1 : 0))}
                 maximumColumns={phone ? 1 : undefined}
-                options={paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, icon: PATH_ICON[path.id] }))}
-                value={active}
-                onChange={(next) => { if (next) flow.choosePath(next); }}
+                options={[
+                    ...paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, icon: PATH_ICON[path.id] })),
+                    ...(offerCreate ? [{ id: 'create' as const, title: t('managedMachines.add.createPath'),
+                        subtitle: t('managedMachines.add.createPathSubtitle'), icon: 'plus' as const }] : []),
+                ]}
+                value={showCreate ? 'create' : active}
+                onChange={(next) => {
+                    if (next === 'create') setCreating(true);
+                    else if (next) { setCreating(false); flow.choosePath(next); }
+                }}
             />
-            {pane}
+            </ItemGroup>
+            {showCreate || active === null ? pane : <ItemGroup surface="none"><View style={styles.page}>{pane}</View></ItemGroup>}
         </View>
     );
 }

@@ -35,7 +35,7 @@ function privateBytes(value: string) {
 }
 
 export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
-  title: 'Docker Sandboxes', icon: 'server', resourceKind: 'docker-sandbox', schemaVersion: 1,
+  title: 'Docker Sandboxes', icon: 'cube', resourceKind: 'docker-sandbox', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }],

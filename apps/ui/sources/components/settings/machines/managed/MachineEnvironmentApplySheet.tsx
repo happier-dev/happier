@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
@@ -7,12 +6,12 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { Icon } from '@/components/ui/icons/Icon';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -39,10 +38,9 @@ export function showMachineEnvironmentApplySheet(props: ApplySheetProps) {
   Modal.show({ component: MachineEnvironmentApplySheet, props });
 }
 
-function MachineEnvironmentApplySheet(
+export function MachineEnvironmentApplySheet(
   props: ApplySheetProps & CustomModalInjectedProps,
 ) {
-  const { theme } = useUnistyles();
   const router = useRouter();
   const { setChrome, onClose } = props;
   React.useEffect(() => {
@@ -59,6 +57,8 @@ function MachineEnvironmentApplySheet(
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
   const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
   const [pending, setPending] = React.useState<string | null>(null);
+  // Choosing a preset only shows what it sets up; the one primary button runs it.
+  const [chosenId, setChosenId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const approval = useActionApprovalContinuation({
     scopeKey: JSON.stringify([
@@ -74,6 +74,9 @@ function MachineEnvironmentApplySheet(
   const presets = (presetsByServerId[props.serverId] ?? []).filter(
     (preset) => preset.environment && preset.archivedAt === undefined,
   );
+  // A single preset is the obvious choice; several wait for the person to pick one.
+  const chosen = presets.find((preset) => preset.id === chosenId) ?? (presets.length === 1 ? presets[0] : undefined);
+  const busy = pending !== null || approval.approvalPending;
   const opened = (result: unknown) => {
     const output =
       ManagedMachineActionOutputSchemasV1[
@@ -168,26 +171,15 @@ function MachineEnvironmentApplySheet(
             key={preset.id}
             testID={`machine-environment-apply.preset:${preset.id}`}
             title={preset.name}
+            // Labelled facts; the chosen preset opens them one per line, so its row says what will run.
             subtitle={describeMachineEnvironment(preset.environment)
-              .map((fact) => fact.value)
-              .join(' · ')}
-            icon={
-              <Icon
-                name="stack"
-                size={20}
-                color={theme.colors.text.secondary}
-              />
-            }
-            disabled={pending !== null || approval.approvalPending}
+              .map((fact) => t('machinePresets.environment.fact', { label: fact.label, value: fact.value }))
+              .join(chosen?.id === preset.id ? '\n' : ' · ')}
+            subtitleLines={chosen?.id === preset.id ? 0 : undefined}
+            selected={chosen?.id === preset.id}
+            disabled={busy}
             showChevron={false}
-            rightElement={
-              pending === preset.id ? (
-                <ActivitySpinner size="small" />
-              ) : undefined
-            }
-            onPress={() => {
-              void apply(preset);
-            }}
+            onPress={() => setChosenId(preset.id)}
           />
         ))}
         {presets.length === 0 ? (
@@ -210,6 +202,22 @@ function MachineEnvironmentApplySheet(
           />
         ) : null}
       </ItemGroup>
+      {presets.length > 0 ? (
+        <ItemGroup surface="none">
+          <SectionButtonRow>
+            <RoundButton
+              testID="machine-environment-apply.run"
+              display="default"
+              title={t('machinePresets.environment.applyRun', { machine: props.machineName })}
+              loading={pending !== null}
+              disabled={!chosen || busy}
+              onPress={() => {
+                if (chosen) void apply(chosen);
+              }}
+            />
+          </SectionButtonRow>
+        </ItemGroup>
+      ) : null}
       {error ? (
         <SurfaceStateCard
           testID="machine-environment-apply.error"

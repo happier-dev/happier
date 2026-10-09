@@ -57,7 +57,7 @@ function bytes(value: string) {
   return decoded;
 }
 export const MACHINE_PROVISIONER = {
-  title: 'Fly Machines', icon: 'server', resourceKind: 'fly-machine', schemaVersion: 1,
+  title: 'Fly Machines', icon: 'hard-drives', resourceKind: 'fly-machine', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: FlyLaunchV1Schema.jsonSchema, resourceSchema: FlyResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],

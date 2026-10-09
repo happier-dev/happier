@@ -104,6 +104,20 @@ describe('MachineConfigurationReceipt', () => {
     expect(cost).toContain('native-monthly-source');
   });
 
+  it('leads with one hero price, says the same machine\'s monthly price as a sentence, and names one source once', async () => {
+    const { t } = await import('@/text');
+    const { formatProviderAmount } = await import('./managedMachineDisplay');
+    const observedAt = Date.UTC(2026, 9, 8, 10, 40);
+    const screen = await renderReceipt({ cost: { kind: 'price', prices: [
+      { amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'Hetzner', observedAt },
+      { amount: '7.49', currency: 'EUR', unit: 'month', source: 'Hetzner', observedAt },
+    ] } });
+    const cost = textContent(screen, 'receipt:cost');
+    expect(cost).toContain(t('managedMachines.price.aboutMonthly', { amount: formatProviderAmount({ amount: '7.49', currency: 'EUR' }) }));
+    expect(cost.split('Hetzner').length - 1).toBe(1);
+    await screen.unmount();
+  });
+
   it('shows all native line-item labels, exact prices, units and provenance without calculating a total', async () => {
     const prices = [
       { label: 'Compute', amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'native-compute', observedAt: Date.UTC(2026, 9, 8, 10, 40) },

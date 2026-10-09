@@ -314,7 +314,7 @@ export const managedMachinesEn = {
             recipeDescription: "Set when it was created. Edit the preset for new machines; this machine keeps what it was made with.",
             madeFromPreset: ({ preset }: { preset: string }) => `Made from the ${preset} preset.`,
             createdOn: ({ provider }: { provider: string }) => `Created by Happier on ${provider}.`,
-            kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
+            kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind.toLocaleLowerCase('en')}`,
             power: { running: "Running", stopped: "Stopped", suspended: "Suspended" },
         },
         picker: {

@@ -245,6 +245,15 @@ describe('Item mode prop', () => {
         uiItemDensitySetting = 'comfortable';
     });
 
+    it('turns a disclosure header chevron to show whether the row is open', async () => {
+        const { Item } = await import('../Item');
+        const closed = await renderScreen(<Item title="Closed" onPress={() => {}} accessibilityState={{ expanded: false }} />);
+        expect(closed.findAllByProps({ name: 'caret-down' })).toHaveLength(1);
+        expect(closed.findAllByProps({ name: 'caret-right' })).toHaveLength(0);
+        const open = await renderScreen(<Item title="Open" onPress={() => {}} accessibilityState={{ expanded: true }} />);
+        expect(open.findAllByProps({ name: 'caret-up' })).toHaveLength(1);
+    });
+
     it('suppresses the chevron when a rightElement is present (default)', async () => {
         const { Item } = await import('../Item');
         const screen = await renderScreen(

@@ -60,7 +60,58 @@ export function describeRetention(
     }
   }
 }
+/** The descriptor facts a consequence depends on: where it runs, whether stopped bills, and who bills. */
+export type RetentionConsequenceFacts = Readonly<{
+  location: 'local' | 'cloud' | 'unknown';
+  stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+  /** The provider's display name ("Hetzner"). */
+  provider: string;
+}>;
 
+/**
+ * What the chosen Keep rule means for the machine and its bill, said once under the choices. The
+ * choice's own label is already on screen, so this never repeats it (copy: one message per state).
+ */
+export function describeRetentionConsequence(
+  retention: RetentionV1,
+  facts: RetentionConsequenceFacts,
+  formatTime: (at: number) => string = formatAsOfTime,
+): string {
+  const billed = facts.location !== 'local';
+  if (retention.kind === 'until-delete')
+    return billed && facts.stoppedBilling !== 'unknown'
+      ? t('managedRetention.consequence.untilDeleteBilled')
+      : t('managedRetention.consequence.untilDelete');
+  if (retention.effect === 'delete') {
+    const when =
+      retention.kind === 'unused'
+        ? { duration: formatRetentionDuration(retention.afterMs) }
+        : { time: formatTime(retention.at) };
+    if ('duration' in when)
+      return billed
+        ? t('managedRetention.consequence.deleteBilled', when)
+        : t('managedRetention.consequence.delete', when);
+    return billed
+      ? t('managedRetention.consequence.deleteAtBilled', when)
+      : t('managedRetention.consequence.deleteAt', when);
+  }
+  if (facts.location === 'local')
+    return t('managedRetention.categoryHelp.local');
+  switch (facts.stoppedBilling) {
+    case 'billed':
+      return t('managedRetention.consequence.stopBilled', {
+        provider: facts.provider,
+      });
+    case 'not-billed':
+      return t('managedRetention.consequence.stopNotBilled', {
+        provider: facts.provider,
+      });
+    case 'unknown':
+      return t('managedRetention.consequence.stopUnknown', {
+        provider: facts.provider,
+      });
+  }
+}
 
 /** A Stop rule is the only one a wake can follow: Delete leaves nothing to start, Until I delete it never stops. */
 export function retentionStops(retention: RetentionV1): boolean {
@@ -115,16 +166,24 @@ export function buildRetentionChoices(
     finiteOnly?: boolean;
   }>,
 ): readonly RetentionChoice[] {
-  const effects = input.finiteOnly ? ['delete'] as const : input.effects ?? ['stop', 'delete'];
-  const retentions: RetentionV1[] = input.finiteOnly ? [] : [{ kind: 'until-delete' }];
+  const effects = input.finiteOnly
+    ? (['delete'] as const)
+    : (input.effects ?? ['stop', 'delete']);
+  const retentions: RetentionV1[] = input.finiteOnly
+    ? []
+    : [{ kind: 'until-delete' }];
   for (const effect of effects) {
     for (const afterMs of UNUSED_DURATIONS_MS)
       retentions.push({ kind: 'unused', afterMs, effect });
   }
   const currentId = retentionChoiceId(input.current);
   if (
-    !retentions.some((retention) => retentionChoiceId(retention) === currentId)
-    && (!input.finiteOnly || input.current.kind !== 'until-delete' && input.current.effect === 'delete')
+    !retentions.some(
+      (retention) => retentionChoiceId(retention) === currentId,
+    ) &&
+    (!input.finiteOnly ||
+      (input.current.kind !== 'until-delete' &&
+        input.current.effect === 'delete'))
   )
     retentions.push(input.current);
   return retentions.map((retention) => ({
@@ -136,8 +195,12 @@ export function buildRetentionChoices(
 
 /** Finite resources end; the fact is never presented as a retained Stop or same-resource wake. */
 export function describeFiniteRetention(retention: RetentionV1): string {
-  if (retention.kind === 'unused') return t('managedRetention.endsAfterUnused', { duration: formatRetentionDuration(retention.afterMs) });
-  if (retention.kind === 'deadline') return t('managedRetention.endsAt', { time: formatAsOfTime(retention.at) });
+  if (retention.kind === 'unused')
+    return t('managedRetention.endsAfterUnused', {
+      duration: formatRetentionDuration(retention.afterMs),
+    });
+  if (retention.kind === 'deadline')
+    return t('managedRetention.endsAt', { time: formatAsOfTime(retention.at) });
   return t('managedMachines.options.unavailable');
 }
 

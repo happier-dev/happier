@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -13,18 +12,23 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from './ManagedMachineStateRow';
 import { canRetryManagedInstallation, currentManagedCreationOperation, managedCreationSetup, managedCreationState } from './managedCreationPresentation';
+import { describeManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
     provider?: string;
+    /** The provider's mark, so the resource row reads as what it is. */
+    mark?: React.ReactNode;
+    /** The controller's name and presence: an offline one is what an unsubmitted creation waits on. */
+    controller?: Readonly<{ name: string; online: boolean }>;
     operation?: ActionOperationProjection | null;
     /** D53: a failed Set up recovers on this same machine, or is skipped; never re-acquired. */
     setupRecovery?: Readonly<{ retry?: () => void; skip?: () => void }> }>) {
-    const { theme } = useUnistyles();
     const { machine } = props;
-    const state = managedCreationState(machine);
+    const state = managedCreationState(machine, { controller: props.controller, provider: props.provider });
+    const lifecycle = describeManagedLifecycleState(state);
     const awaitingConnection = !machine.enrolledMachineId || state.kind !== 'resourceReady';
     const operation = currentManagedCreationOperation(machine, props.operation);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
@@ -53,9 +57,12 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 title={operation.snapshot.error.error} diagnosticCode={operation.snapshot.error.errorCode}
                 testID="managed-machine.installation-error" /> : null}
         </ItemGroup> : null}
-        {awaitingConnection ? <ItemGroup>
+        {/* A blocking or billing-uncertain state is the page's banner, which already says what may bill. */}
+        {awaitingConnection && lifecycle.banner ? <ManagedMachineStateRow name={machine.launch.name} mark={null}
+            state={state} provider={props.provider} handlers={props.handlers ?? {}} testID="managed-machine.progress" /> : null}
+        {awaitingConnection && !lifecycle.banner ? <ItemGroup>
             <ManagedMachineStateRow name={machine.launch.name}
-                mark={<Icon name="desktop" color={theme.colors.text.secondary} />}
+                mark={props.mark ?? <Icon name="desktop" />}
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}

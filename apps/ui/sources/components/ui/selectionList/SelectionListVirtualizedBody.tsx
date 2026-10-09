@@ -52,6 +52,7 @@ import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import type {
     SelectionListOption,
     SelectionListPagination,
+    SelectionListSectionAction,
     SelectionListStep,
     SelectionListVirtualizedOptionSource,
     SelectionListVirtualizedOptionSourceItem,
@@ -113,6 +114,7 @@ export type SelectionListBodyVirtualizedItem =
           sectionId: string;
           title?: string;
           count?: number;
+          action?: SelectionListSectionAction;
           isStale: boolean;
       }>
     | SelectionListBodyVirtualizedOptionItem
@@ -194,6 +196,7 @@ export function flattenRenderPlanForVirtualizedList(
             sectionId: sectionPlan.id,
             title: sectionPlan.title,
             count: sectionPlan.count,
+            action: sectionPlan.action,
             isStale,
         });
 
@@ -475,6 +478,7 @@ function renderVirtualizedListRow(
                     testID={measureMode ? undefined : headerTestId}
                     title={item.title}
                     count={item.count}
+                    action={measureMode ? undefined : item.action}
                     {...(measureMode || headerRowIndex === undefined
                         ? {}
                         : { gridRow: { rowIndex: headerRowIndex, columnCount: ctx.columnCount ?? 1 } })}

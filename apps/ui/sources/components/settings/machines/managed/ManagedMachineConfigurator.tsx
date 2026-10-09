@@ -1,10 +1,18 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { Icon } from '@/components/ui/icons/Icon';
+import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
+import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
+import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { shadowLevelStyle } from '@/shadowElevation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
@@ -38,8 +46,11 @@ export const ManagedMachineConfigurator = React.memo(
   function ManagedMachineConfigurator(
     props: Readonly<{
       title: string;
-      description: string;
+      /** The page's one-sentence purpose; a phone shows the title only (lab m-config Ap). */
+      description?: string;
       mark: React.ReactNode;
+      /** The page scope ("Managed from" chip), in the header's actions slot. */
+      actions?: React.ReactNode;
       children: React.ReactNode;
       receipt: ManagedReceiptModel;
       summary: ManagedConfiguratorSummary;
@@ -55,7 +66,7 @@ export const ManagedMachineConfigurator = React.memo(
     if (!props.compact) {
     return (
       <ManagedReceiptPageLayout
-        header={{ title: props.title, description: props.description, leading: props.mark }}
+        header={{ title: props.title, description: props.description, leading: props.mark, actions: props.actions }}
         receipt={props.receipt}
         compact={false}
         testID={props.testID}
@@ -71,6 +82,7 @@ export const ManagedMachineConfigurator = React.memo(
             title={props.title}
             description={props.description}
             leading={props.mark}
+            actions={props.actions}
           />
           {props.children}
         </ItemList>
@@ -97,36 +109,43 @@ function SummaryBar(
   }>,
 ) {
   const insets = useSafeAreaInsets();
+  const { theme } = useUnistyles();
+  // A floating, inset bar (lab m-config Ap): it stands on the floating material and rim, like every
+  // surface that floats over the page, and its summary says it opens the receipt.
   return (
-    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-      <HappierPressable
-        testID={props.testID}
-        accessibilityRole="button"
-        accessibilityLabel={`${props.summary.value} ${props.summary.unit}, ${props.summary.spec}`}
-        accessibilityHint={t('managedMachines.receipt.openSummary')}
-        hasPopup="dialog"
-        onPress={props.onOpen}
-        style={styles.barSummary}
-      >
-        <View style={styles.barValueRow}>
-          <Text style={styles.barValue}>{props.summary.value}</Text>
-          <Text style={styles.barUnit}>{props.summary.unit}</Text>
-        </View>
-        <Text style={styles.barSpec} numberOfLines={1}>
-          {props.summary.spec}
-        </Text>
-      </HappierPressable>
-      {props.primary ? (
-        <RoundButton
-          testID={props.primary.testID ?? `${props.testID}.create`}
-          size="normal"
-          title={props.primary.label}
-          accessibilityLabel={props.primary.label}
-          disabled={props.primary.disabled}
-          loading={props.primary.loading}
-          onPress={props.primary.onPress}
-        />
-      ) : null}
+    <View style={[styles.barFrame, { marginBottom: Math.max(insets.bottom, 12) }]}>
+      <GlassSurface surfaceGroup="floating" style={styles.bar}>
+        <HappierPressable
+          testID={props.testID}
+          accessibilityRole="button"
+          accessibilityLabel={`${props.summary.value} ${props.summary.unit}, ${props.summary.spec}`}
+          accessibilityHint={t('managedMachines.receipt.openSummary')}
+          hasPopup="dialog"
+          onPress={props.onOpen}
+          style={styles.barSummary}
+        >
+          <View style={styles.barValueRow}>
+            <Text style={styles.barValue}>{props.summary.value}</Text>
+            <Text style={styles.barUnit}>{props.summary.unit}</Text>
+            <Icon name="caret-up" size={12} color={theme.colors.text.secondary} />
+          </View>
+          <Text style={styles.barSpec} numberOfLines={1}>
+            {props.summary.spec}
+          </Text>
+        </HappierPressable>
+        {props.primary ? (
+          <RoundButton
+            testID={props.primary.testID ?? `${props.testID}.create`}
+            size="normal"
+            title={props.primary.label}
+            accessibilityLabel={props.primary.label}
+            disabled={props.primary.disabled}
+            loading={props.primary.loading}
+            onPress={props.primary.onPress}
+          />
+        ) : null}
+        <SurfaceRim role="floating" radius={FLOATING_OVERLAY_METRICS.radiusPx} border="modal" />
+      </GlassSurface>
     </View>
   );
 }
@@ -159,15 +178,24 @@ const styles = StyleSheet.create((theme) => ({
   phoneList: {
     flex: 1,
   },
+  barFrame: {
+    marginHorizontal: 12,
+    borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
+    ...shadowLevelStyle(theme.colors.shadowLevels[2]),
+  },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border.subtle,
-    backgroundColor: theme.colors.surface.base,
+    paddingVertical: 10,
+    borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
+    overflow: 'hidden',
+    ...resolveThemeSurfaceBorderStyle({
+      borderColor: theme.colors.border.modal,
+      edge: resolveThemeRaisedEdge(theme, 'modal'),
+      rim: surfaceUsesRim('floating', theme.dark),
+    }),
   },
   barSummary: {
     flex: 1,

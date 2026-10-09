@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { Typography } from '@/constants/Typography';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard, type SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { ShareGrantRow, ShareLevelControl, ShareRowAction } from '../ShareGrantRow';
 import type { ShareSheetAdapter } from '../shareSheetTypes';
@@ -17,9 +21,11 @@ export function createMachineShareAdapter(input: Readonly<{
     const adapter: ShareSheetAdapter<MachineShareGrantRow> = {
         namespace: 'machine-share', title: t('machines.sharing.title'),
         showLeadingOnDirectorySteps: true,
+        // The level meanings live once, inside the trust disclosure: Can use is the section's own
+        // description, so only what Manage adds is said there (lab m-share legend).
         levels: {
-            view: { label: t('machines.sharing.use'), help: t('machines.sharing.description', { machine }) },
-            admin: { label: t('machines.sharing.manage'), help: t('machines.sharing.manageHelp', { machine }) },
+            view: { label: t('machines.sharing.use') },
+            admin: { label: t('machines.sharing.manage') },
         },
         principalTags: (principal, row) => [
             ...(principal.ref.kind === 'account' ? [] : [t('machines.sharing.allMembers')]),
@@ -31,9 +37,9 @@ export function createMachineShareAdapter(input: Readonly<{
         showsLevelLock: row => row.level.kind === 'locked',
         removalLabels: row => row.viewer ? { request: t('machines.sharing.leave'), confirm: t('machines.sharing.leave') }
             : row.readiness === 'key_pending' ? { request: t('common.cancel'), confirm: t('shareSheet.confirmRemove') } : undefined,
-        renderGrantDetails: (row, context) => <View>
+        renderGrantDetails: (row, context) => <View style={styles.details}>
             {row.canPrepareKeys ? <>
-                <Text testID={`${context.idPrefix}machine-share-key-pending:${row.principal.key}`} accessibilityLiveRegion="polite">
+                <Text style={styles.detail} testID={`${context.idPrefix}machine-share-key-pending:${row.principal.key}`} accessibilityLiveRegion="polite">
                     {t('machines.sharing.pending', { machine })}
                 </Text>
                 {controller.model.editable ? <ShareRowAction label={t('common.retry')}
@@ -42,17 +48,17 @@ export function createMachineShareAdapter(input: Readonly<{
                     onPress={() => controller.prepareKeys(row.grant)} /> : null}
             </> : null}
             {row.audience.filter(member => member.reason === 'recipient_encryption_incompatible').map(member => <View key={member.accountId}>
-                <Text testID={`${context.idPrefix}machine-share-incompatible:${row.principal.key}:${member.accountId}`}>
+                <Text style={styles.detail} testID={`${context.idPrefix}machine-share-incompatible:${row.principal.key}:${member.accountId}`}>
                     {t('machines.sharing.incompatible', { machine, person: member.displayName || t('shareSheet.person') })}
                 </Text>
-                <Text>{t('machines.sharing.incompatibleHelp', { person: member.displayName || t('shareSheet.person') })}</Text>
+                <Text style={styles.detail}>{t('machines.sharing.incompatibleHelp', { person: member.displayName || t('shareSheet.person') })}</Text>
             </View>)}
             {row.operation.kind === 'error'
                 && ['recipient_encryption_incompatible', 'recipient_incompatible'].includes(row.operation.error.code)
-                && !row.audience.some(member => member.reason === 'recipient_encryption_incompatible') ? <Text>
+                && !row.audience.some(member => member.reason === 'recipient_encryption_incompatible') ? <Text style={styles.detail}>
                 {t('machines.sharing.incompatibleHelp', { person: row.principal.displayName })}
             </Text> : null}
-            {row.viewer && row.removal.kind !== 'blocked' ? controller.inherited.map(source => <Text key={JSON.stringify(source.principal)}>
+            {row.viewer && row.removal.kind !== 'blocked' ? controller.inherited.map(source => <Text style={styles.detail} key={JSON.stringify(source.principal)}>
                 {t('machines.sharing.inherited', { audience: source.displayName
                     ?? t(source.principal.kind === 'group' ? 'shareSheet.group' : 'shareSheet.team') })}
             </Text>) : null}
@@ -63,10 +69,8 @@ export function createMachineShareAdapter(input: Readonly<{
                 content: <MachineShareTrustDisclosure idPrefix={context.idPrefix}
                     lead={t('machines.sharing.trustedOsLead', { machine })}
                     detail={t('machines.sharing.trustedOsDetail', { machine })}
-                    notes={[
-                        t('machines.sharing.manageHelp', { machine }),
-                        ...(controller.response?.access.resourceMode === 'plain' ? [t('machines.sharing.plain')] : []),
-                    ]} />,
+                    legend={[{ label: t('machines.sharing.manage'), text: t('machines.sharing.manageHelp', { machine }) }]}
+                    notes={controller.response?.access.resourceMode === 'plain' ? [t('machines.sharing.plain')] : []} />,
             }] }];
             const own = controller.viewerRow;
             if (own && !context.directoryKind) leading.push({ kind: 'static', id: 'machine-own-access', title: t('machines.sharing.yourAccess'), options: [{
@@ -79,13 +83,19 @@ export function createMachineShareAdapter(input: Readonly<{
                 expandedContent: () => <ShareGrantRow row={own} adapter={adapter} actions={controller.actions}
                     context={{ ...context, editable: controller.canLeave }} />,
             }] });
+            // Status lines sit on the grant rows' edge as one quiet state each, with their own next step.
             const notices: SelectionListOption[] = [];
-            if (controller.loading) notices.push({ id: 'loading', label: t('machines.sharing.loading', { machine }), disabled: true, loading: true });
-            if (controller.issue) notices.push({ id: 'read-error', label: controller.issue.message,
-                ...(controller.issue.retryable ? { subtitle: t('common.retry'), onSelect: () => { void controller.retryContent(); } } : { disabled: true }) });
-            if (!input.online) notices.push({ id: 'offline', label: t('machines.sharing.offline', { machine }), disabled: true });
-            if (controller.notice) notices.push({ id: 'notice', label: controller.notice.message, disabled: true });
-            if (controller.response?.canManage && !controller.model.grants.length) notices.push({ id: 'empty', label: t('machines.sharing.empty', { machine }), disabled: true });
+            const notice = (id: string, kind: SurfaceStateKind, title: string, action?: Readonly<{ label: string; onPress: () => void }>): SelectionListOption => ({
+                id, label: title, disabled: true,
+                content: <SurfaceStateCard testID={`${context.idPrefix}machine-share-${id}`} kind={kind} size="line" title={title}
+                    {...(action ? { action } : {})} />,
+            });
+            if (controller.loading) notices.push(notice('loading', 'loading', t('machines.sharing.loading', { machine })));
+            if (controller.issue) notices.push(notice('read-error', 'error', controller.issue.message,
+                controller.issue.retryable ? { label: t('common.retry'), onPress: () => { void controller.retryContent(); } } : undefined));
+            if (!input.online) notices.push(notice('offline', 'unavailable', t('machines.sharing.offline', { machine })));
+            if (controller.notice) notices.push(notice('notice', 'warning', controller.notice.message));
+            if (controller.response?.canManage && !controller.model.grants.length) notices.push(notice('empty', 'empty', t('machines.sharing.empty', { machine })));
             if (controller.approvalId && input.openApproval) {
                 const id = controller.approvalId;
                 notices.push({ id: 'approval', label: t('approvals.title'), subtitle: t('approvals.status.open'), onSelect: () => input.openApproval?.(id) });
@@ -95,3 +105,13 @@ export function createMachineShareAdapter(input: Readonly<{
     };
     return adapter;
 }
+
+// Grant details read as row descriptions (pending keys, incompatible members, inherited access).
+const styles = StyleSheet.create((theme) => ({
+    details: { gap: 4 },
+    detail: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('rowDescription'),
+        color: theme.colors.text.secondary,
+    },
+}));

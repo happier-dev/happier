@@ -15,8 +15,14 @@ export function managedCreationSetup(machine: ManagedMachineV1) {
     return { ...setup, recoveryActions };
 }
 
+/** What the page knows beside the row: the controller's name and presence, and the provider's display name. */
+export type ManagedCreationContext = Readonly<{
+    controller?: Readonly<{ name: string; online: boolean }>;
+    provider?: string;
+}>;
+
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
-export function managedCreationState(machine: ManagedMachineV1): ManagedLifecycleState {
+export function managedCreationState(machine: ManagedMachineV1, context: ManagedCreationContext = {}): ManagedLifecycleState {
     if (machine.allocation === 'confirmed-absent') return { kind: 'absent' };
     if (machine.cleanup) return machine.creationState === 'canceled' && machine.cleanup.disposition === 'pending'
         ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
@@ -29,15 +35,19 @@ export function managedCreationState(machine: ManagedMachineV1): ManagedLifecycl
     const pendingIntent = machine.submittedNativeEffect?.intent;
     if ((pendingIntent === 'start' || pendingIntent === 'resume') && machine.observation?.power !== 'running'
         || pendingIntent === 'suspend' && machine.observation?.power !== 'suspended') {
-        return { kind: 'powerPending', provider: t('common.unknown'), state: t(`managedMachines.actions.${pendingIntent}`) };
+        return { kind: 'powerPending', provider: context.provider ?? t('common.unknown'), state: t(`managedMachines.actions.${pendingIntent}`) };
     }
     if (machine.observation?.power === 'stopped') return machine.observation.storage === 'retained'
         ? { kind: 'stoppedStorage' } : { kind: 'storageUnknown' };
-    return machine.allocation === 'unsubmitted' ? { kind: 'creationWaiting', name: machine.launch.name } : { kind: 'resourceReady' };
+    if (machine.allocation !== 'unsubmitted') return { kind: 'resourceReady' };
+    // Provider calls run where the account lives: an offline controller is what nothing waits on but the user.
+    return context.controller && !context.controller.online && context.provider
+        ? { kind: 'controllerWaiting', name: machine.launch.name, controller: context.controller.name, provider: context.provider }
+        : { kind: 'creationWaiting', name: machine.launch.name };
 }
 
-export function describeManagedCreation(machine: ManagedMachineV1) {
-    return describeManagedLifecycleState(managedCreationState(machine));
+export function describeManagedCreation(machine: ManagedMachineV1, context?: ManagedCreationContext) {
+    return describeManagedLifecycleState(managedCreationState(machine, context));
 }
 
 /** Installation and boot recovery follow the correlated host operation's failure. */

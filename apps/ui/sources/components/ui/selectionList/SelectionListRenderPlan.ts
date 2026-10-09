@@ -17,6 +17,7 @@ import { SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS } from './_constants';
 import { filterSelectionListSections } from './filterSelectionListSections';
 import type {
     SelectionListOption,
+    SelectionListSectionAction,
     SelectionListSectionDescriptor,
     SelectionListVirtualizationMode,
 } from './_types';
@@ -26,6 +27,7 @@ export type SectionRenderPlan = Readonly<{
     id: string;
     title?: string;
     count?: number;
+    action?: SelectionListSectionAction;
     options: ReadonlyArray<SelectionListOption>;
     virtualization?: SelectionListVirtualizationMode;
     /** When set, the section is in a non-success dynamic state. */
@@ -154,6 +156,7 @@ export type SynthesizeSelectionListRenderPlanArgs = Readonly<{
     filterQuery: string;
     /** Dynamic-section state map, keyed by section id. */
     dynamicSectionStates: ReadonlyMap<string, DynamicSectionState>;
+    searchAcrossSections?: boolean;
 }>;
 
 /**
@@ -219,6 +222,7 @@ export function synthesizeSelectionListRenderPlan(
                 id: filtered.id,
                 title: filtered.title,
                 count: filtered.count,
+                action: filtered.action,
                 options: filtered.options,
                 virtualization: filtered.virtualization,
                 resultHint: filtered.resultHint,
@@ -360,6 +364,19 @@ export function synthesizeSelectionListRenderPlan(
                 continue;
             }
         }
+    }
+    if (args.searchAcrossSections === true && filterQuery.trim().length > 0) {
+        // Authored groups remain useful when browsing, but cannot put a
+        // description-only match ahead of a title match while searching.
+        // Keep pending/error/stale rows in their original status sections.
+        const resultSections = plan.filter(section => section.dynamicState === undefined && !section.isStale);
+        const options = rankOptionsByQuery(resultSections.flatMap(section => section.options), filterQuery);
+        const firstResultSection = resultSections.find(section => section.options.length > 0);
+        return plan.flatMap(section => {
+            if (section.dynamicState !== undefined || section.isStale) return [section];
+            if (section === firstResultSection) return [{ ...section, title: undefined, count: undefined, options }];
+            return section.resultHint ? [{ ...section, options: [] }] : [];
+        });
     }
     return plan;
 }

@@ -123,7 +123,8 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
     const colors = React.useMemo((): HappierSelectionTilesColors => ({
         tileBackground: theme.colors.surface.base,
         tileBorder: theme.colors.border.default,
-        selection: theme.colors.border.focus,
+        // DESIGN.md: borders, dividers and selection are ink, never the focus blue.
+        selection: theme.colors.text.primary,
         glyph: theme.colors.text.secondary,
         ring: theme.colors.text.primary,
         previewBackground: theme.colors.background.canvas,

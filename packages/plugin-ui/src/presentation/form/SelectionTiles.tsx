@@ -462,14 +462,21 @@ function ActionSelectionTiles<T extends string, I extends string>(props: Happier
 const CARD_GAP_PX = 10;
 const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
 
-/** The unchosen mark of a card tile without its own icon: an empty ring the size of the check it becomes. */
-function SelectionRing(props: Readonly<{ size: number; color: string }>) {
+/**
+ * The radio mark of a single-choice card: an empty ring, and the same ring filled when chosen, so one
+ * group never mixes a ring with a check (a multiple-choice card's chosen mark stays the check).
+ */
+function SelectionRing(props: Readonly<{ size: number; color: string; filled?: boolean }>) {
   const diameter = Math.round(props.size * (20 / 24));
+  const dot = Math.round(diameter / 2.5);
   return (
     <View
       aria-hidden
-      style={{ width: diameter, height: diameter, borderRadius: diameter / 2, borderWidth: 2, borderColor: props.color }}
-    />
+      style={{ width: diameter, height: diameter, borderRadius: diameter / 2, borderWidth: 2, borderColor: props.color,
+        alignItems: 'center', justifyContent: 'center' }}
+    >
+      {props.filled ? <View style={{ width: dot, height: dot, borderRadius: dot / 2, backgroundColor: props.color }} /> : null}
+    </View>
   );
 }
 
@@ -624,9 +631,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
-                  {selected
+                  {selected && props.selectionMode === 'multiple'
                     ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection })
-                    : <SelectionRing size={16} color={props.colors.glyph} />}
+                    : <SelectionRing size={16} color={selected ? props.colors.selection : props.colors.glyph} filled={selected} />}
                 </View>
               </View>
             </Pressable>

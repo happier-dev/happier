@@ -84,6 +84,16 @@ describe('SelectionTiles', () => {
         expect(screen.findByTestId('identity:b')!.props.accessibilityState.checked).toBe(false);
         expect(screen.findByTestId('identity:a')!.props['aria-checked']).toBe(true);
     });
+    it('marks a chosen single-choice card with the filled radio of its group, keeping the check for multiple choice', async () => {
+        const { SelectionTiles } = await import('./SelectionTiles');
+        const options = [{ id: 'fsn1', title: 'Falkenstein' }, { id: 'hel1', title: 'Helsinki' }];
+        const single = await renderScreen(<SelectionTiles options={options} value="fsn1" onChange={vi.fn()} testIdPrefix="radio" />);
+        expect(single.root.findAll(node => node.props.name === 'check')).toHaveLength(0);
+        await single.unmount();
+        const multiple = await renderScreen(<SelectionTiles selectionMode="multiple" options={options} value={['fsn1']} onChange={vi.fn()} testIdPrefix="checks" />);
+        expect(multiple.root.findAll(node => node.props.name === 'check').length).toBeGreaterThan(0);
+        await multiple.unmount();
+    });
     it('supports single selection mode', async () => {
         const onChange = vi.fn();
         const { SelectionTiles } = await import('./SelectionTiles');

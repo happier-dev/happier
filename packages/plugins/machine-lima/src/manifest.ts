@@ -43,7 +43,7 @@ function decodePrivateBytes(value: string) {
 }
 
 export const LIMA_MACHINE_PROVISIONER = {
-  title: 'Lima', icon: 'server', resourceKind: 'lima-vm', schemaVersion: 1,
+  title: 'Lima', icon: 'terminal', resourceKind: 'lima-vm', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LimaLaunchSchema.jsonSchema, resourceSchema: LimaResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux'],

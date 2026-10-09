@@ -9,9 +9,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { t } from '@/text';
 
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
@@ -181,27 +179,30 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         )}
       </ItemGroup>
       {model.onArchive || model.onRestore ? (
-        <View style={styles.archive}>
-          <RoundButton
-            testID={`${props.testID}.${model.onRestore ? 'restore' : 'archive'}`}
-            size="normal"
-            display="inverted"
-            title={model.onRestore ? t('common.restore') : t('machinePresets.archive')}
-            loading={model.archivePending}
-            disabled={model.archivePending}
-            leading={
-              <Icon
-                name="archive"
-                size={14}
-                color={theme.colors.text.primary}
-              />
-            }
-            onPress={model.onRestore ?? model.onArchive}
-          />
-          <Text style={styles.archiveHelp}>
-            {model.onRestore ? t('machinePresets.archived') : t('machinePresets.archiveHelp')}
-          </Text>
-        </View>
+        // Closes the page: the quiet archive (or restore) button, then its one consequence line.
+        <ItemGroup surface="none" accessibilityLabel={model.onRestore ? t('common.restore') : t('machinePresets.archive')}>
+          <SectionButtonRow
+            testID={`${props.testID}.closing`}
+            footnote={model.onRestore ? t('machinePresets.archived') : t('machinePresets.archiveHelp')}
+          >
+            <RoundButton
+              testID={`${props.testID}.${model.onRestore ? 'restore' : 'archive'}`}
+              size="normal"
+              display="inverted"
+              title={model.onRestore ? t('common.restore') : t('machinePresets.archive')}
+              loading={model.archivePending}
+              disabled={model.archivePending}
+              leading={
+                <Icon
+                  name="archive"
+                  size={14}
+                  color={theme.colors.text.primary}
+                />
+              }
+              onPress={model.onRestore ?? model.onArchive}
+            />
+          </SectionButtonRow>
+        </ItemGroup>
       ) : null}
     </ManagedReceiptPageLayout>
   );
@@ -261,23 +262,10 @@ export function ManagedFieldRow(
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  archive: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 4,
-  },
-  archiveHelp: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('sectionDescription'),
-    color: theme.colors.text.tertiary,
-    flexShrink: 1,
   },
 }));

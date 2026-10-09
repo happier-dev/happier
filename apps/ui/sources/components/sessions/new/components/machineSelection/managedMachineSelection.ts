@@ -17,6 +17,8 @@ export {
 export type ManagedMachineSelectionOffer = Readonly<{
     id: string;
     homeId: string;
+    /** A saved preset, or the one-off configuration entry. */
+    kind?: 'preset' | 'one-off';
     title: string;
     /** Controller/Keep facts only; prices belong to the shared reviewed receipt. */
     subtitle?: string;
@@ -87,11 +89,12 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
     return [...params.presets.filter(preset => preset.homeId === params.homeId && preset.archivedAt === undefined).map(preset => ({
         id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
         homeId: preset.homeId,
+        kind: 'preset' as const,
         title: preset.name,
         subtitle: params.describeController?.(preset),
         onSelect: () => params.onConfigure(preset),
     })), {
-        id: `managed-machine:${params.homeId}:one-off`, homeId: params.homeId,
+        id: `managed-machine:${params.homeId}:one-off`, homeId: params.homeId, kind: 'one-off' as const,
         title: params.oneOffTitle, subtitle: params.oneOffSubtitle,
         onSelect: () => params.onConfigure(null),
     }];

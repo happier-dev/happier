@@ -25,7 +25,7 @@ const runtime = async (context: PluginInvocationContext) => createDigitalOceanPr
 function unavailable() { return { observedAt: 0, availability: 'unavailable' as const, reason: 'provider_unavailable' }; }
 
 export const MACHINE_PROVISIONER = {
-  title: 'DigitalOcean', icon: 'server', resourceKind: 'digitalocean-droplet', schemaVersion: 1,
+  title: 'DigitalOcean', icon: 'hard-drives', resourceKind: 'digitalocean-droplet', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: dropletLaunchSchema.jsonSchema, resourceSchema: dropletResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],

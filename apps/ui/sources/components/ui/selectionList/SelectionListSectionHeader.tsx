@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { View, Platform, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, View, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { buildSelectionListSectionHeaderGridA11yProps } from './buildSelectionListOptionA11yProps';
+import type { SelectionListSectionAction } from './_types';
 
 /**
  * R6 — Premium UI design polish (Fix 1): a lighter, command-bar-style section
@@ -35,6 +36,8 @@ export type SelectionListSectionHeaderProps = Readonly<{
     count?: number;
     /** Optional section-owned action rendered at the trailing edge. */
     rightAccessory?: React.ReactNode;
+    /** The section's one quiet destination, drawn as a text link at the trailing edge. */
+    action?: SelectionListSectionAction;
     /** Stable testID anchor (e.g. `<sectionTestId>:header`). */
     testID?: string;
     /** Optional host-owned layout override; typography and accessory behavior remain canonical here. */
@@ -85,6 +88,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: Platform.select({ ios: 13, default: 12 }),
         lineHeight: Platform.select({ ios: 18, default: 16 }),
     },
+    action: {
+        ...Typography.default('medium'),
+        color: theme.colors.text.secondary,
+        fontSize: Platform.select({ ios: 13, default: 12 }),
+        lineHeight: Platform.select({ ios: 18, default: 16 }),
+    },
     count: {
         color: theme.colors.text.tertiary,
         fontSize: Platform.select({ ios: 13, default: 12 }),
@@ -125,6 +134,17 @@ export function SelectionListSectionHeader(
                 <Text style={[styles.count, Typography.tabular()]}>{String(props.count)}</Text>
             ) : null}
             {props.rightAccessory}
+            {props.action ? (
+                <Pressable
+                    testID={props.action.testID}
+                    accessibilityRole="link"
+                    accessibilityLabel={props.action.label}
+                    hitSlop={8}
+                    onPress={props.action.onPress}
+                >
+                    <Text style={styles.action}>{props.action.label}</Text>
+                </Pressable>
+            ) : null}
         </View>
     );
     if (gridAria === null) return header;

@@ -321,6 +321,7 @@ function renderSelectionListSectionElement(
             testID={measureMode ? undefined : headerTestId}
             title={sectionPlan.title}
             count={sectionPlan.count}
+            action={measureMode ? undefined : sectionPlan.action}
             {...(headerRowIndex === undefined
                 ? {}
                 : { gridRow: { rowIndex: headerRowIndex, columnCount: ctx.columnCount ?? 1 } })}
@@ -455,6 +456,7 @@ function renderSelectionListSectionElement(
         id: sectionPlan.id,
         title: sectionPlan.title,
         count: sectionPlan.count,
+        action: sectionPlan.action,
         options: sectionPlan.options,
         virtualization: sectionPlan.virtualization,
     };

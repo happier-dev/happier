@@ -42,6 +42,8 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+    /** Opens the Machines presets from the managed group's header. */
+    onOpenManagedPresets?: () => void;
     onManagedMachineProjection?: (serverId: string, projection: ManagedMachineDestinationProjection) => void;
     poolSelectionStatus?: MachinePoolSelectionStatus;
     onRefreshMachines?: () => void;
@@ -92,6 +94,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         managedMachines,
         selectedManagedMachine: props.selectedManagedMachine,
         onSelectManagedMachine: props.onSelectManagedMachine,
+        onOpenManagedPresets: props.onOpenManagedPresets,
         poolSelectionStatus: props.poolSelectionStatus,
         onRefreshMachines: props.onRefreshMachines,
         onRefreshPools: props.onRefreshPools,

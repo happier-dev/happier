@@ -23,6 +23,7 @@ import {
 import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensity';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import {
     ITEM_CHEVRON_SIZE,
@@ -341,6 +342,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flex: 1,
         minWidth: 0,
         justifyContent: 'center',
+    },
+    labelBand: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        minWidth: 0,
+    },
+    labelBandStacked: {
+        flex: undefined,
+        alignSelf: 'stretch',
     },
     title: {
         ...ITEM_TITLE_TEXT_METRICS.comfortable,
@@ -789,7 +800,11 @@ export const Item = React.memo<ItemProps>((props) => {
     const [isNarrowRow, setIsNarrowRow] = React.useState(false);
     const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
     const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
-    const measuresRowWidth = accessoryLayout === 'adaptive';
+    // An independently activated page operation follows the phone rule even when a caller asks
+    // for inline placement. Grouped controls retain their explicitly chosen composition.
+    const adaptiveAccessory = accessoryLayout === 'adaptive'
+        || (isPageRow && rightElementOutsidePressable && accessoryLayout === 'inline');
+    const measuresRowWidth = adaptiveAccessory;
     const handleRowLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(widthPx) || widthPx <= 0) return;
@@ -801,8 +816,10 @@ export const Item = React.memo<ItemProps>((props) => {
     // a wide row (a segmented bar of long labels), instead of overflowing the sheet.
     const accessoryOverflows = rowWidthPx !== null && accessoryWidthPx !== null
         && accessoryWidthPx > rowWidthPx * ADAPTIVE_ACCESSORY_MAX_ROW_SHARE;
+    // A menu is narrow by design: its adaptive control (a segmented choice) stays beside the label and
+    // moves beneath it only when it would take more than its share of the row.
     const stackAccessory = rightElement != null
-        && (accessoryLayout === 'stacked' || (accessoryLayout === 'adaptive' && (isNarrowRow || accessoryOverflows)));
+        && (accessoryLayout === 'stacked' || (adaptiveAccessory && ((isNarrowRow && !isMenuRow) || accessoryOverflows)));
     const stackAccessoryRef = React.useRef(stackAccessory);
     stackAccessoryRef.current = stackAccessory;
     const handleAccessoryLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -933,7 +950,7 @@ export const Item = React.memo<ItemProps>((props) => {
         if (normalized == null) return null;
         const named = (
             <ItemRowAccessibleNameProvider value={accessoryAccessibleName}>
-                {normalized}
+                {isPageRow ? <RoundButtonSizeScope size="small">{normalized}</RoundButtonSizeScope> : normalized}
             </ItemRowAccessibleNameProvider>
         );
         if (!measuresRowWidth) return <View style={stackAccessory ? styles.accessoryMeasureStacked : styles.accessoryInline}>{named}</View>;
@@ -942,19 +959,21 @@ export const Item = React.memo<ItemProps>((props) => {
                 {named}
             </View>
         );
-    }, [accessoryAccessibleName, handleAccessoryLayout, measuresRowWidth, rightElement, stackAccessory]);
+    }, [accessoryAccessibleName, handleAccessoryLayout, isPageRow, measuresRowWidth, rightElement, stackAccessory]);
     const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
     const chevronAccessory = React.useMemo(() => {
         if (!showAccessory) return null;
+        // A disclosure header's chevron shows whether the row is open; a destination's points onward.
+        const name = accessibilityExpanded === undefined ? 'caret-right' : accessibilityExpanded ? 'caret-up' : 'caret-down';
         return normalizeNodeForView(
             <Icon
-                name="caret-right"
+                name={name}
                 size={chevronSize}
                 color={theme.colors.text.secondary}
                 style={{ marginLeft: 4 }}
             />,
         );
-    }, [chevronSize, showAccessory, theme.colors.text.secondary]);
+    }, [accessibilityExpanded, chevronSize, showAccessory, theme.colors.text.secondary]);
 
     // A sheet row's hairline is the sheet's: its divider colour, full width. A page row outside a sheet
     // (a bare or columned section) draws the same page hairline in the page divider colour.
@@ -1015,8 +1034,12 @@ export const Item = React.memo<ItemProps>((props) => {
 
     const renderRowContent = React.useCallback((options?: Readonly<{ includeRightAccessory?: boolean }>) => {
         const includeRightAccessory = options?.includeRightAccessory ?? true;
+        // A split primary remains a bounded horizontal label/value band. Its independent
+        // operation stacks outside this band, so only content containing that operation stacks.
+        const stackContentAccessory = stackAccessory && includeRightAccessory;
         return (
         <>
+            <View style={[styles.labelBand, stackContentAccessory ? styles.labelBandStacked : null]}>
             {/* Left Section */}
             {leftAccessory || (isPageRow && reservesLeadingColumn) ? (
                 <View
@@ -1132,8 +1155,9 @@ export const Item = React.memo<ItemProps>((props) => {
                 ) : null}
             </View>
 
+            </View>
             {/* Right Section */}
-            <View style={[styles.rightSection, stackAccessory ? styles.rightSectionStacked : pageRowStyles?.accessoryBleed]}>
+            <View style={[styles.rightSection, stackContentAccessory ? styles.rightSectionStacked : pageRowStyles?.accessoryBleed]}>
                 {copyFeedback.isCopied() ? (
                     <CopiedPill visible testID="item-copy-feedback" />
                 ) : detail ? (
@@ -1383,9 +1407,13 @@ export const Item = React.memo<ItemProps>((props) => {
                     <View
                         style={[
                             styles.rightSection,
-                            // A stacked control sits under the label exactly as it does on an ordinary
-                            // row: full width, no inset, and above the row's bottom padding.
+                            // A stacked page operation begins at its label's leading edge, after
+                            // the shared mark column, and above the row's bottom padding.
                             stackAccessory ? [styles.rightSectionStacked, containerPadding, styles.splitRightSectionStacked] : null,
+                            // Auto-fit identity marks have no fixed width here; retain their anatomy.
+                            stackAccessory && isPageRow && leadingMarkFitStyle === null && (leftAccessory || reservesLeadingColumn) ? {
+                                marginLeft: (iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx) + PAGE_LIST_METRICS.rowLeadingGapPx,
+                            } : null,
                         ]}
                         pointerEvents={sharedItemBehavior.secondaryActionsEnabled ? 'auto' : 'none'}
                         accessibilityElementsHidden={!sharedItemBehavior.secondaryActionsEnabled}

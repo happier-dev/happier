@@ -70,7 +70,8 @@ async function setupHome() {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://credential-purposes.example', serverIdentityId: 'srv_credentials', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: controller.machineId, installationId: controller.installationId }),
-        createMachineFixture({ id: otherController.machineId, installationId: otherController.installationId })] } });
+        createMachineFixture({ id: otherController.machineId, installationId: otherController.installationId })] },
+        machineListStatusByServerId: { [serverId]: 'idle' } });
     harness.answer(serverId, '/v1/machines', { body: [controller, otherController].map(target => ({ id: target.machineId, kind: 'persistent',
         installationId: target.installationId, active: true, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null,
         access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })) });
@@ -246,7 +247,10 @@ describe('managed provisioner credential purposes', () => {
                     { purpose: cloudPurpose, options: [{ value: cloud, label: 'Cloud work' }] },
                 ] }] } } } };
         } });
-        await act(async () => screen.pressByTestId(`managed-config.controller:${otherController.machineId}`));
+        // Change "Managed from" through the header chip's own selection (its popover list is the canonical picker).
+        const chip = screen.tree.findAll(node => node.props.presentation === 'chip' && node.props.selection)[0]!;
+        const target = chip.props.selection.candidates.find((candidate: { target: { machineId: string } }) => candidate.target.machineId === otherController.machineId).target;
+        await act(async () => chip.props.selection.selectTarget(target));
         expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
         await waitForHomeGovernance(() => expect(credentialField(screen, 'cloud-account').props.selection).toBeUndefined());
         expect(screen.tree.findAll(node => node.props.controlTestID === 'managed-config.credential:computer-access')).toHaveLength(0);

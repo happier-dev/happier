@@ -6,7 +6,6 @@ import { MACHINES_COLLECTION_ROOT } from '@/components/settings/machines/collect
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
@@ -21,6 +20,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { MachineAddForm } from './MachineAddForm';
 import type { MachineAddPathId } from './machineAddPaths';
 import { discardMachineAdd, useMachineAddDraftRow } from './useMachineAddFlow';
+import { useMachineAddFlowDraftSelector } from './machineAddFlowStore';
+import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const PATH_IDS: readonly MachineAddPathId[] = ['thisComputer', 'ssh', 'anotherComputer'];
 
@@ -40,7 +42,12 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const draftRow = useMachineAddDraftRow();
     // The machine joins the Home this device uses (the flow's default target).
     const activeServer = useActiveServerSnapshot();
-    const homeName = resolveHomeDisplayName(getServerProfileById(activeServer.serverId)) ?? t('settingsAccount.thisHomeTitle');
+    const draftServerId = useMachineAddFlowDraftSelector((draft) => draft.serverId);
+    const serverId = draftServerId ?? activeServer.serverId;
+    const homeName = resolveHomeDisplayName(getServerProfileById(serverId));
+    // One read of the Account's opt-out serves the header's promise and the form's Create one.
+    const accountScope = useServerCredentialAccountScopeBinding(serverId);
+    const canCreate = useManagedMachineAccountSettings(accountScope.binding ?? undefined).settings?.managedMachineCreationEnabled === true;
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });
@@ -68,9 +75,9 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
             <PageHeader
                 testID="settings.machines.draft.header"
                 alwaysShowTitle={Boolean(draftRow?.entityTitle)}
-                title={draftRow?.title ?? t('machineAdd.newMachine')}
-                description={t('addFlows.addMachineDescription')}
-                meta={[{ key: 'home', icon: 'house', text: t('addFlows.machineJoinsHome', { home: homeName }) }]}
+                title={draftRow?.entityTitle ?? t('settingsOverview.addMachineTitle')}
+                description={canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
+                meta={[{ key: 'home', icon: 'house', text: homeName ? t('addFlows.machineJoinsHome', { home: homeName }) : t('managedMachines.add.joinsThisHome') }]}
                 actions={(
                     <RoundButton
                         testID="settings.machines.draft.discard"
@@ -81,17 +88,16 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                     />
                 )}
             />
-            <ItemGroup surface="none">
-                <SettingAnchor setting={MACHINES_ADD_SETTINGS.settings.setupNewMachineAction}>
+            <SettingAnchor setting={MACHINES_ADD_SETTINGS.settings.setupNewMachineAction}>
                     <MachineAddForm
                         layout="page"
                         testID="settings.machines.draft.form"
                         initialPath={readPath(params.path)}
+                        canCreate={canCreate}
                         onClose={discard}
                         onStartSession={startSession}
                     />
-                </SettingAnchor>
-            </ItemGroup>
+            </SettingAnchor>
         </ItemList>
     );
 });

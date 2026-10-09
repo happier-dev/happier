@@ -105,6 +105,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
     onRefreshMachinePools: (serverId: string) => void;
     /** Existing Machine Pool settings route, offered when the activated Pool has no enabled member. */
     onOpenMachinePoolSettings: (target: Readonly<{ serverId: string; poolId: string }>) => void;
+    /** Existing Machines presets route, the managed group's trailing destination. */
+    onOpenMachinePresets?: () => void;
     targetServerId: string | null;
     externalSessionsFeatureEnabled: boolean;
     resumeSessionId: string;
@@ -151,6 +153,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         onRefreshMachines: params.onRefreshMachines,
         onRefreshMachinePools: params.onRefreshMachinePools,
         onOpenMachinePoolSettings: params.onOpenMachinePoolSettings,
+        onOpenMachinePresets: params.onOpenMachinePresets,
         recentMachines: params.recentMachines,
         selectedMachine: params.selectedMachine,
         selectedServerId: params.selectedServerId,
@@ -295,6 +298,11 @@ export function useNewSessionInputPopovers(params: Readonly<{
                         renderParams.onSelectManagedMachine?.(draft);
                         requestClose();
                     }}
+                    onOpenManagedPresets={renderParams.onOpenMachinePresets ? () => {
+                        renderParams.machinePoolSelection.cancelPendingSelection();
+                        requestClose();
+                        renderParams.onOpenMachinePresets?.();
+                    } : undefined}
                     recentMachines={renderParams.recentMachines}
                     favoriteMachines={renderParams.favoriteMachineItems}
                     serverId={renderParams.selectedServerId}

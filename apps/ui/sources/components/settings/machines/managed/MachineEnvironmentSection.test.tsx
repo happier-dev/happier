@@ -102,6 +102,35 @@ describe('MachineEnvironmentSection (D53)', () => {
     ).toBeUndefined();
   });
 
+  it('adds a secret in one inline row: the name shows its rule as it is typed, and choosing a saved secret binds it', async () => {
+    const onChange = vi.fn();
+    const { Modal } = await import('@/modal');
+    const prompt = vi.spyOn(Modal, 'prompt');
+    const screen = await renderSection(undefined, onChange);
+    const nameField = () => screen.tree.findAll(
+      (node) => node.props?.testID === 'env.add-secret.name' && typeof node.props.onChangeText === 'function',
+    )[0]!;
+    const secretSelect = () => screen.tree.findAll(
+      (node) => node.props?.testID === 'env.add-secret.secret' && typeof node.props.onSelect === 'function',
+    )[0]!;
+    await act(async () => nameField().props.onChangeText('npm-token'));
+    // Typed in place, upper-cased, and refused inline while it breaks the rule.
+    expect(nameField().props.value).toBe('NPM-TOKEN');
+    expect(nameField().props.error).toBeTruthy();
+    await act(async () => secretSelect().props.onSelect('saved-secret-1'));
+    expect(onChange).not.toHaveBeenCalled();
+    await act(async () => nameField().props.onChangeText('npm_token'));
+    expect(nameField().props.error).toBeFalsy();
+    await act(async () => secretSelect().props.onSelect('saved-secret-1'));
+    expect(onChange).toHaveBeenLastCalledWith({
+      secretRefs: { v: 1, bindings: { NPM_TOKEN: { ref: 'saved-secret-1' } } },
+    });
+    // The row is ready for the next one, and no dialog chain was involved.
+    expect(nameField().props.value).toBe('');
+    expect(prompt).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
+
   it('summarizes the environment for the receipt without showing the script or secret values', async () => {
     const { describeMachineEnvironment } =
       await import('./MachineEnvironmentSection');

@@ -17,6 +17,8 @@ export function MachineShareTrustDisclosure(
   props: Readonly<{
     lead: string;
     detail: string;
+    /** What each access level adds, read as "Can manage — …" (the sheet's one level legend). */
+    legend?: readonly Readonly<{ label: string; text: string }>[];
     notes: readonly string[];
     idPrefix: string;
   }>,
@@ -32,16 +34,18 @@ export function MachineShareTrustDisclosure(
           <Text style={styles.lead}>{props.lead}</Text>
           <Text style={styles.detail}>{props.detail}</Text>
         </View>
-        {props.notes.map((note, index) => (
+        {(props.legend ?? []).map((line, index) => (
           <Text
-            key={index}
-            testID={
-              index === 0
-                ? `${props.idPrefix}machine-share-manage-consequence`
-                : undefined
-            }
+            key={line.label}
+            testID={index === 0 ? `${props.idPrefix}machine-share-manage-consequence` : undefined}
             style={styles.detail}
           >
+            <Text style={styles.legendLabel}>{line.label}</Text>
+            {` ${line.text}`}
+          </Text>
+        ))}
+        {props.notes.map((note, index) => (
+          <Text key={index} style={styles.detail}>
             {note}
           </Text>
         ))}
@@ -70,6 +74,10 @@ const styles = StyleSheet.create((theme) => ({
   lead: {
     ...Typography.default('semiBold'),
     ...happierPageTextMetrics('rowDescription'),
+    color: theme.colors.text.primary,
+  },
+  legendLabel: {
+    ...Typography.default('semiBold'),
     color: theme.colors.text.primary,
   },
   detail: {

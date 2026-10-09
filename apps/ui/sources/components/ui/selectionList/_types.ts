@@ -64,6 +64,8 @@ type SelectionListOptionBase = Readonly<{
     testID?: string;
     /** Plain-text label used for matching and as the synchronous fallback. */
     label: string;
+    /** An inline mark after the label, such as "· via DeepSeek"; rendered by the row's `Item`. */
+    titleAccessory?: SelectionListLazyVisual;
     /**
      * Additional canonical plain-text metadata used only for matching. It is
      * ranked after visible label and subtitle matches and is never rendered.
@@ -242,12 +244,20 @@ export type SelectionListVirtualizedOptionSource = Readonly<{
  */
 export type SelectionListVirtualizationMode = 'auto' | 'force' | 'never';
 
+export type SelectionListSectionAction = Readonly<{
+    label: string;
+    onPress: () => void;
+    testID?: string;
+}>;
+
 export type SelectionListSection = Readonly<{
     id: string;
     /** Uppercase tracking label; renders as a section header. */
     title?: string;
     /** Optional integer rendered as ` · {count}` after the section title. */
     count?: number;
+    /** One quiet destination at the header's trailing edge ("New machine · Presets"); never an option. */
+    action?: SelectionListSectionAction;
     options: ReadonlyArray<SelectionListOption>;
     /** Optional non-activatable status rendered after this static section. */
     resultHint?: string;
@@ -436,6 +446,8 @@ export type SelectionListStep = Readonly<{
      * a custom value. Default `false` preserves the search-filter behavior.
      */
     disableInputFilter?: boolean;
+    /** Rank a nonempty search as one result set, instead of retaining authored section priority. */
+    searchAcrossSections?: boolean;
     /**
      * Resolve the option that should be focused/selected BY DEFAULT for the
      * current input value, before the user explicitly navigates rows. Returning
@@ -623,7 +635,7 @@ export type SelectionListColumnsLayout = Readonly<{
  * Unselected cards paint `surface.base` and are therefore invisible on a base
  * pane BY DESIGN — only the selected card is meant to read as an envelope.
  */
-export type SelectionListOptionPresentation = 'row' | 'card';
+export type SelectionListOptionPresentation = 'row' | 'menu' | 'card';
 
 export type SelectionListSelection =
     | Readonly<{ kind: 'single'; selectedId: string | null }>
@@ -683,6 +695,8 @@ export type SelectionListFilter = Readonly<{
 }>;
 
 export type SelectionListProps = Readonly<{
+    /** `none` lays the picker flat on its host; the default paints the base surface. */
+    surface?: 'base' | 'none';
     /** Root step. Pushes accumulate above this. */
     rootStep: SelectionListStep;
     /**

@@ -50,15 +50,17 @@ describe('managed composer badges', () => {
     const badge = buildManagedProgressStatusBadge({
       machineName: 'Guest', mark: null, recipe: '', stages: [], failed: false,
       label: 'Waiting', message: 'Waiting',
-      archiveChoice: { value: 'keep', onChange: vi.fn(), supportedEffects: ['keep', 'delete'] },
+      archiveChoice: { value: 'keep', onChange: vi.fn(), supportedEffects: ['keep', 'delete'],
+        availability: { controllerMachineId: 'controller', supportedEffects: ['keep', 'delete'], nativeUnsupportedEffects: ['stop'] } },
     });
     const screen = await renderScreen(<>{badge.renderPopover?.({ open: true,
       anchorRef: React.createRef<unknown>(), onRequestClose: () => undefined })}</>);
     const archive = screen.findAll(node => node.props?.testIDPrefix === 'managed-machine-progress-archive')[0];
     expect(archive?.props.tabs).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'keep' }),
-      expect.objectContaining({ id: 'stop', disabled: true }),
-      expect.objectContaining({ id: 'delete', disabled: false }),
+      // A disabled effect says why, so the bar never offers a silent dead segment.
+      expect.objectContaining({ id: 'stop', disabled: true, unavailableReason: expect.any(String) }),
+      expect.objectContaining({ id: 'delete', disabled: false, unavailableReason: undefined }),
     ]));
   });
 
@@ -191,6 +193,12 @@ describe('managed composer badges', () => {
     });
     expect(onRetrySetup).toHaveBeenCalledTimes(1);
     expect(onContinueWithoutSetup).toHaveBeenCalledTimes(1);
+    // The irreversible delete reads as destructive, and only one next step is bordered.
+    const buttons = screen.findAll((node) => typeof node.props?.testID === 'string'
+      && node.props.testID.startsWith('managed-machine-progress-') && typeof node.props.display === 'string');
+    const display = (testID: string) => buttons.find((node) => node.props.testID === testID)?.props.display;
+    expect(display('managed-machine-progress-delete')).toBe('destructive');
+    expect(new Set(buttons.filter((node) => node.props.display === 'secondary').map((node) => node.props.testID)).size).toBe(1);
   });
 
   it('says whose machine a requester session runs on and how the sign-in lands', async () => {

@@ -9,6 +9,13 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
  */
 export type ManagedLifecycleState =
   | Readonly<{ kind: 'creationWaiting'; name: string }>
+  /** Provider calls run where the account lives; nothing is created until that machine is back. */
+  | Readonly<{
+      kind: 'controllerWaiting';
+      name: string;
+      controller: string;
+      provider: string;
+    }>
   | Readonly<{ kind: 'creationDisabled' }>
   | Readonly<{ kind: 'resourceReady' }>
   | Readonly<{ kind: 'observationUnavailable' }>
@@ -48,177 +55,265 @@ export type ManagedLifecycleAction =
   | 'remove'
   | 'reconnect'
   | 'createAnother'
-  | 'deleteNow';
+  | 'deleteNow'
+  | 'cancel'
+  | 'change';
 
 export type ManagedLifecyclePresentation = Readonly<{
   /** `pending` draws the activity mark: something was requested and is not yet observed. */
   tone: 'neutral' | 'pending' | 'warning' | 'danger';
+  /** What went wrong, in one sentence: the only part a warning or failure tints. */
+  cause?: string;
+  /** The state or the next step, said plainly after the cause. */
+  detail?: string;
+  /** The cause and detail as one sentence pair, for one-line consumers. */
   line: string;
   actions: readonly ManagedLifecycleAction[];
+  /**
+   * A state that blocks use or leaves billing uncertain speaks as the page's banner, titled with the
+   * state; every other state is a fact on the resource's own row.
+   */
+  banner?: Readonly<{ title: string }>;
 }>;
+
+function present(
+  tone: ManagedLifecyclePresentation['tone'],
+  text: Readonly<{ cause?: string; detail?: string }>,
+  actions: readonly ManagedLifecycleAction[],
+  banner?: ManagedLifecyclePresentation['banner'],
+): ManagedLifecyclePresentation {
+  return {
+    tone,
+    ...(text.cause ? { cause: text.cause } : {}),
+    ...(text.detail ? { detail: text.detail } : {}),
+    line: [text.cause, text.detail].filter(Boolean).join(' '),
+    actions,
+    ...(banner ? { banner } : {}),
+  };
+}
 
 export function describeManagedLifecycleState(
   state: ManagedLifecycleState,
 ): ManagedLifecyclePresentation {
   switch (state.kind) {
     case 'creationDisabled':
-      return { tone: 'warning', line: t('managedMachines.creation.disabledDetail'), actions: [] };
+      return present(
+        'neutral',
+        { detail: t('managedMachines.creation.disabledDetail') },
+        ['change'],
+        { title: t('managedMachines.creation.disabledTitle') },
+      );
     case 'creationWaiting':
-      return { tone: 'neutral', line: t('managedMachines.creation.waiting', { name: state.name }), actions: [] };
+      return present(
+        'neutral',
+        { detail: t('managedMachines.creation.waiting', { name: state.name }) },
+        [],
+      );
+    case 'controllerWaiting':
+      return present(
+        'neutral',
+        {
+          detail: t('managedMachines.controller.waitingDetail', {
+            provider: state.provider,
+            controller: state.controller,
+            name: state.name,
+          }),
+        },
+        ['cancel'],
+        {
+          title: t('managedMachines.controller.waiting', {
+            controller: state.controller,
+          }),
+        },
+      );
     case 'resourceReady':
-      return { tone: 'neutral', line: t('managedMachines.creation.resourceReady'), actions: ['checkNow'] };
+      return present(
+        'neutral',
+        { detail: t('managedMachines.creation.resourceReady') },
+        ['checkNow'],
+      );
     case 'observationUnavailable':
-      return { tone: 'warning', line: t('managedMachines.creation.observationUnavailable'), actions: ['checkNow'] };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.creation.observationUnavailableCause'),
+          detail: t('managedMachines.creation.observationUnavailableDetail'),
+        },
+        ['checkNow'],
+      );
     case 'creationCanceledCleanup':
-      return { tone: 'warning', line: t('managedMachines.creation.canceledCleanup'), actions: ['checkNow', 'openProvider'] };
+      return present(
+        'warning',
+        { cause: t('managedMachines.creation.canceledCleanup') },
+        ['checkNow', 'openProvider'],
+      );
     case 'stopPending':
-      return {
-        tone: 'pending',
-        line: t('managedPower.stopPending'),
-        actions: ['checkNow'],
-      };
+      return present('pending', { detail: t('managedPower.stopPending') }, [
+        'checkNow',
+      ]);
     case 'powerPending':
-      return {
-        tone: 'pending',
-        line: t('managedMachines.power.pending', {
-          provider: state.provider,
-          state: state.state,
-        }),
-        actions: ['checkNow'],
-      };
+      return present(
+        'pending',
+        {
+          detail: t('managedMachines.power.pending', {
+            provider: state.provider,
+            state: state.state,
+          }),
+        },
+        ['checkNow'],
+      );
     case 'stoppedStorage':
-      return {
-        tone: 'neutral',
-        line: t('managedPower.stoppedStorage'),
-        actions: [],
-      };
+      return present(
+        'neutral',
+        { detail: t('managedPower.stoppedStorage') },
+        [],
+      );
     case 'storageUnknown':
-      return {
-        tone: 'warning',
-        line: t('managedPower.storageUnknown'),
-        actions: ['checkNow'],
-      };
+      return present('warning', { cause: t('managedPower.storageUnknown') }, [
+        'checkNow',
+      ]);
     case 'absent':
-      return {
-        tone: 'neutral',
-        line: t('managedPower.resourceAbsent'),
-        actions: ['remove'],
-      };
+      return present('neutral', { detail: t('managedPower.resourceAbsent') }, [
+        'remove',
+      ]);
     case 'expired':
-      return {
-        tone: 'neutral',
-        line: t('managedPower.expired'),
-        actions: ['remove'],
-      };
+      return present('neutral', { detail: t('managedPower.expired') }, [
+        'remove',
+      ]);
     case 'volumeLost':
-      return {
-        tone: 'warning',
-        line: t('managedPower.volumeLost'),
-        actions: ['remove'],
-      };
+      return present('warning', { cause: t('managedPower.volumeLost') }, [
+        'remove',
+      ]);
     case 'nativeExpiry':
-      return {
-        tone: 'neutral',
-        line: t('managedRetention.nativeExpiry', {
-          provider: state.provider,
-          time: formatAsOfTime(state.at),
-        }),
-        actions: [],
-      };
+      return present(
+        'neutral',
+        {
+          detail: t('managedRetention.nativeExpiry', {
+            provider: state.provider,
+            time: formatAsOfTime(state.at),
+          }),
+        },
+        [],
+      );
     case 'unsupported':
-      return {
-        tone: 'neutral',
-        line: t('managedPower.unsupported', {
-          provider: state.provider,
-          effect: state.effect,
-        }),
-        actions: [],
-      };
+      return present(
+        'neutral',
+        {
+          detail: t('managedPower.unsupported', {
+            provider: state.provider,
+            effect: state.effect,
+          }),
+        },
+        [],
+      );
     case 'busy':
-      return { tone: 'neutral', line: t('managedRetention.busy'), actions: [] };
+      return present('neutral', { detail: t('managedRetention.busy') }, []);
     case 'activityUnknown':
-      return {
-        tone: 'warning',
-        line: t('managedRetention.activityUnknown'),
-        actions: ['checkNow'],
-      };
+      return present(
+        'warning',
+        { cause: t('managedRetention.activityUnknown') },
+        ['checkNow'],
+      );
     case 'draining':
-      return {
-        tone: 'pending',
-        line: t('managedRetention.draining'),
-        actions: [],
-      };
+      return present('pending', { detail: t('managedRetention.draining') }, []);
     case 'cleanupPending':
-      return {
-        tone: 'danger',
-        line: state.reason
-          ? `${t('managedCleanup.pending')} ${state.reason}`
-          : t('managedCleanup.pending'),
-        actions: ['openProvider', 'tryAgain'],
-      };
+      return present(
+        'danger',
+        {
+          // The banner's title names the state; its body says what it means for the bill.
+          detail: [t('managedCleanup.pendingDetail'), state.reason]
+            .filter(Boolean)
+            .join(' '),
+        },
+        ['tryAgain', 'openProvider'],
+        { title: t('managedCleanup.pendingTitle') },
+      );
     case 'cleanupUnknown':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.cleanup.unknown'),
-        actions: ['checkNow', 'openProvider'],
-      };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.cleanup.unknownCause'),
+          detail: t('managedMachines.cleanup.unknownDetail'),
+        },
+        ['checkNow', 'openProvider'],
+      );
     case 'providerRemoved':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.provider.removed', {
-          provider: state.provider,
-        }),
-        actions: ['reinstall'],
-      };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.provider.removed', {
+            provider: state.provider,
+          }),
+        },
+        ['reinstall'],
+      );
     case 'providerUnreachable':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.provider.unreachable', {
-          provider: state.provider,
-          time: formatAsOfTime(state.checkedAt),
-        }),
-        actions: ['checkNow'],
-      };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.provider.unreachableCause', {
+            provider: state.provider,
+          }),
+          detail: t('managedMachines.provider.lastChecked', {
+            time: formatAsOfTime(state.checkedAt),
+          }),
+        },
+        ['checkNow'],
+      );
     case 'credentialRefused':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.credential.refused'),
-        actions: ['reconnect'],
-      };
+      return present(
+        'warning',
+        { cause: t('managedMachines.credential.refused') },
+        ['reconnect'],
+      );
     case 'localMissing':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.local.missing', {
-          controller: state.controller,
-        }),
-        actions: ['checkNow'],
-      };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.local.missingCause', {
+            controller: state.controller,
+          }),
+          detail: t('managedMachines.local.missingDetail'),
+        },
+        ['checkNow'],
+      );
     case 'controllerRequired':
-      return {
-        tone: 'neutral',
-        line: t('managedMachines.controller.required', {
-          controller: state.controller,
-        }),
-        actions: [],
-      };
+      return present(
+        'neutral',
+        {
+          detail: t('managedMachines.controller.required', {
+            controller: state.controller,
+          }),
+        },
+        [],
+      );
     case 'stoppedCharges':
-      return {
-        tone: 'neutral',
-        line: t('managedMachines.billing.stopped', { charges: state.charges }),
-        actions: [],
-      };
+      return present(
+        'neutral',
+        {
+          detail: t('managedMachines.billing.stopped', {
+            charges: state.charges,
+          }),
+        },
+        [],
+      );
     case 'resumeUnsupported':
-      return {
-        tone: 'neutral',
-        line: t('managedMachines.resume.unsupported'),
-        actions: ['createAnother'],
-      };
+      return present(
+        'neutral',
+        { detail: t('managedMachines.resume.unsupported') },
+        ['createAnother'],
+      );
     case 'mayExist':
-      return {
-        tone: 'warning',
-        line: t('managedMachines.creation.unknown', { name: state.name }),
-        actions: ['checkNow', 'openProvider'],
-      };
+      return present(
+        'warning',
+        {
+          cause: t('managedMachines.creation.unknownCause', {
+            name: state.name,
+          }),
+          detail: t('managedMachines.creation.unknownDetail'),
+        },
+        ['checkNow', 'openProvider'],
+      );
   }
 }
 
@@ -245,5 +340,9 @@ export function managedLifecycleActionLabel(
       return t('managedMachines.actions.createAnother');
     case 'deleteNow':
       return t('managedMachines.actions.delete');
+    case 'cancel':
+      return t('common.cancel');
+    case 'change':
+      return t('managedMachines.actions.change');
   }
 }

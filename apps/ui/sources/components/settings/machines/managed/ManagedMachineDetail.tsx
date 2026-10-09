@@ -11,7 +11,7 @@ import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
-import { ManagedMachineSections } from './ManagedMachineSections';
+import { ManagedMachineSections, useManagedMachineHeaderIdentity } from './ManagedMachineSections';
 import { useManagedMachineInventory } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 
@@ -43,6 +43,7 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     const accountState = inventory.accountScopes.get(serverId);
     const [actionError, setActionError] = React.useState<string | null>(null);
     const machine = entry?.machines[0];
+    const identity = useManagedMachineHeaderIdentity(entry?.status === 'denied' ? undefined : machine, serverId);
     const profile = getServerProfileById(serverId);
     const homeName = resolveHomeDisplayLabel(profile, serverId);
     const forbidden = entry?.status === 'denied' || actionError === 'permission_denied'
@@ -51,7 +52,7 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     if (enrolledMachineId) return <Redirect href={{ pathname: '/machine/[id]',
         params: { id: enrolledMachineId, serverId: props.serverId } }} />;
 
-    const mark = <Icon name="desktop" color={theme.colors.text.secondary} />;
+    const mark = (machine && !forbidden ? identity?.mark : undefined) ?? <Icon name="desktop" color={theme.colors.text.secondary} />;
 
     const showMachine = Boolean(machine && !forbidden);
     const loading = inventory.loading && !machine;
@@ -60,7 +61,8 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
             ? t('managedMachines.detail.missing') : t('managedMachines.detail.loadFailed');
     return <ManagedReceiptPageLayout testID="managed-machine.detail" compact={layout?.mode !== 'split'}
         header={{ title: showMachine ? machine!.launch.name : t('settings.machines'), leading: mark,
-            description: t('managedMachines.detail.creationDescription'), meta: [{ key: 'home', text: homeName }],
+            description: (showMachine ? identity?.description : null) ?? t('managedMachines.detail.creationDescription'),
+            meta: [{ key: 'home', text: homeName }, ...(showMachine ? identity?.meta ?? [] : [])],
             actions: <RoundButton size="small" display="secondary" title={t('common.retry')}
                 onPress={() => { setActionError(null); inventory.refresh(); }} testID="managed-machine.refresh" /> }}
         /* The sections own the receipt beside them, with Stop and Delete at its foot. */

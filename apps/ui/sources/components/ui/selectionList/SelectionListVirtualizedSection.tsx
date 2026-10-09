@@ -227,6 +227,7 @@ export function SelectionListVirtualizedSection(
                     testID={headerTestId}
                     title={props.section.title}
                     count={props.section.count}
+                    action={props.section.action}
                     {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
                 />
                 <VirtualizedList
@@ -257,6 +258,7 @@ export function SelectionListVirtualizedSection(
                 testID={headerTestId}
                 title={props.section.title}
                 count={props.section.count}
+                action={props.section.action}
                     {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
             />
             {props.section.options.map((option) => renderRow(option))}

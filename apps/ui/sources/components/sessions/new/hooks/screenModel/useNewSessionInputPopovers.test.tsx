@@ -157,6 +157,7 @@ function createParams(overrides: Partial<HookParams> = {}): HookParams {
         onRefreshMachines: vi.fn(),
         onRefreshMachinePools: vi.fn(),
         onOpenMachinePoolSettings: vi.fn(),
+        onOpenMachinePresets: vi.fn(),
         targetServerId: 'server-a',
         externalSessionsFeatureEnabled: false,
         resumeSessionId: '',

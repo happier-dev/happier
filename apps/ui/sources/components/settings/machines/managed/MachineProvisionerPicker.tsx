@@ -5,6 +5,7 @@ import type { MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plug
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -133,6 +134,13 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         ? t('managedMachines.add.localDescription', { computer: controllerName, cores: String(localResources.availableCpuCores),
             memory: formatByteCapacity(localResources.availableMemoryBytes), disk: formatByteCapacity(localResources.availableDiskBytes) })
         : t('managedMachines.add.localDescriptionShort', { computer: controllerName });
+    // A page sets the chip on its first section's header; a grouped surface (the composer's modal) has no
+    // section header actions, so the same chip leads the picker as its own "Managed from" row.
+    // On a phone the chip is wider than a header action may be, so it also leads as its own row there.
+    const pageSections = useListPresentation() === 'page' && !compact;
+    const scopeRow = !pageSections && scope.chip ? <ItemGroup>
+        <Item testID="managed-picker.scope" title={t('managedMachines.config.managedFrom')} mode="info" showChevron={false} rightElement={scope.chip} />
+    </ItemGroup> : null;
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
     return <View testID="managed-picker">
         {approval.approvalId ? <AttentionBanner title={t('approvals.title')} description={t('approvals.status.open')}
@@ -143,9 +151,11 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             title={t('managedMachines.add.noControllerTitle')} reason={t('managedMachines.add.noControllerReason')}
             action={{ label: t('managedMachines.add.setUpThisComputer'), onPress: setUpThisComputer }} />
             : cards.length > 0 ? <>
+                {scopeRow}
                 {scopeState}
-                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={scope.chip}
+                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={pageSections ? scope.chip : undefined}
                     localTitle={t('managedMachines.add.onThisComputer')} localDescription={localDescription} />
-            </> : <ItemGroup title={t('managedMachines.config.managedFrom')} action={scope.chip} surface="none">{scopeState}</ItemGroup>}
+            </> : pageSections ? <ItemGroup title={t('managedMachines.config.managedFrom')} action={scope.chip} surface="none">{scopeState}</ItemGroup>
+            : <>{scopeRow}{scopeState}</>}
     </View>;
 }

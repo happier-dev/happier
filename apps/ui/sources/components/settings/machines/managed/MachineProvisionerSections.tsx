@@ -33,6 +33,8 @@ export const MachineProvisionerSections = React.memo(
       localDescription: string;
       compact: boolean;
       testID: string;
+      /** The machine-scope chip ("Managed from · MacBook Pro"), set on the first section's header. */
+      scope?: React.ReactNode;
     }>,
   ) {
     const local = props.cards.filter((card) => card.location === 'local');
@@ -44,6 +46,7 @@ export const MachineProvisionerSections = React.memo(
             title={props.localTitle}
             description={props.localDescription}
             cards={local}
+            action={props.scope}
             compact={props.compact}
             testID={`${props.testID}.local`}
           />
@@ -57,11 +60,17 @@ export const MachineProvisionerSections = React.memo(
                 : t('managedMachines.add.cloudDescription')
             }
             cards={cloud}
+            action={local.length > 0 ? undefined : props.scope}
             compact={props.compact}
             testID={`${props.testID}.cloud`}
           />
         ) : null}
-        {cloud.length > 0 ? <AccountsNote compact={props.compact} /> : null}
+        {/* The note is page content: an edge-only section gives it the page column, not a local inset. */}
+        {cloud.length > 0 ? (
+          <ItemGroup surface="none">
+            <AccountsNote compact={props.compact} />
+          </ItemGroup>
+        ) : null}
       </>
     );
   },
@@ -72,6 +81,7 @@ function ProvisionerGroup(
     title: string;
     description: string;
     cards: readonly ManagedProvisionerCard[];
+    action?: React.ReactNode;
     compact: boolean;
     testID: string;
   }>,
@@ -79,7 +89,8 @@ function ProvisionerGroup(
   const { theme } = useUnistyles();
   if (props.compact) {
     return (
-      <ItemGroup title={props.title} description={props.description}>
+      <ItemGroup title={props.title} description={props.description} action={props.action}
+        actionLayout="adaptive">
         {props.cards.map((card) => (
           <Item
             key={card.id}
@@ -105,6 +116,8 @@ function ProvisionerGroup(
     <ItemGroup
       title={props.title}
       description={props.description}
+      action={props.action}
+        actionLayout="adaptive"
       surface="none"
     >
       <SelectionTiles<string>
@@ -116,7 +129,8 @@ function ProvisionerGroup(
           title: card.title,
           subtitle: card.description,
           mark: card.mark,
-          badge: card.kind,
+          // Four local cards across leave no room for a kind badge (lab note); cloud cards name theirs.
+          ...(card.location === 'cloud' && card.kind ? { badge: card.kind } : {}),
         }))}
         onPress={(id) => byId.get(id)?.action.onPress()}
         renderOptionFooter={({ option }) => {
@@ -140,12 +154,13 @@ function ProvisionerFooter(
   const { card } = props;
   return (
     <View style={styles.footer}>
-      {card.status.tone === 'none' ? null : (
-        <StatusDot color={toneColor(theme, card.status.tone)} />
-      )}
-      <Text style={styles.status} numberOfLines={1}>
-        {card.status.label}
-      </Text>
+      {/* A long status keeps its words and moves the button beneath it instead of truncating. */}
+      <View style={styles.statusGroup}>
+        {card.status.tone === 'none' ? null : (
+          <StatusDot color={toneColor(theme, card.status.tone)} />
+        )}
+        <Text style={styles.status}>{card.status.label}</Text>
+      </View>
       <RoundButton
         testID={`${props.testID}.action`}
         size="small"
@@ -185,21 +200,29 @@ function toneColor(
 const styles = StyleSheet.create((theme) => ({
   footer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  statusGroup: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexGrow: 1,
+    flexShrink: 0,
+    maxWidth: '100%',
   },
   status: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
-    flex: 1,
-    minWidth: 0,
+    flexShrink: 1,
   },
   note: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    paddingHorizontal: 4,
   },
   noteText: {
     ...Typography.default(),

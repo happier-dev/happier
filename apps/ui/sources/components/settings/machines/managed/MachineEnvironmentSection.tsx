@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
 import {
   listMachineEnvironmentAdaptersV1,
@@ -9,7 +10,9 @@ import {
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -17,7 +20,6 @@ import {
   SegmentedChoiceItem,
   type SegmentedChoiceOption,
 } from '@/components/ui/lists/SegmentedChoiceItem';
-import { Modal } from '@/modal';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
@@ -117,51 +119,45 @@ export const MachineEnvironmentSection = React.memo(
         : []),
     ];
     const bindings = Object.entries(environment.secretRefs?.bindings ?? {});
-    const addSecret = async () => {
-      if (!props.editable) return;
-      const raw = await Modal.prompt(
-        t('machinePresets.environment.secretName'),
-        t('machinePresets.environment.secretNameHelp'),
-        { placeholder: 'NPM_TOKEN' },
-      );
-      const name = raw?.trim().toUpperCase();
-      if (!name) return;
-      if (!ENV_NAME.test(name)) {
-        Modal.alert(
-          t('machinePresets.environment.secretName'),
-          t('machinePresets.environment.secretNameInvalid'),
-        );
-        return;
-      }
-      Modal.show({
-        component: SavedSecretPickerModal,
-        props: {
-          scope: props.scope,
-          selectedId: null,
-          includeNoneRow: false,
-          allowEdit: false,
-          onSelectId: (ref: string | null) => {
-            if (!ref) return;
-            const resolved = catalog.resolveReference(ref);
-            const reference = {
-              ref,
-              ...(resolved.kind === 'shared_resource' &&
-              resolved.revision !== null
-                ? { revision: resolved.revision }
-                : {}),
-            };
-            change({
-              secretRefs: {
-                v: 1,
-                bindings: {
-                  ...(environment.secretRefs?.bindings ?? {}),
-                  [name]: reference,
-                },
-              },
-            });
+    // One inline row: the variable name is typed in place (its rule shows as it is typed), then
+    // choosing a saved secret binds it. Only existing, usable saved secrets can be chosen.
+    const [draftName, setDraftName] = React.useState('');
+    const [secretMenuOpen, setSecretMenuOpen] = React.useState(false);
+    const nameValid = ENV_NAME.test(draftName);
+    const nameError =
+      draftName && !nameValid
+        ? t('machinePresets.environment.secretNameInvalid')
+        : null;
+    const secretChoices = catalog.sharedEntries
+      .filter(
+        (entry) =>
+          entry.capabilities.use &&
+          catalog.resolveReference(entry.ref).status === 'ready',
+      )
+      .map((entry) => ({
+        id: entry.ref,
+        title: entry.name ?? t('secrets.catalog.unavailableName'),
+      }));
+    const bindSecret = (ref: string) => {
+      setSecretMenuOpen(false);
+      if (!props.editable || !nameValid) return;
+      const resolved = catalog.resolveReference(ref);
+      const reference = {
+        ref,
+        ...(resolved.kind === 'shared_resource' && resolved.revision !== null
+          ? { revision: resolved.revision }
+          : {}),
+      };
+      change({
+        secretRefs: {
+          v: 1,
+          bindings: {
+            ...(environment.secretRefs?.bindings ?? {}),
+            [draftName]: reference,
           },
         },
       });
+      setDraftName('');
     };
     const removeSecret = (name: string) => {
       const rest = { ...(environment.secretRefs?.bindings ?? {}) };
@@ -229,7 +225,7 @@ export const MachineEnvironmentSection = React.memo(
                       selectedAdapter?.title ?? environment.toolchain.adapterId,
                   },
                 )}
-                placeholder={'[tools]\nnode = "22"'}
+                placeholder={t('machinePresets.environment.toolchainPlaceholder')}
                 multiline
                 minLines={5}
                 monospace
@@ -255,7 +251,7 @@ export const MachineEnvironmentSection = React.memo(
                 })
               }
               accessibilityLabel={t('machinePresets.environment.setup')}
-              placeholder="npm install -g pnpm"
+              placeholder={t('machinePresets.environment.setupPlaceholder')}
               multiline
               minLines={4}
               monospace
@@ -307,17 +303,62 @@ export const MachineEnvironmentSection = React.memo(
             testID={`${props.testID}.add-secret`}
             title={t('machinePresets.environment.addSecret')}
             subtitle={
-              bindings.length
-                ? undefined
+              draftName || bindings.length
+                ? t('machinePresets.environment.secretNameHelp')
                 : t('machinePresets.environment.secretsHelp')
             }
-            icon={
-              <Icon name="plus" size={20} color={theme.colors.text.secondary} />
-            }
+            subtitleLines={0}
+            mode="info"
             showChevron={false}
-            onPress={() => {
-              void addSecret();
-            }}
+            // The name field and the secret select are wider than a right-side control: they sit beneath.
+            accessoryLayout="stacked"
+            rightElement={
+              <View style={styles.addSecret}>
+                <FieldTextInput
+                  testID={`${props.testID}.add-secret.name`}
+                  value={draftName}
+                  onChangeText={(value) => setDraftName(value.trim().toUpperCase())}
+                  accessibilityLabel={t('machinePresets.environment.secretName')}
+                  placeholder={t('machinePresets.environment.secretNamePlaceholder')}
+                  error={nameError}
+                  monospace
+                  autoCapitalize="characters"
+                />
+                <DropdownMenu
+                  testID={`${props.testID}.add-secret.secret`}
+                  open={secretMenuOpen}
+                  onOpenChange={(next) => setSecretMenuOpen(next && nameValid)}
+                  variant="selectable"
+                  search={false}
+                  rowKind="item"
+                  matchTriggerWidth
+                  connectToTrigger
+                  emptyLabel={t('machinePresets.environment.secretPickEmpty')}
+                  items={secretChoices}
+                  onSelect={bindSecret}
+                  trigger={({ open, toggle }) => (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t('machinePresets.environment.secretPick')}
+                      accessibilityState={{ disabled: !nameValid, expanded: open }}
+                      disabled={!nameValid}
+                      onPress={toggle}
+                    >
+                      {renderDropdownItemTriggerRightElement({
+                        detail: null,
+                        open,
+                        detailColor: theme.colors.text.secondary,
+                        chevronColor: theme.colors.text.secondary,
+                        field: resolveFieldBoxColors(theme),
+                        placeholder: t('machinePresets.environment.secretPick'),
+                        placeholderColor: theme.colors.input.placeholder,
+                        fieldSpan: 'content',
+                      })}
+                    </Pressable>
+                  )}
+                />
+              </View>
+            }
           />
         ) : null}
       </ItemGroup>
@@ -369,3 +410,10 @@ export function describeMachineEnvironment(
       : []),
   ];
 }
+
+const styles = StyleSheet.create(() => ({
+  addSecret: {
+    alignSelf: 'stretch',
+    gap: 8,
+  },
+}));

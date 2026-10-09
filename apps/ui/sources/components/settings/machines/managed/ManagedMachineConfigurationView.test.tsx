@@ -416,14 +416,13 @@ describe('mounted managed configurator', () => {
         } });
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} />);
-        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.controller:host'
-            || node.props.testID === 'managed-config.catalog' && node.props.kind !== 'loading').length).toBeGreaterThan(0));
-        expect(screen.tree.findAll(node => node.props.testID === 'managed-config.controller:host').length).toBeGreaterThan(0);
-        expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(0);
-        await act(async () => screen.pressByTestId('managed-config.controller:host'));
+        // The Home's one controller ("Build host") is preselected, so its choices load without a controller pick.
         await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.choice:small').length).toBeGreaterThan(0));
         await act(async () => screen.pressByTestId('managed-config.choice:small'));
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+        // A one-off machine has no audience or running limit: those belong to the preset editor.
+        expect(screen.findByTestId('managed-config.audience')).toBeNull();
+        expect(screen.findByTestId('managed-config.limit')).toBeNull();
         const keep = 'managed-config.receipt:keep';
         const deadline = { kind: 'deadline', at: new Date(2099, 0, 2, 18, 30).getTime(), effect: 'stop', interrupts: true };
         expect(screen.findByTestId(`${keep}:choice:deadline`)).not.toBeNull();

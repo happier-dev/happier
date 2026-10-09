@@ -10,6 +10,7 @@ import {
   type ProgressChecklistStep,
 } from '@/components/systemTasks/ProgressChecklist';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -105,7 +106,7 @@ export function buildManagedProgressStatusBadge(
   };
 }
 
-const ManagedProgressPopoverContent = React.memo(
+export const ManagedProgressPopoverContent = React.memo(
   function ManagedProgressPopoverContent(
     props: Readonly<{ model: ManagedProgressModel }>,
   ) {
@@ -147,7 +148,7 @@ const ManagedProgressPopoverContent = React.memo(
         </Text>
         {model.archiveChoice && !model.failed ? (
           <View style={styles.archive}>
-            <Text style={styles.quiet}>
+            <Text style={styles.archiveLabel}>
               {t('managedRetention.whenSessionArchived')}
             </Text>
             <SegmentedTabBar<ManagedArchiveChoice>
@@ -160,26 +161,20 @@ const ManagedProgressPopoverContent = React.memo(
               tabs={[
                 { id: 'keep', label: t('managedRetention.scopeKeep') },
                 { id: 'stop', label: t('managedRetention.scopeStop'),
-                  disabled: model.archiveChoice.supportedEffects?.includes('stop') === false },
+                  disabled: model.archiveChoice.supportedEffects?.includes('stop') === false,
+                  unavailableReason: archiveUnavailableReason(model.archiveChoice, 'stop') },
                 { id: 'delete', label: t('managedRetention.scopeDelete'),
-                  disabled: model.archiveChoice.supportedEffects?.includes('delete') === false },
+                  disabled: model.archiveChoice.supportedEffects?.includes('delete') === false,
+                  unavailableReason: archiveUnavailableReason(model.archiveChoice, 'delete') },
               ]}
             />
           </View>
         ) : null}
-        <View style={styles.actions}>
-          {model.failed ? (
+        {/* The irreversible delete stands apart at the leading edge; one bordered next step closes the row. */}
+        <SectionButtonRow
+          trailing={
             <>
-              {model.onDeleteMachine ? (
-                <RoundButton
-                  testID="managed-machine-progress-delete"
-                  size="small"
-                  display="inverted"
-                  title={t('managedMachines.actions.deleteMachine')}
-                  onPress={model.onDeleteMachine}
-                />
-              ) : null}
-              {model.onContinueWithoutSetup ? (
+              {model.failed && model.onContinueWithoutSetup ? (
                 <RoundButton
                   testID="managed-machine-progress-skip-setup"
                   size="small"
@@ -188,16 +183,16 @@ const ManagedProgressPopoverContent = React.memo(
                   onPress={model.onContinueWithoutSetup}
                 />
               ) : null}
-              {model.onRetryInstall ? (
+              {model.failed && model.onRetryInstall ? (
                 <RoundButton
                   testID="managed-machine-progress-retry"
                   size="small"
-                  display="secondary"
+                  display={model.onRetrySetup ? 'inverted' : 'secondary'}
                   title={t('managedMachines.creation.retryInstall')}
                   onPress={model.onRetryInstall}
                 />
               ) : null}
-              {model.onRetrySetup ? (
+              {model.failed && model.onRetrySetup ? (
                 <RoundButton
                   testID="managed-machine-progress-retry-setup"
                   size="small"
@@ -206,22 +201,47 @@ const ManagedProgressPopoverContent = React.memo(
                   onPress={model.onRetrySetup}
                 />
               ) : null}
+              {model.onCancel ? (
+                <RoundButton
+                  testID="managed-machine-progress-cancel"
+                  size="small"
+                  display="inverted"
+                  title={t('common.cancel')}
+                  onPress={model.onCancel}
+                />
+              ) : null}
             </>
-          ) : null}
-          {model.onCancel ? (
+          }
+        >
+          {model.failed && model.onDeleteMachine ? (
             <RoundButton
-              testID="managed-machine-progress-cancel"
+              testID="managed-machine-progress-delete"
               size="small"
-              display="inverted"
-              title={t('common.cancel')}
-              onPress={model.onCancel}
+              display="destructive"
+              title={t('managedMachines.actions.deleteMachine')}
+              onPress={model.onDeleteMachine}
             />
           ) : null}
-        </View>
+        </SectionButtonRow>
       </View>
     );
   },
 );
+
+/** Why a disabled archive effect cannot be chosen: the provider lacks it, or the controller cannot run the rule. */
+function archiveUnavailableReason(
+  choice: NonNullable<ManagedProgressModel['archiveChoice']>,
+  effect: 'stop' | 'delete',
+): string | undefined {
+  if (choice.supportedEffects?.includes(effect) !== false) return undefined;
+  if (choice.availability?.nativeUnsupportedEffects.includes(effect))
+    return effect === 'stop'
+      ? t('managedRetention.scopeStopUnsupported')
+      : t('managedRetention.scopeDeleteUnsupported');
+  return t('managedRetention.scopeControllerUnavailable', {
+    controller: choice.availability?.controllerName ?? t('managedRetention.scopeControllerFallback'),
+  });
+}
 
 export type RequesterDisclosureModel = Readonly<{
   owner: string;
@@ -330,6 +350,11 @@ const styles = StyleSheet.create((theme) => ({
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
   },
+  archiveLabel: {
+    ...Typography.default('medium'),
+    ...rowDescription,
+    color: theme.colors.text.primary,
+  },
   quiet: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
@@ -350,11 +375,5 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.subtle,
-  },
-  actions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
-    gap: 8,
   },
 }));

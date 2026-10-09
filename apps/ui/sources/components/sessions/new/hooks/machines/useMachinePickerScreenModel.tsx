@@ -313,6 +313,10 @@ export function useMachinePickerScreenModel() {
     const handleOpenPoolSettings = React.useCallback((target: Readonly<{ serverId: string; poolId: string }>) => {
         router.push(`/(app)/settings/machines/pools/${encodeURIComponent(target.poolId)}?serverId=${encodeURIComponent(target.serverId)}`);
     }, [router]);
+    // Presets live in the Machines collection (its "Presets" group).
+    const handleOpenManagedPresets = React.useCallback(() => {
+        router.push('/(app)/settings/machines');
+    }, [router]);
     const handleRefreshPress = React.useCallback(() => {
         fireAndForget(handleRefresh(true), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' });
     }, [handleRefresh]);
@@ -508,6 +512,7 @@ export function useMachinePickerScreenModel() {
             onRefreshMachines={handleRefreshMachinesPress}
             onRefreshPools={handleRefreshPools}
             onOpenPoolSettings={handleOpenPoolSettings}
+            onOpenManagedPresets={handleOpenManagedPresets}
             onDismissPoolSelection={poolSelection.cancelPendingSelection}
             serverId={selectedServerId}
             onToggleFavorite={onToggleFavorite}
@@ -530,6 +535,7 @@ export function useMachinePickerScreenModel() {
         selectedServerId,
         serverScopedMachineGroups,
         handleOpenPoolSettings,
+        handleOpenManagedPresets,
         handleRefreshMachinesPress,
         handleRefreshPools,
         poolSelection.cancelPendingSelection,

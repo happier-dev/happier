@@ -23,6 +23,8 @@ export type MachineAddSshDraft = SshCredentialsDraft & Readonly<{ privateKeyMate
 export type MachineAddFlowDraft = Readonly<{
     serverId: string | null;
     path: MachineAddPathId | null;
+    /** Create one is open instead of a connect path (lab `m-add`): nothing is waiting to connect. */
+    creating: boolean;
     sshDraft: MachineAddSshDraft;
     os: MachineAddCommandOs;
     thisComputerTask: MachineAddTaskHandle | null;
@@ -32,7 +34,7 @@ export type MachineAddFlowDraft = Readonly<{
 }>;
 
 function createDraft(): MachineAddFlowDraft {
-    return { serverId: null, path: null, sshDraft: createDefaultSshCredentialsDraft(), os: 'linux', thisComputerTask: null, sshTask: null, baseline: null, startedAtMs: null };
+    return { serverId: null, path: null, creating: false, sshDraft: createDefaultSshCredentialsDraft(), os: 'linux', thisComputerTask: null, sshTask: null, baseline: null, startedAtMs: null };
 }
 
 const NOT_SEEING_AFTER_MS = 5 * 60_000;

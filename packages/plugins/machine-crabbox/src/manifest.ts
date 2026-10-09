@@ -37,7 +37,7 @@ async function directProvider(context: PluginInvocationContext) {
 }
 
 export const CRABBOX_MACHINE_PROVISIONER = {
-  title: 'Crabbox', icon: 'server', resourceKind: 'crabbox-lease', schemaVersion: 1,
+  title: 'Crabbox', icon: 'hard-drives', resourceKind: 'crabbox-lease', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],

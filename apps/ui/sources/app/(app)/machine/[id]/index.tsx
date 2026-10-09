@@ -50,7 +50,7 @@ import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { MachineAgentsSection } from '@/components/machines/agents/MachineAgentsSection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
-import { ManagedEnrolledMachineSections } from '@/components/settings/machines/managed/ManagedMachineSections';
+import { ManagedEnrolledMachineSectionsView, useManagedEnrolledMachine, useManagedMachineHeaderIdentity } from '@/components/settings/machines/managed/ManagedMachineSections';
 import { showMachineEnvironmentApplySheet } from '@/components/settings/machines/managed/MachineEnvironmentApplySheet';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
 import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
@@ -810,13 +810,19 @@ export default function MachineDetailScreen() {
         return replacement ? getMachineDisplayName(replacement) : replacedById;
     }, [allMachines, machine?.replacedByMachineId]);
 
+    // A machine Happier created reads as what it is: its provider's mark, where it came from, and its
+    // observed power and kind. The same read feeds the managed sections below.
+    const managedEnrolled = useManagedEnrolledMachine({ enrolledMachineId: machineId || undefined, serverId: machineServerId });
+    const managedIdentity = useManagedMachineHeaderIdentity(managedEnrolled.machine, managedEnrolled.serverId);
+    const managedMeta = managedIdentity?.meta;
+
     const headerMeta = React.useMemo((): PageHeaderMetaFact[] => {
         if (!machine) return [];
         const facts: PageHeaderMetaFact[] = [{
             key: 'presence',
             text: machineIsOnline ? t('machineDetailPage.online') : t('machineDetailPage.offline'),
             testID: 'machine-detail-presence',
-        }];
+        }, ...(managedMeta ?? [])];
         const platformLabel = formatOSPlatform(machine.metadata?.platform);
         if (platformLabel) facts.push({ key: 'platform', text: platformLabel });
         const host = machine.metadata?.host;
@@ -829,7 +835,7 @@ export default function MachineDetailScreen() {
             facts.push({ key: 'replaced', text: t('machineDetailPage.replacedByFact', { machine: replacedByMachineLabel }) });
         }
         return facts;
-    }, [machine, machineIsOnline, replacedByMachineLabel]);
+    }, [machine, machineIsOnline, managedMeta, replacedByMachineLabel]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const headerMenuActions = React.useMemo((): PageHeaderMenuAction[] => {
@@ -947,10 +953,10 @@ export default function MachineDetailScreen() {
                     testID="machine-detail-header"
                     alwaysShowTitle
                     title={machineName}
-                    description={t('machineDetailPage.description')}
+                    description={managedIdentity?.description ?? t('machineDetailPage.description')}
                     leading={(
-                        <PageHeaderMarkSlot>
-                            <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
+                        <PageHeaderMarkSlot testID={managedIdentity ? 'machine-detail-managed-mark' : undefined}>
+                            {managedIdentity?.mark ?? <Icon name="desktop" size={22} color={theme.colors.text.secondary} />}
                         </PageHeaderMarkSlot>
                     )}
                     meta={headerMeta}
@@ -1007,6 +1013,10 @@ export default function MachineDetailScreen() {
                     />
                 ) : null}
 
+                {/* A machine Happier created explains itself first (lab m-detail): Keep it, Managed from and what it
+                    was made with, beside its receipt, before the sections every machine has. */}
+                {machineId ? <ManagedEnrolledMachineSectionsView enrolled={managedEnrolled} /> : null}
+
                 {/* Work from your projects (30s3/31s3): this Machine's finite work policy, your runs and its fresh copies. */}
                 {machineId && machineServerId ? (
                     <MachineProjectWorkSection serverId={machineServerId} machineId={machineId} machineName={machineName} />
@@ -1018,8 +1028,6 @@ export default function MachineDetailScreen() {
                     <MachineWorkSummaryReader machineId={machineId} machineName={machineName}
                         scope={activeAccountScope} online={isOnline} refreshKey={machineWorkRefreshKey} /></>
                 ) : null}
-
-                {machineId ? <ManagedEnrolledMachineSections enrolledMachineId={machineId} serverId={machineServerId} /> : null}
 
                 {/* Agents first (lab agent-setup M1): what runs here, its sign-in, and setting up more. */}
                 {machineId ? (
