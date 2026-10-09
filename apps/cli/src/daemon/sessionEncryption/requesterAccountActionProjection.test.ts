@@ -89,6 +89,12 @@ describe('admitted requester Action projection', () => {
       serverHttpBaseUrl: 'https://requester-home.test', isCurrent: async () => live });
     expect(context?.authorization.requesterAccountProjection?.accountId).toBe('bob');
     expect(context?.accountSettingsContext.source).toBe('network');
+    const readContext = Reflect.get(requesterAccountOwner, 'readRequesterAccountActionContext');
+    expect(typeof readContext).toBe('function');
+    if (typeof readContext !== 'function') throw new Error('Missing admitted private custody consumer port');
+    expect(readContext(context.authorization)).toBe(context);
+    expect(readContext(ExternalActionExecutionAuthorizationV1Schema.parse(context.authorization))).toBeNull();
+    expect(JSON.stringify(context.authorization)).not.toContain('bob-ordinary');
     expect(getActiveAccountSettingsSnapshot()).toBe(before);
     expect(reads.mock.calls.some(([url]) => String(url).includes('/sessions'))).toBe(false);
     await context.dispose();

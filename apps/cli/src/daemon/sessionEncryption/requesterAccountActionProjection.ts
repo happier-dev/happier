@@ -200,6 +200,15 @@ export type RequesterAccountActionContext = Readonly<{
   dispose(): Promise<void>;
 }>;
 
+const requesterActionContext = Symbol('admittedRequesterAccountActionContext');
+
+/** Host-local custody facet; strict parsing/JSON forwarding cannot carry credentials or settings. */
+export function readRequesterAccountActionContext(authorization?: ExternalActionExecutionAuthorizationV1): RequesterAccountActionContext | null {
+  const projection: (ExternalActionRequesterAccountProjectionV1 & { [requesterActionContext]?: RequesterAccountActionContext }) | undefined
+    = authorization?.requesterAccountProjection;
+  return projection?.[requesterActionContext] ?? null;
+}
+
 export async function admitRequesterAccountActionContext(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   credentials: StoredCredentials;
@@ -282,13 +291,25 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
         ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(encryption.secret) }
         : encryption };
     };
-    return Object.freeze({ credentials: input.credentials, accountSettingsContext, savedSecretOperationContext, authorization, resolveEncryption,
+    // HTTP projection retains this exact private Account facet. Its symbol is
+    // not an authorization input and never enters the public carrier schema.
+    const projection = { ...authorization.requesterAccountProjection! };
+    const carrier: ExternalActionExecutionAuthorizationV1 = Object.defineProperties({}, {
+      ...Object.getOwnPropertyDescriptors(authorization),
+      requesterAccountProjection: { value: projection, enumerable: false },
+    });
+    const context: RequesterAccountActionContext = Object.freeze({ credentials: input.credentials, accountSettingsContext, savedSecretOperationContext,
+      authorization: carrier, resolveEncryption,
       refreshAccountSettings,
       serverHttpBaseUrl: input.serverHttpBaseUrl,
       isCurrent: authorization.requesterAccountProjection!.isCurrent,
       retain,
       dispose: async () => { if (!ingressReleased) { ingressReleased = true; await release(); } },
     });
+    Object.defineProperty(projection, requesterActionContext, { value: context, enumerable: false });
+    Object.freeze(projection);
+    Object.freeze(carrier);
+    return context;
   } catch { live = false; return null; }
 }
 

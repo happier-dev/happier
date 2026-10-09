@@ -7,22 +7,28 @@ import { getRandomBytes } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
 import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { hasUsableAccountSettingsEncryptionMaterial } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 /** Finite Account/Home-bound row operation, using the incumbent credential lifetime and HTTP carrier. */
 export async function createAccountServerWorkspaceWorkerPreferenceClient(input: Readonly<{
   token: string; credentials?: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
   context: ActionExecutorContext; actionId: string; isCredentialCurrent?: () => boolean | Promise<boolean>;
+  operationContext?: SavedSecretOperationContextV1;
   onRequestIssued?: () => void;
-  resolveRequestHeaders(params: Readonly<{context: ActionExecutorContext; effectActionId: string; method: string; path: string; body?: unknown}>): Readonly<Record<string, string>> | null;
+  resolveRequestHeaders(params: Readonly<{context: ActionExecutorContext; effectActionId: string; method: string; path: string; body?: unknown}>): Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>): Promise<ReturnType<typeof createWorkspaceExecutionConfigClientV1> | null> {
   const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-  const isCurrent = async () => !input.signal?.aborted && lifetime === getActiveAccountSettingsSnapshotLifetimeToken()
+  const isCurrent = async () => !input.signal?.aborted && (input.operationContext
+    ? input.operationContext.credentials.token === input.token && input.operationContext.serverHttpBaseUrl === input.serverHttpBaseUrl
+      && await input.operationContext.isCurrent()
+    : lifetime === getActiveAccountSettingsSnapshotLifetimeToken())
     && (!input.isCredentialCurrent || await input.isCredentialCurrent());
   async function request(path: string, body?: unknown) {
     if (!await isCurrent()) throw new Error('workspace_execution_config_scope_retired');
     const method = body === undefined ? 'GET' : 'POST';
-    const headers = input.resolveRequestHeaders({context: input.context, effectActionId: input.actionId, method, path, ...(body === undefined ? {} : {body})});
+    const headers = await input.resolveRequestHeaders({context: input.context, effectActionId: input.actionId, method, path, ...(body === undefined ? {} : {body})});
     if (!headers) throw new Error('workspace_execution_config_authorization_unavailable');
+    if (!await isCurrent()) throw new Error('workspace_execution_config_scope_retired');
     // Mode and CAS-preparation reads have not handed off this Action's effect.
     if (path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/mutate`
       || (input.actionId.endsWith('.get') && path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`)) {

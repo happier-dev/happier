@@ -2,6 +2,10 @@ import axios, { AxiosHeaders } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { createAccountServerWorkspaceWorkerPreferenceClient } from './workspaceWorkerPreferences';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 const workspace = { serverId: 'home-a', refId: 'checkout-a' };
 const preference = { enabled: false as const, unavailable: 'ask' as const, allowAdHoc: false, scriptOverrides: {} };
@@ -14,6 +18,30 @@ const response = (data: unknown, status = 200) => ({ data, status, statusText: '
 afterEach(() => vi.restoreAllMocks());
 
 describe('captured Account workspace preference carrier', () => {
+  it('awaits requester HTTP authorization and keeps invocation settings independent of daemon Account retirement', async () => {
+    let current = true;
+    const credentials = { token: 'bob', encryption: null };
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials,
+      snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 1, loadedAtMs: 1,
+        scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token), settingsSecretsReadKeys: [] },
+      serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent: async () => current });
+    const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      expect(config.headers?.['x-requester-proof']).toBe('bob-proof');
+      expect(config.headers?.Authorization).toBeUndefined();
+      return response(config.url?.endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
+        : { status: 'present', revision: 1, content: { t: 'plain', v: { ...preference, allowAdHoc: true, services: {} } } });
+    });
+    const client = await createAccountServerWorkspaceWorkerPreferenceClient({ ...input, credentials, token: credentials.token,
+      operationContext, resolveRequestHeaders: async () => ({ 'x-requester-proof': 'bob-proof' }) });
+    expect(client).not.toBeNull();
+    clearActiveAccountSettingsSnapshot();
+    expect(await client!.get({ workspace })).toMatchObject({ status: 'ready', preference: { allowAdHoc: true } });
+    current = false;
+    const requestsBeforeRetirement = request.mock.calls.length;
+    expect(await client!.get({ workspace })).toEqual({ status: 'unavailable' });
+    expect(request.mock.calls.length).toBe(requestsBeforeRetirement);
+  });
+
   it('keeps Plain keyless, addresses the exact checkout and observes a committed lost acknowledgement once', async () => {
     let row: unknown = null;
     let writes = 0;
