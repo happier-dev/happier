@@ -65,6 +65,20 @@ describe('useWorkspaceFileQuery', () => {
         expect(hook.getCurrent().coverage).toBe('unavailable');
         expect(hook.getCurrent().isSearching).toBe(false);
     });
+    it('does not retain another Session context rows even at the same qualified workspace', async () => {
+        const contextScope = { ...scope, rootPath: '/context-retirement-browser' };
+        transport.list.mockResolvedValue({ ok: true, paths: ['needle.ts'], truncated: false });
+        const renders: Array<{ contextKey: string; paths: string[] }> = [];
+        const hook = await renderHook((contextKey: string) => {
+            const result = useWorkspaceFileQuery({ scope: contextScope, query: 'needle', mode: 'glob', accountLifetime, contextKey });
+            renders.push({ contextKey, paths: result.items.map(item => item.fullPath) });
+            return result;
+        }, { initialProps: 'first-session' });
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        expect(hook.getCurrent().items.map(item => item.fullPath)).toEqual(['needle.ts']);
+        await hook.rerender('next-session');
+        expect(renders.find(render => render.contextKey === 'next-session')?.paths).toEqual([]);
+    });
 
     it('clears retained rows and aborts transport when the exact credential lifetime retires', async () => {
         let current = true;

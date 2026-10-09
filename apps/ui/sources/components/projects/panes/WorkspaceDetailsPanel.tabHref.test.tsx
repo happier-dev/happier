@@ -35,7 +35,7 @@ describe('workspace Details tab destinations', () => {
         const href = resolveTabHref(fileTab);
         if (!href) throw new Error('Expected shareable file destination');
         const url = new URL(href, 'https://happier.test');
-        expect(url.pathname).toBe('/projects/workspace-tab-href/details');
+        expect(url.pathname).toBe('/projects/workspace-tab-href/code');
         expect(url.searchParams.get('initialFile')).toBe('src/app.ts');
     });
 });

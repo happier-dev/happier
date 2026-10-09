@@ -1,4 +1,5 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
@@ -21,10 +22,11 @@ function resolveAbsoluteWorkspacePath(params: Readonly<{
         rootPath: params.rootPath,
         agentRootPath: params.agentRootPath,
         requestPath: params.requestPath,
+        pathKind: 'workspace_entry',
     });
 }
 
-type WorkspaceCreateDirectoryRequest = Readonly<{ path: string }>;
+type WorkspaceCreateDirectoryRequest = Readonly<{ rootPath: string; path: string }>;
 
 export type WorkspaceCreateDirectoryResponse =
     | Readonly<{ success: true }>
@@ -38,8 +40,11 @@ export async function workspaceCreateDirectory(
         const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceCreateDirectoryRequest>({
             machineId: target.machineId,
             serverId: target.serverId,
-            method: RPC_METHODS.CREATE_DIRECTORY,
-            payload: { path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }) },
+            method: getActionSpec('daemon.filesystem.createDirectory').bindings!.rpcMethod!,
+            payload: {
+                rootPath: target.rootPath,
+                path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
+            },
         });
 
         return assertRpcResponseWithSuccess<WorkspaceCreateDirectoryResponse>(response);

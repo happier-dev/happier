@@ -5,16 +5,38 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { createBufferedTransferDestination } from '../carriers/createBufferedTransferDestination';
 import { downloadBulkPayloadViaDirectExportToDestination } from './directTransferExportDownload';
+import { copyPreparedFilesystemFile } from './preparedFilesystemCopy';
+import { createTransferRecipientKeyPair } from './transferChunkEncryption';
+import { decryptEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 
 const callGuardedMachineRpcWithPolicyMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
+const convertedWorkspaceFixtures = vi.hoisted(() => new Set<string>());
+const workspaceCompletionRequests = vi.hoisted(() => new Map<string, unknown>());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
-    callGuardedMachineRpcWithPolicy: (...args: unknown[]) => callGuardedMachineRpcWithPolicyMock(...args),
+    callGuardedMachineRpcWithPolicy: async (params: { method: string; payload: { input?: { destination?: { destinationId: string } } } }) => {
+        const result = await callGuardedMachineRpcWithPolicyMock(params);
+        if (params.method === 'daemon.filesystem.download' && result?.success === true && typeof result.transferId === 'string') {
+            const { success: _success, ...prepared } = result;
+            convertedWorkspaceFixtures.add(prepared.transferId);
+            return { success: true, status: 'accepted', operationId: 'download-operation', destinationId: params.payload.input?.destination?.destinationId,
+                prepared: { manifestHash: `sha256:${'0'.repeat(64)}`, ...prepared } };
+        }
+        if (params.method === 'daemon.filesystem.transfer.cancel') return { success: true, aborted: true };
+        return result;
+    },
 }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    runtimeFetch: (url: string, init?: RequestInit) => {
+        if (url.includes('/complete') && Array.from(convertedWorkspaceFixtures).some(id => url.includes(id))) {
+            const id = Array.from(convertedWorkspaceFixtures).find(id => url.includes(id))!;
+            workspaceCompletionRequests.set(id, JSON.parse(String(init?.body)));
+            return Promise.resolve(new Response(JSON.stringify({ success: true }), { headers: { 'content-type': 'application/json' } }));
+        }
+        return runtimeFetchMock(url, init);
+    },
 }));
 
 async function createManifestHash(payloadBytes: Uint8Array): Promise<string> {
@@ -25,9 +47,156 @@ async function createManifestHash(payloadBytes: Uint8Array): Promise<string> {
 }
 
 describe('directTransferExportDownload', () => {
+    it('reopens only the original file capabilities for cleanup after cancellation retires the byte leases', async () => {
+        const cancellation = new AbortController();
+        const bytes = new Uint8Array([0, 255, 128, 10]);
+        const manifestHash = await createManifestHash(bytes);
+        const recipient = createTransferRecipientKeyPair();
+        const expiresAt = Date.now() + 60_000;
+        let transferred: Uint8Array | undefined;
+        let sourceClosed = false; let destinationAborted = false;
+        callGuardedMachineRpcWithPolicyMock.mockImplementation(async (params: { method: string; payload: { input: { destination?: { destinationId: string } } } }) => {
+            if (params.method === 'daemon.filesystem.download') return { success: true, status: 'accepted', operationId: 'source-operation',
+                destinationId: params.payload.input.destination!.destinationId,
+                prepared: { transferId: 'file-export', name: 'binary', sizeBytes: bytes.length, manifestHash, expiresAt,
+                    endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/ZmlsZS1leHBvcnQ',
+                        authorizationToken: 'file-export-token', expiresAt }] } };
+            if (params.method !== 'daemon.filesystem.copy') throw new Error('Cleanup must not request another Action');
+            return { success: true, status: 'accepted', operationId: 'destination-operation', sourceId: 'captured-source',
+                prepared: { uploadId: 'file-import', destDisplayPath: '/destination/copy', expectedSizeBytes: bytes.length,
+                    chunkSizeBytes: bytes.length, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64, expiresAt,
+                    endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/file-import', expiresAt }] } };
+        });
+        const acquire = async (prepared: Readonly<{ signal?: AbortSignal }>) => {
+            prepared.signal?.throwIfAborted();
+            let encrypted: Awaited<ReturnType<typeof createEncryptedTransferChunkEnvelope>>;
+            return { kind: 'browser_stream' as const, release: async () => {}, request: async (input: RequestInfo | URL, init?: RequestInit) => {
+                prepared.signal?.throwIfAborted();
+                const url = new URL(String(input));
+                let response: unknown;
+                if (url.pathname.endsWith('/open')) {
+                    encrypted = await createEncryptedTransferChunkEnvelope({ transferId: 'file-export', sequence: 0, payload: bytes,
+                        recipientPublicKeyBase64: new Headers(init?.headers).get('x-happier-transfer-recipient-public-key')! });
+                    response = { transferId: 'file-export', totalChunks: 1, sizeBytes: bytes.length, manifestHash };
+                } else if (url.pathname.includes('/imports/') && url.pathname.endsWith('/chunks/0')) {
+                    const body: unknown = JSON.parse(String(init?.body));
+                    if (!body || typeof body !== 'object' || !('payloadBase64' in body) || typeof body.payloadBase64 !== 'string'
+                        || !('encryptedDataKeyEnvelopeBase64' in body) || typeof body.encryptedDataKeyEnvelopeBase64 !== 'string') throw new Error('Invalid byte envelope');
+                    transferred = await decryptEncryptedTransferChunkEnvelope({ ...body, payloadBase64: body.payloadBase64,
+                        encryptedDataKeyEnvelopeBase64: body.encryptedDataKeyEnvelopeBase64, transferId: 'file-import', sequence: 0,
+                        recipientSecretKeySeed: recipient.recipientSecretKeySeed });
+                    cancellation.abort(); response = { success: true };
+                } else if (url.pathname.endsWith('/chunks/0')) response = { transferId: 'file-export', kind: 'chunk', sequence: 0, ...encrypted! };
+                else if (url.pathname.endsWith('/abort')) { destinationAborted = true; response = { success: true, aborted: true }; }
+                else if (url.pathname.endsWith('/complete')) {
+                    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer file-export-token');
+                    expect(JSON.parse(String(init?.body))).toMatchObject({ success: false }); sourceClosed = true; response = { success: true };
+                } else throw new Error('Cancelled file copy must not finalize');
+                return Response.json(response);
+            } };
+        };
+        expect(await copyPreparedFilesystemFile({ input: { kind: 'prepared_transfer',
+            source: { kind: 'file', serverId: 'source-home', machineId: 'source', rootPath: '/source', path: 'binary',
+                sourceId: 'captured-source', sizeBytes: bytes.length, sha256: manifestHash.slice('sha256:'.length) },
+            destination: { serverId: 'destination-home', machineId: 'destination', rootPath: '/destination', path: 'copy' },
+            recursive: false, overwrite: false }, signal: cancellation.signal, acquireSourceCarrier: acquire, acquireDestinationCarrier: acquire }))
+            .toMatchObject({ success: false, status: 'cancelled' });
+        expect(transferred).toEqual(bytes); expect(destinationAborted).toBe(true); expect(sourceClosed).toBe(true);
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.map(([call]) => call.method)).toEqual(['daemon.filesystem.download', 'daemon.filesystem.copy']);
+    });
+    it('closes the original tree export and every prepared import capability after user cancellation without a second Action', async () => {
+        const cancellation = new AbortController();
+        const recipient = createTransferRecipientKeyPair();
+        const expiresAt = Date.now() + 60_000;
+        const imports = ['manifest-import', 'blob-import'];
+        const aborted: string[] = [];
+        let sourceClosed = false;
+        const preparedImport = (uploadId: string) => ({ uploadId, destDisplayPath: '/destination/copy', expectedSizeBytes: 4,
+            chunkSizeBytes: 4, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64, expiresAt,
+            endpointCandidates: [{ kind: 'http', url: `http://127.0.0.1:46001/machine-transfers/direct/imports/${uploadId}`, expiresAt }] });
+        callGuardedMachineRpcWithPolicyMock.mockImplementation(async (params: { method: string; payload: { input: { destination?: { destinationId: string } } } }) => {
+            if (params.method === 'daemon.filesystem.download') return { success: true, status: 'accepted', operationId: 'source-operation',
+                destinationId: params.payload.input.destination!.destinationId,
+                prepared: { transferId: 'source-export', name: 'tree', sizeBytes: 4, manifestHash: `sha256:${'0'.repeat(64)}`, expiresAt,
+                    endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/c291cmNlLWV4cG9ydA',
+                        authorizationToken: 'original-export-token', expiresAt }] },
+                entryTree: { operationId: 'manifest', expectation: { kind: 'directory', fingerprint: '1'.repeat(64) },
+                    blobs: [{ transferId: 'blob', sizeBytes: 4, manifestHash: `sha256:${'2'.repeat(64)}` }] } };
+            if (params.method !== 'daemon.filesystem.copy') throw new Error('Cleanup must not request another semantic Action');
+            cancellation.abort();
+            return { success: true, status: 'accepted', operationId: 'destination-operation', sourceId: 'source-export',
+                prepared: { manifest: preparedImport(imports[0]!), blobs: [{ transferId: 'blob', prepared: preparedImport(imports[1]!) }] } };
+        });
+        const acquire = async (prepared: Readonly<{ signal?: AbortSignal }>) => {
+            prepared.signal?.throwIfAborted();
+            return { kind: 'browser_stream' as const, release: async () => {}, request: async (input: RequestInfo | URL, init?: RequestInit) => {
+                const url = new URL(String(input));
+                if (url.pathname.endsWith('/complete')) {
+                    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer original-export-token');
+                    expect(JSON.parse(String(init?.body))).toMatchObject({ success: false });
+                    sourceClosed = true;
+                } else if (url.pathname.endsWith('/abort')) aborted.push(url.pathname.split('/').at(-2)!);
+                else throw new Error('Cancelled copy must not write bytes');
+                return new Response(JSON.stringify({ success: true, aborted: true }), { headers: { 'content-type': 'application/json' } });
+            } };
+        };
+        expect(await copyPreparedFilesystemFile({ input: { kind: 'target_copy',
+            source: { serverId: 'source-home', machineId: 'source', rootPath: '/source', path: 'tree' },
+            destination: { serverId: 'destination-home', machineId: 'destination', rootPath: '/destination', path: 'copy' },
+            recursive: true, overwrite: false }, signal: cancellation.signal,
+            acquireSourceCarrier: acquire, acquireDestinationCarrier: acquire }))
+            .toMatchObject({ success: false, status: 'cancelled' });
+        expect(sourceClosed).toBe(true);
+        expect(aborted.sort()).toEqual(imports.sort());
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.map(([call]) => call.method)).toEqual(['daemon.filesystem.download', 'daemon.filesystem.copy']);
+    });
+    it.each(['completed', 'lost_ack', 'wrong_source', 'lost_failure_ack'] as const)('acknowledges only the admitted Action-owned binary source after the real destination closes (%s)', async (outcome) => {
+        const bytes = new Uint8Array([0, 255, 128, 10]);
+        const manifestHash = await createManifestHash(bytes);
+        let destinationClosed = false;
+        const sourceRejected = outcome === 'wrong_source' || outcome === 'lost_failure_ack';
+        const received: number[] = [];
+        callGuardedMachineRpcWithPolicyMock.mockImplementation(async (params: { payload: { input: { destination?: { destinationId: string } } } }) => ({
+            success: true, status: 'accepted', operationId: 'download-operation',
+            destinationId: params.payload.input.destination!.destinationId,
+            prepared: { transferId: 'binary-transfer', name: 'binary.dat', sizeBytes: bytes.length, manifestHash, expiresAt: 5000,
+                endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/YmluYXJ5LXRyYW5zZmVy',
+                    authorizationToken: 'export-token', expiresAt: 5000 }] },
+        }));
+        let encrypted: Awaited<ReturnType<typeof createEncryptedTransferChunkEnvelope>>;
+        runtimeFetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+            if (url.includes('/open')) {
+                const publicKey = new Headers(init.headers).get('x-happier-transfer-recipient-public-key')!;
+                encrypted = await createEncryptedTransferChunkEnvelope({ transferId: 'binary-transfer', sequence: 0, payload: bytes, recipientPublicKeyBase64: publicKey });
+                return new Response(JSON.stringify({ transferId: 'binary-transfer', sizeBytes: bytes.length, totalChunks: 1,
+                    manifestHash: sourceRejected ? `sha256:${'0'.repeat(64)}` : manifestHash }),
+                    { headers: { 'content-type': 'application/json' } });
+            }
+            if (url.includes('/complete')) {
+                expect(destinationClosed).toBe(!sourceRejected);
+                expect(JSON.parse(String(init.body))).toMatchObject(sourceRejected ? { success: false } : { success: true, sizeBytes: bytes.length, manifestHash });
+                expect(new Headers(init.headers).get('authorization')).toBe('Bearer export-token');
+                if (outcome === 'lost_ack' || outcome === 'lost_failure_ack') throw new TypeError('Completion acknowledgement lost');
+                return new Response(JSON.stringify({ success: true }), { headers: { 'content-type': 'application/json' } });
+            }
+            return new Response(JSON.stringify({ transferId: 'binary-transfer', kind: 'chunk', sequence: 0,
+                payloadBase64: encrypted.payloadBase64, encryptedDataKeyEnvelopeBase64: encrypted.encryptedDataKeyEnvelopeBase64 }),
+                { headers: { 'content-type': 'application/json' } });
+        });
+        await expect(downloadBulkPayloadViaDirectExportToDestination({ machineId: 'machine-one', serverId: 'home-one',
+            request: { t: 'workspace_file_download_v1', workingDirectory: '/repo', path: 'binary.dat', asZip: false },
+            destination: { writeBytes: async chunk => { received.push(...chunk); }, close: async () => { destinationClosed = true; }, cleanup: async () => { received.length = 0; } },
+        })).resolves.toEqual(sourceRejected ? { ok: false, error: 'Direct export download unavailable' } : outcome === 'lost_ack'
+            ? { ok: false, error: 'Download completed but its operation outcome could not be confirmed', errorCode: 'indeterminate' }
+            : { ok: true, name: 'binary.dat', sizeBytes: bytes.length });
+        expect(received).toEqual(sourceRejected ? [] : Array.from(bytes));
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.some(([call]) => call.method === 'daemon.filesystem.transfer.cancel')).toBe(false);
+    });
     afterEach(() => {
         callGuardedMachineRpcWithPolicyMock.mockReset();
         runtimeFetchMock.mockReset();
+        convertedWorkspaceFixtures.clear();
+        workspaceCompletionRequests.clear();
     });
 
     it('downloads and verifies a direct-export JSON payload through a machine-carrier origin override', async () => {
@@ -553,6 +722,7 @@ describe('directTransferExportDownload', () => {
         callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({
             success: true,
             transferId: 'transfer-2',
+            manifestHash,
             expiresAt: 5_000,
             name: 'hello.txt',
             sizeBytes: payloadBytes.byteLength,
@@ -648,6 +818,7 @@ describe('directTransferExportDownload', () => {
         callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({
             success: true,
             transferId: 'transfer-candidate-reset',
+            manifestHash: goodManifestHash,
             expiresAt: 5_000,
             name: 'payload.txt',
             sizeBytes: goodPayload.byteLength,
@@ -727,10 +898,13 @@ describe('directTransferExportDownload', () => {
             onInit,
         })).resolves.toEqual({ ok: false, error: 'Direct export download unavailable' });
 
-        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        // The admitted source hash rejects the first open before any chunk or
+        // alternative endpoint is consumed; cleanup acknowledges that failure.
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
         expect(onInit).toHaveBeenCalledTimes(1);
         expect(cleanup).toHaveBeenCalledTimes(1);
         expect(writes).toEqual([]);
+        expect(workspaceCompletionRequests.get('transfer-candidate-reset')).toMatchObject({ success: false });
     });
 
     it('cleans up the destination and returns an error when the init callback throws', async () => {
@@ -752,6 +926,8 @@ describe('directTransferExportDownload', () => {
 
         const cleanup = vi.fn(async () => {});
         const close = vi.fn(async () => {});
+        let initializationFailed = false;
+        const cleanupRequests: Readonly<{ destinationId: string; success: boolean; error: string }>[] = [];
 
         const { downloadBulkPayloadViaDirectExportToDestination } = await import('./directTransferExportDownload');
         const resultPromise = downloadBulkPayloadViaDirectExportToDestination({
@@ -769,7 +945,19 @@ describe('directTransferExportDownload', () => {
                 cleanup,
             },
             onInit: async () => {
+                initializationFailed = true;
                 throw new Error('init callback exploded');
+            },
+            acquirePreparedCarrier: async () => { throw new Error('Failed initialization must not open a byte carrier'); },
+            acquireCleanupCarrier: async ({ operationId }) => {
+                expect(initializationFailed).toBe(true);
+                expect(operationId).toBe('transfer-init-throws');
+                return { kind: 'browser_stream', release: async () => {}, request: async (input, init) => {
+                    expect(new URL(String(input)).pathname).toBe('/machine-transfers/direct/transfer-init-throws/complete');
+                    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer token-throws');
+                    cleanupRequests.push(JSON.parse(String(init?.body)));
+                    return Response.json({ success: true });
+                } };
             },
         });
 
@@ -779,10 +967,9 @@ describe('directTransferExportDownload', () => {
         });
         expect(cleanup).toHaveBeenCalledTimes(1);
         expect(close).not.toHaveBeenCalled();
-        expect(callGuardedMachineRpcWithPolicyMock).toHaveBeenLastCalledWith(expect.objectContaining({
-            method: 'daemon.directTransfer.export.release',
-            payload: { transferId: 'transfer-init-throws' },
-        }));
+        expect(cleanupRequests).toEqual([{ destinationId: expect.any(String), success: false, error: 'init callback exploded' }]);
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.map(([call]) => call.method)).toEqual(['daemon.filesystem.download']);
     });
 
     it('does not acquire the finite-transfer carrier until destination initialization completes', async () => {
@@ -907,10 +1094,8 @@ describe('directTransferExportDownload', () => {
         });
         expect(cleanup).toHaveBeenCalledTimes(1);
         expect(close).not.toHaveBeenCalled();
-        expect(callGuardedMachineRpcWithPolicyMock).toHaveBeenLastCalledWith(expect.objectContaining({
-            method: 'daemon.directTransfer.export.release',
-            payload: { transferId: 'transfer-3' },
-        }));
+        expect(workspaceCompletionRequests.get('transfer-3')).toMatchObject({ success: false });
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.map(([call]) => call.method)).toEqual(['daemon.filesystem.download']);
     });
 
     it('returns a failure instead of throwing when direct-export prepare is unavailable for destination downloads', async () => {
@@ -1109,6 +1294,7 @@ describe('directTransferExportDownload', () => {
             callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({
                 success: true,
                 transferId: 'transfer-timeout',
+                manifestHash,
                 expiresAt: 5_000,
                 name: 'hello.txt',
                 sizeBytes: payloadBytes.byteLength,
@@ -1284,10 +1470,8 @@ describe('directTransferExportDownload', () => {
         expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
         expect(onInit).toHaveBeenCalledTimes(1);
         expect(cleanup).not.toHaveBeenCalled();
-        expect(callGuardedMachineRpcWithPolicyMock).toHaveBeenLastCalledWith(expect.objectContaining({
-            method: 'daemon.directTransfer.export.release',
-            payload: { transferId: 'transfer-canceled' },
-        }));
+        expect(workspaceCompletionRequests.get('transfer-canceled')).toMatchObject({ success: false });
+        expect(callGuardedMachineRpcWithPolicyMock.mock.calls.map(([call]) => call.method)).toEqual(['daemon.filesystem.download']);
     });
 
     it('abandons a 500 direct-export open response and retries the next destination endpoint', async () => {
@@ -1297,6 +1481,7 @@ describe('directTransferExportDownload', () => {
         callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({
             success: true,
             transferId: 'transfer-open-500',
+            manifestHash,
             expiresAt: 5_000,
             name: 'hello.txt',
             sizeBytes: payloadBytes.byteLength,
@@ -1561,7 +1746,7 @@ describe('directTransferExportDownload', () => {
         });
         runtimeFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
             transferId: 'transfer-oversized-chunk',
-            manifestHash: 'sha256:none',
+            manifestHash: `sha256:${'0'.repeat(64)}`,
             totalChunks: 1,
         }), {
             status: 200,

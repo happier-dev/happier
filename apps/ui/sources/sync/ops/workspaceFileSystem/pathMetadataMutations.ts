@@ -1,4 +1,5 @@
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
@@ -16,10 +17,11 @@ function resolveAbsoluteWorkspacePath(params: Readonly<{
         rootPath: params.rootPath,
         agentRootPath: params.agentRootPath,
         requestPath: params.requestPath,
+        pathKind: 'workspace_entry',
     });
 }
 
-type WorkspaceRenamePathRequest = Readonly<{ from: string; to: string; overwrite?: boolean }>;
+type WorkspaceRenamePathRequest = Readonly<{ rootPath: string; from: string; to: string; overwrite: boolean }>;
 
 export type WorkspaceRenamePathResponse =
     | Readonly<{ success: true }>
@@ -33,11 +35,12 @@ export async function workspaceRenamePath(
         const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceRenamePathRequest>({
             machineId: target.machineId,
             serverId: target.serverId,
-            method: RPC_METHODS.RENAME_PATH,
+            method: getActionSpec('daemon.filesystem.rename').bindings!.rpcMethod!,
             payload: {
+                rootPath: target.rootPath,
                 from: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.from }),
                 to: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.to }),
-                overwrite: input.overwrite,
+                overwrite: input.overwrite === true,
             },
         });
 
@@ -51,7 +54,7 @@ export async function workspaceRenamePath(
     }
 }
 
-type WorkspaceDeletePathRequest = Readonly<{ path: string; recursive?: boolean }>;
+type WorkspaceDeletePathRequest = Readonly<{ rootPath: string; path: string; recursive: boolean }>;
 
 export type WorkspaceDeletePathResponse =
     | Readonly<{ success: true }>
@@ -65,10 +68,11 @@ export async function workspaceDeletePath(
         const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceDeletePathRequest>({
             machineId: target.machineId,
             serverId: target.serverId,
-            method: RPC_METHODS.DELETE_PATH,
+            method: getActionSpec('daemon.filesystem.delete').bindings!.rpcMethod!,
             payload: {
+                rootPath: target.rootPath,
                 path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.path }),
-                recursive: input.recursive,
+                recursive: input.recursive === true,
             },
         });
 

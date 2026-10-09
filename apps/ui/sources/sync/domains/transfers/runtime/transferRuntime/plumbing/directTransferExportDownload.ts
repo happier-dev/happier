@@ -2,6 +2,9 @@ import { isSafeDirectTransferEndpointCandidate, normalizeDirectPeerTransferEndpo
 import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema, type TransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/transferStream';
 import type { PromptRegistryConfiguredSourceV1 } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FilesystemDownloadOutputSchema, type FilesystemDownloadOutput } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { randomUUID } from '@/platform/randomUUID';
+import { callFilesystemTransferAction } from './filesystemTransferActionClient';
 
 import { type ChunkDownloadProgress, downloadInChunks } from './chunkTransferClient';
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
@@ -65,6 +68,7 @@ type DirectTransferExportPrepareResponse =
         endpointCandidates: readonly TransferEndpointCandidate[];
         expiresAt: number;
         name?: string;
+        manifestHash?: string;
         sizeBytes?: number;
     }>
     | Readonly<{
@@ -99,6 +103,7 @@ type DirectTransferPrepareResult =
         ok: true;
         prepare: Extract<DirectTransferExportPrepareResponse, { success: true }>;
         releaseExport: () => Promise<void>;
+        filesystemDestinationId?: string;
     }>
     | Readonly<{
         ok: false;
@@ -165,8 +170,15 @@ async function releasePreparedDirectTransferExport(params: Readonly<{
     serverId?: string | null;
     transferId: string;
     timeoutMs?: number | null;
+    filesystemRootPath?: string;
 }>): Promise<void> {
     try {
+        if (params.filesystemRootPath) {
+            // The held prepared capability settles through /complete. Missing
+            // carrier/ACK custody is left to its incumbent expiry; automatic
+            // cleanup must not start a second consequential user-cancel Action.
+            return;
+        }
         await callGuardedMachineRpcWithPolicy({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
@@ -183,15 +195,35 @@ async function releasePreparedDirectTransferExport(params: Readonly<{
 async function prepareDirectTransferExport(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
     request: DirectTransferExportPrepareRequest;
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
 }>): Promise<DirectTransferPrepareResult> {
     let preparedTransferId: string | null = null;
     let publicationCustodyTransferred = false;
+    let filesystemDestinationId: string | undefined;
     try {
         const requestTimeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
-        const prepare = await callGuardedMachineRpcWithPolicy<DirectTransferExportPrepareResponse, DirectTransferExportPrepareRequest>({
+        let prepare: DirectTransferExportPrepareResponse;
+        if (params.request.t === 'workspace_file_download_v1') {
+            filesystemDestinationId = randomUUID();
+            const response = await callFilesystemTransferAction({ actionId: 'daemon.filesystem.download', machineId: params.machineId,
+                serverId: params.serverId, timeoutMs: requestTimeoutMs, signal: params.signal,
+                accountId: params.accountId,
+                input: { rootPath: params.request.workingDirectory, path: params.request.path, asZip: params.request.asZip,
+                    destination: { destinationId: filesystemDestinationId } },
+            });
+            const receipt = FilesystemDownloadOutputSchema.safeParse(response);
+            if (!receipt.success || !receipt.data.success || receipt.data.status !== 'accepted'
+                || receipt.data.destinationId !== filesystemDestinationId) {
+                return { ok: false, error: isObject(response) && typeof response.error === 'string'
+                    ? response.error : 'Filesystem download Action did not accept destination custody',
+                    ...(isObject(response) && typeof response.errorCode === 'string' ? { errorCode: response.errorCode } : {}) };
+            }
+            prepare = { success: true, ...receipt.data.prepared };
+        } else {
+        prepare = await callGuardedMachineRpcWithPolicy<DirectTransferExportPrepareResponse, DirectTransferExportPrepareRequest>({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
             timeoutMs: requestTimeoutMs,
@@ -199,6 +231,7 @@ async function prepareDirectTransferExport(params: Readonly<{
             payload: params.request,
             signal: params.signal ?? undefined,
         });
+        }
 
         if (prepare.success !== true) {
             return {
@@ -238,7 +271,9 @@ async function prepareDirectTransferExport(params: Readonly<{
                 serverId: params.serverId,
                 transferId: prepare.transferId,
                 timeoutMs: params.timeoutMs,
+                ...(params.request.t === 'workspace_file_download_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
             }),
+            ...(filesystemDestinationId ? { filesystemDestinationId } : {}),
         };
         publicationCustodyTransferred = true;
         return result;
@@ -251,6 +286,7 @@ async function prepareDirectTransferExport(params: Readonly<{
                 serverId: params.serverId,
                 transferId: preparedTransferId,
                 timeoutMs: params.timeoutMs,
+                ...(params.request.t === 'workspace_file_download_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
             });
         }
     }
@@ -333,7 +369,7 @@ function extractDirectPeerRequestAuth(candidate: TransferEndpointCandidate, pres
     };
 }
 
-function buildDirectExportEndpoint(baseUrl: string, suffix: 'open' | 'chunks', sequence?: number): string {
+function buildDirectExportEndpoint(baseUrl: string, suffix: 'open' | 'chunks' | 'complete', sequence?: number): string {
     const url = new URL(baseUrl);
     url.pathname = `${url.pathname}/${suffix}${typeof sequence === 'number' ? `/${sequence}` : ''}`;
     return url.toString();
@@ -390,15 +426,20 @@ async function runtimeFetchJsonWithDirectTransferTimeout(
 export async function downloadBulkPayloadViaDirectExportToDestination(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
+    /** Existing publication custody is held by the enclosing tree copy operation. */
+    preparedExport?: Extract<FilesystemDownloadOutput, { success: true; status: 'accepted' }>['prepared'];
     request: DirectTransferExportPrepareRequest;
     destination: BulkTransferFileDestination;
     cleanupOnFailure?: boolean;
-    onInit?: ((init: Readonly<{ name: string; sizeBytes: number }>) => Promise<void | DirectTransferFailureResponse>) | null;
+    onInit?: ((init: Readonly<{ name: string; sizeBytes: number; manifestHash?: string }>) => Promise<void | DirectTransferFailureResponse>) | null;
     timeoutMs?: number | null;
     onProgress?: ((progress: ChunkDownloadProgress) => void) | null;
     signal?: AbortSignal | null;
     httpOriginOverride?: string | null;
     acquirePreparedCarrier?: ((prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>) | null;
+    /** Original Account custody, independent of the cancelled byte lease. */
+    acquireCleanupCarrier?: ((prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>) | null;
 }>): Promise<DirectTransferFileDownloadResponse> {
     async function cleanupFailedDestination(originalError?: unknown): Promise<void> {
         if (params.cleanupOnFailure === false) {
@@ -416,7 +457,9 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         return await returnCanceled();
     }
 
-    const prepared = await prepareDirectTransferExport(params);
+    const prepared: DirectTransferPrepareResult = params.preparedExport
+        ? { ok: true, prepare: { success: true, ...params.preparedExport }, releaseExport: async () => {} }
+        : await prepareDirectTransferExport(params);
     if (!prepared.ok) {
         await cleanupFailedDestination(new Error(prepared.error));
         return {
@@ -427,8 +470,14 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     }
     const prepare = prepared.prepare;
     let carrierRoute: Extract<DirectTransferCarrierRouteResult, { ok: true }> | null = null;
+    let completionCandidate: TransferEndpointCandidate | null = null;
+    let completedManifestHash: string | null = null;
+    let destinationClosed = false;
+    let completionAcknowledged = false;
+    let failure: Readonly<{ error: string; errorCode?: string }> = { error: 'Download did not complete' };
     try {
     if (typeof prepare.name !== 'string' || typeof prepare.sizeBytes !== 'number' || !Number.isFinite(prepare.sizeBytes) || prepare.sizeBytes < 0) {
+        failure = { error: 'Direct export prepare returned invalid file metadata' };
         await cleanupFailedDestination(new Error('Direct export prepare returned invalid file metadata'));
         return { ok: false, error: 'Direct export prepare returned invalid file metadata' };
     }
@@ -438,7 +487,8 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     const initializeDestination = async (): Promise<DirectTransferFailureResponse | null> => {
         if (!params.onInit) return null;
         try {
-            const sideEffect = await params.onInit({ name: preparedName, sizeBytes: preparedSizeBytes });
+            const sideEffect = await params.onInit({ name: preparedName, sizeBytes: preparedSizeBytes,
+                ...(prepare.manifestHash ? { manifestHash: prepare.manifestHash } : {}) });
             if (sideEffect && sideEffect.success === false) {
                 return { success: false, error: sideEffect.error };
             }
@@ -453,6 +503,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
 
     const initialDestinationFailure = await initializeDestination();
     if (initialDestinationFailure) {
+        failure = { error: initialDestinationFailure.error };
         await cleanupFailedDestination(new Error(initialDestinationFailure.error));
         return { ok: false, error: initialDestinationFailure.error };
     }
@@ -468,6 +519,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         ...(params.acquirePreparedCarrier === undefined ? {} : { acquirePreparedCarrier: params.acquirePreparedCarrier }),
     });
     if (!acquiredRoute.ok) {
+        failure = { error: acquiredRoute.error, ...(acquiredRoute.errorCode ? { errorCode: acquiredRoute.errorCode } : {}) };
         await cleanupFailedDestination(new Error(acquiredRoute.error));
         return {
             ok: false,
@@ -480,6 +532,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
 
     let completed: Extract<DirectTransferFileDownloadResponse, { ok: true }> | null = null;
     for (const [index, candidate] of carrierRoute.endpointCandidates.entries()) {
+        completionCandidate = candidate;
         const hasMoreCandidates = index + 1 < carrierRoute.endpointCandidates.length;
         try {
             const manifestHasher = createTransferManifestHasher();
@@ -506,6 +559,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
             if (
                 !isDirectTransferOpenResponse(openJson)
                 || openJson.transferId !== prepare.transferId
+                || ((prepared.filesystemDestinationId !== undefined || params.preparedExport) && openJson.manifestHash !== prepare.manifestHash)
                 || (openJson.sizeBytes !== undefined && openJson.sizeBytes !== preparedSizeBytes)
                 || !isDirectTransferChunkCountConsistent(openJson.totalChunks, preparedSizeBytes)
             ) {
@@ -585,8 +639,10 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
                 name: prepare.name,
                 sizeBytes: download.sizeBytes,
             };
+            completedManifestHash = manifestHash;
             break;
         } catch (error) {
+            failure = { error: error instanceof Error ? error.message : 'Direct export download unavailable' };
             if (params.signal?.aborted) {
                 return await returnCanceled();
             }
@@ -606,9 +662,19 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     if (completed) {
         try {
             await params.destination.close();
+            destinationClosed = true;
         } catch (error) {
+            failure = { error: error instanceof Error ? error.message : 'Download destination close failed' };
             await cleanupFailedDestination(error);
             throw error;
+        }
+        if (prepared.filesystemDestinationId && completionCandidate && completedManifestHash) {
+            const acknowledgement = await acknowledgeFilesystemExport(completionCandidate, carrierRoute, {
+                destinationId: prepared.filesystemDestinationId, success: true,
+                sizeBytes: completed.sizeBytes, manifestHash: completedManifestHash,
+            }, requestTimeoutMs).catch(() => false);
+            if (!acknowledgement) return { ok: false, error: 'Download completed but its operation outcome could not be confirmed', errorCode: 'indeterminate' };
+            completionAcknowledged = true;
         }
         return completed;
     }
@@ -624,9 +690,72 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         }
         : { ok: false, error: 'Direct export download unavailable' };
     } finally {
-        await prepared.releaseExport();
+        if (prepared.filesystemDestinationId && !destinationClosed) {
+            const outcome = {
+                destinationId: prepared.filesystemDestinationId, success: false,
+                ...(params.signal?.aborted ? { error: 'Download cancelled', errorCode: 'cancelled' } : failure),
+            } as const;
+            if (!completionCandidate || !carrierRoute || (params.signal?.aborted && params.acquireCleanupCarrier)) {
+                try {
+                    // Initialization can fail before the byte carrier exists. Close
+                    // that same publication through its original capability only.
+                    const cleanupRoute = await acquirePreparedDirectTransferRoute({
+                        prepare: prepared.prepare,
+                        ...(params.httpOriginOverride === undefined ? {} : { httpOriginOverride: params.httpOriginOverride }),
+                        acquirePreparedCarrier: params.acquireCleanupCarrier ?? params.acquirePreparedCarrier,
+                    });
+                    if (cleanupRoute.ok) {
+                        try {
+                            const candidate = cleanupRoute.endpointCandidates[0];
+                            completionAcknowledged = candidate ? await acknowledgeFilesystemExport(candidate, cleanupRoute, outcome,
+                                resolveDirectTransferRequestTimeoutMs(params.timeoutMs)) : false;
+                        } finally { await cleanupRoute.releaseCarrier?.(); }
+                    }
+                } catch { completionAcknowledged = false; }
+            } else {
+                completionAcknowledged = await acknowledgeFilesystemExport(completionCandidate, carrierRoute, outcome,
+                    resolveDirectTransferRequestTimeoutMs(params.timeoutMs)).catch(() => false);
+            }
+        }
+        // A closed destination has taken actual bytes. An uncertain acknowledgement
+        // cannot turn that effect into a cancellation or delete it.
+        if (!completionAcknowledged && !destinationClosed) await prepared.releaseExport();
         await Promise.resolve(carrierRoute?.releaseCarrier?.()).catch(() => undefined);
     }
+}
+
+async function acknowledgeFilesystemExport(
+    candidate: TransferEndpointCandidate,
+    route: Extract<DirectTransferCarrierRouteResult, { ok: true }>,
+    outcome: Readonly<{ destinationId: string }> & (
+        Readonly<{ success: true; sizeBytes: number; manifestHash: string }>
+        | Readonly<{ success: false; error: string; errorCode?: string }>),
+    timeoutMs: number,
+): Promise<boolean> {
+    const { requestUrl, authorizationHeader } = extractDirectPeerRequestAuth(candidate, true);
+    const response = await runtimeFetchJsonWithDirectTransferTimeout(buildDirectExportEndpoint(requestUrl, 'complete'), {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json',
+            ...(authorizationHeader ? { authorization: authorizationHeader } : {}) }, body: JSON.stringify(outcome),
+    }, { timeoutMs, maxBodyBytes: DIRECT_TRANSFER_OPEN_RESPONSE_MAX_BYTES, request: route.request });
+    return isObject(response) && response.success === true;
+}
+
+/** Completes a multi-payload publication only after its enclosing destination closed. */
+export async function completePreparedFilesystemExport(params: Readonly<{
+    prepared: Extract<FilesystemDownloadOutput, { success: true; status: 'accepted' }>['prepared'];
+    destinationId: string;
+    failure?: Readonly<{ error: string; errorCode?: string }>;
+    acquirePreparedCarrier: (prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>;
+}>): Promise<boolean> {
+    const route = await acquirePreparedDirectTransferRoute({ prepare: { success: true, ...params.prepared }, acquirePreparedCarrier: params.acquirePreparedCarrier });
+    if (!route.ok) return false;
+    try {
+        const candidate = route.endpointCandidates[0];
+        return candidate ? await acknowledgeFilesystemExport(candidate, route, params.failure
+            ? { success: false, destinationId: params.destinationId, ...params.failure }
+            : { success: true, destinationId: params.destinationId, sizeBytes: params.prepared.sizeBytes, manifestHash: params.prepared.manifestHash },
+            resolveDirectTransferRequestTimeoutMs(undefined)) : false;
+    } finally { await Promise.resolve(route.releaseCarrier?.()).catch(() => undefined); }
 }
 
 

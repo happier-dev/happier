@@ -3,7 +3,9 @@ import { Platform, Pressable, View, type GestureResponderEvent } from 'react-nat
 import { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
+import type { FilesystemTreeKeyboardNode, FilesystemTreeRowProps } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
 import { t } from '@/text';
 
 import { getPathBrowserRowTestId, getPathBrowserToggleTestId } from './pathBrowserTestIds';
@@ -22,6 +24,7 @@ type MachinePathBrowserListRowProps = Readonly<{
     onRetryDirectory: (directoryPath: string) => void;
     onSelectPath: (path: string) => void;
     onPickPathImmediately: (path: string) => void;
+    getTreeRowProps: (node: FilesystemTreeKeyboardNode, onDisclosure?: () => void) => FilesystemTreeRowProps;
 }>;
 
 function stopToggleEventPropagation(event: unknown): void {
@@ -47,6 +50,10 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
     const toggleButtonOffsetLeft = 20;
     const rowPaddingLeft = rowBasePaddingLeft + Math.min(6, Math.max(0, props.node.depth)) * rowDepthIndent;
     const contextMenuRowAnchorRef = React.useRef<View | null>(null);
+    const { getTreeRowProps, node, onToggleDirectory } = props;
+    const treeItemProps = React.useMemo(() => getTreeRowProps(node,
+        node.type === 'directory' ? () => onToggleDirectory(node.path) : undefined),
+    [getTreeRowProps, node, onToggleDirectory]);
 
     const handleTogglePress = React.useCallback((event?: GestureResponderEvent) => {
         stopToggleEventPropagation(event);
@@ -65,26 +72,33 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
         props.onOpenContextMenu(props.node.path, contextMenuRowAnchorRef.current);
     }, [props, props.node.path]);
 
-    const rightElement = props.selected
-        ? <Icon name="check-circle" size={16} color={theme.colors.button.primary.background} />
-        : undefined;
+    const loadingChildren = props.node.type === 'directory' && props.node.isExpanded && props.node.isLoadingChildren;
+    const rightElement = loadingChildren || props.selected ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            {loadingChildren ? <ActivitySpinner testID={`${getPathBrowserRowTestId(props.node.path)}-loading`}
+                size={16} color={theme.colors.text.secondary} /> : null}
+            {props.selected ? <Icon name="check-circle" size={16} color={theme.colors.button.primary.background} /> : null}
+        </View>
+    ) : undefined;
 
+    // Glyphs stay ink; colour is for state (the selected check keeps the accent).
     const icon = props.node.type === 'directory'
         ? (
             <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
                 <Icon
                     name={props.node.isExpanded ? 'folder-open' : 'folder'}
                     size={16}
-                    color={theme.colors.text.link}
+                    color={theme.colors.text.secondary}
                 />
             </View>
         )
         : props.node.type === 'file'
-            ? <Icon name="file" size={16} color={theme.colors.text.link} />
-            : <Icon name="folder" size={16} color={theme.colors.text.link} />;
+            ? <Icon name="file" size={16} color={theme.colors.text.secondary} />
+            : <Icon name="folder" size={16} color={theme.colors.text.secondary} />;
 
     return (
         <FilesystemBrowserRow
+            treeItemProps={treeItemProps}
             node={props.node}
             title={
                 props.node.type === 'info' && props.node.infoKind === 'truncated'

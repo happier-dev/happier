@@ -14,12 +14,13 @@ import { useWorkspaceRepositoryDirectoryRevision } from './useWorkspaceRepositor
 
 import { readRepositoryTreeClassification } from '@/hooks/workspaces/files/repositoryTreeClassification';
 import { projectRepositoryTreeNodes } from '@/hooks/workspaces/files/repositoryTreeVisibility';
+import { useWorkspaceEntryHistory } from './useWorkspaceEntryHistory';
 
 const NO_PRESERVED_PATHS: readonly string[] = [];
 
 function joinPath(parent: string, name: string): string {
-    const trimmedParent = parent.trim().replace(/\/+$/g, '');
-    const trimmedName = name.trim().replace(/^\/+/g, '');
+    const trimmedParent = parent.replace(/\/+$/g, '');
+    const trimmedName = name.replace(/^\/+/g, '');
     if (!trimmedParent) return trimmedName;
     if (!trimmedName) return trimmedParent;
     return `${trimmedParent}/${trimmedName}`;
@@ -59,8 +60,13 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     reloadToken?: number;
     visibilityMode?: 'project' | 'all';
     preservedPaths?: readonly string[];
+    /** The folder the tree starts at (a Code folder page); the repository root by default. */
+    rootDirectoryPath?: string;
+    historyEnabled?: boolean;
+    headOid?: string | null;
+    repoRootPath?: string | null;
 }>) {
-    const scope = input.scope;
+    const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath]);
     const workspaceCacheKey = React.useMemo(() => tryBuildWorkspaceCacheKey(scope) ?? '', [scope]);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
     const effectiveReloadToken = React.useMemo(() => (
@@ -86,9 +92,10 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     }, [scope]);
 
     const tree = useLazyDirectoryTree({
-        scopeKey: workspaceCacheKey,
+        scopeKey: JSON.stringify([workspaceCacheKey, input.rootDirectoryPath ?? '']),
         enabled: input.enabled,
-        rootDirectoryPath: '',
+        retainNodesWhenDisabled: true,
+        rootDirectoryPath: input.rootDirectoryPath ?? '',
         expandedPaths: input.expandedPaths,
         onExpandedPathsChange: input.onExpandedPathsChange,
         reloadToken: effectiveReloadToken,
@@ -100,11 +107,14 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const classification = React.useMemo(() => readRepositoryTreeClassification(tree.nodes, (directoryPath) => ({
         available: getCachedWorkspaceRepositoryGitIgnoreAvailable({ workspaceCacheKey, directoryPath }),
         entries: getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath }),
-    })), [tree.nodes, workspaceCacheKey]);
+    }), input.rootDirectoryPath ?? ''), [tree.nodes, workspaceCacheKey, input.rootDirectoryPath]);
     const gitIgnoreAvailable = classification.available;
     const preservedPaths = input.preservedPaths ?? NO_PRESERVED_PATHS;
     const nodes = React.useMemo(() => input.visibilityMode === 'project' && gitIgnoreAvailable === true
         ? projectRepositoryTreeNodes(tree.nodes, classification.ignoredPaths, preservedPaths)
         : tree.nodes, [tree.nodes, input.visibilityMode, gitIgnoreAvailable, classification.ignoredPaths, preservedPaths]);
-    return { ...tree, nodes, gitIgnoreAvailable };
+    const demandedPaths = React.useMemo(() => nodes.filter(node => node.type === 'file' || node.type === 'directory').map(node => node.path), [nodes]);
+    const history = useWorkspaceEntryHistory({ scope, folder: input.rootDirectoryPath ?? '', paths: demandedPaths,
+        headOid: input.headOid, repoRootPath: input.repoRootPath, enabled: input.enabled && input.historyEnabled === true, reloadToken: input.reloadToken });
+    return { ...tree, nodes, gitIgnoreAvailable, history };
 }

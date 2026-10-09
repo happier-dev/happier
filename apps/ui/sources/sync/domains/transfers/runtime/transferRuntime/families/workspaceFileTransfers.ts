@@ -6,6 +6,7 @@ import { uploadBulkPayloadFromFileViaMachineCarrier } from '../plumbing/uploadBu
 import type { TransferFinalizeRecoveryFailure } from '../plumbing/directTransferFinalizeRecovery';
 import { resolveMachineCarrierRoute } from '../plumbing/machineCarrierHttpLease';
 import { downloadBulkPayloadViaDirectExportToDestination } from '../plumbing/directTransferExportDownload';
+import { captureFilesystemTransferAccountScope } from '../plumbing/filesystemTransferAccountScope';
 
 import { createBufferedTransferDestination } from '../carriers/createBufferedTransferDestination';
 import { createWorkspaceFileTransferRpcCaller } from './workspaceFileTransferRpcCaller';
@@ -69,6 +70,7 @@ function resolveAbsoluteWorkspacePath(params: Readonly<{
         rootPath: params.rootPath,
         agentRootPath: params.agentRootPath,
         requestPath: params.requestPath,
+        pathKind: 'workspace_entry',
     });
 }
 
@@ -151,7 +153,7 @@ export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
     });
 }
 
-export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<{
+async function downloadWorkspaceFileToDestination(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     rootPath: string;
@@ -162,7 +164,7 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
     onInit?: ((init: Readonly<{ name: string; sizeBytes: number }>) => Promise<void | TransferFailureResponse>) | null;
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => void) | null;
-}>): Promise<Readonly<{ ok: true; name: string; sizeBytes: number }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
+}>, capturedAccount?: Awaited<ReturnType<typeof captureFilesystemTransferAccountScope>>): Promise<Readonly<{ ok: true; name: string; sizeBytes: number }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
     if (typeof params.destination.cleanup !== 'function') {
         return {
             ok: false,
@@ -183,25 +185,45 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
         await params.destination.cleanup();
         return { ok: false, error: 'Download canceled' };
     }
-    const machineRoute = await resolveMachineCarrierRoute(params.machineId, params.serverId);
-    if (machineRoute.kind === 'unavailable') {
+    let account: Awaited<ReturnType<typeof captureFilesystemTransferAccountScope>> | undefined;
+    try {
+        const captured = account = capturedAccount ?? await captureFilesystemTransferAccountScope(params.serverId, params.signal);
+        captured.assertCurrent();
+        const machineRoute = await resolveMachineCarrierRoute(params.machineId, captured.serverId);
+        captured.assertCurrent();
+        if (machineRoute.kind === 'unavailable') {
+            await params.destination.cleanup();
+            return { ok: false, error: machineRoute.error, errorCode: machineRoute.errorCode };
+        }
+        const result = await downloadBulkPayloadViaDirectExportToDestination({
+            machineId: params.machineId,
+            serverId: machineRoute.serverId,
+            accountId: captured.accountId,
+            request: directExportRequest,
+            destination: params.destination,
+            onInit: params.onInit ?? null,
+            signal: captured.signal,
+            onProgress: params.onProgress ?? null,
+            acquirePreparedCarrier: async ({ operationId }) => await machineRoute.acquire({
+                operationId,
+                signal: captured.signal,
+                accountLifetime: captured.accountLifetime,
+            }),
+            acquireCleanupCarrier: async ({ operationId }) => {
+                captured.assertAccountCurrent();
+                return await machineRoute.acquire({ operationId, accountLifetime: captured.accountOnlyLifetime });
+            },
+        });
+        captured.assertCurrent();
+        return result;
+    } catch (error) {
         await params.destination.cleanup();
-        return { ok: false, error: machineRoute.error, errorCode: machineRoute.errorCode };
-    }
+        return { ok: false, error: error instanceof Error ? error.message : 'Download Account custody is unavailable', errorCode: 'action_account_scope_changed' };
+    } finally { if (!capturedAccount) account?.dispose(); }
+}
 
-    return await downloadBulkPayloadViaDirectExportToDestination({
-        machineId: params.machineId,
-        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
-        request: directExportRequest,
-        destination: params.destination,
-        onInit: params.onInit ?? null,
-        signal: params.signal ?? null,
-        onProgress: params.onProgress ?? null,
-        acquirePreparedCarrier: async ({ operationId }) => await machineRoute.acquire({
-            operationId,
-            signal: params.signal ?? undefined,
-        }),
-    });
+export async function downloadDaemonWorkspaceFileToDestination(params: Parameters<typeof downloadWorkspaceFileToDestination>[0]) {
+    return await downloadWorkspaceFileToDestination(params);
 }
 
 export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
@@ -213,15 +235,22 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     maxBytes: number;
     signal?: AbortSignal | null;
 }>): Promise<Readonly<{ ok: true; contentBase64: string }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
+    let account: Awaited<ReturnType<typeof captureFilesystemTransferAccountScope>> | undefined;
+    try {
+    account = await captureFilesystemTransferAccountScope(params.serverId, params.signal);
+    account.assertCurrent();
     const statClient = createWorkspaceFileTransferRpcCaller({
         machineId: params.machineId,
-        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        serverId: account.serverId,
+        accountId: account.accountId,
     });
     const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.path });
     const stat = await statClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
         request: { path: absolutePath },
         machineMethod: RPC_METHODS.STAT_FILE,
+        signal: account.signal,
     });
+    account.assertCurrent();
     if (stat.success !== true) {
         return { ok: false, error: stat.error, ...(stat.errorCode ? { errorCode: stat.errorCode } : {}) };
     }
@@ -247,25 +276,12 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     const createInlineBufferedDestination = () => createBufferedTransferDestination(params.maxBytes);
 
     const directBufferedDestination = createInlineBufferedDestination();
-    const directExportRequest = {
-        t: 'workspace_file_download_v1',
-        workingDirectory: params.rootPath,
-        path: absolutePath,
-        asZip: false,
-    } as const;
-
-    if (params.signal?.aborted) {
-        return { ok: false, error: 'Download canceled' };
-    }
-    const machineRoute = await resolveMachineCarrierRoute(params.machineId, params.serverId);
-    if (machineRoute.kind === 'unavailable') {
-        return { ok: false, error: machineRoute.error, errorCode: machineRoute.errorCode };
-    }
-
-    const directExportResult = await downloadBulkPayloadViaDirectExportToDestination({
+    const directExportResult = await downloadWorkspaceFileToDestination({
         machineId: params.machineId,
-        ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
-        request: directExportRequest,
+        serverId: account.serverId,
+        rootPath: params.rootPath,
+        agentRootPath: params.agentRootPath,
+        request: { path: absolutePath, asZip: false },
         destination: directBufferedDestination.destination,
         onInit: async (init) => {
             if (init.sizeBytes > params.maxBytes) {
@@ -276,11 +292,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
             }
         },
         signal: params.signal ?? null,
-        acquirePreparedCarrier: async ({ operationId }) => await machineRoute.acquire({
-            operationId,
-            signal: params.signal ?? undefined,
-        }),
-    });
+    }, account);
     if (directExportResult.ok) {
         return {
             ok: true,
@@ -288,4 +300,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
         };
     }
     return directExportResult;
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'Download Account custody is unavailable', errorCode: 'action_account_scope_changed' };
+    } finally { account?.dispose(); }
 }

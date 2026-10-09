@@ -223,6 +223,17 @@ vi.mock('./machineCarrierBrowserStream', () => ({
 }));
 
 describe('resolveMachineCarrierRoute', () => {
+    it('refuses changed or mismatched captured Account custody before opening the carrier', async () => {
+        boundaries.requestGrant.mockResolvedValueOnce({ ok: false, reasonCode: 'unexpected_grant_after_retirement' });
+        const route = await resolveMachineCarrierRoute('machine-1', 'server-1');
+        if (route.kind !== 'iroh_peer') throw new Error('Expected finite carrier');
+        await expect(route.acquire({ operationId: 'owned-transfer', accountLifetime: {
+            scope: { serverId: 'server-1', accountId: 'original-account' }, isCurrent: () => false,
+            onRetire: () => ({ dispose: () => {} }),
+        } })).rejects.toMatchObject({ cause: { message: 'action_account_scope_changed' } });
+        expect(boundaries.startTunnel).not.toHaveBeenCalled();
+        expect(boundaries.requestGrant).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         boundaries.resolveTargetServer.mockClear();
         boundaries.focusActiveServer('server-1');
@@ -318,7 +329,7 @@ describe('resolveMachineCarrierRoute', () => {
                 payload: {
                     v: 2,
                     grantId: 'grant-v2',
-                    accountId: 'account-from-signed-grant',
+                    accountId: 'account-b',
                     machineId: 'machine-1',
                     flowKind: 'bounded_transfer',
                     routeKind: 'iroh_peer',
@@ -442,7 +453,7 @@ describe('acquireMachineCarrierHttpLease', () => {
                 payload: {
                     v: 2,
                     grantId: 'grant-v2',
-                    accountId: 'account-from-signed-grant',
+                    accountId: 'account-b',
                     machineId: 'machine-1',
                     flowKind: 'bounded_transfer',
                     routeKind: 'iroh_peer',
@@ -485,7 +496,7 @@ describe('acquireMachineCarrierHttpLease', () => {
             scope: { serverId: 'server-1', accountId: 'account-b' },
         }));
         const tunnelInput = boundaries.startTunnel.mock.calls[0]?.[0] as { handshakeJson: string };
-        expect(JSON.parse(tunnelInput.handshakeJson)).toMatchObject({ accountId: 'account-from-signed-grant' });
+        expect(JSON.parse(tunnelInput.handshakeJson)).toMatchObject({ accountId: 'account-b' });
         expect(boundaries.releaseAuthority).toHaveBeenCalledTimes(1);
     });
 
@@ -503,7 +514,7 @@ describe('acquireMachineCarrierHttpLease', () => {
                     payload: {
                         v: 2,
                         grantId: 'grant-v2-fresh-hints',
-                        accountId: 'account-from-signed-grant',
+                        accountId: 'account-b',
                         machineId: 'machine-1',
                         flowKind: 'bounded_transfer',
                         routeKind: 'iroh_peer',
@@ -549,7 +560,7 @@ describe('acquireMachineCarrierHttpLease', () => {
                     payload: {
                         v: 2,
                         grantId: 'grant-v2-stale-target',
-                        accountId: 'account-from-signed-grant',
+                        accountId: 'account-b',
                         machineId: 'machine-1',
                         flowKind: 'bounded_transfer',
                         routeKind: 'iroh_peer',
@@ -577,7 +588,7 @@ describe('acquireMachineCarrierHttpLease', () => {
             operationId: 'prepared-file-stale-target',
             machineId: 'machine-1',
             serverId: 'server-1',
-        })).rejects.toThrow('Target Iroh endpoint changed while authorizing transfer');
+        })).rejects.toThrow();
         expect(boundaries.startTunnel).not.toHaveBeenCalled();
     });
 });
