@@ -72,6 +72,39 @@ async function renderScopedProviderHook(target:
 }
 
 describe('useMemorySearchProvider', () => {
+    it('keeps Home Session search available for mixed corpora when no eligible daemon can answer', async () => {
+        setReadyHomeCapability({ enabled: true });
+        daemonTargetState.target = null;
+        const { useMemorySearchProvider } = await import('./useMemorySearchProvider');
+        const hook = await renderHook(() => useMemorySearchProvider({ kind: 'ambient' }, {
+            corpora: ['documents', 'sessions'],
+        }));
+        expect(hook.getCurrent()).toMatchObject({ provider: 'home', homeServerId: 'srv_home',
+            queryAvailable: true, unavailableReason: 'documents_unavailable' });
+    });
+    it('routes document corpora to the selected daemon even when Home transcript search is ready', async () => {
+        setReadyHomeCapability({ enabled: true });
+        const { useMemorySearchProvider } = await import('./useMemorySearchProvider');
+        const hook = await renderHook(() => useMemorySearchProvider({ kind: 'ambient' }, {
+            corpora: ['sessions', 'documents'],
+        }));
+        expect(hook.getCurrent()).toMatchObject({
+            provider: 'daemon', daemonTarget: { serverId: 'srv_daemon', machineId: 'machine_1' },
+            queryAvailable: true,
+        });
+    });
+
+    it('reports document search unavailable when only Home can serve the target', async () => {
+        setReadyHomeCapability({ enabled: true });
+        daemonTargetState.target = null;
+        const { useMemorySearchProvider } = await import('./useMemorySearchProvider');
+        const hook = await renderHook(() => useMemorySearchProvider({ kind: 'ambient' }, {
+            corpora: ['documents'],
+        }));
+        expect(hook.getCurrent()).toMatchObject({
+            provider: null, queryAvailable: false, unavailableReason: 'documents_unavailable',
+        });
+    });
     it('falls back to daemon when the active Home capability is missing', async () => {
         const hook = await renderProviderHook();
         expect(hook.getCurrent()).toEqual({

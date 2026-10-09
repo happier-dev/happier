@@ -5,7 +5,6 @@ import {
     type MemorySearchCorpusV1,
     type MemorySearchHitV1,
 } from '@happier-dev/protocol/memory/memorySearch';
-import { MEMORY_ARCHIVE_TOPIC_TITLE_V1 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -26,7 +25,7 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { formatMemoryDate, memoryTopicLabel } from './MemoryDocumentBody';
-import { memoryDocumentHref } from './memoryDocumentRoutes';
+import { memoryDocumentSearchHitHref } from './memoryDocumentRoutes';
 
 const CORPORA: readonly MemorySearchCorpusV1[] = ['documents', 'sessions'];
 /** Typing settles before a machine is asked; a superseded query is cancelled, not raced. */
@@ -102,9 +101,7 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
     }, [accountId, machineId, normalized, targetServerId]);
 
     const openDocument = React.useCallback((hit: MemoryDocumentSearchHitV1) => {
-        const topic = typeof hit.location === 'object' ? hit.location.title
-            : hit.location === 'archive' ? MEMORY_ARCHIVE_TOPIC_TITLE_V1 : undefined;
-        router.push(memoryDocumentHref(hit.ref, { ...(topic ? { topic } : {}), ...(hit.factId ? { factId: hit.factId } : {}) }) as never);
+        router.push(memoryDocumentSearchHitHref(hit) as never);
     }, [router]);
     const openSession = React.useCallback((hit: MemorySearchHitV1) => {
         fireAndForget(navigateToSession(hit.sessionId, { serverId, query: { jumpSeq: hit.seqFrom } }), { tag: 'MemorySearchPanel.session' });

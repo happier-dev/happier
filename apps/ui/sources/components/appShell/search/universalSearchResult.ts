@@ -2,6 +2,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
+import type { MemoryDocumentSearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
 
 /**
  * The small UI-internal normalized boundary for built-in Universal Search rows.
@@ -26,6 +27,8 @@ export type UniversalSearchTarget =
      * Home B result is open cannot retarget the navigation.
      */
     | Readonly<{ kind: 'session'; serverId: string; accountId: string; sessionId: string; seq?: number }>
+    | (Readonly<{ kind: 'memoryDocument'; serverId: string; accountId: string }>
+        & Pick<MemoryDocumentSearchHitV1, 'ref' | 'location' | 'factId'>)
     | Readonly<{
         kind: 'project';
         workspaceRefId: string;

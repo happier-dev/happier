@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { HomeSearchCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/homeSearchCapabilities';
+import type { MemorySearchCorpusV1 } from '@happier-dev/protocol/memory/memorySearch';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -42,7 +43,8 @@ export type MemorySearchUnavailableReason =
     | 'home_indexing'
     | 'home_unavailable'
     | 'home_unknown'
-    | 'daemon_no_target';
+    | 'daemon_no_target'
+    | 'documents_unavailable';
 
 export type MemorySearchProvider = Readonly<{
     /** `null` when neither transcript provider is admitted for the current context. */
@@ -103,9 +105,11 @@ export function resolveHomeMemorySearchReadiness(capability: unknown): HomeMemor
  */
 export function useMemorySearchProvider(
     target: MemorySearchProviderTarget = { kind: 'ambient' },
-    options: Readonly<{ enabled?: boolean }> = {},
+    options: Readonly<{ enabled?: boolean; corpora?: readonly MemorySearchCorpusV1[] }> = {},
 ): MemorySearchProvider {
     const enabled = options.enabled !== false;
+    const documentsRequested = options.corpora?.includes('documents') === true;
+    const sessionsRequested = options.corpora?.includes('sessions') === true;
     const activeServer = useActiveServerSnapshot();
     const requestedServerId = target.kind === 'exact'
         ? resolveServerProfileScopeIdForIdentifier(target.serverId)
@@ -163,6 +167,21 @@ export function useMemorySearchProvider(
                 ? { serverId: daemonServerId, machineId: daemonMachineId }
                 : null;
         const resolvedHomeReadiness = resolveHomeMemorySearchReadiness(capability);
+        // Home indexes transcripts, not attached Artifacts. Document requests
+        // use only the explicitly selected daemon; its transport negotiates
+        // real document support and reports unavailable coverage for old peers.
+        if (documentsRequested && nextDaemonTarget) {
+            return {
+                provider: 'daemon', homeServerId: null, homeReadiness: null,
+                daemonTarget: nextDaemonTarget, queryAvailable: true, unavailableReason: null,
+            };
+        }
+        if (documentsRequested && !sessionsRequested) {
+            return {
+                ...NO_MEMORY_SEARCH_PROVIDER,
+                unavailableReason: 'documents_unavailable',
+            };
+        }
         const homeCandidate = homeSearchFeatureEnabled && activeServerId.length > 0;
         const homeAdmitted = homeCandidate && resolvedHomeReadiness !== 'unknown';
         const homeReadiness = homeCandidate ? resolvedHomeReadiness : null;
@@ -172,7 +191,8 @@ export function useMemorySearchProvider(
             homeReadiness,
             daemonTarget: null,
             queryAvailable: homeReadiness === 'ready',
-            unavailableReason: homeReadiness === null ? null : resolveHomeUnavailableReason(homeReadiness),
+            unavailableReason: documentsRequested && homeReadiness === 'ready' ? 'documents_unavailable'
+                : homeReadiness === null ? null : resolveHomeUnavailableReason(homeReadiness),
         };
         // 1. An admitted, ready Home owns the context outright.
         if (homeAdmitted && homeReadiness === 'ready') return readyHome;
@@ -202,6 +222,8 @@ export function useMemorySearchProvider(
         return NO_MEMORY_SEARCH_PROVIDER;
     }, [
         enabled,
+        documentsRequested,
+        sessionsRequested,
         activeServerId,
         daemonMachineId,
         daemonMemorySearchEnabled,
