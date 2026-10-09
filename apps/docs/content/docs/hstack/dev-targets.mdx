@@ -551,14 +551,19 @@ target before applying `fallback=local|error`. Once a command starts, its result
 and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
 independent from allowing local fallback.
 
-In current 0.3 development source, an admission-state registration failure before bootstrap or
-command execution also temporarily excludes the worker from automatic placement and tries another
-configured target. A pinned invocation reports that failure without switching hosts. A command's
-exit status, including 75, does not trigger replay after execution starts.
+In current 0.3 development source, dependency and workspace preparation finish before the payload
+reserves its heavyweight admission envelope. This lets a dependency or build lock holder obtain
+admission while another command waits for that lock. Preparation and payload stay in one cancellable
+remote execution; preparation's compiler children retain their own admission.
+
+An admission-state registration failure before payload execution temporarily excludes the worker
+from automatic placement and tries another configured target. A pinned invocation reports that
+failure without switching hosts. Preparation failures and a payload's exit status, including 75,
+do not trigger replay.
 
 In current development, automatic placement also checks actual worker admission without queuing
-there. A busy worker triggers re-evaluation of the remaining pool before any bootstrap or command
-starts, without marking that worker unavailable. If all usable workers are busy, automatic placement
+there after preparation. A busy worker triggers re-evaluation of the remaining pool before the
+payload starts, without marking that worker unavailable. If all usable workers are busy, automatic placement
 waits and rechecks the pool instead of falling back locally. An explicitly pinned command retains
 its observable wait on that worker. Already-running launchers are not moved by this change.
 
@@ -610,6 +615,8 @@ Task-private mirrors, caller admission roots and machine aliases cannot create i
 The configured execution account must own this directory; unavailable or foreign-account state fails
 closed rather than falling back to a private queue. Live older private-root owners are counted during
 cutover; already-loaded older launchers must drain before all writers use the new authority.
+Admission decisions reclaim dead owners and incomplete process-identity records under the existing
+capacity lock. Low CPU alone does not expire a live owner.
 
 Runtime service placements do not exclude a host from commands. The worker measures current
 server/Expo process-tree resident memory from existing Stack PID state and generation witnesses,

@@ -505,12 +505,14 @@ export function buildRemoteExecCommand(
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
       body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)}`);
     }
-    body.push(`cd -- ${posixQuote(workingDirectory)}`, `exec ${args.map(posixQuote).join(' ')}`);
-    args = ['bash', '-c', body.join('; ')];
     if (admissionClass) {
+      // Dependency/build lock holders can need admission themselves. Only
+      // reserve the payload envelope once its preparation has released locks.
       args = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`, `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
     }
+    body.push(`cd -- ${posixQuote(workingDirectory)}`, `exec ${args.map(posixQuote).join(' ')}`);
+    args = ['bash', '-c', body.join('; ')];
   }
   if (target.platform === 'windows') {
     return wrapRemoteScript(

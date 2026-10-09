@@ -1862,7 +1862,7 @@ test('remote heavyweight admission starts from the configured repository when SS
   await mkdir(binDir, { recursive: true });
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await writeFile(configPath, '{}\n', 'utf8');
-  await writeFile(projectionPath, [
+  await writeNativeProjectionFixture(projectionPath, [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
@@ -5401,7 +5401,9 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     '#!/bin/sh',
     'case "$*" in',
     '  *service_memory.mjs*) printf "service 0\\n"; exit 0 ;;',
-    '  *remote_dependency_bootstrap.mjs*) exec vitest remote-bootstrap ;;',
+    // Preparation precedes payload admission; this process-boundary fixture
+    // has no dependency install or compiler leaf of its own to admit.
+    '  *remote_dependency_bootstrap.mjs*) exit 0 ;;',
     '  *node_modules/vitest/vitest.mjs*) exec vitest "$@" ;;',
     '  *generateBundledPluginEntries.ts*) exec vitest remote-bundled-plugin-generator ;;',
     'esac',
@@ -5637,11 +5639,11 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     assert.match(nodeVitestOutput.stderr, remoteAdmissionEvidence);
     assert.match(
       await readFile(scopeMarker, 'utf8'),
-      /--user --scope --quiet --slice=happier-jobs\.slice --nice=1[0-9] -- bash -c .*remote_dependency_bootstrap\.mjs.*tsc.*remote-third/s,
+      /--user --scope --quiet --slice=happier-jobs\.slice --nice=1[0-9] -- bash -c .*tsc.*remote-third/s,
     );
     assert.match(
       await readFile(scopeMarker, 'utf8'),
-      /--user --scope --quiet --slice=happier-jobs\.slice --nice=1[0-9] -- bash -c .*remote_validation_preparation\.mjs.*'node' 'node_modules\/vitest\/vitest\.mjs' 'remote-node-vitest/s,
+      /--user --scope --quiet --slice=happier-jobs\.slice --nice=1[0-9] -- bash -c .*'node' 'node_modules\/vitest\/vitest\.mjs' 'remote-node-vitest/s,
     );
     assert.deepEqual(await readdir(join(admissionRoot, 'waiters')), []);
 

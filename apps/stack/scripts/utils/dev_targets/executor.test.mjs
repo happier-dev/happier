@@ -268,7 +268,7 @@ test('POSIX dependency-consuming commands prepare inside their SSH operation whi
   }
 });
 
-test('JavaScript dispatch admits bootstrap, preparation and command as one target operation', async (t) => {
+test('JavaScript dispatch keeps preparation before admission within one cancellable target operation', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-executor-whole-operation-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   // SSH is the system boundary. Preparations must remain inside the final
@@ -286,7 +286,7 @@ test('JavaScript dispatch admits bootstrap, preparation and command as one targe
       return { completion: Promise.resolve({ code: 0, signal: null }) };
     },
   });
-  assert.match(request, /--heavyweight-admission[\s\S]*remote_dependency_bootstrap\.mjs[\s\S]*remote_validation_preparation\.mjs[\s\S]*vitest/);
+  assert.match(request, /remote_dependency_bootstrap\.mjs[\s\S]*remote_validation_preparation\.mjs[\s\S]*--heavyweight-admission[\s\S]*vitest/);
 });
 
 test('Windows source-test dispatch preserves its source preparation contract through both existing transports', async (t) => {

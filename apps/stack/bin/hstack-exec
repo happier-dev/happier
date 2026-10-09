@@ -373,8 +373,8 @@ heavyweight_cleanup_records() {
   [ -n "${heavyweight_admission_root-}" ] || return 0
   for heavyweight_entry in "$heavyweight_admission_root/owners"/*; do
     [ -d "$heavyweight_entry" ] || continue
-    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry/process" 2>/dev/null || continue
-    if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
+    if ! IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token 2>/dev/null < "$heavyweight_entry/process" \
+      || ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
       rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" "$heavyweight_entry/phase" "$heavyweight_entry/disk" 2>/dev/null || true
       rmdir -- "$heavyweight_entry" 2>/dev/null || true
     fi
@@ -2450,10 +2450,10 @@ if [ "$heavyweight_admission_required" -eq 1 ]; then
   fi
 fi
 if [ -n "$heavyweight_admission_prefix" ]; then
-  # Dependency bootstrap can itself perform the initial package install. Keep
-  # that existing per-workspace lock, but execute bootstrap, preparation, and
-  # the requested heavyweight command beneath the one per-machine admission.
-  heavyweight_command_body="set -euo pipefail;$remote_setup_script$remote_command_environment"
+  # Preparation may wait on a dependency/build lock whose holder still needs
+  # admission. Finish it before reserving the payload's compilation envelope;
+  # its compiler children retain their own canonical leaf admission.
+  heavyweight_command_body="set -euo pipefail; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
   if [ "$resource_governor_priority" = background ]; then
     # Keep niceness on the actual child process while the admission wrapper
     # owns its slot. A guest without `nice` still waits and runs normally.
@@ -2461,7 +2461,7 @@ if [ -n "$heavyweight_admission_prefix" ]; then
   else
     heavyweight_command_body="$heavyweight_command_body$remote_command_arguments;"
   fi
-  remote_script="$remote_script$heavyweight_admission_prefix bash -c $(quote_remote "$heavyweight_command_body");"
+  remote_script="$remote_script$remote_setup_script$heavyweight_admission_prefix bash -c $(quote_remote "$heavyweight_command_body");"
 elif [ "$resource_governor_priority" = background ]; then
   # `nice` is available on supported Linux and Darwin targets. Keep the fallback in the
   # remote shell so an unusual minimal guest still executes the command rather

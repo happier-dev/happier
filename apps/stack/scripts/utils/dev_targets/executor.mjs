@@ -280,8 +280,8 @@ export async function runDevTargetCommand(
   const bootstrapRequired = dependencyAdmission !== 'skip' && classification.requiresDependencyBootstrap;
   const preparationRequired = workspacePreparation !== 'skip' && requiresRemoteWorkspacePreparation(commandArgs, { cwd });
   const validationKind = resolveRemoteValidationKind(commandArgs, { cwd });
-  // POSIX preparations are children of the same native admission and execution
-  // identity as the payload. Windows retains its separate local-only transport.
+  // POSIX preparation shares the payload's execution custody, but completes
+  // before its native admission. Windows retains its separate transport.
   if (target.platform === 'windows' && bootstrapRequired) {
     const bootstrap = await runDependencyBootstrap({
       target,
