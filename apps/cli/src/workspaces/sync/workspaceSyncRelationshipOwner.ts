@@ -25,6 +25,7 @@ export type PrepareWorkspaceSyncRelationshipInput = Readonly<{
   mode: WorkspaceSyncPersistentModeV1;
   contentPolicy: WorkspaceContentPolicyV1;
   targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
+  purpose?: 'worker_clean_copy';
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;
@@ -52,6 +53,7 @@ export type WorkspaceSyncRelationshipOwner = Readonly<{
     sourceRootPath: string;
     targetMachineId: string;
     targetRootPath: string;
+    purpose?: 'worker_clean_copy';
     signal?: AbortSignal;
   }>): Promise<MaterializedWorkspaceSyncEndpoints>;
   prepareCreate(input: PrepareWorkspaceSyncRelationshipInput): Promise<PreparedWorkspaceSyncRelationship>;
@@ -142,6 +144,11 @@ function resolveEndpointPair(
   relationships: readonly WorkspaceSyncRelationshipV1[],
   requested: WorkspaceSyncRelationshipV1,
 ): WorkspaceSyncRelationshipV1 | null {
+  if (relationships.some(relationship => unorderedPairMatches(relationship,
+    requested.alphaWorkspaceRefId, requested.betaWorkspaceRefId)
+    && !areWorkspaceSyncWorkerCopyProvenancesEqual(relationship, requested))) {
+    throw ownerError('relationship_provenance_conflict', 'Workspace copy purpose differs from its creation provenance');
+  }
   const identityMatches = relationships.filter((relationship) => (
     relationship.relationshipId === requested.relationshipId
   ));
@@ -214,6 +221,7 @@ export function createWorkspaceSyncRelationshipOwner(
     sourceRootPath: string;
     targetMachineId: string;
     targetRootPath: string;
+    purpose?: 'worker_clean_copy';
     signal?: AbortSignal;
   }>): Promise<MaterializedWorkspaceSyncEndpoints> => {
     let sourceRef!: WorkspaceRefV1;
@@ -230,6 +238,10 @@ export function createWorkspaceSyncRelationshipOwner(
         serverId: input.serverId,
         machineId: input.targetMachineId,
         rootPath: input.targetRootPath,
+        ...(input.purpose === 'worker_clean_copy' ? { parentWorkspace: {
+          serverId: first.workspaceRef.serverId, workspaceId: first.workspaceRef.id,
+          machineId: first.workspaceRef.machineId, rootPath: first.workspaceRef.rootPath,
+        } } : {}),
         nowMs: nowMs(),
         createId,
       });
@@ -320,6 +332,9 @@ export function createWorkspaceSyncRelationshipOwner(
         controllerMachineId: options.localMachineId,
         alphaWorkspaceRefId: endpoints.source.id,
         betaWorkspaceRefId: endpoints.target.id,
+        ...(input.purpose === 'worker_clean_copy' ? { provenance: {
+          kind: 'worker_clean_copy', sourceWorkspaceRefId: endpoints.source.id, targetWorkspaceRefId: endpoints.target.id,
+        } } : {}),
         mode: input.mode,
         contentPolicy: input.contentPolicy,
         enabled: true,
@@ -327,6 +342,10 @@ export function createWorkspaceSyncRelationshipOwner(
         updatedAtMs: timestamp,
       });
       const existing = resolveEndpointPair(parseRelationships(current), candidate);
+      if (input.purpose === 'worker_clean_copy'
+        && (endpoints.target.projectKey ?? endpoints.target.id) !== (endpoints.source.projectKey ?? endpoints.source.id)) {
+        throw ownerError('project_workspace_changed', 'The chosen worker folder belongs to a different Project');
+      }
       const relationship = existing ?? candidate;
       const runtimeRelationship = relationship.enabled
         ? relationship

@@ -1,4 +1,5 @@
-import { areWorkspaceSyncRelationshipDefinitionsEqual } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual,
+  getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute,
   type WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -116,16 +117,15 @@ export function resolveWorkspaceSyncWorkerTarget(input: Readonly<{
   }
   const component = topology.sets.find(set => set.relationships.some(relationship =>
     relationship.alphaWorkspaceRefId === sourceEndpoint.endpoint.id || relationship.betaWorkspaceRefId === sourceEndpoint.endpoint.id));
-  if (!component) return { ok: false, errorCode: 'route_not_found' };
-  const endpointIds = new Set(component.relationships.flatMap(relationship =>
-    [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]));
+  if (!component) return { ok: false, errorCode: 'worker_copy_missing' };
   const targets = input.workspaceRefs.filter(ref => ref.serverId === input.serverId
     && ref.machineId === input.targetMachineId && (() => {
       const resolved = resolveWorkspaceSyncEndpoint({ ...input, workspace: ref });
-      return resolved.ok && endpointIds.has(resolved.endpoint.id);
+      return resolved.ok && component.relationships.some(relationship =>
+          getWorkspaceSyncWorkerCopyV1(relationship)?.targetWorkspaceRefId === resolved.endpoint.id);
     })());
   if (targets.length !== 1) return { ok: false,
-    errorCode: targets.length ? 'workspace_sync_target_ambiguous' : 'workspace_ref_not_ready' };
+    errorCode: targets.length ? 'workspace_sync_target_ambiguous' : 'worker_copy_missing' };
   const target = targets[0]!;
   const route = resolveWorkspaceSyncTransferRoute({ ...input, targetWorkspaceRefId: target.id });
   if (!route.ok) return { ok: false, errorCode: route.code };
@@ -164,7 +164,8 @@ export function assertWorkspaceSyncWorkerTargetCurrent(basis: WorkspaceSyncWorke
       return relationship.relationshipId !== accepted.relationshipId
         || relationship.controllerMachineId !== accepted.controllerMachineId
         || relationship.alphaWorkspaceRefId !== accepted.alphaWorkspaceRefId
-        || relationship.betaWorkspaceRefId !== accepted.betaWorkspaceRefId;
+        || relationship.betaWorkspaceRefId !== accepted.betaWorkspaceRefId
+        || !areWorkspaceSyncWorkerCopyProvenancesEqual(relationship, accepted);
     })) fail('relationship_changed');
 }
 

@@ -96,6 +96,7 @@ describe('accepted Project Service declaration starter', () => {
         const basePolicy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
         const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'source-worker', controllerMachineId: workspace.machineId,
             alphaWorkspaceRefId: workspace.id, betaWorkspaceRefId: targetWorkspace.id, mode: 'keep_synced', enabled: true,
+            ...(workerExecution ? { provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: workspace.id, targetWorkspaceRefId: targetWorkspace.id } } : {}),
             contentPolicy: { ...basePolicy, policyDigest: computeWorkspaceSyncPolicyDigest(basePolicy) }, createdAtMs: 1, updatedAtMs: 1 };
         let relationshipCurrent = true;
         let copyManifestOverride: unknown;

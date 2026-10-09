@@ -55,11 +55,12 @@ function createHarness(options: Readonly<{
   /** Engine facts the first completed cycle reports for the new link. */
   preparedStatus?: (relationshipId: string) => WorkspaceSyncStatusV1;
   existingRelationships?: readonly WorkspaceSyncRelationshipV1[];
+  freshTarget?: boolean;
 }> = {}) {
   let snapshot = parseProjectAccountSnapshotV1({
     workspaceRefs: [
       { id: 'source_ref', serverId: 'server_a', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
-      { id: 'target_ref', serverId: 'server_a', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 },
+      ...(options.freshTarget ? [] : [{ id: 'target_ref', serverId: 'server_a', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 }]),
     ],
     relationships: options.existingRelationships ?? [],
   });
@@ -111,6 +112,7 @@ function createHarness(options: Readonly<{
     terminateRelationshipRuntime,
     commitRelationshipTarget,
     readRelationships: () => snapshot.relationships,
+    readRefs: () => snapshot.workspaceRefs,
   };
 }
 
@@ -136,6 +138,52 @@ function request(overrides: Readonly<{
 }
 
 describe('createWorkspaceSyncRelationshipForProject', () => {
+  it('creates a dedicated copy at the explicitly chosen root with provenance before bootstrap and preserves it on retry', async () => {
+    const h = createHarness({ freshTarget: true });
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    const worker = { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' } };
+    let firstBootstrap = true;
+    h.ensureRelationship.mockImplementation(async definition => {
+      if (firstBootstrap) expect(h.readRelationships()[0]).toMatchObject({ enabled: false, provenance: {
+        kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'unexpected_source',
+      } });
+      firstBootstrap = false;
+      return status(definition.relationshipId);
+    });
+    const first = await createWorkspaceSyncRelationshipForProject(h.dependencies, worker);
+    expect(h.readRefs().find(ref => ref.id === first.targetWorkspaceRefId)).toMatchObject({
+      rootPath: '/target', machineId: 'machine_target', projectKey: 'source_ref',
+    });
+    expect(h.readRelationships()[0]).toMatchObject({ enabled: true, provenance: {
+      kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: first.targetWorkspaceRefId,
+    } });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies, worker)).resolves.toMatchObject({ created: false });
+    expect(h.readRelationships()).toHaveLength(1);
+  });
+
+  it('never upgrades an ordinary existing relationship into a worker copy', async () => {
+    const ordinary: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'ordinary', controllerMachineId: 'machine_source',
+      alphaWorkspaceRefId: 'source_ref', betaWorkspaceRefId: 'target_ref', mode: 'keep_synced', contentPolicy: policy,
+      enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+    const h = createHarness({ existingRelationships: [ordinary] });
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies,
+      { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' } }))
+      .rejects.toMatchObject({ code: 'relationship_provenance_conflict' });
+    expect(h.readRelationships()).toEqual([ordinary]);
+    expect(h.ensureRelationship).not.toHaveBeenCalled();
+  });
+  it('refuses a worker folder already admitted to a different Project without rebinding or bootstrapping it', async () => {
+    const h = createHarness();
+    const before = h.readRefs();
+    const raw = request({ mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
+    await expect(createWorkspaceSyncRelationshipForProject(h.dependencies,
+      { ...raw, actionInput: { ...raw.actionInput, purpose: 'worker_clean_copy' } }))
+      .rejects.toMatchObject({ code: 'project_workspace_changed' });
+    expect(h.readRefs().map(ref => [ref.id, ref.projectKey ?? ref.id])).toEqual(before.map(ref => [ref.id, ref.projectKey ?? ref.id]));
+    expect(h.readRelationships()).toEqual([]);
+    expect(h.ensureRelationship).not.toHaveBeenCalled();
+  });
   it('attaches a divergent existing checkout without reseeding it, commits one definition, and reports the conflict', async () => {
     // The whole point of "Use existing folder": both machines already hold work
     // and the person keeps both. Reseeding here would destroy the target's.

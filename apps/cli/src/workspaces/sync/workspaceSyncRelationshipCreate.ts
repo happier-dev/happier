@@ -72,6 +72,7 @@ export async function createWorkspaceSyncRelationshipForProject(
     mode: input.mode,
     contentPolicy: input.contentPolicy,
     targetBootstrap: input.destinationIntent,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
     ...(request.targetReplacementApproval && request.targetReplacementApprovalReceiptId
       ? {
           targetReplacementApproval: request.targetReplacementApproval,

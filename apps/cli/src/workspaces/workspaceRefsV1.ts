@@ -39,7 +39,7 @@ export function materializeWorkspaceRefForMachineRoot(
         machineId: string;
         rootPath: string;
         label?: string;
-        /** Host-proven native parent; only a newly accepted child may inherit its current anchor. */
+        /** Host-proven native parent or copy source; only a new ref may inherit its current anchor. */
         parentWorkspace?: WorkspaceAddressV1;
         nowMs: number;
         createId: () => string;

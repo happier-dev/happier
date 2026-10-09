@@ -194,7 +194,8 @@ describe('authenticated finite Project Action owner', () => {
             const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
             relationships.push({ v: 1, relationshipId: 'source-worker', controllerMachineId: sourceMachineId,
                 alphaWorkspaceRefId: workspace.id, betaWorkspaceRefId: target.id, mode: 'keep_synced', enabled: true,
-                contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 });
+                contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
+                provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: workspace.id, targetWorkspaceRefId: target.id } });
             workersEnabled = true;
             return target;
         };
@@ -411,6 +412,26 @@ describe('authenticated finite Project Action owner', () => {
             await turn();
             await turn();
         }
+    });
+
+    it.each(['missing', 'ordinary'] as const)('returns a typed no-acceptance refusal for a %s worker copy without choosing or creating a folder', async kind => {
+        const h = await harness({ version: 1, scripts: { checked: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } } }, 1, 'source-machine');
+        if (kind === 'ordinary') {
+            await h.addWorkerTarget();
+            delete h.relationships[0]!.provenance;
+        }
+        const result = await h.rpcInvoke('projects.script.run', { workspace: h.address, selection: { kind: 'named', name: 'checked' },
+            choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'machine' } } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'worker_copy_missing', details: {
+            kind: 'no_worker_can_accept', reason: 'worker_copy_missing', workerCopy: {
+                serverId: 'home', sourceWorkspaceRefId: 'accepted', sourceMachineId: 'source-machine', targetMachineId: 'machine',
+            },
+        } });
+        expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toBeNull();
+        expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
+        expect(h.spawned).toEqual([]);
+        expect(h.relationships).toHaveLength(kind === 'ordinary' ? 1 : 0);
+        expect(h.workspaceRefs).toHaveLength(kind === 'ordinary' ? 2 : 1);
     });
 
     it.each(['command', 'native config', 'native executable', 'ordinary data', 'native ordinary data'] as const)('retains the accepted portable Script effect through worker copy while allowing fresh %s', async changed => {
@@ -947,9 +968,10 @@ describe('authenticated finite Project Action owner', () => {
         const original = h.relationships[0]!;
         h.relationships.splice(0, 1,
             { ...original, relationshipId: 'source-hub', controllerMachineId: hub.machineId,
-                alphaWorkspaceRefId: hub.id, betaWorkspaceRefId: h.address.workspaceId, mode: 'keep_both_in_sync' },
+                alphaWorkspaceRefId: hub.id, betaWorkspaceRefId: h.address.workspaceId, mode: 'keep_both_in_sync', provenance: undefined },
             { ...original, relationshipId: 'hub-target', controllerMachineId: hub.machineId,
-                alphaWorkspaceRefId: hub.id, betaWorkspaceRefId: target.id });
+                alphaWorkspaceRefId: hub.id, betaWorkspaceRefId: target.id,
+                provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: hub.id, targetWorkspaceRefId: target.id } });
         const previousGet = h.get.getMockImplementation()!;
         h.get.mockImplementation(async (...args) => {
             const url = String(args[0]);
