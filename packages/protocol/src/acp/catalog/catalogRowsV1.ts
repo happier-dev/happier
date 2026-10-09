@@ -181,9 +181,16 @@ export function listAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1): rea
     value.t === 'savedSecret' ? [{ path: `definitions[${index}].env.${name}`, secretId: value.secretId }] : []));
 }
 
-export function rewriteAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1, previousId: string, nextId: string): AcpCatalogRecordV1 {
+export function rewriteAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1, references: ReadonlyMap<string, string>): AcpCatalogRecordV1;
+export function rewriteAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1, previousId: string, nextId: string): AcpCatalogRecordV1;
+export function rewriteAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1, references: string | ReadonlyMap<string, string>, nextId?: string): AcpCatalogRecordV1 {
   return AcpCatalogRecordV1Schema.parse({ ...record, definitions: record.definitions.map(definition => ({ ...definition,
-    env: Object.fromEntries(Object.entries(definition.env).map(([name, value]) => [name,
-      value.t === 'savedSecret' && value.secretId === previousId ? { t: 'savedSecret', secretId: nextId } : value])),
+    env: Object.fromEntries(Object.entries(definition.env).map(([name, value]) => {
+      if (value.t !== 'savedSecret') return [name, value];
+      const reference = typeof references === 'string'
+        ? value.secretId === references ? nextId : undefined
+        : references.get(value.secretId);
+      return [name, reference === undefined ? value : { t: 'savedSecret', secretId: reference }];
+    })),
   })) });
 }

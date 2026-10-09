@@ -138,6 +138,22 @@ describe('Account ACP catalog rows', () => {
         expect(openAcpCatalogContentV1({ mode: 'e2ee', material: null, content: { t: 'plain', v: record } })).toMatchObject({ status: 'unavailable', reason: 'account-mode-mismatch' });
     });
 
+    it('closes the authored catalog after remapping every verified personal binding together', () => {
+        const first = formatSharedSavedSecretRefV1('verified-first');
+        const second = formatSharedSavedSecretRefV1('verified-second');
+        const record = { v: 1 as const, definitions: [{ ...definition, env: {
+            FIRST: { t: 'savedSecret' as const, secretId: 'personal-first' },
+            SECOND: { t: 'savedSecret' as const, secretId: 'personal-second' },
+            LABEL: { t: 'literal' as const, v: 'personal-first' },
+        } }] };
+        const mappings = new Map([['personal-first', first], ['personal-second', second]]);
+        expect(rewriteAcpCatalogSavedSecretRefsV1(record, mappings).definitions[0].env).toEqual({
+            FIRST: { t: 'savedSecret', secretId: first }, SECOND: { t: 'savedSecret', secretId: second },
+            LABEL: { t: 'literal', v: 'personal-first' },
+        });
+        expect(() => rewriteAcpCatalogSavedSecretRefsV1(record, new Map([['personal-first', first]]))).toThrow();
+    });
+
     it('converts complete original payload and envelope metadata losslessly without relaxing new writes', () => {
         const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) };
         const payload = { v: 1, futureCatalog: { label: 'retained' }, definitions: [{ ...definition,
