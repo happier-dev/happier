@@ -28,11 +28,11 @@ import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows, withdrawAc
   type ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
 import type { MutagenControlCommandV1, MutagenSessionSummaryV1 } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
+import type { FiniteTransferMachineTunnel, WorkspaceSyncMachineTunnel, WorkspaceSyncMachineTunnelOpenInput } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import { createDaemonWorkspaceSyncRuntime, type DaemonWorkspaceSyncRuntime } from './createDaemonWorkspaceSyncRuntime';
 import { createProductionDaemonWorkspaceSyncRuntime, type ProductionDaemonWorkspaceSyncFactories } from './createProductionDaemonWorkspaceSyncRuntime';
 
 const contentPolicyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-const contentPolicy = { ...contentPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyInput) };
 
 // The real daemon-applied registry outlives each workspace fixture. Keep its
 // private store valid while the singleton is warm; never shut down or delete a
@@ -47,6 +47,10 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   }>;
   sourcePhaseUnavailable?: boolean;
   separateTargetParent?: boolean;
+  /** Ordinary D owns the existing target row directly, without a managed Parent route. */
+  ordinaryTarget?: boolean;
+  /** Real Git worktree plus installed remote-seed ports, without lending Parent Account access. */
+  gitWorktreeSeed?: boolean;
   withTargetChildRuntime?: boolean;
   /** Separate installed target custody, exercising per-call keys rather than source Account codecs. */
   targetCredentials?: StoredCredentials;
@@ -64,8 +68,14 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   readAdditionalHttpPostResponse?: (url: string, data: unknown, config?: AxiosRequestConfig) => Promise<Readonly<{ status: number; data: unknown }> | undefined>;
   handleAdditionalSocketAck?: (payload: unknown) => Promise<unknown | undefined>;
   callWorkspaceTargetPhase?: (descriptor: WorkspaceSyncTargetPhaseDescriptor, context: RpcHandlerContext) => Promise<unknown>;
+  callWorkspaceSeedExport?: (descriptor: Readonly<{ machineId: string;
+    request: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncSeedExportPrepareV1;
+    signal?: AbortSignal }>, context: RpcHandlerContext) => Promise<unknown>;
 }>) {
   const { socketIo } = options;
+  const selectedContentPolicy = { ...contentPolicyInput,
+    selection: options.gitWorktreeSeed ? 'git_worktree' as const : 'all_files' as const };
+  const contentPolicy = { ...selectedContentPolicy, policyDigest: computeWorkspaceSyncPolicyDigest(selectedContentPolicy) };
   options.onCompositionPhase?.('filesystem and network fixture');
   if (options.projectRowsFromHttp) withdrawActiveProjectAccountRowsSnapshot();
   const serverId = options.serverId ?? 'srv_bind_child_home';
@@ -83,8 +93,14 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   // Explicit Home fixtures own their fresh same/foreign observation boundary.
   // Otherwise provide only the actual Home's canonical features response; the
   // fresh observer and all bind admission logic remain production-owned.
-  const fetchBoundary = options.homeTarget ? undefined : vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+  let seedTransferLifecycle: import('@/machines/transfer/directTransferServerLifecycle').DirectTransferServerLifecycle | undefined;
+  const nativeFetch = globalThis.fetch;
+  const fetchBoundary = options.homeTarget ? undefined : vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const endpoint = new URL(url);
+    if (options.gitWorktreeSeed && endpoint.hostname === '127.0.0.1'
+      && endpoint.port === String(seedTransferLifecycle?.getState().port)
+      && endpoint.pathname.startsWith('/machine-transfers/')) return await nativeFetch(input, init);
     if (!url.endsWith('/v1/features')) throw new Error(`Unexpected Home identity boundary: ${url}`);
     return new Response(JSON.stringify({ features: {}, capabilities: {
       serverIdentity: { serverIdentityId: managedHomeId },
@@ -104,14 +120,26 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   const lockDirectory = join(root, 'root-custody');
   await mkdir(sourcePath);
   await writeFile(join(sourcePath, 'payload.txt'), 'before quiesce');
+  if (options.gitWorktreeSeed) {
+    const [{ execFile }, { promisify }] = await Promise.all([import('node:child_process'), import('node:util')]);
+    const git = promisify(execFile);
+    // Git is the real native process boundary. All writes are confined to the
+    // fixture's newly created worktree; no repository/global identity changes.
+    await git('git', ['-C', sourcePath, 'init']);
+    await git('git', ['-C', sourcePath, 'add', 'payload.txt']);
+    await git('git', ['-C', sourcePath, '-c', 'user.name=Workspace fixture', '-c', 'user.email=workspace-fixture@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '-m', 'Source workspace fixture']);
+  }
   const sourceRef = { id: 'source-parent-ref', serverId, machineId: 'source-parent', rootPath: sourcePath, createdAtMs: 1 };
   const childRef = { id: 'actual-child-ref', serverId, machineId: 'source-child', rootPath: '/child/custom', createdAtMs: 1 };
   const childInstallationId = 'child-installation';
   const targetRef = { id: 'target-parent-ref', serverId,
-    machineId: options.separateTargetParent ? 'target-parent' : sourceRef.machineId, rootPath: targetPath, createdAtMs: 1 };
-  const targetChildRef = { id: 'target-child-ref', serverId, machineId: 'target-child', rootPath: '/target/custom', createdAtMs: 1 };
+    machineId: options.ordinaryTarget ? 'target-child' : options.separateTargetParent ? 'target-parent' : sourceRef.machineId,
+    rootPath: targetPath, createdAtMs: 1 };
+  const targetChildRef = options.ordinaryTarget ? targetRef
+    : { id: 'target-child-ref', serverId, machineId: 'target-child', rootPath: '/target/custom', createdAtMs: 1 };
   const targetChildInstallationId = 'target-child-installation';
-  const targetParentInstallationId = 'target-parent-installation';
+  const targetParentInstallationId = options.ordinaryTarget ? targetChildInstallationId : 'target-parent-installation';
   const projection: DevcontainerChildProjectionV1 = {
     relation: { managedMachineId: 'managed-source-child', managedMachineKind: 'devcontainer', parentMachineId: sourceRef.machineId },
     observation: { nativeResourceId: 'container-current', user: 'coder', workspaceFolder: childRef.rootPath,
@@ -141,7 +169,8 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     enrolledMachineId: targetChildRef.machineId,
   };
   const snapshot: ActiveProjectAccountRowsSnapshot = {
-    source: 'network', workspaceRefs: [sourceRef, childRef, targetRef, ...(options.separateTargetParent ? [targetChildRef] : [])], relationships: [],
+    source: 'network', workspaceRefs: [...new Map([sourceRef, childRef, targetRef,
+      ...(options.separateTargetParent ? [targetChildRef] : [])].map(ref => [ref.id, ref])).values()], relationships: [],
     graphRevision: 1, loadedAtMs: 1, organizations: [], rows: [], scopeKey: 'scope-1',
   };
   const handlers = new Map<string, (raw: unknown, context?: RpcHandlerContext) => unknown>();
@@ -158,7 +187,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     const id = url.slice(url.lastIndexOf('/') + 1);
     const currentProjection = id === childRef.machineId ? projection
-      : options.separateTargetParent && id === targetChildRef.machineId && !targetChildRetired ? targetProjection : null;
+      : !options.ordinaryTarget && options.separateTargetParent && id === targetChildRef.machineId && !targetChildRetired ? targetProjection : null;
     const installationId = id === sourceRef.machineId ? 'parent-installation'
       : options.separateTargetParent && id === targetRef.machineId ? targetParentInstallationId
       : id === targetChildRef.machineId ? targetChildInstallationId : childInstallationId;
@@ -225,6 +254,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     // initialization before stopping its runtimes or withdrawing its boundaries.
     await initializationSettled;
     try {
+      await seedTransferLifecycle?.stop();
       const results = await Promise.allSettled(productions.map(production => production.stop()));
       const failures: unknown[] = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (failures.length === 1) throw failures[0];
@@ -240,7 +270,12 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     }
   });
   try {
-  if (options.withScmRuntime) {
+  if (options.gitWorktreeSeed) {
+    const { createDirectTransferServerLifecycle } = await import('@/machines/transfer/directTransferServerLifecycle');
+    seedTransferLifecycle = createDirectTransferServerLifecycle({ bindHost: '127.0.0.1', bindPort: 0,
+      listenerClasses: ['loopback_http'] });
+  }
+  if (options.withScmRuntime || options.gitWorktreeSeed) {
     // Real seed materialization acquires the authoritative daemon lease. SCM's
     // canonical owner demands every declared backend and hosting provider, so
     // admit those exact public plugin occurrences, not just Git/Sapling.
@@ -339,11 +374,29 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       },
       launchLocalAgent: async () => ({ stream: new PassThrough(), stop: async () => undefined }),
     };
+    const { requestDirectPeerTransferToFile } = options.gitWorktreeSeed
+      ? await import('@/machines/transfer/directPeerTransport') : { requestDirectPeerTransferToFile: undefined };
+    async function openSeedTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
+    async function openSeedTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
+    async function openSeedTunnel(request: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
+      if (request.flow !== 'file_transfer') throw new Error('This seed fixture does not open a Mutagen tunnel');
+      expect(request).toMatchObject({ sourceMachineId: targetRef.machineId,
+        targetMachineId: sourceRef.machineId, flow: 'file_transfer' });
+      if (!seedTransferLifecycle) throw new Error('The source transfer lifecycle is unavailable');
+      return { localPort: await seedTransferLifecycle.ensureListening(), observedPath: 'direct', close: async () => undefined };
+    }
     const productionInput = { happyHomeDir: join(root, machineId),
       activeServerDir: join(root, machineId, 'servers', localProfileId), activeServerId: localProfileId, localMachineId: machineId,
       releaseChannel: 'publicdev' as const, credentials: machineCredentials,
       ...(localHomeTarget ? { homeTarget: localHomeTarget } : {}),
-      ...(options.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: options.callWorkspaceTargetPhase } : {}) };
+      ...(options.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: options.callWorkspaceTargetPhase } : {}),
+      ...(options.callWorkspaceSeedExport ? { callWorkspaceSeedExport: options.callWorkspaceSeedExport } : {}),
+      ...(requestDirectPeerTransferToFile ? {
+        requestDirectTransferPayloadFile: requestDirectPeerTransferToFile,
+        // Replace only native tunnel port selection. Publication, listener,
+        // on-demand blob authorization and file materialization remain real.
+        openMachineCarrierTunnel: openSeedTunnel,
+      } : {}) };
     const production = await runWithServerHttpBaseUrl(localHomeTarget.applicationUrl, async () => {
       if (options.projectRowsFromHttp) {
         options.onCompositionPhase?.(`Project row read for ${machineId}`);
@@ -356,9 +409,23 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     return production;
   }
   const parent = await compose(sourceRef.machineId);
+  const registerSeedExport = async (rpcHandlerManager: RpcHandlerRegistrar) => {
+    const lifecycle = seedTransferLifecycle;
+    if (!lifecycle) return;
+    const prepareSourceSeedExport = parent.workspaceSync.prepareSourceSeedExport;
+    if (!prepareSourceSeedExport) throw new Error('The source seed owner is unavailable');
+    const [{ registerMachineDirectTransferExportRpcHandlers }, { prepareWorkspaceSyncSeedExport }] = await Promise.all([
+      import('@/api/machine/rpcHandlers.directTransferExports'), import('@/machines/transfer/prepareWorkspaceSyncSeedExport'),
+    ]);
+    registerMachineDirectTransferExportRpcHandlers({ rpcHandlerManager, prepareExportSession: async request => {
+      if (request.t !== 'workspace_sync_seed_v1') throw new Error('This source fixture only publishes admitted workspace seeds');
+      return await prepareWorkspaceSyncSeedExport({ lifecycle, request, prepareSourceSeedExport });
+    } });
+  };
+  await registerSeedExport(registrar);
   registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: registrar, service: parent.workspaceSync });
   const child = await compose(childRef.machineId);
-  const targetParent = options.separateTargetParent ? await compose(targetRef.machineId) : undefined;
+  const targetParent = options.separateTargetParent && !options.ordinaryTarget ? await compose(targetRef.machineId) : undefined;
   const targetChild = options.withTargetChildRuntime ? await compose(targetChildRef.machineId) : undefined;
   if (targetParent) registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
     targetParentHandlers.set(method, (raw, context) => handler(raw as Parameters<typeof handler>[0], context));
@@ -391,7 +458,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
     targetParent, targetChild, targetParentRpcHandlers: targetParentHandlers, targetChildRef, targetChildInstallationId, targetProjection, managedTargetChild,
     credentials, targetCredentials, serverId, parentServerId, managedHomeId, controller: managedChild.controller,
-    projectRowsFromHttp: options.projectRowsFromHttp === true,
+    projectRowsFromHttp: options.projectRowsFromHttp === true, registerSeedExport,
     // External enrollment/socket/native boundaries now report the replacement
     // gap; existing parent custody is deliberately not modified by this fact.
     retireTargetChild: () => { targetChildRetired = true; delete managedTargetChild.enrolledMachineId; },
@@ -423,10 +490,12 @@ export async function composeInstalledBindTargetTransport(
   ]);
   const { API_TOKEN_FULL_GRANT_V1 } = await import('@happier-dev/protocol/auth/apiTokenGrant');
   const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
-  if (!fixture.targetParent || !fixture.targetChild) throw new Error('Installed target transport requires real D and P2 runtimes');
+  if (!fixture.targetChild || !fixture.targetParent && fixture.targetRef.machineId !== fixture.targetChildRef.machineId) {
+    throw new Error('Installed target transport requires each actual target runtime');
+  }
   const targetCustodian = readAccountIdFromToken(fixture.targetCredentials.token);
   if (!targetCustodian) throw new Error('Installed target transport requires its own custodian credentials');
-  const ids = [fixture.sourceRef.machineId, fixture.targetChildRef.machineId, fixture.targetRef.machineId] as const;
+  const ids = [...new Set([fixture.sourceRef.machineId, fixture.targetChildRef.machineId, fixture.targetRef.machineId])];
   const installed = new Map(ids.map(machineId => {
     const existing = options.installedIdentities?.get(machineId);
     if (existing) return [machineId, existing] as const;
@@ -465,15 +534,19 @@ export async function composeInstalledBindTargetTransport(
   } });
   const observed = { preflightEndpoint: undefined as import('@happier-dev/protocol/machines/identity/installationIdentity').MachineInstallationPublicIdentityV1 | undefined,
     prepared: false, releaseDestination: undefined as string | undefined, rootRetired: false,
+    releaseReasons: [] as string[],
+    phaseOutcomes: [] as Array<{ machineId: string; phase: string; result?: unknown; error?: string; errorCode?: string }>,
     rpcDiagnostics: [] as Array<{ machineId: string; message: string; method?: string; error?: string }> };
+  let preparedRequestTargetRefId: string | undefined;
   const homeResponse = async (url: string, raw: unknown) => {
     if (!url.endsWith('/admission/verify')) return undefined;
     if (!raw || typeof raw !== 'object' || !('proof' in raw) || !('context' in raw) || !('method' in raw)) throw new Error('Missing installed Home proof');
     const signerMachineId = new URL(url).pathname.split('/')[3]!;
     const signer = installedAt(signerMachineId);
     const accountId = signerMachineId === fixture.sourceRef.machineId ? 'owner' : targetCustodian;
-    const b = 'workspaceSyncSourceWriterTargetRouting' in raw
-      ? socketSchemas.WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(raw.workspaceSyncSourceWriterTargetRouting) : undefined;
+    const seed = 'workspaceSyncSeedRouting' in raw ? socketSchemas.WorkspaceSyncSeedRoutingV1Schema.parse(raw.workspaceSyncSeedRouting) : undefined;
+    const b = seed?.sourceWriterTarget ?? ('workspaceSyncSourceWriterTargetRouting' in raw
+      ? socketSchemas.WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(raw.workspaceSyncSourceWriterTargetRouting) : undefined);
     if (b?.target.phase === 'release' && signerMachineId === fixture.sourceRef.machineId) {
       throw new Error('Rootless cleanup has no source key-discovery purpose');
     }
@@ -495,7 +568,7 @@ export async function composeInstalledBindTargetTransport(
       ? socketSchemas.WorkspaceSyncSourceExecutionV1Schema.parse(raw.workspaceSyncSourceExecution) : undefined;
     const purpose = { context: admission, method: String(raw.method), ...(original ? { callerInputAuthorization: original } : {}),
       ...(sourceExecution ? { workspaceSyncSourceExecution: sourceExecution } : {}),
-      ...(b ? { workspaceSyncSourceWriterTargetRouting: b } : {}), ...(source ? { workspaceSyncSourceRouting: source } : {}),
+      ...(seed ? { workspaceSyncSeedRouting: seed } : b ? { workspaceSyncSourceWriterTargetRouting: b } : {}), ...(source ? { workspaceSyncSourceRouting: source } : {}),
       ...(target ? { workspaceSyncTargetRouting: target } : {}) };
     expect(identity.verifyMachineInstallationProof({ publicKey: signer.publicKey,
       proof: identity.MachineInstallationProofV1Schema.parse(raw.proof), payload: { version: 1,
@@ -522,13 +595,17 @@ export async function composeInstalledBindTargetTransport(
       authorizeRequest: request => authorization.authorizeMachineRpcRequest(request, { machineId,
         resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => own.installationId,
         verifyMachineAdmission: admitted => authorization.verifyMachineRpcAdmissionCurrent({ ...admitted,
-          ...(admitted.workspaceSyncTargetRouting ? { workspaceSyncTargetReceiver: { machineId, installationId: own.installationId } }
+          ...(admitted.workspaceSyncSeedRouting ? { workspaceSyncSeedReceiver: { machineId, installationId: own.installationId, accountId } }
+            : admitted.workspaceSyncTargetRouting ? { workspaceSyncTargetReceiver: { machineId, installationId: own.installationId } }
             : { workspaceSyncSourceWriterTargetReceiver: { machineId, installationId: own.installationId, accountId } }),
           privateKey: own.privateKey, daemonToken: credentials.token, serverHttpBaseUrl: 'https://bind-child-home.invalid' }) }) });
     registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: manager, service: machineId === fixture.sourceRef.machineId
       ? fixture.parent.workspaceSync : machineId === fixture.targetChildRef.machineId ? fixture.targetChild!.workspaceSync : fixture.targetParent!.workspaceSync });
     return [machineId, manager];
   }));
+  const sourceManager = managers.get(fixture.sourceRef.machineId);
+  if (!sourceManager) throw new Error('The installed source receiver is unavailable');
+  await fixture.registerSeedExport(sourceManager);
   const clients = new Map(ids.map(machineId => {
     const credentials = machineId === fixture.sourceRef.machineId ? fixture.credentials : fixture.targetCredentials;
     const client = runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
@@ -537,8 +614,9 @@ export async function composeInstalledBindTargetTransport(
     Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, raw) => {
       if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string'
         || !('requestId' in raw) || typeof raw.requestId !== 'string' || !('params' in raw)
-        || !('workspaceSyncSourceWriterTargetRouting' in raw)) throw new Error('Missing installed TARGET carrier');
-      const b = socketSchemas.WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(raw.workspaceSyncSourceWriterTargetRouting);
+        || !('workspaceSyncSourceWriterTargetRouting' in raw) && !('workspaceSyncSeedRouting' in raw)) throw new Error('Missing installed TARGET carrier');
+      const seed = 'workspaceSyncSeedRouting' in raw ? socketSchemas.WorkspaceSyncSeedRoutingV1Schema.parse(raw.workspaceSyncSeedRouting) : undefined;
+      const b = seed?.sourceWriterTarget ?? socketSchemas.WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse('workspaceSyncSourceWriterTargetRouting' in raw ? raw.workspaceSyncSourceWriterTargetRouting : undefined);
       if (b.target.phase !== 'release') {
         if (!('externalActionExecution' in raw)) throw new Error('Effectful target transport did not sign its original Root');
         const signed = actions.ExternalActionMachineRpcExecutionV1Schema.parse(raw.externalActionExecution);
@@ -546,7 +624,8 @@ export async function composeInstalledBindTargetTransport(
         expect(signed).toMatchObject({ authorization: root, installationId: installedAt(machineId).installationId });
         expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: root.token, effectActionId: signed.effectActionId,
           target: signed.target, installationId: signed.installationId, event: socketSchemas.SOCKET_RPC_EVENTS.CALL,
-          method: raw.method, requestId: raw.requestId, params: raw.params, workspaceSyncSourceWriterTargetRouting: b,
+          method: raw.method, requestId: raw.requestId, params: raw.params,
+          ...(seed ? { workspaceSyncSeedRouting: seed } : { workspaceSyncSourceWriterTargetRouting: b }),
           publicKey: new Uint8Array(Buffer.from(installedAt(machineId).publicKey, 'base64url')),
           signature: signed.machineSignature })).toBe(true);
       } else expect(raw).not.toHaveProperty('externalActionExecution');
@@ -557,7 +636,7 @@ export async function composeInstalledBindTargetTransport(
         throw new Error('Cleanup contacted retired chosen target authority');
       }
       const release = b.target.phase === 'release';
-      const admission = release ? { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+      const admission = seed ? sourceRouting.sourceContext!.machineAdmission : release ? { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
         installationId: fixture.controller.installationId, role: 'manage' as const, encryptionMode: 'plain' as const } : targetAdmission;
       const incoming = { ...raw, machineAdmission: admission, callerAuthority: release ? 'present_user' as const : sourceRouting.sourceContext!.callerAuthority,
         ...(!release ? { callerInputAuthorization: root, callerInputConstraints: sourceRouting.sourceContext!.callerInputConstraints } : {}) };
@@ -596,11 +675,26 @@ export async function composeInstalledBindTargetTransport(
     return [machineId, client];
   }));
   const call = async (descriptor: import('@/workspaces/sync/workspaceSyncTargetAuthority').WorkspaceSyncTargetPhaseDescriptor, context: RpcHandlerContext) => {
+    if (descriptor.routing.phase === 'prepare') {
+      const { WorkspaceSyncTargetBootstrapPrepareV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
+      const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(descriptor.request);
+      expect(request.bootstrapOperationId).toBe(options.operationId);
+      if (preparedRequestTargetRefId) expect(request.targetWorkspaceRefId).toBe(preparedRequestTargetRefId);
+      preparedRequestTargetRefId = request.targetWorkspaceRefId;
+    }
     if (descriptor.routing.phase === 'release') {
       const { WorkspaceSyncTargetBootstrapReleaseV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
-      expect(WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(descriptor.request)).toMatchObject({
-        bootstrapOperationId: options.operationId, targetWorkspaceRefId: fixture.targetChildRef.id,
-        reason: options.releaseReason ?? 'abort' });
+      const request = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(descriptor.request);
+      expect(request).toMatchObject({
+        // Project preflight can qualify P2's existing row before prepare. The
+        // cleanup locator must retain the exact request definition, whether it
+        // originally named logical D or that already-qualified physical row.
+        bootstrapOperationId: options.operationId, targetWorkspaceRefId: preparedRequestTargetRefId ?? fixture.targetChildRef.id });
+      // A failed preparation must reach abort cleanup rather than be masked by
+      // the successful-copy fixture's expected commit reason. Success assertions
+      // below the public materialization result still require committed cleanup.
+      if (request.reason !== 'abort') expect(request.reason).toBe(options.releaseReason ?? 'abort');
+      observed.releaseReasons.push(request.reason);
       expect(descriptor.machineId).toBe(fixture.targetRef.machineId);
       expect(descriptor.signal?.aborted).not.toBe(true);
       expect(context.callerInputAuthorization).toBeUndefined();
@@ -615,7 +709,14 @@ export async function composeInstalledBindTargetTransport(
       result = await client.callWorkspaceSyncTargetPhase({ ...descriptor,
         credentials: machineId === fixture.sourceRef.machineId ? fixture.credentials : fixture.targetCredentials,
         context: dispatch.buildActionExecutorContextForRpc({ ...context, serverId: fixture.serverId }) });
+      // Observe only the canonical caller's decoded result. Do not decrypt the
+      // network acknowledgement through a second codec or record authority bytes.
+      observed.phaseOutcomes.push({ machineId, phase: descriptor.routing.phase, result });
     } catch (error) {
+      observed.phaseOutcomes.push({ machineId, phase: descriptor.routing.phase,
+        ...(error instanceof Error ? { error: error.message } : {}),
+        ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? { errorCode: error.code } : {}) });
       if (error instanceof Error) error.message += `; installed RPC diagnostics: ${JSON.stringify(observed.rpcDiagnostics)}`;
       throw error;
     }
@@ -632,7 +733,35 @@ export async function composeInstalledBindTargetTransport(
       workspaceSyncSourceRouting: sourceRouting, callerInputAuthorization: root, workspaceSyncSourceReceiver: fixture.controller,
       privateKey: installedAt(fixture.sourceRef.machineId).privateKey, daemonToken: fixture.credentials.token,
       serverHttpBaseUrl: 'https://bind-child-home.invalid' }) };
-  return { call, homeResponse, sourceContext, sourceRouting, observed,
+  return { call, callSeed: async (descriptor: Readonly<{ machineId: string;
+    request: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncSeedExportPrepareV1;
+    signal?: AbortSignal }>, context: RpcHandlerContext) => {
+      const machineId = fixture.targetRef.machineId;
+      const client = clients.get(machineId);
+      if (!client) throw new Error('The installed physical target seed sender is unavailable');
+      identityBoundary.mockReturnValue(installedAt(machineId));
+      let result: unknown;
+      try {
+        result = await client.callWorkspaceSyncSeedExport({ ...descriptor, credentials: fixture.targetCredentials,
+          context: dispatch.buildActionExecutorContextForRpc({ ...context, serverId: fixture.serverId }) });
+      } catch (error) {
+        observed.phaseOutcomes.push({ machineId, phase: 'seed',
+          ...(error instanceof Error ? { error: error.message } : {}),
+          ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? { errorCode: error.code } : {}) });
+        throw error;
+      }
+      // Keep finite phase diagnostics without recording transfer authorization
+      // tokens, the original Root, or encrypted request/reply material.
+      observed.phaseOutcomes.push({ machineId, phase: 'seed', ...(result && typeof result === 'object' ? {
+        result: {
+          ...('success' in result && typeof result.success === 'boolean' ? { success: result.success } : {}),
+          ...('error' in result && typeof result.error === 'string' ? { error: result.error } : {}),
+          ...('code' in result && typeof result.code === 'string' ? { code: result.code } : {}),
+        },
+      } : {}) });
+      return result;
+    }, homeResponse, sourceContext, sourceRouting, observed,
     withInstalledMachine: async <T>(machineId: string, run: () => Promise<T>): Promise<T> => {
       const previous = installationStore.readInstallationIdentityIfExistsSync();
       identityBoundary.mockReturnValue(installedAt(machineId));
