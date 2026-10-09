@@ -44,10 +44,9 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     const { onChange } = props;
     const router = useRouter();
     const settings = useSettingsSelector((settings) => ({
-        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
         connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
     }));
 
     /**
@@ -106,14 +105,13 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
         connectedAccounts: props.connectedAccounts,
         agentOptionState,
         settings: {
-            connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey ?? {},
             connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId ?? {},
-            ...(settings.connectedAccountPurposeBindingsV1 === undefined
-                ? {}
-                : { connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1 }),
             ...(settings.connectedServicesDefaultAuthByAgentIdV1 === undefined
                 ? {}
                 : { connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1 }),
+            ...(settings.connectedServicesAdditionalDefaultAuthByAgentIdV1 === undefined
+                ? {}
+                : { connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1 }),
         },
         targetServerId: serverId,
         // Choosing native for every service is an authored "use no connected

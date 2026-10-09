@@ -8,7 +8,7 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
-export type ConnectedServicesAuthActionChipSource = 'native' | 'connected' | 'mixed';
+export type ConnectedServicesAuthActionChipSource = 'native' | 'connected' | 'mixed' | 'unknown';
 
 export function createConnectedServicesAuthActionChip(params: Readonly<{
     label: string;
