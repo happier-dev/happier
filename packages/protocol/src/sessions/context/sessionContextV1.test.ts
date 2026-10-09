@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import { buildSessionInstructionsContextIntentV1 } from '../../actions/sessionStateFieldActions.js';
 import { admitSessionContextIntentV1, readSessionMemoryEnabledV1, SessionContextIntentV1Schema, writeSessionContextIntentV1ToMetadata } from './sessionContextV1.js';
 
 describe('Session context field owner', () => {
+  it('requires a PromptDoc for reserved Session Instructions while admitting ordinary memory context', async () => {
+    const intent = buildSessionInstructionsContextIntentV1({ kind: 'doc', artifactId: 'selected', serverId: 'home-2' });
+    const readMemoryHeader = async () => ({ header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' } });
+    await expect(admitSessionContextIntentV1(intent, readMemoryHeader))
+      .rejects.toMatchObject({ code: 'attachment_unavailable', reason: 'wrong_kind',
+        ref: { kind: 'doc', artifactId: 'selected', serverId: 'home-2' } });
+    const memoryIntent = SessionContextIntentV1Schema.parse({ kind: 'attach', entry: {
+      id: 'session.memory', ref: { kind: 'doc', artifactId: 'selected', serverId: 'home-2' },
+    } });
+    await expect(admitSessionContextIntentV1(memoryIntent, readMemoryHeader)).resolves.toEqual(memoryIntent);
+    await expect(admitSessionContextIntentV1(intent, async () => ({ header: {
+      v: 1, kind: 'prompt_doc.v2', title: 'Instructions',
+    } }))).resolves.toEqual(intent);
+  });
+
   it('admits attachments from the current qualified header and rejects a dashboard before mutation', async () => {
     const intent = SessionContextIntentV1Schema.parse({ kind: 'attach', entry: {
       id: 'context', ref: { kind: 'bundle', artifactId: 'dashboard', serverId: 'home-2' },

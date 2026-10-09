@@ -65,8 +65,16 @@ export type PromptStackSystemAppendInputV1 = Readonly<{
 }>;
 
 /** Admission and preparation share the same document-kind authority. */
-export function assertPromptStackArtifactHeaderV1(ref: PromptArtifactRefV1, header: Readonly<Record<string, unknown>> | null): void {
+export function assertPromptStackArtifactHeaderV1(ref: PromptArtifactRefV1, header: Readonly<Record<string, unknown>> | null,
+  entry?: Readonly<{ layer: PromptStackLayerV1; entryId: string; memoryEnabled?: boolean }>,
+): void {
   const kind = header?.kind;
+  if (entry?.layer === 'session' && entry.entryId === 'session.instructions' && kind !== 'prompt_doc.v2') {
+    throw new PromptStackPreparationError('wrong_kind', ref);
+  }
+  // Memory-off preparation intentionally checks only the kind before skipping
+  // ordinary memory bodies; reserved Instructions must never take that path.
+  if (entry?.memoryEnabled === false && kind === 'memory_doc.v1') return;
   if (ref.kind === 'doc') {
     if (kind !== 'prompt_doc.v2' && kind !== 'memory_doc.v1') throw new PromptStackPreparationError('wrong_kind', ref);
     const schema = kind === 'memory_doc.v1' ? MemoryDocArtifactHeaderV1StoredSchema : createStoredReadSchema(PromptDocArtifactHeaderV1Schema);
@@ -136,7 +144,10 @@ export async function resolvePromptStackSystemAppendBlocksV1(args: PromptStackSy
           admittedEntries.push({ ...preparing, outcome: 'unavailable', reason: 'not_found', revision: null });
           continue;
         }
-        if (header.header?.kind === 'memory_doc.v1') continue;
+        if (header.header?.kind === 'memory_doc.v1') {
+          assertPromptStackArtifactHeaderV1(ref, header.header, { layer, entryId: entry.id, memoryEnabled: false });
+          continue;
+        }
       }
       let pending = reads.get(key);
       if (!pending) { pending = read(ref, () => args.readArtifact(ref)); reads.set(key, pending); }
@@ -147,7 +158,7 @@ export async function resolvePromptStackSystemAppendBlocksV1(args: PromptStackSy
         continue;
       }
       observedRevision = { ...artifact.revision };
-      assertPromptStackArtifactHeaderV1(ref, artifact.header);
+      assertPromptStackArtifactHeaderV1(ref, artifact.header, { layer, entryId: entry.id });
       const bodyJson = parseJson(artifact.body);
       const fail = (reason: PromptStackPreparationReason): never => { throw new PromptStackPreparationError(reason, ref); };
       let text: string;

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { buildSessionInstructionsContextIntentV1 } from '../../actions/sessionStateFieldActions.js';
+import { writeSessionContextIntentV1ToMetadata } from '../../sessions/context/sessionContextV1.js';
 
 import { resolvePromptStackSystemAppendBlocksV1 } from './resolvePromptStackSystemAppendBlocksV1.js';
 
@@ -20,6 +22,39 @@ describe('resolvePromptStackSystemAppendBlocksV1', () => {
     id, header: { v: 1, kind: 'prompt_doc.v2', title: id },
     body: JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 1 }),
     revision: { headerVersion: 1, bodyVersion: 1 },
+  });
+
+  it.each([true, false])('requires repair for retained Session Instructions pointing at memory when memoryEnabled=%s', async (memoryEnabled) => {
+    const scope = { serverId: 'home', accountId: 'account', sessionId: 'session' };
+    const metadata = writeSessionContextIntentV1ToMetadata({ work: {
+      memoryEnabled, promptStack: [entry('session.memory', 'selected')],
+    } }, buildSessionInstructionsContextIntentV1({ kind: 'doc', artifactId: 'selected' }));
+    const memory = { id: 'selected', header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },
+      body: JSON.stringify({ v: 1, facts: [{ id: 'fact', text: 'Remembered preference', createdAtMs: 1,
+        sourceSessionRef: null }], archive: [] }), revision: { headerVersion: 3, bodyVersion: 7 } };
+    await expect(resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding', scope, sessionEntries: metadata.work.promptStack, memoryEnabled,
+      readArtifactHeader: async () => ({ header: memory.header }),
+      readArtifact: async () => memory,
+    })).rejects.toMatchObject({ code: 'attachment_unavailable', reason: 'wrong_kind', admittedEntries: expect.arrayContaining([
+      { entryId: 'session.instructions', layer: 'session', scope,
+        ref: { kind: 'doc', artifactId: 'selected', serverId: 'home' }, outcome: 'unavailable', reason: 'wrong_kind',
+        revision: memoryEnabled ? memory.revision : null },
+    ]) });
+
+    const repaired = writeSessionContextIntentV1ToMetadata(metadata,
+      buildSessionInstructionsContextIntentV1({ kind: 'doc', artifactId: 'instructions' }));
+    const bodyReads: string[] = [];
+    const result = await resolvePromptStackSystemAppendBlocksV1({
+      surface: 'coding', scope, accountEntries: [entry('session.instructions', 'selected')],
+      sessionEntries: repaired.work.promptStack, memoryEnabled,
+      readArtifactHeader: async ref => ({ header: ref.artifactId === 'selected' ? memory.header : artifact('instructions').header }),
+      readArtifact: async ref => { bodyReads.push(ref.artifactId); return ref.artifactId === 'selected'
+        ? memory : artifact('instructions', 'Ordinary instructions'); },
+    });
+    expect(result.blocks.at(-1)).toBe('Ordinary instructions');
+    expect(result.blocks).toHaveLength(memoryEnabled ? 3 : 1);
+    expect(bodyReads).toEqual(memoryEnabled ? ['selected', 'instructions'] : ['instructions']);
   });
 
   it('composes all four layers even when the legacy Account stack is absent', async () => {

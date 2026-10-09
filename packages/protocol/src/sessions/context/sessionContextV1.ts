@@ -35,7 +35,7 @@ export async function admitSessionContextIntentV1(input: unknown,
   if (intent.kind === 'attach' || intent.kind === 'set') {
     const artifact = await readArtifactHeader(intent.entry.ref);
     if (!artifact) throw new PromptStackPreparationError('not_found', intent.entry.ref);
-    assertPromptStackArtifactHeaderV1(intent.entry.ref, artifact.header);
+    assertPromptStackArtifactHeaderV1(intent.entry.ref, artifact.header, { layer: 'session', entryId: intent.entry.id });
   }
   return intent;
 }
