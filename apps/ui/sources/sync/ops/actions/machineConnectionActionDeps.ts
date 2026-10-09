@@ -5,12 +5,16 @@ import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredential
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
-import { machineTerminalEnsure, machineTerminalList } from '@/sync/ops/machineTerminal';
-import { captureLazyActionAccountContext } from './actionAccountContext';
+import { machineTerminalEnsure, machineTerminalList, machineTerminalStreamReadBytes, machineTerminalStreamSendInput, machineTerminalClose, machineTerminalRestart, trackPendingMachineTerminalCreation } from '@/sync/ops/machineTerminal';
+import { MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineTerminal';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
+import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { canUsePrivateProjectAccountAction } from '@/sync/api/projects/projectAccountRowsClient';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { createMachineAddSshTaskAction } from '@/components/machines/add/machineAddSshTaskAction';
 
-export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalOpen' | 'machineTerminalList' | 'machineAddSshTaskAction'> {
+export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction'> {
     return {
         machineAddSshTaskAction: createMachineAddSshTaskAction(options.runner),
         homeConnect: async (input, context) => {
@@ -64,9 +68,52 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 return { ok: false, errorCode, error: errorCode };
             } finally { if (!lifecycleOwnsAccount) account.dispose(); }
         },
-        machineTerminalOpen: async ({ machineId, serverId, signal, ...request }) =>
-            await machineTerminalEnsure(machineId, request, { serverId, signal }),
-        machineTerminalList: async ({ machineId, serverId, signal }) =>
-            await machineTerminalList(machineId, { serverId, signal }),
+        machineTerminalAction: async ({ actionId, input, context, signal }) => {
+            if ((actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart')
+                && options.account && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+                && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+                const account = options.account;
+                const request = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                if (!areServerProfileIdentifiersEquivalent(account.serverId, request.serverId)
+                    || context.surface !== 'ui' || context.authority !== 'present_user'
+                    || !context.actionRequestId || !canUsePrivateProjectAccountAction(account, context)) {
+                    return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+                }
+                const requestId = context.actionRequestId;
+                const execution = await trackPendingMachineTerminalCreation(request.machineId, request.terminalKey,
+                    () => executeOriginalAccountMachineAction({ account, actionId,
+                        input: { ...request, serverId: account.serverId }, machineId: request.machineId,
+                        requestId, foreignTargetOnly: true, ...(signal ? { signal } : {}) }),
+                    { serverId: account.serverId, accountId: account.accountId, signal });
+                account.assertResultCurrent(getActionSpec(actionId).sideEffectClass);
+                if (execution) return execution.ok ? execution.result : execution;
+            }
+            switch (actionId) {
+                case 'machines.terminal.open': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalEnsure(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                }
+                case 'machines.terminal.list': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalList(machineId, { ...request, serverId, accountId: context.runtimeAccountId, signal });
+                }
+                case 'machines.terminal.read': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalStreamReadBytes(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                }
+                case 'machines.terminal.write': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalStreamSendInput(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                }
+                case 'machines.terminal.close': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalClose(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                }
+                case 'machines.terminal.restart': {
+                    const { machineId, serverId, ...request } = MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+                    return await machineTerminalRestart(machineId, request, { serverId, accountId: context.runtimeAccountId, signal });
+                }
+            }
+        },
     };
 }

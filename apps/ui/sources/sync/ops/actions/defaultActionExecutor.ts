@@ -137,6 +137,8 @@ import { createNotificationConfigurationAction } from './notificationConfigurati
 import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 import { executeExternalSessionBrowseAction } from './externalSessionBrowseAction';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
+import { createUiUsageActionPorts } from './usageActionDeps';
+import { createUiUsageSourceActionPort } from './usageSourceActionDeps';
 import { createUiScmAction } from './scmActionDeps';
 import { createUiFilesystemAction, resolveUiFilesystemTransferCustodyFailure } from './filesystemActionDeps';
 import { createUiProjectDefinitionAction } from './projectDefinitionActionDeps';
@@ -516,6 +518,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   sessionAccessAction?: NonNullable<ActionExecutorDeps['sessionAccessAction']>;
   machineAccessAction?: NonNullable<ActionExecutorDeps['machineAccessAction']>;
   machineWorkSummaryGet?: NonNullable<ActionExecutorDeps['machineWorkSummaryGet']>;
+  usageSourceDismiss?: Parameters<typeof createUiUsageSourceActionPort>[1];
   projectWorkerAction?: NonNullable<ActionExecutorDeps['projectWorkerAction']>;
   /** Local keyholding-host delivery; never enters Action input, approval or result. */
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
@@ -532,7 +535,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   /** A mounted WorkBoard binds current UI membership and its existing Account save queue. */
   workBoardArtifacts?: NonNullable<ActionExecutorDeps['workBoardArtifacts']>;
   /** Host-page defaults remain outside Action input and personal persisted copies. */
-  resolveWidgetAreaPreset?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
+  resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
   }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }): ReturnType<typeof createActionExecutor> & Readonly<{
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
@@ -689,6 +692,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return await invokeScopeAction(actionId, input);
     },
     connectedServiceAction: accountContext ? createUiConnectedServiceAction(accountContext) : undefined,
+    usageActions: accountContext ? createUiUsageActionPorts(accountContext) : undefined,
+    usageSourceAction: accountContext ? createUiUsageSourceActionPort(accountContext, opts?.usageSourceDismiss) : undefined,
     scmActionExecute: createUiScmAction(accountContext),
     appShellAction: createAppShellAction(accountContext),
     notificationConfigurationAction: createNotificationConfigurationAction(accountContext ?? null),
@@ -2646,7 +2651,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   };
 
   const companionDeps = accountContext ? createWidgetCompanionActionDepsV1(accountContext) : {};
-  const areaDeps = createWidgetAreaActionDepsV1(accountContext, opts?.resolveWidgetAreaPreset, opts?.widgetAreaIsCurrent);
+  const areaDeps = createWidgetAreaActionDepsV1(accountContext, opts?.resolveWidgetAreaPresets, opts?.widgetAreaIsCurrent);
   const widgetSurfaceDeps = { ...deps, ...areaDeps, widgetSurfaceActions: { ...deps.widgetSurfaceActions, ...companionDeps.widgetSurfaceActions, ...areaDeps.widgetSurfaceActions } };
   const widgetDefinitionDeps = { ...widgetSurfaceDeps, ...createWidgetDefinitionActionDepsV1(accountContext, widgetSurfaceDeps) };
   const widgetHostDeps = { ...widgetDefinitionDeps, ...createWidgetCatalogActionDepsV1(accountContext, widgetDefinitionDeps) };

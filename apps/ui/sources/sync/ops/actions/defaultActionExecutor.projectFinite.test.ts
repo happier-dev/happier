@@ -22,6 +22,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { createProjectManifestActionClient } from '@/components/projects/projectSetup/projectManifestActionClient';
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -442,18 +443,34 @@ describe('Project finite delivery through the default UI Action host', () => {
                 id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath,
                 projectKey: project.projectId, createdAtMs: 1,
             }] }));
+            const held = ProjectCommandActionOutputV1Schema.parse({ operation: {
+                version: 1, operationId: 'remembered-setup', actionId: 'projects.prepare',
+                scope: { accountId: 'requester', machineId: 'source' }, state: 'accepted', revision: 1, createdAt: 1,
+                title: 'Prepare', cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'setup',
+                    serverId, machineId: 'source', workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace },
+                setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest,
+                    reviewedEffect: { commands: ['setup'] }, consentScope },
+            } }).operation;
+            let issued = held;
+            const operationReadMethod = `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`;
+            homes.answer(requesterHomeId, '/v1/actions/projects.prepare', { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                issued = { ...held, requestId: request.envelope.requestId };
+                rpcResponses.set(operationReadMethod, ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: issued }));
+                return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.prepare',
+                    requestId: request.envelope.requestId, execution: { ok: true, result: { operation: issued } },
+                }) };
+            } });
             homes.answer(requesterHomeId, `${PROJECT_TRUST_ROUTE_V1}/read`, { body: { status: 'absent' } });
             homes.answer(requesterHomeId, `${PROJECT_TRUST_ROUTE_V1}/mutate`, { select: body => {
                 expect(ProjectTrustMutationRequestV1Schema.parse(body)).toEqual({ project, expectedRevision: 'absent',
                     content: { t: 'plain', v: { project, reviewedEffectDigest, approvedAtMs: expect.any(Number) } },
                 });
+                const { setupReview: _review, ...resumed } = issued;
+                rpcResponses.set(operationReadMethod, ActionOperationGetV1ResponseSchema.parse({ kind: 'found',
+                    operation: { ...resumed, revision: 2 },
+                }));
                 return { body: { status: 'updated', revision: 1, cursor: 1 } };
-            } });
-            response = ProjectCommandActionOutputV1Schema.parse({ operation: {
-                version: 1, operationId: 'remembered-setup', actionId: 'projects.prepare',
-                scope: { accountId: 'requester', machineId: 'source' }, state: 'accepted', revision: 1, createdAt: 1,
-                title: 'Prepare', cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'setup',
-                    serverId, machineId: 'source', workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace },
             } });
         }
         const onChanged = vi.fn();
@@ -464,14 +481,20 @@ describe('Project finite delivery through the default UI Action host', () => {
         });
         try {
             await vi.waitFor(() => expect(controller.getCurrent().ready).toBe(true));
+            if (consentScope === 'untilChanged') {
+                await act(async () => { await controller.getCurrent().prepare(); });
+                await vi.waitFor(() => expect(controller.getCurrent().consent?.operation?.snapshot)
+                    .toMatchObject({ operationId: 'remembered-setup', setupReview: { reviewedEffectDigest } }));
+                onChanged.mockClear();
+            }
             await act(async () => {
                 await controller.getCurrent().prepare(reviewedEffectDigest, consentScope);
             });
             expect.soft(ownFiniteRelayRequests('projects.prepare')).toEqual([expect.objectContaining({ serverUrl, token: requesterToken,
                 input: expect.objectContaining({ target: { kind: 'machine', machineId: 'source' }, input: { workspace, phase: 'setup',
-                    expectedEffectDigest: reviewedEffectDigest, consentScope },
+                    ...(consentScope === 'thisTime' ? { expectedEffectDigest: reviewedEffectDigest, consentScope } : {}) },
             }) })]);
-            expect(calls).toEqual([]);
+            if (consentScope === 'thisTime') expect(calls).toEqual([]);
             expect(controller.getCurrent().failure, JSON.stringify(controller.getCurrent().failure)).toBeNull();
             expect(controller.getCurrent().pendingKey).toBeNull();
             if (consentScope === 'thisTime') {
@@ -483,12 +506,20 @@ describe('Project finite delivery through the default UI Action host', () => {
                 expect(controller.getCurrent().consent).toBeNull();
                 expect(onChanged).toHaveBeenCalledOnce();
                 expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toContainEqual({ serverId,
-                    snapshot: expect.objectContaining({ operationId: 'remembered-setup', state: 'accepted', scope: { accountId: 'requester', machineId: 'source' } }),
+                    snapshot: expect.objectContaining({ operationId: 'remembered-setup', state: 'accepted', revision: 2,
+                        requestId: ownFiniteRelayRequests('projects.prepare')[0]?.input.requestId,
+                        scope: { accountId: 'requester', machineId: 'source' } }),
                 });
+                expect(controller.getCurrent().setupOperation?.snapshot.setupReview).toBeUndefined();
+                expect(calls).toEqual([expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
+                    method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup' },
+                }) }), expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
+                    method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup' },
+                }) })]);
                 const mutations = homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`);
                 expect(mutations).toEqual([expect.objectContaining({ serverUrl, token: requesterToken })]);
                 expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/read`)).toEqual([expect.objectContaining({ serverUrl, token: requesterToken, input: { project } })]);
-                expect(homes.requests.indexOf(mutations[0]!)).toBeLessThan(homes.requests.indexOf(homes.requestsFor('/v1/actions/projects.prepare')[0]!));
+                expect(homes.requests.indexOf(homes.requestsFor('/v1/actions/projects.prepare')[0]!)).toBeLessThan(homes.requests.indexOf(mutations[0]!));
             }
         } finally {
             await controller.unmount();

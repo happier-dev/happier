@@ -121,9 +121,12 @@ describe('managed Machine rebuild origination', () => {
         expect(effects).toHaveLength(accepted ? 1 : 0);
     });
 
-    it('resolves the specialized retained row id to its controller without changing the reviewed rebuild input', async ({ onTestFinished }) => {
-        const homeId = 'srv_rebuild_origination_home';
-        const serverUrl = 'https://rebuild-origination.example.test';
+    it.each([{ actionId: 'machines.managed.rebuild', revoked: false }, { actionId: 'machines.environment.apply', revoked: false },
+        { actionId: 'machines.environment.apply', revoked: true }] as const)(
+        'routes only the current reviewed exact machine ($actionId, revoked=$revoked)', async ({ actionId, revoked }) => {
+        const applyingEnvironment = actionId === 'machines.environment.apply';
+        const homeId = applyingEnvironment ? `srv_environment_origination_home_${revoked}` : 'srv_rebuild_origination_home';
+        const serverUrl = applyingEnvironment ? `https://environment-origination-${revoked}.example.test` : 'https://rebuild-origination.example.test';
         const accountId = 'rebuild-owner';
         const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64')}.signature`;
@@ -131,17 +134,18 @@ describe('managed Machine rebuild origination', () => {
         const profile = await setServerProfileIdentityForUrl(serverUrl, homeId);
         expect(profile).not.toBeNull();
         expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token })).toBe(true);
-        const input = ManagedRebuildInputV1Schema.parse({ homeId, managedMachineId: 'retained-child', kind: 'rebuild',
+        const rebuildInput = ManagedRebuildInputV1Schema.parse({ homeId, managedMachineId: 'retained-child', kind: 'rebuild',
             expectedRevision: 4, reviewedEffectDigest: 'a'.repeat(64) });
-        const machine = ManagedMachineV1Schema.parse({ id: input.managedMachineId, homeId, custodianAccountId: accountId,
+        const input = applyingEnvironment ? { homeId, machineId: 'ordinary-child', presetId: 'setup-preset', presetRevision: 3 } : rebuildInput;
+        const machine = ManagedMachineV1Schema.parse({ id: rebuildInput.managedMachineId, homeId, custodianAccountId: accountId,
             controller: { machineId: 'physical-controller', installationId: 'physical-installation' },
             launch: { provider: { pluginId: 'acme.devcontainer', localId: 'child' }, schemaVersion: 1,
                 name: 'Child', choices: {} }, allocation: 'bound', creationState: 'active',
-            desired: 'start', desiredWhen: 'now', intentRevision: input.expectedRevision,
+            desired: 'start', desiredWhen: 'now', intentRevision: rebuildInput.expectedRevision,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'ordinary-child',
             resource: { contributionRef: { pluginId: 'acme.devcontainer', localId: 'child' }, schemaVersion: 1, value: {} },
         });
-        const approval = { kind: 'approval_request_created' as const, artifactId: 'rebuild-approval', actionId: 'machines.managed.rebuild' };
+        const approval = { kind: 'approval_request_created' as const, artifactId: 'rebuild-approval', actionId };
         // Only Home HTTP is substituted. Scope, credential storage, token parsing,
         // row validation, target selection and public envelope owners remain real.
         setRuntimeFetch(async (url, init) => {
@@ -153,12 +157,18 @@ describe('managed Machine rebuild origination', () => {
                 return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 });
             }
             if (parsedUrl.pathname === '/v1/machines/managed/actions/get') {
-                expect(body).toEqual({ homeId, managedId: input.managedMachineId });
+                expect(applyingEnvironment).toBe(false);
+                expect(body).toEqual({ homeId, managedId: rebuildInput.managedMachineId });
                 return new Response(JSON.stringify(machine), { status: 200 });
             }
-            if (parsedUrl.pathname === '/v1/actions/machines.managed.rebuild') {
+            if (parsedUrl.pathname === '/v1/machines') return Response.json([{ id: 'ordinary-child', kind: 'persistent', active: true,
+                installationId: 'joined-installation', installationPublicKey: null,
+                revokedAt: revoked ? 5 : null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }]);
+            if (parsedUrl.pathname === `/v1/actions/${actionId}`) {
+                expect(revoked).toBe(false);
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-                expect(envelope.target).toEqual({ kind: 'machine', machineId: machine.controller.machineId });
+                expect(envelope.target).toEqual({ kind: 'machine', machineId: applyingEnvironment ? 'ordinary-child' : machine.controller.machineId });
                 expect(envelope.input).toEqual(input);
                 return new Response(JSON.stringify(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
                     actionId: approval.actionId, requestId: envelope.requestId, execution: { ok: true, result: approval } })), { status: 200 });
@@ -168,8 +178,9 @@ describe('managed Machine rebuild origination', () => {
         onTestFinished(resetRuntimeFetch);
         const account = await captureLazyActionAccountContext(homeId);
         onTestFinished(() => account.dispose());
-        const result = await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.rebuild', input,
+        const result = await executeManagedMachineNativeAction({ account, actionId, input,
             context: { surface: 'ui', authority: 'present_user', actionRequestId: 'reviewed-rebuild-invocation' } });
-        expect(result).toEqual({ ok: true, result: approval });
+        expect(result).toEqual(revoked ? { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }
+            : { ok: true, result: approval });
     });
 });

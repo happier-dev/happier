@@ -3,9 +3,10 @@ import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creat
 import { SessionSpawnNewResultV1Schema, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1, SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { UiActionExecutorContext } from './defaultActionExecutor';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { SessionRequesterBootstrapV1, SessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createSpawnAttemptKeyForSessionSpawnNewInput } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import {
     acquireSpawnAttemptCustody,
@@ -20,9 +21,11 @@ import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spaw
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+import { parseToken } from '@/utils/auth/parseToken';
 
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { prepareSessionFollowSourceKey } from '@/components/sessions/follow/prepareSessionFollowSourceKey';
+import { t } from '@/text';
 
 export type StrictSessionSpawnNewInput = SessionSpawnNewInputV2 & Readonly<{
     creationKey: NonNullable<SessionSpawnNewInputV2['creationKey']>;
@@ -55,7 +58,7 @@ export function readCommittedSessionSpawnNewActionResult(action: SessionSpawnNew
  */
 export type SessionSpawnNewActionExecutor = (
     input: StrictSessionSpawnNewInput,
-    context: ActionExecutorContext,
+    context: UiActionExecutorContext,
 ) => Promise<SessionSpawnNewActionResult>;
 
 export type ManualSessionSpawnNewActionExecutionResult =
@@ -144,6 +147,27 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
         : 'newSession.failedToStart';
 }
 
+/** Keep localized recovery guidance while exposing the typed cause of otherwise generic failures. */
+export function resolveSessionSpawnNewActionFailureMessage(
+    result: Extract<SessionSpawnNewActionResult, Readonly<{ ok: false }>>,
+): string {
+    const key = resolveSessionSpawnNewActionFailureMessageKey(result);
+    const message = t(key);
+    return key === 'newSession.failedToStart'
+        ? t('errors.errorWithCode', { message, code: result.errorCode })
+        : message;
+}
+
+export function resolveSessionSpawnNewResultFailureMessage(
+    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+): string {
+    const key = resolveSessionSpawnNewResultFailureMessageKey(result);
+    const message = t(key);
+    return result.type !== 'pending' && key === 'newSession.failedToStart'
+        ? t('errors.errorWithCode', { message, code: result.code })
+        : message;
+}
+
 /**
  * UI's sole public ordinary Session-creation client. The Action executor owns
  * transport, trusted caller stamping, approvals, cancellation, and typed
@@ -151,7 +175,7 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
  */
 export async function executeSessionSpawnNewAction(
     input: StrictSessionSpawnNewInput,
-    context: ActionExecutorContext,
+    context: UiActionExecutorContext,
     executor?: Parameters<typeof createFrontDoorActionExecute>[0],
 ): Promise<SessionSpawnNewActionResult> {
     const result = await createFrontDoorActionExecute(executor)('session.spawn_new', input, context);
@@ -178,15 +202,25 @@ export async function executeSessionSpawnNewAction(
  */
 export async function dispatchSessionSpawnNewToMachine(params: Readonly<{
     payload: SessionSpawnNewInputV2;
+    requesterBootstrap?: SessionRequesterBootstrapV1;
     signal?: AbortSignal;
 }>): Promise<SessionSpawnNewResultV1> {
     let issued = false;
     try {
-        return await machineRpcWithServerScope<SessionSpawnNewResultV1, SessionSpawnNewInputV2>({
+        const payload: SessionSpawnNewInputV2 | SessionRequesterBootstrapRpcRequestV1 = params.requesterBootstrap
+            ? { kind: 'requester_session_bootstrap_v1', input: params.payload, requesterBootstrap: params.requesterBootstrap }
+            : params.payload;
+        return await machineRpcWithServerScope<SessionSpawnNewResultV1, typeof payload>({
             serverId: params.payload.executionTarget.serverId,
             machineId: params.payload.executionTarget.machineId,
             method: RPC_METHODS.SESSION_SPAWN_NEW,
-            payload: params.payload,
+            payload,
+            ...(params.requesterBootstrap ? {
+                accountId: parseToken(params.requesterBootstrap.credentials.token),
+                // A Plain Account still has private authentication; the installed
+                // requester wrapper protects it without requiring an Account DEK.
+                requireEncryptedPayload: true,
+            } : {}),
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
             signal: params.signal,
             onIssued: () => { issued = true; },
@@ -204,6 +238,7 @@ export async function dispatchSessionSpawnNewToMachine(params: Readonly<{
 /** The durable creation result remains explicit when the attached lead's private material cannot be prepared. */
 export async function dispatchSessionSpawnNewWithReportsToPreparation(params: Readonly<{
     payload: SessionSpawnNewInputV2;
+    requesterBootstrap?: SessionRequesterBootstrapV1;
     signal?: AbortSignal;
 }>): Promise<SessionSpawnNewResultV1 | Extract<ActionExecuteResult, Readonly<{ ok: false }>>> {
     const committed = await dispatchSessionSpawnNewToMachine(params);
@@ -240,12 +275,13 @@ export function buildManualSessionCreationKey(userAttemptId: string) {
  */
 export async function executeManualSessionSpawnNewAction(
     input: StrictSessionSpawnNewInput,
-    context: ActionExecutorContext,
+    context: UiActionExecutorContext,
     params: Readonly<{
         scope: ServerAccountScope;
         machineHomeDir: string;
         userAttemptId: string;
         seedNonce?: string | null;
+        sourceAccountLifetime?: Pick<ServerAccountScopeLifetime, 'isCurrent'>;
         executeAction?: SessionSpawnNewActionExecutor;
     }>,
 ): Promise<ManualSessionSpawnNewActionExecutionResult> {
@@ -288,7 +324,15 @@ export async function executeManualSessionSpawnNewAction(
         return { status: 'custody_unavailable', reason: 'lock_unavailable' };
     }
 
-    const action = await (params.executeAction ?? executeSessionSpawnNewAction)(input, context);
+    // Custody acquisition may outlive the originating draft's Account authority.
+    // Fence admission here; once issued, the Action owns truthful effect receipts.
+    const sourceAdmissionRetired = params.sourceAccountLifetime !== undefined && !params.sourceAccountLifetime.isCurrent();
+    const action: SessionSpawnNewActionResult = sourceAdmissionRetired
+        ? { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }
+        : await (params.executeAction ?? executeSessionSpawnNewAction)(input, {
+            ...context,
+            expectedAccountId: params.scope.accountId,
+        });
     let custody = submitted;
     const committed = readCommittedSessionSpawnNewActionResult(action);
     if (committed
@@ -303,7 +347,7 @@ export async function executeManualSessionSpawnNewAction(
             createdSessionId: committed.sessionId,
         }) ?? submitted;
     }
-    const terminalWithoutCommittedSession = (
+    const terminalWithoutCommittedSession = sourceAdmissionRetired || (
         !action.ok && action.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
     ) || (
         action.ok && action.result.type === 'error' && action.result.retryable === false

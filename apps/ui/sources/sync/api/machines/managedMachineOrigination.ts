@@ -5,7 +5,7 @@ import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } fr
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createManagedMachineActionClient } from './managedMachineActions';
-import { executeOriginalAccountActionTransport, readOriginalAccountActionAuthentication,
+import { executeOriginalAccountActionTransport, executeOriginalAccountMachineAction, readOriginalAccountActionAuthentication,
     readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
@@ -30,6 +30,19 @@ export async function executeManagedMachineNativeAction(params: Readonly<{
         ? resolveManagedAcquireReviewV1(ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input)) : null;
     const homeId = review?.homeId ?? ('homeId' in input ? input.homeId : undefined);
     if (homeId !== account.serverIdentityId) return failure('server_target_mismatch');
+    const validateExecution = (execution: ActionExecuteResult): ActionExecuteResult => {
+        if (!execution.ok) return execution;
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+        if (approval.success && approval.data.actionId === actionId) return { ok: true, result: approval.data };
+        const output = ManagedMachineActionOutputSchemasV1[actionId].safeParse(execution.result);
+        return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
+    };
+    if (actionId === 'machines.environment.apply') {
+        const selected = ManagedMachineActionInputSchemasV1['machines.environment.apply'].parse(input);
+        return validateExecution(await executeOriginalAccountMachineAction({ account, actionId, input: selected,
+            machineId: selected.machineId, requestId: context.actionRequestId,
+            ...(params.signal ? { signal: params.signal } : {}) }));
+    }
     let controller = review?.controller ?? ('controller' in input ? input.controller : undefined);
     const managedId = 'managedId' in input ? input.managedId
         : 'managedMachineId' in input ? input.managedMachineId : undefined;
@@ -82,9 +95,5 @@ export async function executeManagedMachineNativeAction(params: Readonly<{
         ...(machineCustody ? { machineCustody } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         invalidResponseCode: 'managed_response_invalid', requestFailureCode: 'managed_request_failed' });
-    if (!execution.ok) return execution;
-    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
-    if (approval.success && approval.data.actionId === actionId) return { ok: true, result: approval.data };
-    const output = ManagedMachineActionOutputSchemasV1[actionId].safeParse(execution.result);
-    return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
+    return validateExecution(execution);
 }
