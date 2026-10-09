@@ -142,6 +142,24 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { ...failure.details, credential: 'private' } }).success).toBe(false);
     expect(ActionOperationFailureV1Schema.safeParse({ ...failure, details: { arbitrary: 'private' } }).success).toBe(false);
   });
+  it('preserves configured worker fallback refusals without promoting unknown eligibility or exposing private facts', () => {
+    for (const unavailable of ['ask', 'primary', 'fail'] as const) {
+      const errorCode = unavailable === 'fail' ? 'not_accepting' : 'choice_required';
+      const failure = { errorCode, error: errorCode, details: {
+        kind: 'no_worker_can_accept', unavailable, reason: 'not_accepting',
+      } };
+      expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
+      expect(ActionOperationFailureV1Schema.safeParse({ ...failure, errorCode: 'process_exit_nonzero' }).success).toBe(false);
+      for (const reason of ['memory_unavailable', 'worker_status_unavailable', 'load_unknown']) {
+        expect(ActionOperationFailureV1Schema.safeParse({ ...failure,
+          details: { ...failure.details, reason } }).success).toBe(false);
+      }
+      expect(ActionOperationFailureV1Schema.safeParse({ ...failure,
+        details: { ...failure.details, credential: 'private' } }).success).toBe(false);
+    }
+    expect(ActionOperationFailureV1Schema.safeParse({ errorCode: 'choice_required', error: 'Choice needed',
+      details: { kind: 'no_worker_can_accept', unavailable: 'fail', reason: 'not_accepting' } }).success).toBe(false);
+  });
   it('links only the existing remote enrollment task without granting another routing identity', () => {
     const domainRef = { kind: 'systemTask', id: 'bootstrap-task', taskKind: 'remote.ssh.bootstrapMachine.v1' };
     expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire', domainRef }).domainRef)

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
 import { ProjectSetupConsentFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
+import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
 import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
 import { ProjectCommandSourceV1Schema } from '../../workspaces/projectSetup/projectManifestV1.js';
 import { LocalServiceManagedServiceActionTargetV1Schema, ProjectServiceDeclarationRefV1Schema } from '../../local/services/actions/v1.js';
@@ -96,9 +97,11 @@ const ActionOperationErrorCodeV1Schema = lazyZodSchema(() => z.string().trim().m
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.object({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().trim().min(1).max(ACTION_OPERATION_ERROR_MAX_LENGTH_V1),
-  details: ProjectSetupConsentFailureDetailsV1Schema.optional(),
-}).strict().refine(failure => !failure.details || failure.details.code === failure.errorCode, {
-  path: ['details', 'code'], message: 'Consent review facts must match their terminal failure code.',
+  details: z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectWorkerNoAcceptanceFailureDetailsV1Schema]).optional(),
+}).strict().refine(failure => !failure.details || (failure.details.kind === 'pendingApproval'
+  ? failure.details.code === failure.errorCode
+  : readProjectWorkerNoAcceptanceFailureV1({ ok: false, ...failure }) !== null), {
+  path: ['details'], message: 'Public refusal facts must match their terminal failure code.',
 }));
 export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFailureV1Schema>>;
 
