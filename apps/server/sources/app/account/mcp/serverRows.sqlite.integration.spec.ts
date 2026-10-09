@@ -139,7 +139,7 @@ describe('MCP catalog Account row (SQLite)', () => {
     it.each([
         ['plain', 'replace'], ['plain', 'delete'], ['e2ee', 'replace'], ['e2ee', 'delete'],
     ] as const)('refuses ordinary replacement or deletion of a retained unclassified SavedSecret carrier (%s, %s)', async (mode, operation) => {
-        const { mutateMcpServerCatalogRowInTx } = await import('./serverRows');
+        const { registerMcpServerCatalogRoutes } = await import('./registerMcpServerCatalogRoutes');
         const account = await db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
         const content = mode === 'plain' ? catalog : { t: 'encrypted' as const,
@@ -149,9 +149,20 @@ describe('MCP catalog Account row (SQLite)', () => {
             futureEnvelopeCredential: { t: 'savedSecret', secretId: 'happier:shared-secret:v1:future' } };
         const row = await db.userKVStore.create({ data: { accountId: account.id, key: '@happier/account/mcp/v1/catalog', version: 5,
             value: new TextEncoder().encode(JSON.stringify(retained)) } });
-        const result = await inTx(tx => mutateMcpServerCatalogRowInTx(tx, { accountId: account.id,
-            expectedRevision: 5, content: operation === 'replace' ? content : null }));
-        expect(result).toEqual({ status: 'invalid-stored-content' });
+        const accountBefore = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+        await withAuthenticatedTestApp(app => registerMcpServerCatalogRoutes(app as unknown as Fastify), async app => {
+            const headers = { 'x-test-user-id': account.id };
+            const read = await app.inject({ method: 'GET', url: route, headers });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json()).toEqual({ status: 'present', revision: 5, content: retained });
+            const response = await app.inject({ method: 'POST', url: route, headers, payload: {
+                expectedRevision: 5, content: operation === 'replace' ? content : null,
+            } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ status: 'invalid-stored-content' });
+        });
         expect(await db.userKVStore.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(accountBefore);
+        expect(await db.accountSettingsSnapshot.count({ where: { accountId: account.id } })).toBe(0);
     });
 });
