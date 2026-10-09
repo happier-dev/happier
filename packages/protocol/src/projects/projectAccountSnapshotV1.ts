@@ -4,6 +4,7 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 import {
   areWorkspaceSyncRelationshipDefinitionsEqual,
+  areWorkspaceSyncWorkerCopyProvenancesEqual,
   WorkspaceSyncRelationshipV1Schema,
   type WorkspaceSyncRelationshipV1,
 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
@@ -88,7 +89,8 @@ export function assertProjectAccountSnapshotTransition(
   const previousRelationships = new Map(previous.relationships.map((relationship) => [relationship.relationshipId, relationship] as const));
   for (const relationship of next.relationships) {
     const prior = previousRelationships.get(relationship.relationshipId);
-    if (prior && !areWorkspaceSyncRelationshipDefinitionsEqual(prior, relationship)) {
+    if (prior && (!areWorkspaceSyncRelationshipDefinitionsEqual(prior, relationship)
+      || !areWorkspaceSyncWorkerCopyProvenancesEqual(prior, relationship))) {
       throw Object.assign(new Error('Workspace relationship immutable definition cannot change'), { code: 'relationship_definition_conflict' });
     }
     if (prior) {

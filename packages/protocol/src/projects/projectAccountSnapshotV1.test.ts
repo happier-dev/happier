@@ -1,8 +1,52 @@
 import { describe, expect, it } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { computeWorkspaceSyncPolicyDigest, getWorkspaceSyncWorkerCopyV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1, ProjectAccountSnapshotV1Schema } from './projectAccountSnapshotV1.js';
 
 describe('ProjectAccountSnapshotV1', () => {
+  it('preserves bound worker-copy provenance while older or unknown provenance remains ordinary Sync', () => {
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const relationship = {
+      v: 1 as const, relationshipId: 'worker-link', controllerMachineId: 'controller',
+      alphaWorkspaceRefId: 'source', betaWorkspaceRefId: 'target', mode: 'keep_synced' as const,
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+      enabled: true, createdAtMs: 1, updatedAtMs: 1,
+    };
+    const workspaceRefs = [
+      { id: 'source', serverId: 'home', machineId: 'controller', rootPath: '/source', createdAtMs: 1 },
+      { id: 'target', serverId: 'home', machineId: 'worker', rootPath: '/target', createdAtMs: 1 },
+    ];
+    const provenance = { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' };
+    const marked = { workspaceRefs, relationships: [{ ...relationship, provenance }] };
+    expect(ProjectAccountSnapshotV1Schema.safeParse(marked).success).toBe(true);
+    expect(parseProjectAccountSnapshotV1(marked).relationships[0]).toMatchObject({ provenance });
+    expect(getWorkspaceSyncWorkerCopyV1(parseProjectAccountSnapshotV1(marked).relationships[0]!)).toEqual(provenance);
+    expect(getWorkspaceSyncWorkerCopyV1(relationship)).toBeNull();
+    expect(() => assertProjectAccountSnapshotTransition({ workspaceRefs, relationships: [] }, marked)).not.toThrow();
+    expect(() => assertProjectAccountSnapshotTransition({ workspaceRefs, relationships: [relationship] }, marked))
+      .toThrow(expect.objectContaining({ code: 'relationship_definition_conflict' }));
+    expect(() => assertProjectAccountSnapshotTransition(marked, { workspaceRefs, relationships: [relationship] }))
+      .toThrow(expect.objectContaining({ code: 'relationship_definition_conflict' }));
+    expect(() => assertProjectAccountSnapshotTransition(marked, { workspaceRefs,
+      relationships: [{ ...relationship, provenance: { ...provenance, sourceWorkspaceRefId: 'target', targetWorkspaceRefId: 'source' } }],
+    })).toThrow(expect.objectContaining({ code: 'relationship_definition_conflict' }));
+    expect(parseProjectAccountSnapshotV1({ workspaceRefs, relationships: [relationship] }).relationships[0])
+      .not.toHaveProperty('provenance');
+    const unknown = { workspaceRefs, relationships: [{ ...relationship, provenance: { kind: 'future_copy', sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' } }] };
+    expect(parseProjectAccountSnapshotV1(unknown).relationships[0]).toEqual(relationship);
+    expect(getWorkspaceSyncWorkerCopyV1(parseProjectAccountSnapshotV1(unknown).relationships[0]!)).toBeNull();
+    expect(ProjectAccountSnapshotV1Schema.safeParse(unknown).success).toBe(false);
+    for (const invalid of [
+      { ...provenance, targetWorkspaceRefId: 'source' },
+      { ...provenance, sourceWorkspaceRefId: 'unrelated' },
+      { ...provenance, targetWorkspaceRefId: 'unrelated' },
+    ]) {
+      expect(ProjectAccountSnapshotV1Schema.safeParse({ workspaceRefs, relationships: [{ ...relationship, provenance: invalid }] }).success)
+        .toBe(false);
+      expect(() => parseProjectAccountSnapshotV1({ workspaceRefs, relationships: [{ ...relationship, provenance: invalid }] }))
+        .toThrow();
+    }
+  });
+
   it('reads known stored fields without assigning meaning to unknown fields', () => {
     const empty = parseProjectAccountSnapshotV1({});
     expect(empty.workspaceRefs).toEqual([]);
