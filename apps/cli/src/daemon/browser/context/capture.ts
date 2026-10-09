@@ -9,6 +9,10 @@ import {
 } from '../sidecar/context/capture';
 import { createSidecarContextPublisher, resolveSidecarContextGateDenial } from '../sidecar/context/publish';
 import type { BrowserSidecarCdpCommandScope } from '../sidecar/controlAdapter';
+import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
+
+export type BrowserContextInputControlResolver = (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
 
 export type BrowserContextCaptureScope = BrowserSidecarCdpCommandScope;
 
@@ -107,6 +111,7 @@ export type BrowserContextSourceSnapshotResult =
       consoleSummary?: string;
       consoleTruncated?: boolean;
       media?: BrowserScreenshotMediaReferenceV1;
+      focusedCredentialTarget?: BrowserFocusedCredentialTargetV1;
     }>
   | BrowserContextSourceFailure;
 
@@ -315,6 +320,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
   source: BrowserContextSource;
   now?: () => number;
   resolveGate?: BrowserContextCaptureGateResolver;
+  resolveInputControl?: BrowserContextInputControlResolver;
 }>): BrowserContextCaptureService {
   const now = input.now ?? (() => Date.now());
   const resolveOwnerGate = input.resolveGate ?? (() => DEFAULT_GATE_STATE);
@@ -365,7 +371,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
     };
   }
 
-  return {
+  const service: BrowserContextCaptureService = {
     async capturePage(request) {
       if (!isOwner(request)) return { status: 'denied' };
       const gate = await resolveGate(request);
@@ -587,8 +593,23 @@ export function createBrowserContextCaptureService(input: Readonly<{
         interactiveElementsTruncated: capture.interactiveElementsTruncated ?? false,
         ...(capture.consoleSummary ? { consoleSummary: capture.consoleSummary } : {}),
         consoleTruncated: capture.consoleTruncated ?? false,
+        ...(capture.focusedCredentialTarget ? { focusedCredentialTarget: capture.focusedCredentialTarget } : {}),
       });
       return { status: 'captured', snapshot };
     },
+  };
+
+  async function observe<T>(request: BrowserContextCaptureRequest, read: () => Promise<T>): Promise<T | Readonly<{ status: 'denied' }>> {
+    const control = input.resolveInputControl?.(request);
+    return (control ? await control.observeWhile(read) : await read()) ?? { status: 'denied' };
+  }
+  return {
+    capturePage: request => observe(request, () => service.capturePage(request)),
+    captureScreenshot: request => observe(request, () => service.captureScreenshot(request)),
+    captureSummary: request => observe(request, () => service.captureSummary(request)),
+    captureSelectedElement: request => observe(request, () => service.captureSelectedElement(request)),
+    captureAnnotationRegion: request => observe(request, () => service.captureAnnotationRegion(request)),
+    captureAnnotationElement: request => observe(request, () => service.captureAnnotationElement(request)),
+    captureSnapshot: request => observe(request, () => service.captureSnapshot(request)),
   };
 }

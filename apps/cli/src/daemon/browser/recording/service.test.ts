@@ -4,6 +4,10 @@ import type {
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
+import type { BrowserRecordingRuntimeStartInput } from './service';
+import { createDeferred } from '@/testkit/async/deferred';
+
 const recordingCapabilities = {
   enabled: true,
   attachmentsEnabled: true,
@@ -52,6 +56,229 @@ const broadRecordingCapabilities = {
 } satisfies BrowserRecordingCapabilities;
 
 describe('browser recording daemon service', () => {
+  const confidentialStartInput = {
+    browserRecordingEnabled: true,
+    recordingCapabilities,
+    browserSessionId: 'browser_session_1',
+    viewId: 'view_1',
+    profileId: 'profile_1',
+    targetKind: 'streamedBrowser',
+    adapterKind: 'streamedBrowserSurface',
+    renderEngineKind: 'streamedSurface',
+    captureKind: 'streamFrameCapture',
+    fidelity: 'streamFrame',
+    navigationGeneration: 7,
+    mimeType: 'video/webm',
+    retentionClass: 'preSend',
+    captureSource: streamCaptureSource,
+  } satisfies BrowserRecordingRuntimeStartInput;
+
+  it('refuses recording a held view before starting capture', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    await control.beginConfidentialityHold();
+    const start = vi.fn(async () => ({ status: 'started' as const }));
+    const service = createBrowserRecordingDaemonService({
+      captureAdapters: [{ captureKind: 'streamFrameCapture', start, stop: async () => { throw new Error('unused'); }, discard: async () => {} }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+      resolveInputControl: () => control,
+    });
+
+    expect(await service.startRecording(confidentialStartInput)).toMatchObject({
+      status: 'unavailable', reason: { code: 'browser_recording_policy_denied' },
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each(['starting', 'stopping', 'stopping_error', 'persisting'] as const)('drains %s capture before confidential materialization and suppresses its output', async (phase) => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    const deferred = createDeferred<void>();
+    const entered = createDeferred<void>();
+    const cleanup = vi.fn(async () => {});
+    const discard = vi.fn(async () => {});
+    const discardRecording = vi.fn(async () => {});
+    const persistRecording = vi.fn(async () => {
+      if (phase === 'persisting') { entered.resolve(); await deferred.promise; }
+      return mediaRef;
+    });
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: () => control,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        async start() {
+          if (phase === 'starting') { entered.resolve(); await deferred.promise; }
+          return { status: 'started' };
+        },
+        async stop() {
+          if (phase === 'stopping' || phase === 'stopping_error') { entered.resolve(); await deferred.promise; }
+          if (phase === 'stopping_error') throw new Error('D26-recording-fixture-secret');
+          return { durationMs: 100, byteSize: 20, frameCount: 1, fps: 1, mimeType: 'video/webm', source: recordingArtifactSource, cleanup };
+        },
+        discard,
+      }],
+      mediaWriter: { persistRecording, discardRecording },
+    });
+    const started = service.startRecording(confidentialStartInput);
+    const operation = phase === 'starting' ? started : (async () => {
+      const result = await started;
+      if (result.status !== 'started') throw new Error('recording did not start');
+      return service.stopRecording({ recordingId: result.recording.recordingId, navigationGenerationEnd: 7 });
+    })();
+    await entered.promise;
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(drained).toBe(false);
+    deferred.resolve();
+    const result = await operation;
+    await hold;
+
+    expect(discard).toHaveBeenCalled();
+    if (phase === 'persisting') expect(discardRecording).toHaveBeenCalledWith(expect.objectContaining({ recording: expect.objectContaining({ mediaRef }) }));
+    else expect(persistRecording).not.toHaveBeenCalled();
+    if (phase === 'stopping' || phase === 'persisting') expect(cleanup).toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('D26-recording-fixture-secret');
+    expect(service.listRecordingsForView({ viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ status: 'recording' }));
+    expect(service.listRecordingsForView({ viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ mediaRef }));
+  });
+
+  it('discards an active held view while an unrelated view keeps recording', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    const safeControl = createSurfaceInputControl();
+    const discardedViews: string[] = [];
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: ({ viewId }) => viewId === 'view_1' ? control : safeControl,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        start: async () => ({ status: 'started' }),
+        stop: async () => { throw new Error('unused'); },
+        discard: async ({ recording }) => { discardedViews.push(recording.viewId); },
+      }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    await service.startRecording(confidentialStartInput);
+    await service.startRecording({ ...confidentialStartInput, viewId: 'safe_view' });
+    await control.beginConfidentialityHold();
+
+    expect(discardedViews).toEqual(['view_1']);
+    expect(service.listRecordingsForView({ viewId: 'view_1' })[0]).toMatchObject({ status: 'failed', outcomeReason: 'policy_revoked' });
+    expect(service.listRecordingsForView({ viewId: 'safe_view' })[0]).toMatchObject({ status: 'recording' });
+  });
+
+  it.each(['known', 'failed'] as const)('handles %s cleanup of a capture canceled during startup while confidentiality drains it', async (completion) => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    let capturing = false;
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: () => control,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        async start() { entered.resolve(); await release.promise; capturing = true; return { status: 'started' }; },
+        stop: async () => { throw new Error('unused'); },
+        discard: async () => {
+          if (capturing && completion === 'failed') throw new Error('capture shutdown failed');
+          capturing = false;
+        },
+      }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    const starting = service.startRecording({ ...confidentialStartInput, recordingId: 'canceled_start' });
+    await entered.promise;
+    await service.cancelRecording({ recordingId: 'canceled_start', reason: 'user_canceled' });
+    const hold = control.beginConfidentialityHold().then(() => true, () => false);
+    release.resolve();
+    expect(await starting).toMatchObject({ status: 'unavailable' });
+    expect(await hold).toBe(completion === 'known');
+    expect(capturing).toBe(completion === 'failed');
+  });
+
+  it('refuses confidential delivery when the recording capture cannot be drained', async () => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: () => control,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        start: async () => ({ status: 'started' }),
+        stop: async () => { throw new Error('unused'); },
+        discard: async () => { throw new Error('capture could not stop'); },
+      }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    await service.startRecording(confidentialStartInput);
+
+    await expect(control.beginConfidentialityHold()).rejects.toThrow();
+    expect(control.isObservationHeld()).toBe(true);
+    expect(control.clearConfidentialityHold()).toBe(false);
+  });
+
+  it.each(['known', 'failed'] as const)('waits for %s cancellation instead of treating duplicate discard as drained', async (completion) => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    let stopping = false;
+    let capturing = true;
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: () => control,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        start: async () => ({ status: 'started' }),
+        stop: async () => { throw new Error('unused'); },
+        async discard() {
+          // The capture boundary retires its handle before producer shutdown settles.
+          if (stopping) return;
+          stopping = true;
+          entered.resolve();
+          await release.promise;
+          if (completion === 'failed') throw new Error('capture shutdown failed');
+          capturing = false;
+        },
+      }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    const start = await service.startRecording({ ...confidentialStartInput, recordingId: 'canceling_capture' });
+    expect(start.status).toBe('started');
+    const cancel = service.cancelRecording({ recordingId: 'canceling_capture', reason: 'user_canceled' });
+    await entered.promise;
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; return true; }, () => false);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const drainedBeforeStop = drained;
+    release.resolve();
+    await cancel;
+    expect(await hold).toBe(completion === 'known');
+
+    expect(drainedBeforeStop).toBe(false);
+    expect(capturing).toBe(completion === 'failed');
+  });
+
+  it.each(['cancel', 'lifecycle'] as const)('keeps %s capture cleanup reachable after the input target closes', async (operation) => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const control = createSurfaceInputControl();
+    let capturing = true;
+    const service = createBrowserRecordingDaemonService({
+      resolveInputControl: () => control,
+      captureAdapters: [{
+        captureKind: 'streamFrameCapture',
+        start: async () => ({ status: 'started' }),
+        stop: async () => { throw new Error('unused'); },
+        discard: async () => { capturing = false; },
+      }],
+      mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
+    });
+    await service.startRecording({ ...confidentialStartInput, recordingId: 'closed_capture' });
+    await control.close();
+    if (operation === 'cancel') await service.cancelRecording({ recordingId: 'closed_capture', reason: 'user_canceled' });
+    else await service.applyLifecycleOutcome({ browserSessionId: 'browser_session_1', viewId: 'view_1', reason: 'view_closed' });
+
+    expect(capturing).toBe(false);
+  });
+
   it('persists stopped recordings through the session-media writer and stores only a reference envelope', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const cleanup = vi.fn(async () => {});

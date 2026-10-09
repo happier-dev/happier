@@ -176,6 +176,30 @@ See also:
 - [Connected services](/accounts/connected-services)
 - [Provider integrations](/agents/provider-integrations)
 
+### Confidential browser entry (development)
+
+The 0.3 development approval flow can request a credential for an exact Browser
+field. Review the purpose, site, and target in the existing request detail. Choose
+an authorized Saved Secret or enter a masked one-time value; do not put the value
+in chat or an Agent's tool arguments. Native computer entry remains unavailable
+until its field and confidentiality checks are qualified.
+
+On a shared Machine, this development continuation cannot yet use a Saved Secret
+from an Account other than the Machine custodian's. One-time entry also refuses
+when the deciding Account and custodian have different encryption modes.
+
+“Remember as a Saved Secret” starts off. Turn it on and provide a name only if you
+want the existing Saved Secrets writer to retain the one-time value. Entry and
+saving have separate outcomes: entry alone does not mean saved, and a save failure
+must not repeat entry. If saving cannot be confirmed, inspect Saved Secrets before
+trying to save again.
+
+Submitting the form requires a separate choice showing the reviewed control and
+consequence. Unconfirmed entry is not retried and does not submit. A confirmed
+entry can still have an unconfirmed submit; inspect the page before another action.
+This flow does not isolate a credential from an Agent with shell access as the same
+operating-system user, or isolate the page's authenticated account authority.
+
 ## Practical examples
 
 ### Example: Claude via DeepSeek

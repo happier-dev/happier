@@ -6,6 +6,47 @@ const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as cons
 const otherView = { browserSessionId: 'browser_session_1', viewId: 'view_2' } as const;
 
 describe('browser automation owner registry', () => {
+  it('does not mistake an ordinarily closed input target for a confidential source', async () => {
+    const registry = createBrowserAutomationOwnerRegistry();
+    await registry.getInputControl(view).close('view_closed');
+    registry.closeView(view);
+    expect(registry.isObservationHeld(view)).toBe(false);
+    expect(registry.getInputControl(view).isClosed()).toBe(false);
+  });
+
+  it('retains a closed confidential source after transport loss until destruction is confirmed', async () => {
+    const registry = createBrowserAutomationOwnerRegistry();
+    await registry.acquireConfidentiality(view);
+    registry.closeView(view);
+    expect(registry.isObservationHeld(view)).toBe(true);
+    expect(registry.getInputControl(view).isClosed()).toBe(true);
+    registry.closeView(view, { sourceDestroyed: true });
+    expect(registry.isObservationHeld(view)).toBe(false);
+  });
+
+  it('retains confidentiality across hand back until every reviewed fill is safe', async () => {
+    const registry = createBrowserAutomationOwnerRegistry();
+    await registry.acquireConfidentiality(view);
+    registry.handBack(view);
+    expect(registry.isObservationHeld(view)).toBe(true);
+    expect(registry.isObservationHeld(otherView)).toBe(false);
+    let finish: (safe: boolean) => void = () => undefined;
+    const firstSafety = new Promise<boolean>(resolve => { finish = resolve; });
+    registry.setConfidentialitySafetyCheck(view, () => firstSafety);
+    const release = registry.tryReleaseConfidentiality(view);
+    let secondSafe = false;
+    registry.setConfidentialitySafetyCheck(view, async () => secondSafe);
+    finish(true);
+    expect(await release).toBe(false);
+    expect(registry.isObservationHeld(view)).toBe(true);
+    expect(await registry.tryReleaseConfidentiality(view)).toBe(false);
+    registry.setConfidentialitySafetyCheck(view, async () => true);
+    expect(await registry.tryReleaseConfidentiality(view)).toBe(false);
+    secondSafe = true;
+    expect(await registry.tryReleaseConfidentiality(view)).toBe(true);
+    expect(registry.isObservationHeld(view)).toBe(false);
+  });
+
   it('projects interruption settlement and clears uncertainty after a fresh human observation', async () => {
     const registry = createBrowserAutomationOwnerRegistry();
     const control = registry.getInputControl(view);

@@ -3,6 +3,46 @@ import { describe, expect, it } from 'vitest';
 import { createSurfaceInputControl } from './inputControl';
 
 describe('surface input control', () => {
+  it('drains queued observations and capture before confidential input while retaining human admission', async () => {
+    const control = createSurfaceInputControl();
+    let finishRead: (value: string) => void = () => undefined;
+    let finishCapture: () => void = () => undefined;
+    const read = control.observeWhile(() => new Promise<string>(resolve => { finishRead = resolve; }));
+    const captureDrain = new Promise<void>(resolve => { finishCapture = resolve; });
+    control.registerConfidentialityDrain(() => captureDrain);
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+    expect(control.isObservationHeld()).toBe(true);
+    expect(control.clearConfidentialityHold()).toBe(false);
+    expect(control.getAdmissionFailure('agent')).toBe('observation_required');
+    expect(control.getAdmissionFailure('human')).toBeUndefined();
+    expect(await control.observeWhile(async () => 'fixture-secret')).toBeUndefined();
+    finishRead('fixture-secret');
+    expect(await read).toBeUndefined();
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    finishCapture();
+    await hold;
+    expect(drained).toBe(true);
+    control.handBack();
+    expect(control.observe(control.getStatus().controlEpoch)).toBe(false);
+    expect(control.isObservationHeld()).toBe(true);
+    expect(control.clearConfidentialityHold()).toBe(true);
+    expect(await control.observeWhile(async () => 'safe')).toBe('safe');
+  });
+
+  it('suppresses an in-flight observation error after privacy hold without swallowing safe-source errors', async () => {
+    const control = createSurfaceInputControl();
+    let rejectRead: (error: Error) => void = () => undefined;
+    const read = control.observeWhile(() => new Promise<string>((_resolve, reject) => { rejectRead = reject; }));
+    const hold = control.beginConfidentialityHold();
+    rejectRead(new Error('fixture-secret'));
+    expect(await read).toBeUndefined();
+    await hold;
+    expect(control.clearConfidentialityHold()).toBe(true);
+    await expect(control.observeWhile(async () => { throw new Error('safe failure'); })).rejects.toThrow('safe failure');
+  });
+
   it('closes admission before abort and waits for held input to release before hand back', async () => {
     const control = createSurfaceInputControl({ requireObservation: true });
     let finish: () => void = () => undefined;

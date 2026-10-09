@@ -12,6 +12,7 @@ import {
 import { createBrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
 import { createSidecarCdpDiagnosticsRuntime } from './runtime';
+import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 
 const OWNER = 'machine_owner';
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
@@ -60,6 +61,22 @@ function summaryContextSource(summaries: BrowserContextDiagnosticsSummarySource)
 }
 
 describe('createSidecarCdpDiagnosticsRuntime', () => {
+    it('does not retain console or network observations during the confidential source hold', async () => {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
+        const surface = fakeContextCapture();
+        const control = createSurfaceInputControl();
+        const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: OWNER, store,
+            contextCapture: surface.contextCapture, isEnabled: () => true, resolveInputControl: () => control });
+        surface.bindView();
+        await control.beginConfidentialityHold();
+        surface.emitCdp({ method: 'Runtime.consoleAPICalled', sessionId: HANDLE.sessionId,
+            params: { type: 'log', args: [{ type: 'string', value: 'fixture-secret' }] } });
+        surface.emitCdp({ method: 'Network.requestWillBeSent', sessionId: HANDLE.sessionId,
+            params: { requestId: 'r1', request: { url: 'https://example.test/fixture-secret', method: 'GET' } } });
+        expect(store.getSnapshot().events).toEqual([]);
+        runtime.dispose();
+    });
+
     it('feeds the diagnostics store from the live CDP stream once a view is bound, redacting raw payloads', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
         const surface = fakeContextCapture();

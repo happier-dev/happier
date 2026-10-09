@@ -2,6 +2,7 @@ import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BrowserEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
 import type { BrowserEventV1, BrowserCommandDispatchResultV1, BrowserCommandErrorCodeV1, BrowserCommandV1, BrowserSidecarErrorCodeV1, BrowserProfileV1, BrowserViewTargetV1, BrowserPlatformV1 } from '@happier-dev/protocol';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 import {
     browserCommandDispatchFailure,
@@ -62,12 +63,15 @@ export type BrowserSidecarViewLifecycleEvent = Readonly<{
     type: 'bound' | 'unbound';
     browserSessionId: string;
     viewId: string;
+    /** Present only after the producer acknowledged destruction of this exact bound target. */
+    sourceDestroyed?: boolean;
 }>;
 
 export type BrowserSidecarViewLifecycleSubscriber = (event: BrowserSidecarViewLifecycleEvent) => void;
 
 export type BrowserSidecarControlAdapterFactoryInput = Readonly<{
     machineId: string;
+    resolveInputControl?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
 }>;
 
 /**
@@ -77,6 +81,8 @@ export type BrowserSidecarControlAdapterFactoryInput = Readonly<{
  * fail-closed (the unavailable source).
  */
 export type BrowserSidecarContextCaptureSurface = Readonly<{
+    /** Private actual-launch fact for the exact live owned view, never caller metadata. */
+    resolveNativeObservation?(view: Readonly<{ browserSessionId: string; viewId: string }>): 'not_observable' | undefined;
     transport: Pick<BrowserSidecarCdpControlTransport, 'dispatchPageCommand'>;
     resolvePageHandle(
         view: Readonly<{ browserSessionId: string; viewId: string }>,
@@ -119,6 +125,7 @@ type BrowserSidecarCdpControlAdapterInput = Readonly<{
     browserSessionId: string;
     sidecarId: string;
     transport: BrowserSidecarCdpEventCapableTransport;
+    resolveInputControl?: BrowserSidecarControlAdapterFactoryInput['resolveInputControl'];
 }>;
 
 /**
@@ -230,8 +237,15 @@ export function createBrowserSidecarCdpControlAdapter(
     let disposed = false;
 
     function stateEvent(view: BoundView): BrowserEventV1 {
+        // Page script can copy entered material into title or a navigation URL. Public events,
+        // inventories and command results share this projection; private target proof/human
+        // capture continue to read the unmodified engine state through getNavigationState.
+        const state = input.resolveInputControl?.(view)?.isObservationHeld()
+            ? { navigationGeneration: view.state.navigationGeneration, loadingState: view.state.loadingState,
+                canGoBack: view.state.canGoBack, canGoForward: view.state.canGoForward }
+            : view.state;
         return BrowserEventV1Schema.parse({ kind: 'navigationStateChanged', eventId: `cdp:${++eventSequence}`,
-            browserSessionId: view.browserSessionId, viewId: view.viewId, occurredAt: Date.now(), ...view.state });
+            browserSessionId: view.browserSessionId, viewId: view.viewId, occurredAt: Date.now(), ...state });
     }
     function publishState(view: BoundView): void {
         const event = stateEvent(view);
@@ -381,12 +395,13 @@ export function createBrowserSidecarCdpControlAdapter(
         }
 
         try {
-            await input.transport.dispatchBrowserCommand({
+            const response = await input.transport.dispatchBrowserCommand({
                 ...scope,
                 method,
                 params: { targetId: boundView.targetId },
             });
             if (command.kind === 'closeView') {
+                if (recordValue(response)?.success !== true || boundViews.get(browserViewKey(command)) !== boundView) return cdpFailure(command);
                 const event: BrowserEventV1 = { kind: 'viewClosed', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
                     browserSessionId: command.browserSessionId, viewId: command.viewId, navigationGeneration: boundView.state.navigationGeneration };
                 for (const listener of [...eventListeners]) { try { listener(event); } catch { /* Observers cannot break close. */ } }
@@ -395,6 +410,7 @@ export function createBrowserSidecarCdpControlAdapter(
                     type: 'unbound',
                     browserSessionId: command.browserSessionId,
                     viewId: command.viewId,
+                    sourceDestroyed: true,
                 });
                 return { ...dispatched(command), events: [event] };
             }
@@ -452,13 +468,18 @@ export function createBrowserSidecarCdpControlAdapter(
                     if (command.browserSessionId !== input.browserSessionId || command.target.kind !== 'externalUrl') {
                         return failed(command, 'unsupported_command', 'Browser sidecar supports only external URL views.');
                     }
+                    if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command);
                     try {
                         const page = await input.transport.openPage({
                             ...scope,
                             url: command.target.url,
                             focus: command.focus ?? true,
                         });
-                        if (disposed) return cdpFailure(command);
+                        if (disposed || input.resolveInputControl?.(command)?.isObservationHeld()) {
+                            try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
+                            catch { /* The existing confidential binding remains retained on transport loss. */ }
+                            return cdpFailure(command);
+                        }
                         boundViews.set(browserViewKey(command), {
                             browserSessionId: command.browserSessionId,
                             viewId: command.viewId,

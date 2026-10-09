@@ -1,14 +1,15 @@
 import {
   BrowserContextItemV1Schema,
   BrowserContextSnapshotV1Schema,
-  getActionSpec,
   type BrowserContextSnapshotV1,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/context/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserContextSource } from './capture';
 import { createBrowserContextRoutes } from './routes';
+import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 
 function fakeSource(): BrowserContextSource {
   return {
@@ -102,6 +103,23 @@ const annotationActionInputs = {
 } as const satisfies Record<Extract<RuntimeActionIdV1, `browser.context.annotation.${string}`>, unknown>;
 
 describe('browser context routes', () => {
+  it('does not disclose previously captured context through attach while its view is held', async () => {
+    const owners = createBrowserAutomationOwnerRegistry();
+    const control = owners.getInputControl(validInput);
+    const owner = createBrowserContextRoutes({
+      ownerAccountId: 'account_owner', source: fakeSource(), resolveInputControl: owners.getInputControl,
+      resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+    });
+    expect(await owner.dispatch('browser.context.captureScreenshot', validInput)).toMatchObject({ kind: 'browserScreenshot' });
+    await control.beginConfidentialityHold();
+    expect(await owner.dispatch('browser.context.attachToComposer', validInput)).toMatchObject({
+      ok: false, errorCode: 'runtime_action_disabled',
+    });
+    expect(await owner.dispatch('browser.context.attachToComposer', {
+      ...validInput, browserSessionId: 'other_session', viewId: 'other_view',
+    })).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+  });
+
   it('dispatches capturePage to a published page-reference context item', async () => {
     const result = await routes().dispatch('browser.context.capturePage', validInput);
 

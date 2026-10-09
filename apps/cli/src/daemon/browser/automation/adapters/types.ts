@@ -7,6 +7,11 @@ import type {
   BrowserSemanticAdapterKindV1,
   BrowserActiveTargetV1,
 } from '@happier-dev/protocol';
+import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
+import type { ConfidentialSecretFillTarget } from '../../../surfaces/confidentialSecretFill';
+import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
+
+export type BrowserConfidentialFillPreparation = ConfidentialSecretFillTarget | Extract<SecretFillSettlementV1, { status: 'refused' }>;
 
 /**
  * The leaf result a browser automation adapter produces for a single action. The
@@ -47,5 +52,6 @@ export type BrowserAutomationAdapter = Readonly<{
   supportedOperations?: ReadonlySet<BrowserAutomationActionKindV1>;
   /** Read the engine-owned generation; automation never increments it from action success. */
   getNavigationGeneration?(view: Readonly<{ browserSessionId: string; viewId: string }>): number | null;
+  prepareConfidentialFill?(request: BrowserAutomationSecretFillRequestV1): Promise<BrowserConfidentialFillPreparation>;
   execute(request: BrowserAutomationActionRequestV1, context?: BrowserAutomationAdapterExecutionContext): Promise<BrowserAutomationAdapterExecuteResult>;
 }>;

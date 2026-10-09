@@ -31,6 +31,7 @@ import {
   type BrowserRecordingCaptureAdapter,
   type BrowserRecordingDaemonService,
   type BrowserRecordingMediaWriter,
+  type BrowserRecordingInputControlResolver,
 } from './service';
 import {
   createBrowserRecordingSessionMediaWriter,
@@ -69,6 +70,7 @@ export type BrowserRecordingDaemonRuntimeOptions = Readonly<{
   resolveSessionMediaTarget?: BrowserRecordingSessionMediaWriterOptions['resolveSessionMediaTarget'];
   resolveWorkingDirectory?: BrowserRecordingSessionMediaWriterOptions['resolveWorkingDirectory'];
   commitAttachment?: BrowserRecordingSessionMediaWriterOptions['commitAttachment'];
+  resolveInputControl?: BrowserRecordingInputControlResolver;
   resolveStartContext?: (input: Parameters<BrowserRecordingRoutes['startRecording']>[0]) =>
     | BrowserRecordingStartContext
     | Promise<BrowserRecordingStartContext>;
@@ -124,6 +126,7 @@ function createRuntimeMediaWriter(
     resolveSessionMediaTarget,
     resolveWorkingDirectory: options.resolveWorkingDirectory,
     commitAttachment: options.commitAttachment,
+    resolveInputControl: options.resolveInputControl,
   });
 }
 
@@ -142,6 +145,7 @@ function createRuntimeCaptureAdapters(
           workingDirectory: options.workingDirectory,
         }),
       nowMs: options.now,
+      resolveInputControl: options.resolveInputControl,
     }));
   }
   if (
@@ -181,6 +185,7 @@ export function createBrowserRecordingDaemonRuntime(
   const service = createBrowserRecordingDaemonService({
     captureAdapters: createRuntimeCaptureAdapters(options),
     mediaWriter,
+    resolveInputControl: options.resolveInputControl,
     now: options.now,
   });
   const baseRoutes = createBrowserRecordingRoutes({

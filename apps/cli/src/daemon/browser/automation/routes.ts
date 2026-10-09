@@ -4,6 +4,9 @@ import type { BrowserAutomationActionResultV1, BrowserAutomationCancelActiveResu
 
 import type { BrowserAutomationDaemonService } from './service';
 import type { BrowserAutomationViewRef } from './owners';
+import { BrowserAutomationSecretFillRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
+import type { BrowserConfidentialFillPreparation } from './adapters/types';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 export type BrowserAutomationRouteFailure = Readonly<{
   ok: false;
@@ -18,6 +21,8 @@ export type BrowserAutomationRouteResult =
   | BrowserAutomationRouteFailure;
 
 export type BrowserAutomationRoutes = Readonly<{
+  resolveInputControl?(view: BrowserAutomationViewRef): SurfaceInputControl;
+  prepareConfidentialFill(input: unknown, context?: ActionExecutorContext): Promise<BrowserConfidentialFillPreparation>;
   dispatch(
     actionId: RuntimeActionIdV1,
     input: unknown,
@@ -67,6 +72,13 @@ export function createBrowserAutomationRoutes(input: Readonly<{
   service: BrowserAutomationDaemonService;
 }>): BrowserAutomationRoutes {
   return {
+    resolveInputControl: view => input.service.getInputControl(view),
+    async prepareConfidentialFill(rawInput, context) {
+      if (context?.authority !== 'present_user') return { status: 'refused', code: 'approval_required' };
+      const parsed = BrowserAutomationSecretFillRequestV1Schema.safeParse(rawInput);
+      if (!parsed.success) return { status: 'refused', code: 'target_changed' };
+      return input.service.prepareConfidentialFill(parsed.data, context);
+    },
     async dispatch(actionId, rawInput, context) {
       if (actionId === 'browser.automation.status') {
         const view = readViewRef(rawInput);

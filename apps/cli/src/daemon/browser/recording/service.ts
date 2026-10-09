@@ -2,8 +2,14 @@ import { BrowserRecordingSessionV1Schema } from '@happier-dev/protocol/browser/r
 import { resolveBrowserRecordingProfileUnavailableReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 const RECORDING_ID_PREFIX = 'browser_recording';
+
+export type BrowserRecordingInputControlResolver = (view: Readonly<{
+  browserSessionId: string;
+  viewId: string;
+}>) => SurfaceInputControl | undefined;
 
 export type BrowserRecordingDaemonUnavailableCode =
   | 'browser_recording_disabled'
@@ -285,6 +291,7 @@ function resolveArtifactCapFailure(
 export function createBrowserRecordingDaemonService(input: Readonly<{
   captureAdapters: readonly BrowserRecordingCaptureAdapter[];
   mediaWriter: BrowserRecordingMediaWriter;
+  resolveInputControl?: BrowserRecordingInputControlResolver;
   now?: () => number;
 }>): BrowserRecordingDaemonService {
   const now = input.now ?? (() => Date.now());
@@ -294,7 +301,16 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
   const sessionsById = new Map<string, BrowserRecordingSessionV1>();
   const sessionOrder: string[] = [];
   const activeRecordingIdByViewId = new Map<string, string>();
-  const activeAdapterByRecordingId = new Map<string, BrowserRecordingCaptureAdapter>();
+  const activeAdapterByRecordingId = new Map<string, {
+    readonly adapter: BrowserRecordingCaptureAdapter;
+    readonly control?: SurfaceInputControl;
+    readonly unregisterConfidentialityDrain?: () => void;
+    discard?: Promise<void>;
+  }>();
+
+  function confidentialityUnavailable(): Extract<BrowserRecordingRuntimeStartResult, { status: 'unavailable' }> {
+    return { status: 'unavailable', reason: createUnavailable('browser_recording_policy_denied', 'Browser recording is held for confidential input.') };
+  }
 
   function putRecording(recording: BrowserRecordingSessionV1, activeForView: boolean): void {
     if (!sessionsById.has(recording.recordingId)) {
@@ -308,6 +324,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     if (activeRecordingIdByViewId.get(recording.viewId) === recording.recordingId) {
       activeRecordingIdByViewId.delete(recording.viewId);
     }
+    activeAdapterByRecordingId.get(recording.recordingId)?.unregisterConfidentialityDrain?.();
     activeAdapterByRecordingId.delete(recording.recordingId);
   }
 
@@ -319,9 +336,12 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     recording: BrowserRecordingSessionV1,
     reason: BrowserRecordingOutcomeReasonV1,
   ): Promise<void> {
-    const adapter = activeAdapterByRecordingId.get(recording.recordingId);
-    if (!adapter) return;
-    await adapter.discard({ recordingId: recording.recordingId, recording, reason });
+    const active = activeAdapterByRecordingId.get(recording.recordingId);
+    if (!active) return;
+    // Await the same actual teardown, including its rejection. A second adapter discard can
+    // otherwise report success after the adapter retired its handle but shutdown failed.
+    active.discard ??= active.adapter.discard({ recordingId: recording.recordingId, recording, reason });
+    await active.discard;
   }
 
   async function terminalOutcome(
@@ -375,6 +395,8 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
 
   return {
     async startRecording(startInput) {
+      const control = input.resolveInputControl?.(startInput);
+      if (control?.isObservationHeld()) return confidentialityUnavailable();
       const activeRecordingId = activeRecordingIdByViewId.get(startInput.viewId);
       if (activeRecordingId) {
         return {
@@ -425,7 +447,7 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         captureKind: startInput.captureKind,
         fidelity: startInput.fidelity,
         startedAtMs,
-        status: 'recording',
+        status: 'starting',
         navigationGenerationStart: startInput.navigationGeneration,
         durationMs: 0,
         byteSize: 0,
@@ -439,28 +461,48 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         maxBytes: startInput.recordingCapabilities.maxBytes,
       });
 
-      let adapterStart: BrowserRecordingCaptureAdapterStartResult;
-      try {
-        adapterStart = await adapter.start({
-          recording,
-          captureSource: startInput.captureSource,
-        });
-      } catch {
-        return {
-          status: 'unavailable',
-          reason: createUnavailable(
-            'browser_recording_capture_failed',
-            'Browser recording capture failed to start.',
-          ),
-        };
-      }
-      if (adapterStart.status === 'unavailable') {
-        return { status: 'unavailable', reason: adapterStart.reason };
-      }
-
-      activeAdapterByRecordingId.set(recording.recordingId, adapter);
+      // Register before capture startup can await; the input owner drains the actual operation
+      // before discarding its capture, so no encoder can appear after confidential delivery.
+      const unregisterConfidentialityDrain = control?.registerConfidentialityDrain(async () => {
+        const current = readRecording(recordingId);
+        if (current && activeAdapterByRecordingId.has(recordingId)) {
+          await terminalOutcome(current, 'policy_revoked', now());
+        }
+      });
+      activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain });
       putRecording(recording, true);
-      return { status: 'started', recording };
+      const start = async (): Promise<BrowserRecordingRuntimeStartResult> => {
+        let adapterStart: BrowserRecordingCaptureAdapterStartResult;
+        try {
+          adapterStart = await adapter.start({ recording, captureSource: startInput.captureSource });
+        } catch {
+          await terminalOutcome(recording, 'capture_failed', now());
+          return { status: 'unavailable', reason: createUnavailable('browser_recording_capture_failed', 'Browser recording capture failed to start.') };
+        }
+        if (!activeAdapterByRecordingId.has(recordingId)) {
+          // Cancellation may have drained before the adapter finished allocating its source.
+          // The completed startup still owns that late allocation and must retire it directly.
+          const discard = adapter.discard({ recordingId, recording, reason: readRecording(recordingId)?.outcomeReason ?? 'user_canceled' });
+          // The old registration was retired by cancellation. Keep this actual late teardown
+          // registered until it succeeds so a rejected observation cannot authorize a fill.
+          const unregisterLateDrain = control?.registerConfidentialityDrain(() => discard);
+          await discard;
+          unregisterLateDrain?.();
+          return { status: 'unavailable', reason: createUnavailable('browser_recording_not_active', 'Browser recording is no longer active.') };
+        }
+        if (control?.isObservationHeld()) {
+          await terminalOutcome(recording, 'policy_revoked', now());
+          return confidentialityUnavailable();
+        }
+        if (adapterStart.status === 'unavailable') {
+          await terminalOutcome(recording, 'capture_unavailable', now());
+          return { status: 'unavailable', reason: adapterStart.reason };
+        }
+        const started = BrowserRecordingSessionV1Schema.parse({ ...recording, status: 'recording' });
+        putRecording(started, true);
+        return { status: 'started', recording: started };
+      };
+      return (control ? await control.observeWhile(start) : await start()) ?? confidentialityUnavailable();
     },
 
     async stopRecording(stopInput) {
@@ -471,11 +513,13 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           reason: createUnavailable('browser_recording_missing', 'Browser recording is no longer available.'),
         };
       }
+      const control = activeAdapterByRecordingId.get(recording.recordingId)?.control ?? input.resolveInputControl?.(recording);
+      if (control?.isObservationHeld()) return confidentialityUnavailable();
       if (recording.status === 'finalized' || recording.status === 'completed') {
         return { status: 'finalized', recording };
       }
 
-      const adapter = activeAdapterByRecordingId.get(recording.recordingId);
+      const adapter = activeAdapterByRecordingId.get(recording.recordingId)?.adapter;
       if (!adapter || !isActiveStatus(recording.status)) {
         return {
           status: 'unavailable',
@@ -486,61 +530,72 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         };
       }
 
-      let artifact: BrowserRecordingCapturedArtifact | null = null;
-      try {
-        artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
-        const capFailure = resolveArtifactCapFailure(recording, artifact);
-        if (capFailure) {
-          const failed = BrowserRecordingSessionV1Schema.parse({
+      const finalize = async (): Promise<BrowserRecordingRuntimeStopResult> => {
+        let artifact: BrowserRecordingCapturedArtifact | null = null;
+        try {
+          artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
+          if (control?.isObservationHeld()) throw new Error('Browser recording is held for confidential input.');
+          const capFailure = resolveArtifactCapFailure(recording, artifact);
+          if (capFailure) {
+            const failed = BrowserRecordingSessionV1Schema.parse({
+              ...recording,
+              status: 'failed',
+              outcomeReason: capFailure,
+              stoppedAtMs: stopInput.stoppedAtMs ?? now(),
+              navigationGenerationEnd: stopInput.navigationGenerationEnd,
+              durationMs: artifact.durationMs,
+              byteSize: artifact.byteSize,
+              frameCount: artifact.frameCount,
+              fps: artifact.fps,
+              mimeType: artifact.mimeType,
+              mediaRef: undefined,
+            });
+            putRecording(failed, false);
+            return { status: 'failed', recording: failed, reason: capFailure };
+          }
+          const mediaRef = await input.mediaWriter.persistRecording({ recording, artifact });
+          if (control?.isObservationHeld()) {
+            await input.mediaWriter.discardRecording({ recording: { ...recording, mediaRef }, reason: 'user_discarded' });
+            throw new Error('Browser recording is held for confidential input.');
+          }
+          const stoppedAtMs = stopInput.stoppedAtMs ?? now();
+          const finalized = BrowserRecordingSessionV1Schema.parse({
             ...recording,
-            status: 'failed',
-            outcomeReason: capFailure,
-            stoppedAtMs: stopInput.stoppedAtMs ?? now(),
+            status: 'finalized',
+            outcomeReason: 'user_stopped',
+            stoppedAtMs,
             navigationGenerationEnd: stopInput.navigationGenerationEnd,
             durationMs: artifact.durationMs,
             byteSize: artifact.byteSize,
             frameCount: artifact.frameCount,
             fps: artifact.fps,
             mimeType: artifact.mimeType,
+            mediaRef,
+            expiresAtMs: stopInput.expiresAtMs,
+          });
+          putRecording(finalized, false);
+          return { status: 'finalized', recording: finalized };
+        } catch {
+          if (control?.isObservationHeld()) {
+            const outcome = await terminalOutcome(recording, 'policy_revoked', now());
+            if (outcome.status === 'unavailable') return outcome;
+            return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
+          }
+          const failed = BrowserRecordingSessionV1Schema.parse({
+            ...recording,
+            status: 'failed',
+            outcomeReason: 'capture_failed',
+            stoppedAtMs: stopInput.stoppedAtMs ?? now(),
+            durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
             mediaRef: undefined,
           });
           putRecording(failed, false);
-          return { status: 'failed', recording: failed, reason: capFailure };
+          return { status: 'failed', recording: failed, reason: 'capture_failed' };
+        } finally {
+          if (artifact?.cleanup) await artifact.cleanup();
         }
-        const mediaRef = await input.mediaWriter.persistRecording({ recording, artifact });
-        const stoppedAtMs = stopInput.stoppedAtMs ?? now();
-        const finalized = BrowserRecordingSessionV1Schema.parse({
-          ...recording,
-          status: 'finalized',
-          outcomeReason: 'user_stopped',
-          stoppedAtMs,
-          navigationGenerationEnd: stopInput.navigationGenerationEnd,
-          durationMs: artifact.durationMs,
-          byteSize: artifact.byteSize,
-          frameCount: artifact.frameCount,
-          fps: artifact.fps,
-          mimeType: artifact.mimeType,
-          mediaRef,
-          expiresAtMs: stopInput.expiresAtMs,
-        });
-        putRecording(finalized, false);
-        return { status: 'finalized', recording: finalized };
-      } catch {
-        const failed = BrowserRecordingSessionV1Schema.parse({
-          ...recording,
-          status: 'failed',
-          outcomeReason: 'capture_failed',
-          stoppedAtMs: stopInput.stoppedAtMs ?? now(),
-          durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
-          mediaRef: undefined,
-        });
-        putRecording(failed, false);
-        return { status: 'failed', recording: failed, reason: 'capture_failed' };
-      } finally {
-        if (artifact?.cleanup) {
-          await artifact.cleanup();
-        }
-      }
+      };
+      return (control ? await control.observeWhile(finalize) : await finalize()) ?? confidentialityUnavailable();
     },
 
     async cancelRecording(cancelInput) {
@@ -566,7 +621,12 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           reason: createUnavailable('browser_recording_not_active', 'Browser recording is no longer active.'),
         };
       }
-      return await terminalOutcome(recording, cancelInput.reason, cancelInput.atMs ?? now());
+      const control = activeAdapterByRecordingId.get(recording.recordingId)?.control;
+      const cancel = () => terminalOutcome(recording, cancelInput.reason, cancelInput.atMs ?? now());
+      // A closed input target still needs capture cleanup. For an open target, the same
+      // observation tracker makes confidential delivery await an already-issued teardown.
+      if (!control || control.isClosed()) return await cancel();
+      return await control.observeWhile(cancel) ?? confidentialityUnavailable();
     },
 
     async applyLifecycleOutcome(lifecycleInput) {
@@ -578,7 +638,10 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
           reason: createUnavailable('browser_recording_missing', 'Browser recording is no longer available.'),
         };
       }
-      return await terminalOutcome(recording, lifecycleInput.reason, lifecycleInput.atMs ?? now());
+      const control = activeAdapterByRecordingId.get(recording.recordingId)?.control;
+      const applyOutcome = () => terminalOutcome(recording, lifecycleInput.reason, lifecycleInput.atMs ?? now());
+      if (!control || control.isClosed()) return await applyOutcome();
+      return await control.observeWhile(applyOutcome) ?? confidentialityUnavailable();
     },
 
     async cleanupExpiredRecordings(cleanupInput) {

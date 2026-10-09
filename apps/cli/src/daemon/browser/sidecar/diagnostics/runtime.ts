@@ -10,6 +10,7 @@ import type {
 } from '../controlAdapter';
 import { createBrowserSidecarDiagnosticsEventSourceBridge } from './eventSource';
 import { createSidecarCdpDiagnosticsEventSource } from './cdpEventSource';
+import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 
 /**
  * The diagnostics families a CDP sidecar feeds live. The product Chromium sidecar reports `cdp`
@@ -55,6 +56,7 @@ export type SidecarCdpDiagnosticsRuntimeInput = Readonly<{
     contextCapture: SidecarCdpDiagnosticsContextCapture;
     /** Live `browser.diagnostics` gate; re-read at attach and per event for fail-closed publication. */
     isEnabled: () => boolean;
+    resolveInputControl?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
     nowMs?: () => number;
     onError?: (error: unknown) => void;
 }>;
@@ -95,7 +97,7 @@ export function createSidecarCdpDiagnosticsRuntime(
                 dispatchPageCommand: input.contextCapture.transport.dispatchPageCommand,
                 subscribeCdpEvents: input.contextCapture.subscribeCdpEvents,
             },
-            isEnabled: input.isEnabled,
+            isEnabled: () => input.isEnabled() && !input.resolveInputControl?.(view)?.isObservationHeld(),
             ...(input.nowMs ? { now: input.nowMs } : {}),
             ...(input.onError ? { onError: input.onError } : {}),
         });

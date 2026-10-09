@@ -27,6 +27,54 @@ function managedCandidate(): SidecarBrowserBinaryCandidate {
 }
 
 describe('browser sidecar product source owner', () => {
+    it('qualifies native observation only for the exact owned headless Session view', async () => {
+        class OwnedProcess extends EventEmitter {
+            pid = 42;
+            stderr = new PassThrough();
+            kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
+        }
+        const profileStore = createBrowserProfileStore({
+            storageRootDirectory: '/unused',
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            removeDirectory: async () => undefined,
+        });
+        const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
+            platform: 'linux', featureEnabled: true, profileStore,
+            resolveManagedCandidate: async () => managedCandidate(),
+            createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                ...input,
+                // Only the OS process and CDP network transport are replaced; both actual
+                // launch owners, Session profile ownership and view-binding logic remain real.
+                spawnProcess: (_executable, args) => {
+                    expect(args).toContain('--headless=new');
+                    const process = new OwnedProcess();
+                    queueMicrotask(() => process.stderr.write('DevTools listening on ws://127.0.0.1:9444/devtools/browser/private-token\n'));
+                    return process;
+                },
+                connectTransport: async () => ({ transport: {
+                    openPage: async () => ({ targetId: 'target', sessionId: 'cdp' }),
+                    dispatchPageCommand: async () => ({}),
+                    dispatchBrowserCommand: async () => ({ success: true }),
+                } }),
+            }),
+        });
+        const runtime = await factory({ machineId: 'machine' });
+        expect(runtime.ok).toBe(true);
+        if (!runtime.ok) return;
+        const view = { browserSessionId: 'session', viewId: 'view' };
+        try {
+            expect(runtime.contextCapture?.resolveNativeObservation?.(view)).toBeUndefined();
+            expect(await runtime.adapter.dispatchCommand({
+                kind: 'openView', commandId: 'open', ...view, platform: 'web', focus: true,
+                target: { kind: 'externalUrl', targetId: 'target', url: 'https://example.test' },
+            })).toMatchObject({ status: 'dispatched' });
+            expect(runtime.contextCapture?.resolvePageHandle(view)).not.toBeNull();
+            expect(runtime.contextCapture?.resolveNativeObservation?.(view)).toBe('not_observable');
+            expect(runtime.contextCapture?.resolveNativeObservation?.({ ...view, viewId: 'unowned' })).toBeUndefined();
+            expect(runtime.contextCapture?.resolveNativeObservation?.({ ...view, browserSessionId: 'other' })).toBeUndefined();
+        } finally { await runtime.dispose?.(); }
+        expect(runtime.contextCapture?.resolveNativeObservation?.(view)).toBeUndefined();
+    });
     it('settles a pending process acquisition before purging a closed Session profile', async () => {
         class StartingProcess extends EventEmitter {
             pid = 42;

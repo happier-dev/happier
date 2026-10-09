@@ -1,5 +1,6 @@
-import { BrowserContextItemV1Schema } from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { describe, expect, it, vi } from 'vitest';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
 
 import {
   createBrowserContextCaptureService,
@@ -53,6 +54,27 @@ const baseRequest = {
 const allowGate = () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true });
 
 describe('browser context capture service', () => {
+  it('holds injected capture sources and drains their queued observations before confidential input', async () => {
+    const control = createSurfaceInputControl();
+    let finish: (value: Awaited<ReturnType<BrowserContextSource['captureSummary']>>) => void = () => undefined;
+    let entered: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const source = fakeSource({ captureSummary: async () => { entered(); return new Promise(resolve => { finish = resolve; }); } });
+    const service = createBrowserContextCaptureService({ ownerAccountId: 'account_owner', source,
+      resolveGate: allowGate, resolveInputControl: () => control });
+    const read = service.captureSummary({ ...baseRequest, kind: 'browserDomSnapshotSummary' });
+    await started;
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    finish({ ok: true, summary: 'fixture-secret' });
+    expect(await read).toEqual({ status: 'denied' });
+    await hold;
+    expect(await service.captureScreenshot(baseRequest)).toEqual({ status: 'denied' });
+    expect(source.captureScreenshot).not.toHaveBeenCalled();
+  });
+
   it.each(['sensitiveOrigin', 'sensitiveFieldsPresent', 'ephemeralOnly'] as const)(
     'retains the shared %s privacy floor before reading pixels', async privacyState => {
       const source = fakeSource();

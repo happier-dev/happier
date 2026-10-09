@@ -152,7 +152,13 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
         return {
             ok: true,
             adapter: adapterResult.adapter,
-            ...(adapterResult.contextCapture ? { contextCapture: adapterResult.contextCapture } : {}),
+            ...(adapterResult.contextCapture ? { contextCapture: {
+                ...adapterResult.contextCapture,
+                // This exact transport was connected to the private endpoint discovered from
+                // the process above, whose canonical launch plan uses --headless=new.
+                resolveNativeObservation: (view) => !disposal && adapterResult.contextCapture?.resolvePageHandle(view)
+                    ? 'not_observable' as const : undefined,
+            } } : {}),
             dispose: () => {
                 disposal ??= (async () => {
                     try {

@@ -2,10 +2,13 @@ import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/bro
 import type { BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationErrorCodeV1, BrowserCommandDispatchResultV1, BrowserCommandV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationViewRef } from '../owners';
+import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
+import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type {
   BrowserAutomationAdapter,
   BrowserAutomationAdapterExecutionContext,
   BrowserAutomationAdapterExecuteResult,
+  BrowserConfidentialFillPreparation,
 } from './types';
 
 export type BrowserAutomationCdpPageQueryInput = BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Readonly<{
@@ -37,6 +40,8 @@ export type BrowserAutomationCdpInputResult =
 export type BrowserAutomationCdpTransport = Readonly<{
   ownsView(view: BrowserAutomationViewRef): boolean;
   getNavigationGeneration?(view: BrowserAutomationViewRef): number | null;
+  prepareConfidentialFill?(request: BrowserAutomationSecretFillRequestV1): Promise<BrowserConfidentialFillPreparation>;
+  readFocusedCredentialTarget?(view: BrowserAutomationViewRef): Promise<BrowserFocusedCredentialTargetV1 | undefined>;
   /** Observe and handle page dialogs for the entire action, including navigation and queries. */
   executePageOperation?(
     input: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext,
@@ -245,6 +250,7 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
     adapterKind: 'chromiumSidecar',
     supportedOperations: resolveCdpSupportedOperations(input.transport),
     getNavigationGeneration: input.transport.getNavigationGeneration,
+    ...(input.transport.prepareConfidentialFill ? { prepareConfidentialFill: input.transport.prepareConfidentialFill } : {}),
     execute: (request, context = {}) => {
       const executionContext = { ...context, deadlineMs: context.deadlineMs ?? Date.now() + request.timeoutMs };
       return input.transport.executePageOperation

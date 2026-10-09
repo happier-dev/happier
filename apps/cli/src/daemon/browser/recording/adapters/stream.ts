@@ -5,6 +5,7 @@ import type {
   BrowserRecordingCaptureAdapter,
   BrowserRecordingCapturedArtifact,
   BrowserRecordingDaemonUnavailableReason,
+  BrowserRecordingInputControlResolver,
 } from '../service';
 import type { MachineLiveStreamCaptureSession } from '../../../peer/mediation/stream/captureAdapter';
 import type {
@@ -59,6 +60,7 @@ export type BrowserRecordingStreamFrameCaptureAdapterOptions = Readonly<{
   targetMachineId?: string;
   nowMs?: () => number;
   emitReceipt?: (receipt: MachineLiveStreamReceiptV1) => void;
+  resolveInputControl?: BrowserRecordingInputControlResolver;
 }>;
 
 type ActiveStreamRecording = Readonly<{
@@ -125,6 +127,7 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
     captureKind: 'streamFrameCapture',
 
     async start(input) {
+      const control = options.resolveInputControl?.(input.recording);
       if (activeByRecordingId.has(input.recording.recordingId)) {
         return {
           status: 'unavailable',
@@ -227,6 +230,9 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
         startedAtMs: input.recording.startedAtMs,
         nowMs,
         emitFrame: (frame) => {
+          // The live source may remain admitted for the human viewer. Its recording consumer
+          // follows the existing input owner's hold, including late frames during shutdown.
+          if (control?.isObservationHeld()) return;
           if (frame.payloadKind === 'metadata') return;
           const payload = Buffer.from(frame.payloadBase64, 'base64');
           try {
@@ -343,8 +349,11 @@ export function createBrowserRecordingStreamFrameCaptureAdapter(
       const active = activeByRecordingId.get(input.recordingId);
       if (!active) return;
       activeByRecordingId.delete(input.recordingId);
-      await stopCaptureSession(active.captureSession).catch(() => undefined);
-      await active.encoder.discard({ recording: active.recording, reason: input.reason }).catch(() => undefined);
+      try {
+        await stopCaptureSession(active.captureSession);
+      } finally {
+        await active.encoder.discard({ recording: active.recording, reason: input.reason });
+      }
     },
   };
 }

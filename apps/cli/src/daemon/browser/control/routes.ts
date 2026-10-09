@@ -61,6 +61,13 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
         });
       }
 
+      // Focus and other control Actions can otherwise bypass automation admission. A retained
+      // confidential view accepts only verified human control, regardless of approval bypass.
+      if (context?.authority !== 'present_user' && input.automation?.()?.getInputControl(command.data).isObservationHeld()) {
+        return browserCommandDispatchFailure({ commandId: command.data.commandId,
+          code: 'permission_denied', message: 'Browser observation is confidential.' });
+      }
+
       if (command.data.kind === 'takeControl' || command.data.kind === 'handBack') {
         const fail = (code: 'permission_denied' | 'adapter_unavailable' | 'view_not_found', message: string) =>
           browserCommandDispatchFailure({ commandId: command.data.commandId, code, message });
@@ -89,7 +96,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
 
       if ((context?.authority === 'present_user' || context?.authority === 'account_automation') && (
         command.data.kind === 'navigate' || command.data.kind === 'goBack' || command.data.kind === 'goForward'
-        || command.data.kind === 'reload' || command.data.kind === 'stop'
+        || command.data.kind === 'reload' || command.data.kind === 'stop' || command.data.kind === 'focusView'
       )) {
         const automation = input.automation?.();
         if (automation) {

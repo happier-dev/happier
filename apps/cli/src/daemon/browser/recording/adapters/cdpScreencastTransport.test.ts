@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserRecordingCdpScreencastTransport } from './cdpScreencastTransport';
 import { createBrowserCdpScreencastProducer } from '../../capture/cdpScreencast';
+import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 
 type CdpNotification = Readonly<{
   method: string;
@@ -81,6 +82,24 @@ function createHarness(options: { handle?: null; sessionId?: string; canSubscrib
 }
 
 describe('managed-Chromium CDP screencast recording transport', () => {
+  it('keeps human live viewing while confidential frames are excluded from observation subscribers', async () => {
+    const harness = createHarness();
+    const control = createSurfaceInputControl();
+    const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture, resolveInputControl: () => control });
+    const observations: unknown[] = [];
+    const humanFrames: unknown[] = [];
+    await producer.start({ view: createRecording(), onFrame: frame => observations.push(frame) });
+    await producer.start({ view: createRecording(), purpose: 'humanViewer', onFrame: frame => humanFrames.push(frame) });
+    await control.beginConfidentialityHold();
+    harness.listeners.forEach(listener => listener({ method: 'Page.screencastFrame', sessionId: 'session_cdp',
+      params: { sessionId: 1, data: 'fixture-secret' } }));
+    expect(observations).toEqual([]);
+    expect(humanFrames).toHaveLength(1);
+    expect(harness.commands.filter(command => command.method === 'Page.screencastFrameAck')).toHaveLength(1);
+    expect(await producer.start({ view: createRecording(), onFrame: frame => observations.push(frame) })).toBeNull();
+    await producer.dispose();
+  });
+
   it('retires all consumers when their exact view closes and never forwards late page frames', async () => {
     const harness = createHarness();
     const producer = createBrowserCdpScreencastProducer({ contextCapture: harness.contextCapture });

@@ -72,6 +72,35 @@ function clickRequest(
 }
 
 describe('browser automation routes', () => {
+  it('refuses confidential entry when the actual adapter cannot prove a focused field', async () => {
+    const { routes: r, service } = routes();
+    try {
+      const target = await r.prepareConfidentialFill({
+        serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in',
+        browserSessionId: 'browser_session_1', viewId: 'view_1', tabId: 'tab', frameId: 'frame',
+        documentId: 'document', navigationGeneration: 0, origin: 'https://example.test',
+        field: { fieldId: '1', focusId: '1', locator: '#password' },
+      }, presentUserContext);
+      expect(target).toEqual({ status: 'refused', code: 'field_verification_unsupported' });
+      expect(service.getTimeline({ browserSessionId: 'browser_session_1', viewId: 'view_1' }).entries).toEqual([]);
+    } finally { service.dispose(); }
+  });
+
+  it('never admits an Agent confidential continuation or a value-bearing request', async () => {
+    const { routes: r, service } = routes();
+    const request = {
+      serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in',
+      browserSessionId: 'browser_session_1', viewId: 'view_1', tabId: 'tab', frameId: 'frame',
+      documentId: 'document', navigationGeneration: 0, origin: 'https://example.test',
+      field: { fieldId: '1', focusId: '1', locator: '#password' },
+    };
+    try {
+      expect(await r.prepareConfidentialFill(request, accountAutomationContext))
+        .toEqual({ status: 'refused', code: 'approval_required' });
+      expect(await r.prepareConfidentialFill({ ...request, value: 'private-fixture' }, presentUserContext))
+        .toEqual({ status: 'refused', code: 'target_changed' });
+    } finally { service.dispose(); }
+  });
   it('rejects a forged human requester and derives admitted requester from trusted Action authority', async () => {
     const inputRequests: string[] = [];
     const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: {

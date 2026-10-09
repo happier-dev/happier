@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { BrowserRecordingRoutes } from './routes';
+import type { BrowserRecordingInputControlResolver } from './service';
 
 export type BrowserRecordingAttachToComposerInput = Readonly<{
   recordingId: string;
@@ -28,12 +29,14 @@ export type BrowserRecordingAttachToComposerResult =
 export type BrowserRecordingAttachToComposerOptions = Readonly<{
   routes: Pick<BrowserRecordingRoutes, 'getRecordingStatus'>;
   attachToComposer(input: BrowserRecordingComposerAttachInput): Promise<BrowserRecordingComposerAttachResult>;
+  resolveInputControl?: BrowserRecordingInputControlResolver;
 }>;
 
 type BrowserRecordingAttachDisabledReason =
   | 'browser_recording_missing'
   | 'browser_recording_not_finalized'
   | 'browser_recording_media_missing'
+  | 'browser_recording_policy_denied'
   | 'browser_recording_attach_failed';
 
 function disabled(reason: BrowserRecordingAttachDisabledReason): BrowserRecordingAttachToComposerResult {
@@ -62,6 +65,8 @@ export function createBrowserRecordingAttachToComposer(
     if (!recording) {
       return disabled('browser_recording_missing');
     }
+    const control = options.resolveInputControl?.(recording);
+    if (control?.isObservationHeld()) return disabled('browser_recording_policy_denied');
     if (!isTerminalRecording(recording.status)) {
       return disabled('browser_recording_not_finalized');
     }
@@ -69,12 +74,14 @@ export function createBrowserRecordingAttachToComposer(
     if (!mediaRef) {
       return disabled('browser_recording_media_missing');
     }
-    const attached = await options.attachToComposer({
+    const attach = () => options.attachToComposer({
       recordingId: recording.recordingId,
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       mediaRef,
       recording,
     });
+    const attached = control ? await control.observeWhile(attach) : await attach();
+    if (!attached) return disabled('browser_recording_policy_denied');
     if (!attached.ok) {
       return disabled('browser_recording_attach_failed');
     }

@@ -7,6 +7,7 @@ import {
   createBrowserContextCaptureService,
   type BrowserContextCaptureGateResolver,
   type BrowserContextCaptureScope,
+  type BrowserContextInputControlResolver,
   type BrowserContextSource,
   type BrowserContextCaptureResult,
   type BrowserContextRegionRect,
@@ -281,12 +282,14 @@ export function createBrowserContextRoutes(input: Readonly<{
   // Threaded from the single-owner daemon feature-gate. Read per publish so a server that
   // disables `browser.context` after construction fails capture closed.
   resolveGate?: BrowserContextCaptureGateResolver;
+  resolveInputControl?: BrowserContextInputControlResolver;
 }>): BrowserContextRoutes {
   const service = createBrowserContextCaptureService({
     ownerAccountId: input.ownerAccountId,
     source: input.source,
     ...(input.now ? { now: input.now } : {}),
     ...(input.resolveGate ? { resolveGate: input.resolveGate } : {}),
+    ...(input.resolveInputControl ? { resolveInputControl: input.resolveInputControl } : {}),
   });
 
   // ANNO-4b: daemon-local item store + attach service. The store retains captured items so the
@@ -295,15 +298,23 @@ export function createBrowserContextRoutes(input: Readonly<{
   // on clear.
   const store = createBrowserContextItemStore();
   const attachService = createBrowserContextAttachService({ store });
-  const record = (item: BrowserContextItemV1) => store.record(item);
 
   return {
     async dispatch(actionId, rawInput) {
       const parsed = parseContextInput(actionId, rawInput);
       if (!parsed) return invalidParameters;
+      const record = (item: BrowserContextItemV1) => store.record(item, {
+        browserSessionId: parsed.browserSessionId, viewId: parsed.viewId,
+      });
 
       const attachDestination = ATTACH_DESTINATIONS[actionId];
       if (attachDestination) {
+        const groupId = parsed.annotationId ?? store.annotationIdForContext(parsed.contextId);
+        const items = groupId ? store.group(groupId) : [store.item(parsed.contextId)].filter((item): item is BrowserContextItemV1 => item !== undefined);
+        if (items.some(item => {
+          const source = store.source(item.contextId);
+          return source && input.resolveInputControl?.(source)?.isObservationHeld();
+        })) return disabled('browser_context_confidential_input');
         const result = attachService.attach({
           ...(parsed.annotationId ? { annotationId: parsed.annotationId } : {}),
           contextId: parsed.contextId,

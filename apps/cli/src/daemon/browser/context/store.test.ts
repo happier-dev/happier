@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BrowserContextItemV1Schema,
   type BrowserContextItemV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/context/v1';
 
 import { createBrowserContextItemStore } from './store';
 

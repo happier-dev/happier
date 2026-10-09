@@ -12,6 +12,13 @@ export type SurfaceInputControl = Readonly<{
   isClosed(): boolean;
   observe(controlEpoch: number): boolean;
   invalidateObservation(): void;
+  isObservationHeld(): boolean;
+  hasConfidentialityHold(): boolean;
+  beginConfidentialityHold(): Promise<void>;
+  /** Only the source owner may clear this after proving the confidential target is safe. */
+  clearConfidentialityHold(): boolean;
+  observeWhile<T>(read: () => Promise<T>): Promise<T | undefined>;
+  registerConfidentialityDrain(drain: () => Promise<void>): () => void;
   execute<T>(input: Readonly<{
     requestedBy: SurfaceInputRequester;
     signal?: AbortSignal;
@@ -37,10 +44,16 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
   let uncertain = false;
   let observationRequirement: 'required' | 'hand_back' | null = options.requireObservation ? 'required' : null;
   let active: ActiveInput | null = null;
+  let confidentialityHeld = false;
+  let confidentialityDrain: Promise<void> | null = null;
+  let confidentialityDrained = false;
+  const observations = new Set<Promise<unknown>>();
+  const captureDrains = new Set<() => Promise<void>>();
 
   function getAdmissionFailure(requestedBy: SurfaceInputRequester): SurfaceInputAdmissionFailure | undefined {
     if (active) return 'busy';
     if (closed) return 'closed';
+    if (requestedBy === 'agent' && confidentialityHeld) return 'observation_required';
     if (uncertain && requestedBy === 'agent' && observationRequirement !== 'hand_back') return 'uncertain';
     if (requestedBy === 'agent' && humanHeld) return 'human_interrupted';
     if (requestedBy === 'agent' && observationRequirement) return 'observation_required';
@@ -56,8 +69,54 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
     }),
     getAdmissionFailure,
     isClosed: () => closed,
+    isObservationHeld: () => confidentialityHeld || closed,
+    hasConfidentialityHold: () => confidentialityHeld,
+    beginConfidentialityHold() {
+      if (confidentialityDrain) return confidentialityDrain;
+      confidentialityHeld = true;
+      confidentialityDrained = false;
+      controlEpoch += 1;
+      observationRequirement = 'required';
+      const current = active;
+      if (current?.requestedBy === 'agent') current.abort.abort('confidential_input');
+      options.onStatusChange?.();
+      confidentialityDrain = (async () => {
+        await Promise.all([
+          ...[...observations].map(read => read.then(() => undefined, () => undefined)),
+          ...(current?.requestedBy === 'agent' ? [current.drained] : []),
+        ]);
+        await Promise.all([...captureDrains].map(drain => drain()));
+        confidentialityDrained = true;
+      })();
+      return confidentialityDrain;
+    },
+    clearConfidentialityHold() {
+      if (active || closed || !confidentialityHeld || !confidentialityDrained) return false;
+      confidentialityHeld = false;
+      confidentialityDrain = null;
+      observationRequirement = 'required';
+      options.onStatusChange?.();
+      return true;
+    },
+    async observeWhile<T>(read: () => Promise<T>): Promise<T | undefined> {
+      if (confidentialityHeld || closed) return undefined;
+      const epoch = controlEpoch;
+      const pending = read();
+      observations.add(pending);
+      try {
+        const result = await pending;
+        return confidentialityHeld || closed || epoch !== controlEpoch ? undefined : result;
+      } catch (error) {
+        if (confidentialityHeld || closed || epoch !== controlEpoch) return undefined;
+        throw error;
+      } finally { observations.delete(pending); }
+    },
+    registerConfidentialityDrain(drain) {
+      captureDrains.add(drain);
+      return () => { captureDrains.delete(drain); };
+    },
     observe(epoch) {
-      if (closed || active || epoch !== controlEpoch || (uncertain && !humanHeld && observationRequirement !== 'hand_back')) return false;
+      if (confidentialityHeld || closed || active || epoch !== controlEpoch || (uncertain && !humanHeld && observationRequirement !== 'hand_back')) return false;
       uncertain = false;
       observationRequirement = null;
       options.onStatusChange?.();

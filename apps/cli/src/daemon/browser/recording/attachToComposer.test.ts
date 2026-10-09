@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import { createBrowserRecordingAttachToComposer } from './attachToComposer';
 import type { BrowserRecordingRoutes } from './routes';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
+import { createDeferred } from '@/testkit/async/deferred';
 
 function createFinalizedRecording(
   overrides: Partial<BrowserRecordingSessionV1> = {},
@@ -58,6 +60,24 @@ function createRoutes(recording: BrowserRecordingSessionV1 | null): BrowserRecor
 }
 
 describe('createBrowserRecordingAttachToComposer', () => {
+  it('refuses attachment when confidentiality begins while recording status is being read', async () => {
+    const recording = createFinalizedRecording();
+    const control = createSurfaceInputControl();
+    const pendingStatus = createDeferred<BrowserRecordingSessionV1>();
+    let attachments = 0;
+    const attach = createBrowserRecordingAttachToComposer({
+      routes: { getRecordingStatus: () => pendingStatus.promise },
+      resolveInputControl: () => control,
+      attachToComposer: async () => { attachments += 1; return { ok: true, attachmentId: 'attachment_1' }; },
+    });
+    const pending = attach({ recordingId: recording.recordingId });
+    await control.beginConfidentialityHold();
+    pendingStatus.resolve(recording);
+
+    expect(await pending).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    expect(attachments).toBe(0);
+  });
+
   it('attaches a finalized recording mediaRef to the composer attach owner', async () => {
     const recording = createFinalizedRecording();
     let attachedWith: unknown = null;

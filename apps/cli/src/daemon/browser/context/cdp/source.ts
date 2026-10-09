@@ -1,9 +1,11 @@
 import { resolveAnnotationCropClip } from '@happier-dev/protocol/browser/context/annotationCropGeometry';
 import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 
-import type { BrowserContextCaptureScope, BrowserContextSource } from '../capture';
+import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceTargetRef } from '../capture';
+import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 import type { BrowserContextRegionRect } from '../capture';
 import type { SidecarSummaryContextKind } from '../../sidecar/context/capture';
+import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type {
     BrowserContextCdpPageHandle,
     BrowserContextCdpTransport,
@@ -32,8 +34,11 @@ export type BrowserContextDiagnosticsSummarizer = (input: Readonly<{
 }>) => Readonly<{ summary: string; truncated?: boolean }> | null;
 
 export type CdpBrowserContextSourceInput = Readonly<{
+    readFocusedCredentialTarget?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => Promise<BrowserFocusedCredentialTargetV1 | undefined>;
     transport: BrowserContextCdpTransport;
     resolveView: BrowserContextCdpViewResolver;
+    resolveInputControl?: (view: BrowserContextSourceTargetRef) => SurfaceInputControl | undefined;
+    prepareObservation?: (view: BrowserContextSourceTargetRef) => Promise<void>;
     screenshotMediaWriter: BrowserContextScreenshotMediaWriter;
     summarizeDiagnostics?: BrowserContextDiagnosticsSummarizer;
     /** Cap for DOM text summaries before the protocol cap; keeps captures bounded. */
@@ -249,7 +254,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
         return parsePageViewportMetrics(evaluateValue(await evaluate(handle, PAGE_VIEWPORT_METRICS_EXPRESSION)));
     }
 
-    return {
+    const source: BrowserContextSource = {
         async readPrivacyState(view) {
             const handle = resolve(view);
             if (!handle) return ADAPTER_UNAVAILABLE;
@@ -302,6 +307,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             }
             if (!pngBase64) return CAPTURE_FAILED;
 
+            if (input.resolveInputControl?.(view)?.isObservationHeld()) return CAPTURE_FAILED;
             const written = await input.screenshotMediaWriter.write({
                 browserSessionId: view.browserSessionId,
                 viewId: view.viewId,
@@ -374,6 +380,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             }
             if (!pngBase64) return CAPTURE_FAILED;
 
+            if (input.resolveInputControl?.(view)?.isObservationHeld()) return CAPTURE_FAILED;
             const written = await input.screenshotMediaWriter.write({
                 browserSessionId: view.browserSessionId,
                 viewId: view.viewId,
@@ -429,6 +436,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             }
             if (!pngBase64) return CAPTURE_FAILED;
 
+            if (input.resolveInputControl?.(view)?.isObservationHeld()) return CAPTURE_FAILED;
             const written = await input.screenshotMediaWriter.write({
                 browserSessionId: view.browserSessionId,
                 viewId: view.viewId,
@@ -490,6 +498,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                 const entry = readCurrentHistoryEntry(await dispatch(handle, 'Page.getNavigationHistory', undefined, view));
                 const url = stringField(entry, 'url');
                 const title = stringField(entry, 'title');
+                const focusedCredentialTarget = await input.readFocusedCredentialTarget?.(view);
 
                 // Visible text (whitespace-collapsed + capped — never an unbounded DOM dump).
                 const rawText = evaluateString(await evaluate(handle, DOM_TEXT_EXPRESSION, view)) ?? '';
@@ -528,7 +537,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                         captureBeyondViewport: false,
                     }, view);
                     const pngBase64 = stringField(captured, 'data');
-                    if (pngBase64) {
+                    if (pngBase64 && !input.resolveInputControl?.(view)?.isObservationHeld()) {
                         const written = await input.screenshotMediaWriter.write({
                             browserSessionId: view.browserSessionId,
                             viewId: view.viewId,
@@ -546,6 +555,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     ...(url ? { url } : {}),
                     ...(title ? { title } : {}),
                     visibleText,
+                    ...(focusedCredentialTarget ? { focusedCredentialTarget } : {}),
                     ...(visibleTextTruncated ? { visibleTextTruncated: true } : {}),
                     axNodes: ax.nodes,
                     ...(ax.truncated ? { axNodesTruncated: true } : {}),
@@ -559,5 +569,20 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                 return CAPTURE_FAILED;
             }
         },
+    };
+    async function observe<T>(view: BrowserContextSourceTargetRef, read: () => Promise<T>): Promise<T | typeof CAPTURE_FAILED> {
+        if (input.prepareObservation) await input.prepareObservation(view);
+        const control = input.resolveInputControl?.(view);
+        return control ? await control.observeWhile(read) ?? CAPTURE_FAILED : read();
+    }
+    return {
+        readPrivacyState: view => observe(view, () => source.readPrivacyState!(view)),
+        capturePage: view => observe(view, () => source.capturePage(view)),
+        captureScreenshot: view => observe(view, () => source.captureScreenshot(view)),
+        captureSummary: view => observe(view, () => source.captureSummary(view)),
+        captureSelectedElement: view => observe(view, () => source.captureSelectedElement(view)),
+        captureSnapshot: view => observe(view, () => source.captureSnapshot!(view)),
+        captureRegion: view => observe(view, () => source.captureRegion!(view)),
+        captureElement: view => observe(view, () => source.captureElement!(view)),
     };
 }

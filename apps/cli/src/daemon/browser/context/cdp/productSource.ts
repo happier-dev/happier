@@ -2,11 +2,13 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
 import type { BrowserContextSource } from '../capture';
+import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 import type { BrowserSidecarContextCaptureSurface } from '../../sidecar/controlAdapter';
 import type { BrowserContextDiagnosticsSummarySource } from '../diagnostics/summary';
 import {
     createCdpBrowserContextSource,
     type BrowserContextDiagnosticsSummarizer,
+    type CdpBrowserContextSourceInput,
 } from './source';
 import {
     createSessionMediaScreenshotWriter,
@@ -15,7 +17,10 @@ import {
 } from './screenshotMedia';
 
 export type SidecarCdpBrowserContextSourceInput = Readonly<{
+    readFocusedCredentialTarget?: CdpBrowserContextSourceInput['readFocusedCredentialTarget'];
     contextCapture: BrowserSidecarContextCaptureSurface;
+    resolveInputControl?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
+    prepareObservation?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => Promise<void>;
     /** Screenshot media is stored under the invoking Happier session and view generation. */
     workingDirectory: string;
     screenshotMediaStorage?: 'session' | 'daemon';
@@ -73,6 +78,9 @@ export function createSidecarCdpBrowserContextSource(
         transport: input.contextCapture.transport,
         resolveView: (view) => input.contextCapture.resolvePageHandle(view),
         screenshotMediaWriter,
+        ...(input.readFocusedCredentialTarget ? { readFocusedCredentialTarget: input.readFocusedCredentialTarget } : {}),
+        ...(input.resolveInputControl ? { resolveInputControl: input.resolveInputControl } : {}),
+        ...(input.prepareObservation ? { prepareObservation: input.prepareObservation } : {}),
         ...(summarizeDiagnostics ? { summarizeDiagnostics } : {}),
     });
 }

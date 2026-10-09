@@ -239,8 +239,11 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
       const active = activeByRecordingId.get(input.recordingId);
       if (!active) return;
       activeByRecordingId.delete(input.recordingId);
-      await active.session.stop().catch(() => undefined);
-      await active.encoder.discard({ recording: active.recording, reason: input.reason }).catch(() => undefined);
+      try {
+        await active.session.stop();
+      } finally {
+        await active.encoder.discard({ recording: active.recording, reason: input.reason });
+      }
     },
   };
 }

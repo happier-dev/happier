@@ -6,6 +6,7 @@ import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 import type { MachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../../devices/simulator/capture/adapter';
 import type { BrowserCaptureView, BrowserCdpScreencastFrame, BrowserCdpScreencastProducer } from './cdpScreencast';
 
@@ -14,6 +15,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
     contextCapture: BrowserSidecarContextCaptureSurface;
     producer: BrowserCdpScreencastProducer;
     automation: () => BrowserAutomationDaemonService | null;
+    resolveInputControl?: (view: BrowserCaptureView) => SurfaceInputControl | undefined;
 }>): Readonly<{ dispose(): void }> {
     const registered = new Set<string>();
     function register(identity: BrowserCaptureView): void {
@@ -22,6 +24,9 @@ export function registerBrowserLiveCapture(input: Readonly<{
         const sourceId = browserViewKey(view);
         const adapter: MachineLiveStreamCaptureAdapter = {
             async start(startInput) {
+                const humanViewer = startInput.callerAuthority === 'present_user';
+                const canObserve = () => humanViewer || !(input.resolveInputControl?.(view)
+                    ?? input.automation()?.getInputControl(view))?.isObservationHeld();
                 let latest: BrowserCdpScreencastFrame | null = null;
                 let paused = false;
                 let stopped = false;
@@ -32,10 +37,10 @@ export function registerBrowserLiveCapture(input: Readonly<{
                     async start({ emitFrame, fail, reportInputFailure }) {
                         failInput = reportInputFailure;
                         const emitLatest = () => {
-                            if (latest && !paused && !stopped) emitFrame({ codecId: 'image.mjpeg', payload: latest.dataBase64,
+                            if (latest && !paused && !stopped && canObserve()) emitFrame({ codecId: 'image.mjpeg', payload: latest.dataBase64,
                                 timestampMs: latest.timestampMs, keyframe: true });
                         };
-                        const subscription = await input.producer.start({ view,
+                        const subscription = await input.producer.start({ view, purpose: humanViewer ? 'humanViewer' : undefined,
                             onFrame: frame => { latest = frame; emitLatest(); },
                             onError: () => fail('capture_source_unavailable'),
                         });
@@ -43,7 +48,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         // Metadata uses the same encrypted frame transport, scope and lifetime as
                         // the watched view. The controller and engine remain the event producers.
                         const emitEvent = (event?: BrowserEventV1) => {
-                            if (stopped || event && (event.browserSessionId !== view.browserSessionId
+                            if (stopped || !canObserve() || event && (event.browserSessionId !== view.browserSessionId
                                 || !('viewId' in event) || event.viewId !== view.viewId)) return;
                             const occurredAt = Date.now();
                             const controller = input.automation()?.getStatus(view);
@@ -77,6 +82,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         if (stopped) return { ok: false, reasonCode: 'capture_stopped' };
                         const action = inputAction(control, latest);
                         if (!action) return result.session.applySidebandControl?.(control) ?? { ok: false, reasonCode: 'input_not_supported' };
+                        if (!humanViewer) return { ok: false, reasonCode: 'input_not_supported' };
                         const automation = input.automation();
                         if (!automation) return { ok: false, reasonCode: 'input_not_supported' };
                         if (!input.contextCapture.resolvePageHandle(view)) return { ok: false, reasonCode: 'capture_source_unavailable' };

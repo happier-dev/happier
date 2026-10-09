@@ -1,9 +1,10 @@
 import {
     BrowserCommandDispatchResultV1Schema,
     type BrowserCommandV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/control/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from './controlAdapter';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
 
 type SidecarCdpPageHandle = Readonly<{
     targetId: string;
@@ -26,6 +27,7 @@ type SidecarViewLifecycleEvent = Readonly<{
     type: 'bound' | 'unbound';
     browserSessionId: string;
     viewId: string;
+    sourceDestroyed?: boolean;
 }>;
 
 type SidecarControlAdapter = Readonly<{
@@ -100,12 +102,37 @@ function createTransport(overrides: Partial<SidecarCdpControlTransport> = {}): S
             }
             return {};
         }),
-        dispatchBrowserCommand: vi.fn(async () => ({})),
+        dispatchBrowserCommand: vi.fn(async input => input.method === 'Target.closeTarget' ? { success: true } : {}),
         ...overrides,
     };
 }
 
 describe('browser sidecar CDP control adapter', () => {
+    it('retains the confidential page binding when an in-flight replacement opens late', async () => {
+        const control = createSurfaceInputControl();
+        const transport = createTransport();
+        const adapter = createBrowserSidecarCdpControlAdapter({
+            browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1', transport,
+            resolveInputControl: () => control,
+        });
+        await adapter.dispatchCommand(externalOpenViewCommand());
+        let finishOpen!: (page: SidecarCdpPageHandle) => void;
+        vi.mocked(transport.openPage).mockImplementationOnce(() => new Promise(resolve => { finishOpen = resolve; }));
+        const replacement = adapter.dispatchCommand(externalOpenViewCommand());
+        await control.beginConfidentialityHold();
+        finishOpen({ targetId: 'replacement_target', sessionId: 'replacement_session' });
+        expect(await replacement).toMatchObject({ status: 'failed' });
+        expect(adapter.resolvePageHandle({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).toEqual({
+            targetId: 'cdp_target_secret', sessionId: 'cdp_session_secret',
+        });
+        expect(transport.dispatchBrowserCommand).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'Target.closeTarget', params: { targetId: 'replacement_target' },
+        }));
+        expect(await adapter.dispatchCommand(externalOpenViewCommand())).toMatchObject({ status: 'failed' });
+        expect(transport.openPage).toHaveBeenCalledTimes(2);
+        adapter.dispose();
+    });
+
     it('unbinds every owned view on disposal and rejects a pending open completion', async () => {
         let finishOpen: ((page: SidecarCdpPageHandle) => void) | undefined;
         const transport = createTransport();
@@ -130,6 +157,20 @@ describe('browser sidecar CDP control adapter', () => {
         expect(adapter.supportsOpenView(externalOpenViewCommand())).toBe(false);
         adapter.dispose();
         expect(events).toHaveLength(2);
+    });
+
+    it.each([false, undefined])('does not retire a page or clear confidential observation on unproven close acknowledgement (%s)', async success => {
+        const transport = createTransport({ dispatchBrowserCommand: vi.fn(async () => success === undefined ? {} : { success }) });
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1', transport });
+        const lifecycle: SidecarViewLifecycleEvent[] = [];
+        adapter.subscribeViewLifecycle(event => lifecycle.push(event));
+        await adapter.dispatchCommand(externalOpenViewCommand());
+        expect(await adapter.dispatchCommand({ kind: 'closeView', commandId: 'close', browserSessionId: 'browser_session_1', viewId: 'view_1' }))
+            .toMatchObject({ status: 'failed', error: { code: 'adapter_unavailable' } });
+        expect(adapter.ownsView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).toBe(true);
+        expect(lifecycle).toEqual([{ type: 'bound', browserSessionId: 'browser_session_1', viewId: 'view_1' }]);
+        adapter.dispose();
+        expect(lifecycle.at(-1)).toEqual({ type: 'unbound', browserSessionId: 'browser_session_1', viewId: 'view_1' });
     });
     it('publishes engine redirects, title/loading and document generations through the bound view', async () => {
         let listener: BrowserSidecarCdpEventSubscriber | undefined;
@@ -213,7 +254,7 @@ describe('browser sidecar CDP control adapter', () => {
 
         expect(events).toEqual([
             { type: 'bound', browserSessionId: 'browser_session_1', viewId: 'view_1' },
-            { type: 'unbound', browserSessionId: 'browser_session_1', viewId: 'view_1' },
+            { type: 'unbound', browserSessionId: 'browser_session_1', viewId: 'view_1', sourceDestroyed: true },
         ]);
 
         unsubscribe();

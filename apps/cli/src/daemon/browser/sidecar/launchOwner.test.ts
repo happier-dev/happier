@@ -211,6 +211,7 @@ describe('browser sidecar launch owner', () => {
         const result = await resultPromise;
 
         expect(spawnProcess).toHaveBeenCalledWith('/managed/chrome', expect.arrayContaining([
+            '--headless=new',
             '--user-data-dir=/tmp/happier/browser/profile_launch_owner',
             '--remote-debugging-port=0',
         ]));
@@ -223,6 +224,7 @@ describe('browser sidecar launch owner', () => {
         });
         expect(JSON.stringify(result)).not.toContain('private-token');
         if (!result.ok) return;
+        expect(result.contextCapture?.resolveNativeObservation?.(openViewCommand())).toBeUndefined();
 
         await expect(result.adapter.dispatchCommand(openViewCommand())).resolves.toMatchObject({
             v: 1,
@@ -234,6 +236,11 @@ describe('browser sidecar launch owner', () => {
             url: 'https://browser.example.test/launch-owner',
             focus: true,
         });
+        expect(result.contextCapture?.resolvePageHandle(openViewCommand())).toEqual({
+            targetId: 'target_private', sessionId: 'session_private',
+        });
+        expect(result.contextCapture?.resolveNativeObservation?.(openViewCommand())).toBe('not_observable');
+        expect(result.contextCapture?.resolveNativeObservation?.({ ...openViewCommand(), viewId: 'unowned' })).toBeUndefined();
 
         const disposal = result.dispose?.();
         await waitForCondition(() => fake.kill.mock.calls.length === 1);
@@ -243,6 +250,7 @@ describe('browser sidecar launch owner', () => {
         expect(disposeTransport).toHaveBeenCalledOnce();
         expect(fake.kill).toHaveBeenCalledWith('SIGTERM');
         expect(cleanupProfileDirectory).toHaveBeenCalledWith('/tmp/happier/browser/profile_launch_owner');
+        expect(result.contextCapture?.resolveNativeObservation?.(openViewCommand())).toBeUndefined();
     });
 
     it('stops the sidecar and cleans the profile when adapter disposal fails', async () => {

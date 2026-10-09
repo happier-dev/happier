@@ -9,6 +9,7 @@ import type {
 } from '../sidecar/controlAdapter';
 
 import type { BrowserDiagnosticsInteractionTransport } from './actionRoutes';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 /**
  * DIAG-INTERACTION: the LIVE managed-Chromium sidecar CDP interaction transport. It is the producer
@@ -77,6 +78,7 @@ export type BrowserDiagnosticsInteractionTransportInput = Readonly<{
   /** Element-picker selection timeout. Defaults to 60s. */
   pickerTimeoutMs?: number;
   onError?: (error: unknown) => void;
+  resolveInputControl?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
 }>;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -207,16 +209,26 @@ export function createBrowserDiagnosticsInteractionTransport(
   // viewId -> browserSessionId, learned from the control adapter's view-binding lifecycle so a
   // request that carries only a viewId (eval/getProperties/releaseObjectGroup/elementPicker) can be
   // resolved to its owning CDP page handle.
-  const viewSessions = new Map<string, string>();
+  const viewSessions = new Map<string, Readonly<{ browserSessionId: string; unregisterDrain?: () => void }>>();
   const unsubscribeLifecycle = contextCapture.subscribeViewLifecycle((event) => {
     if (disposed) return;
     if (event.type === 'bound') {
-      viewSessions.set(event.viewId, event.browserSessionId);
+      viewSessions.get(event.viewId)?.unregisterDrain?.();
+      const control = input.resolveInputControl?.(event);
+      const unregisterDrain = control?.registerConfidentialityDrain(async () => {
+        const picker = pendingPickers.get(event.viewId);
+        if (picker) { picker.cancel(); await disablePickerOverlay(picker.handle); }
+        await releaseTrackedObjectGroupsForView(event);
+      });
+      viewSessions.set(event.viewId, { browserSessionId: event.browserSessionId, unregisterDrain });
     } else {
+      const picker = pendingPickers.get(event.viewId);
+      if (picker) { picker.cancel(); void disablePickerOverlay(picker.handle); }
       void releaseTrackedObjectGroupsForView({
         browserSessionId: event.browserSessionId,
         viewId: event.viewId,
       });
+      viewSessions.get(event.viewId)?.unregisterDrain?.();
       viewSessions.delete(event.viewId);
     }
   });
@@ -268,7 +280,7 @@ export function createBrowserDiagnosticsInteractionTransport(
   ): void {
     const normalizedObjectGroupId = request.objectGroupId.trim();
     if (!normalizedObjectGroupId) return;
-    const browserSessionId = viewSessions.get(request.viewId);
+    const browserSessionId = viewSessions.get(request.viewId)?.browserSessionId;
     if (!browserSessionId) return;
     const key = objectGroupKey(handle, normalizedObjectGroupId);
     releasedObjectGroupKeys.delete(key);
@@ -297,7 +309,7 @@ export function createBrowserDiagnosticsInteractionTransport(
 
   function resolveHandle(view: Readonly<{ viewId: string; browserSessionId?: string }>): BrowserSidecarCdpPageHandle | null {
     if (disposed) return null;
-    const browserSessionId = view.browserSessionId ?? viewSessions.get(view.viewId);
+    const browserSessionId = view.browserSessionId ?? viewSessions.get(view.viewId)?.browserSessionId;
     if (!browserSessionId) return null;
     return contextCapture.resolvePageHandle({ browserSessionId, viewId: view.viewId });
   }
@@ -315,6 +327,20 @@ export function createBrowserDiagnosticsInteractionTransport(
     });
   }
 
+  function inputControl(view: Readonly<{ viewId: string; browserSessionId?: string }>): SurfaceInputControl | undefined {
+    const browserSessionId = view.browserSessionId ?? viewSessions.get(view.viewId)?.browserSessionId;
+    return browserSessionId ? input.resolveInputControl?.({ browserSessionId, viewId: view.viewId }) : undefined;
+  }
+
+  function reportError(error: unknown, handle: BrowserSidecarCdpPageHandle): void {
+    const view = [...viewSessions].find(([viewId, entry]) => {
+      const current = contextCapture.resolvePageHandle({ browserSessionId: entry.browserSessionId, viewId });
+      return current?.targetId === handle.targetId && current.sessionId === handle.sessionId;
+    });
+    if (view && inputControl({ viewId: view[0] })?.isObservationHeld()) return;
+    onError(view || !input.resolveInputControl ? error : new Error('browser_diagnostics_transport_failed'));
+  }
+
   async function tryPageCommand(
     handle: BrowserSidecarCdpPageHandle,
     method: string,
@@ -324,7 +350,7 @@ export function createBrowserDiagnosticsInteractionTransport(
       await pageCommand(handle, method, params);
     } catch (error) {
       // Best-effort domain enables / teardown must never throw out of a verb dispatch.
-      onError(error);
+      reportError(error, handle);
     }
   }
 
@@ -379,7 +405,7 @@ export function createBrowserDiagnosticsInteractionTransport(
         params: { objectGroup: group.objectGroupId },
       });
     } catch (error) {
-      onError(error);
+      reportError(error, group.handle);
     }
   }
 
@@ -420,9 +446,11 @@ export function createBrowserDiagnosticsInteractionTransport(
   }
 
   async function runEval(request: BrowserDiagnosticsEvalRequestV1): Promise<BrowserDiagnosticsEvalResultV1> {
+    const control = inputControl(request);
     const handle = resolveHandle(request);
     if (!handle) return evalResult(request, 'failed', { errorCode: 'target_detached' });
     await tryPageCommand(handle, 'Runtime.enable');
+    if (inputControl(request)?.isObservationHeld()) return evalResult(request, 'failed', { errorCode: 'collector_unavailable' });
     let raw: unknown;
     try {
       raw = await pageCommand(handle, 'Runtime.evaluate', {
@@ -436,7 +464,7 @@ export function createBrowserDiagnosticsInteractionTransport(
         userGesture: false,
       });
     } catch (error) {
-      onError(error);
+      if (!control?.isObservationHeld()) reportError(error, handle);
       return evalResult(request, 'failed', { errorCode: 'collector_degraded' });
     }
     trackObjectGroup(request, handle);
@@ -473,6 +501,7 @@ export function createBrowserDiagnosticsInteractionTransport(
   async function runGetProperties(
     request: BrowserDiagnosticsGetPropertiesRequestV1,
   ): Promise<BrowserDiagnosticsGetPropertiesResultV1> {
+    const control = inputControl(request);
     const handle = resolveHandle(request);
     if (!handle) return propertiesResult(request, 'failed', { errorCode: 'target_detached' });
     if (releasedObjectGroupKeys.has(objectGroupKey(handle, request.objectGroupId))) {
@@ -487,7 +516,7 @@ export function createBrowserDiagnosticsInteractionTransport(
         generatePreview: true,
       });
     } catch (error) {
-      onError(error);
+      if (!control?.isObservationHeld()) reportError(error, handle);
       return propertiesResult(request, 'failed', { errorCode: 'collector_degraded' });
     }
     const rec = record(raw);
@@ -534,7 +563,7 @@ export function createBrowserDiagnosticsInteractionTransport(
       untrackObjectGroup(handle, request.objectGroupId);
       return releaseResult(request, 'completed');
     } catch (error) {
-      onError(error);
+      reportError(error, handle);
       return releaseResult(request, 'failed', 'collector_degraded');
     }
   }
@@ -602,6 +631,7 @@ export function createBrowserDiagnosticsInteractionTransport(
   async function runElementPickerStart(
     request: BrowserDiagnosticsElementPickerRequestV1,
   ): Promise<BrowserDiagnosticsElementPickerResultV1> {
+    const control = inputControl(request);
     const handle = resolveHandle(request);
     if (!handle) return pickerResult(request, 'failed', { errorCode: 'target_detached' });
     if (disposed) return pickerResult(request, 'failed', { errorCode: 'target_detached' });
@@ -610,7 +640,9 @@ export function createBrowserDiagnosticsInteractionTransport(
       return pickerResult(request, 'failed', { errorCode: 'collector_unavailable' });
     }
     await tryPageCommand(handle, 'DOM.enable');
+    if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
     await tryPageCommand(handle, 'Overlay.enable');
+    if (control?.isObservationHeld()) { await disablePickerOverlay(handle); return pickerResult(request, 'cancelled'); }
     const selection = awaitInspectSelection(handle, request.viewId);
     await tryPageCommand(handle, 'Overlay.setInspectMode', {
       mode: 'searchForNode',
@@ -621,6 +653,7 @@ export function createBrowserDiagnosticsInteractionTransport(
     });
     const outcome = await selection;
     await disablePickerOverlay(handle);
+    if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
     if (outcome.kind === 'selected') {
       return pickerResult(request, 'selected', { backendNodeRef: clamp(String(outcome.backendNodeId), ID_MAX) });
     }
@@ -649,12 +682,14 @@ export function createBrowserDiagnosticsInteractionTransport(
     if (!viewId) return { ok: false, status: 'unavailable', errorCode: 'invalid_parameters' };
     const handle = resolveHandle({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
     if (!handle) return { ok: false, status: 'unavailable', errorCode: 'target_detached' };
+    const control = inputControl({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
     if (actionId === 'browser.diagnostics.pause') {
       await tryPageCommand(handle, 'Debugger.enable');
+      if (control?.isObservationHeld()) return { ok: false, status: 'unavailable', errorCode: 'collector_unavailable' };
       try {
         await pageCommand(handle, 'Debugger.pause');
       } catch (error) {
-        onError(error);
+        if (!control?.isObservationHeld()) reportError(error, handle);
         return { ok: false, status: 'failed', errorCode: 'collector_degraded' };
       }
       return { ok: true, status: 'paused', viewId };
@@ -662,7 +697,7 @@ export function createBrowserDiagnosticsInteractionTransport(
     try {
       await pageCommand(handle, 'Debugger.resume');
     } catch (error) {
-      onError(error);
+      if (!control?.isObservationHeld()) reportError(error, handle);
       return { ok: false, status: 'failed', errorCode: 'collector_degraded' };
     }
     return { ok: true, status: 'resumed', viewId };
@@ -696,6 +731,7 @@ export function createBrowserDiagnosticsInteractionTransport(
       }
       await releaseTrackedObjectGroups();
       pendingPickers.clear();
+      for (const entry of viewSessions.values()) entry.unregisterDrain?.();
       viewSessions.clear();
       releasedObjectGroupKeys.clear();
     },
@@ -703,17 +739,27 @@ export function createBrowserDiagnosticsInteractionTransport(
     async dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<unknown> {
       switch (actionId) {
         case 'browser.diagnostics.pause':
-        case 'browser.diagnostics.resume':
-          return await runTrackedDispatch(() => runPauseResume(actionId, input));
+        case 'browser.diagnostics.resume': {
+          const view = record(input);
+          const viewId = typeof view?.viewId === 'string' ? view.viewId : '';
+          const browserSessionId = typeof view?.browserSessionId === 'string' ? view.browserSessionId : undefined;
+          const control = inputControl({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
+          const read = () => runTrackedDispatch(() => runPauseResume(actionId, input));
+          return (control ? await control.observeWhile(read) : await read()) ?? { ok: false, status: 'unavailable', errorCode: 'collector_unavailable' };
+        }
         case 'browser.diagnostics.eval': {
           const parsed = BrowserDiagnosticsEvalRequestV1Schema.safeParse(input);
           if (!parsed.success) return invalid;
-          return await runTrackedDispatch(() => runEval(parsed.data));
+          const control = inputControl(parsed.data);
+          const read = () => runTrackedDispatch(() => runEval(parsed.data));
+          return (control ? await control.observeWhile(read) : await read()) ?? evalResult(parsed.data, 'failed', { errorCode: 'collector_unavailable' });
         }
         case 'browser.diagnostics.getProperties': {
           const parsed = BrowserDiagnosticsGetPropertiesRequestV1Schema.safeParse(input);
           if (!parsed.success) return invalid;
-          return await runTrackedDispatch(() => runGetProperties(parsed.data));
+          const control = inputControl(parsed.data);
+          const read = () => runTrackedDispatch(() => runGetProperties(parsed.data));
+          return (control ? await control.observeWhile(read) : await read()) ?? propertiesResult(parsed.data, 'failed', { errorCode: 'collector_unavailable' });
         }
         case 'browser.diagnostics.releaseObjectGroup': {
           const parsed = BrowserDiagnosticsReleaseObjectGroupRequestV1Schema.safeParse(input);
@@ -723,6 +769,7 @@ export function createBrowserDiagnosticsInteractionTransport(
         case 'browser.diagnostics.elementPicker.start': {
           const parsed = BrowserDiagnosticsElementPickerRequestV1Schema.safeParse(input);
           if (!parsed.success || parsed.data.action !== 'start') return invalid;
+          if (inputControl(parsed.data)?.isObservationHeld()) return pickerResult(parsed.data, 'cancelled');
           return await runTrackedDispatch(() => runElementPickerStart(parsed.data));
         }
         case 'browser.diagnostics.elementPicker.cancel': {

@@ -109,6 +109,24 @@ function jpegFrame(sessionId: number, bytes: Buffer, timestampMs = 1_100): Brows
 }
 
 describe('browser recording cdpScreencast adapter', () => {
+  it.each(['producer', 'encoder'] as const)('reports a failed %s drain and rejects late frames', async (failure) => {
+    const fake = createFakeTransport();
+    const encoder = createFakeEncoder();
+    if (failure === 'producer') fake.stopSpy.mockRejectedValue(new Error('source shutdown failed'));
+    else encoder.discardSpy.mockRejectedValue(new Error('encoder shutdown failed'));
+    const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({
+      transport: fake.transport,
+      encoderFactory: async () => encoder,
+    });
+    const recording = createRecording();
+    await adapter.start({ recording });
+    const discarded = await adapter.discard({ recordingId: recording.recordingId, recording, reason: 'policy_revoked' }).then(() => true, () => false);
+    fake.emit(jpegFrame(1, Buffer.from('D26-cdp-fixture-secret')));
+
+    expect(discarded).toBe(false);
+    expect(encoder.appended).toEqual([]);
+  });
+
   it('feeds the shared producer JPEG frames into the recording encoder', async () => {
     const fake = createFakeTransport();
     const encoder = createFakeEncoder(8_192);

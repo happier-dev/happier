@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { describe, expect, it, vi } from 'vitest';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
 
 const webmBytes = Buffer.concat([
   Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x86, 0x81, 0x01]),
@@ -50,6 +51,33 @@ function recordingWithId(recordingId: string): BrowserRecordingSessionV1 {
 }
 
 describe('browser recording session-media writer', () => {
+  it('refuses held recording bytes before persistence or transcript attachment', async () => {
+    const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
+    const control = createSurfaceInputControl();
+    await control.beginConfidentialityHold();
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-held-'));
+    try {
+      const sourcePath = join(workingDirectory, 'fixture-secret.webm');
+      await writeFile(sourcePath, Buffer.concat([webmBytes, Buffer.from('D26-recording-fixture-secret')]));
+      const commitAttachment = vi.fn(async () => {});
+      const writer = createBrowserRecordingSessionMediaWriter({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        resolveSessionMediaTarget: () => ({ sessionId: 'session_1', messageLocalId: 'recording_1' }),
+        resolveInputControl: () => control,
+        commitAttachment,
+      });
+      await expect(writer.persistRecording({
+        recording,
+        artifact: { durationMs: 100, byteSize: 20, frameCount: 1, fps: 1, mimeType: 'video/webm', source: { kind: 'local-file', path: sourcePath } },
+      })).rejects.toThrow();
+      expect(commitAttachment).not.toHaveBeenCalled();
+      await expect(stat(join(workingDirectory, '.happier', 'uploads'))).rejects.toThrow();
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('persists captured local video artifacts through the canonical session-media owner and discards them durably', async () => {
     const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-writer-'));

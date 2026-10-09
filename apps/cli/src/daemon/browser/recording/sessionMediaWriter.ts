@@ -16,6 +16,7 @@ import { attachSessionMediaMeta } from '@/api/session/client/transcript/sessionM
 import type {
   BrowserRecordingCapturedArtifact,
   BrowserRecordingMediaWriter,
+  BrowserRecordingInputControlResolver,
 } from './service';
 
 export type BrowserRecordingSessionMediaTarget = Readonly<{
@@ -31,6 +32,7 @@ export type BrowserRecordingSessionMediaWriterOptions = Readonly<{
   resolveSessionMediaTarget(recording: BrowserRecordingSessionV1): BrowserRecordingSessionMediaTarget;
   resolveWorkingDirectory?: (target: BrowserRecordingSessionMediaTarget) => string;
   commitAttachment?: (input: Readonly<{ sessionId: string; localId: string; meta: Record<string, unknown> }>) => Promise<void>;
+  resolveInputControl?: BrowserRecordingInputControlResolver;
 }>;
 
 function buildSessionMediaSource(artifact: BrowserRecordingCapturedArtifact): Extract<
@@ -63,67 +65,76 @@ export function createBrowserRecordingSessionMediaWriter(
   const sourceAccessPolicy = options.sourceAccessPolicy ?? { kind: 'osUser' as const };
   const workspacePathByRecordingId = new Map<string, Readonly<{ path: string; workingDirectory: string; attached: boolean }>>();
 
-  return {
-    async persistRecording({ recording, artifact }) {
-      const target = options.resolveSessionMediaTarget(recording);
-      const workingDirectory = options.resolveWorkingDirectory?.(target) ?? options.workingDirectory;
-      const persisted = await persistSessionMedia({
-        workingDirectory,
-        accessPolicy,
-        sourceAccessPolicy,
-        pathAllowanceRegistry: options.pathAllowanceRegistry,
-        maxBytes: recording.maxBytes,
-        input: {
-          sessionId: target.sessionId,
-          messageLocalId: target.messageLocalId,
-          role: 'output',
-          category: 'tool-artifact',
-          source: buildSessionMediaSource(artifact),
-          origin: {
-            source: 'tool-output',
-            toolCallId: recording.recordingId,
-          },
-          suggestedName: artifact.source.fileNameHint ?? 'browser-recording.webm',
-          createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
-        },
-      });
-      if (!persisted.success) {
-        throw new Error(`Browser recording media persistence failed: ${persisted.code}`);
-      }
-      const mediaRef = convertPersistedItemToMediaRef(persisted);
-      workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: false });
-      if (options.commitAttachment) {
-        await options.commitAttachment({
-          sessionId: target.sessionId,
-          localId: target.messageLocalId,
-          meta: attachSessionMediaMeta({}, [persisted.item], []),
-        });
-        workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: true });
-      }
-      return mediaRef;
-    },
-
-    async discardRecording({ recording }) {
-      if (!recording.mediaRef) return;
-      const workspacePath = workspacePathByRecordingId.get(recording.recordingId);
-      if (!workspacePath) {
-        throw new Error('Browser recording media path is unavailable for discard.');
-      }
-      // Transcript custody has admitted this attachment; draft cleanup must not break it.
-      if (workspacePath.attached) {
-        workspacePathByRecordingId.delete(recording.recordingId);
-        return;
-      }
+  async function discardWorkspaceDraft(recordingId: string): Promise<void> {
+    const workspacePath = workspacePathByRecordingId.get(recordingId);
+    if (!workspacePath) throw new Error('Browser recording media path is unavailable for discard.');
+    // Transcript custody has admitted this attachment; draft cleanup must not break it.
+    if (!workspacePath.attached) {
       const authorized = authorizeFilesystemPath({
         targetPath: workspacePath.path,
         defaultDirectory: workspacePath.workingDirectory,
         accessPolicy,
       });
-      if (!authorized.valid) {
-        throw new Error(authorized.error);
-      }
+      if (!authorized.valid) throw new Error(authorized.error);
       await rm(authorized.resolvedPath, { force: true });
-      workspacePathByRecordingId.delete(recording.recordingId);
+    }
+    workspacePathByRecordingId.delete(recordingId);
+  }
+
+  return {
+    async persistRecording({ recording, artifact }) {
+      const control = options.resolveInputControl?.(recording);
+      const confidential = () => new Error('Browser recording is held for confidential input.');
+      if (control?.isObservationHeld()) throw confidential();
+      const persist = async (): Promise<BrowserEvidenceSessionMediaReferenceV1> => {
+        const target = options.resolveSessionMediaTarget(recording);
+        const workingDirectory = options.resolveWorkingDirectory?.(target) ?? options.workingDirectory;
+        if (control?.isObservationHeld()) throw confidential();
+        const persisted = await persistSessionMedia({
+          workingDirectory,
+          accessPolicy,
+          sourceAccessPolicy,
+          pathAllowanceRegistry: options.pathAllowanceRegistry,
+          maxBytes: recording.maxBytes,
+          input: {
+            sessionId: target.sessionId,
+            messageLocalId: target.messageLocalId,
+            role: 'output',
+            category: 'tool-artifact',
+            source: buildSessionMediaSource(artifact),
+            origin: {
+              source: 'tool-output',
+              toolCallId: recording.recordingId,
+            },
+            suggestedName: artifact.source.fileNameHint ?? 'browser-recording.webm',
+            createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
+          },
+        });
+        if (!persisted.success) throw new Error(`Browser recording media persistence failed: ${persisted.code}`);
+        const mediaRef = convertPersistedItemToMediaRef(persisted);
+        workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: false });
+        if (control?.isObservationHeld()) {
+          await discardWorkspaceDraft(recording.recordingId);
+          throw confidential();
+        }
+        if (options.commitAttachment) {
+          await options.commitAttachment({
+            sessionId: target.sessionId,
+            localId: target.messageLocalId,
+            meta: attachSessionMediaMeta({}, [persisted.item], []),
+          });
+          workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: true });
+        }
+        return mediaRef;
+      };
+      const mediaRef = control ? await control.observeWhile(persist) : await persist();
+      if (!mediaRef) throw confidential();
+      return mediaRef;
+    },
+
+    async discardRecording({ recording }) {
+      if (!recording.mediaRef) return;
+      await discardWorkspaceDraft(recording.recordingId);
     },
   };
 }

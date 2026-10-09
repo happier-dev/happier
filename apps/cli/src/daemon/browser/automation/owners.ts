@@ -28,20 +28,24 @@ export type BrowserAutomationOwnerRegistry = Readonly<{
   ): BrowserAutomationControllerStateV1;
   getControlEpoch(view: BrowserAutomationViewRef): number;
   getInputControl(view: BrowserAutomationViewRef): SurfaceInputControl;
+  acquireConfidentiality(view: BrowserAutomationViewRef): Promise<void>;
+  isObservationHeld(view: BrowserAutomationViewRef): boolean;
+  setConfidentialitySafetyCheck(view: BrowserAutomationViewRef, check: () => Promise<boolean>): void;
+  tryReleaseConfidentiality(view: BrowserAutomationViewRef): Promise<boolean>;
   takeOver(view: BrowserAutomationViewRef): number;
   handBack(view: BrowserAutomationViewRef): number;
-  closeView(view: BrowserAutomationViewRef): void;
+  closeView(view: BrowserAutomationViewRef, facts?: Readonly<{ sourceDestroyed?: boolean }>): void;
 }>;
 
 export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRegistry {
-  const entries = new Map<string, SurfaceInputControl>();
+  const entries = new Map<string, { control: SurfaceInputControl; safetyCheck?: () => Promise<boolean> }>();
 
   function entryFor(view: BrowserAutomationViewRef): SurfaceInputControl {
     const key = browserViewKey(view);
     const existing = entries.get(key);
-    if (existing) return existing;
+    if (existing) return existing.control;
     const created = createSurfaceInputControl();
-    entries.set(key, created);
+    entries.set(key, { control: created });
     return created;
   }
 
@@ -65,6 +69,29 @@ export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRe
       return entryFor(view).getStatus().controlEpoch;
     },
     getInputControl: entryFor,
+    acquireConfidentiality: view => entryFor(view).beginConfidentialityHold(),
+    isObservationHeld: view => entryFor(view).isObservationHeld(),
+    setConfidentialitySafetyCheck(view, check) {
+      entryFor(view);
+      const entry = entries.get(browserViewKey(view));
+      if (entry) {
+        // A later known nondelivery cannot erase an older delivered/unknown secret's hold.
+        const previous = entry.safetyCheck;
+        entry.safetyCheck = previous ? async () => await previous() && await check() : check;
+      }
+    },
+    async tryReleaseConfidentiality(view) {
+      const entry = entries.get(browserViewKey(view));
+      if (!entry?.control.isObservationHeld() || !entry.safetyCheck) return false;
+      const check = entry.safetyCheck;
+      const safe = await check().catch(() => false);
+      if (!safe || entries.get(browserViewKey(view)) !== entry || entry.safetyCheck !== check) return false;
+      const cleared = entry.control.clearConfidentialityHold();
+      if (cleared) {
+        delete entry.safetyCheck;
+      }
+      return cleared;
+    },
 
     takeOver(view) {
       const entry = entryFor(view);
@@ -76,9 +103,13 @@ export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRe
       entry.handBack();
       return entry.getStatus().controlEpoch;
     },
-    closeView(view) {
+    closeView(view, facts) {
       const key = browserViewKey(view);
-      void entries.get(key)?.close('view_closed');
+      const entry = entries.get(key);
+      const held = entry?.control.hasConfidentialityHold() ?? false;
+      void entry?.control.close('view_closed');
+      // Loss of a binding/connection does not prove that its confidential page disappeared.
+      if (held && facts?.sourceDestroyed !== true) return;
       entries.delete(key);
     },
   };

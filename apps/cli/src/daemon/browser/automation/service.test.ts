@@ -2,11 +2,13 @@ import {
   BrowserAutomationActionResultV1Schema,
   BrowserAutomationTimelineV1Schema,
   type BrowserAutomationActionRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/automation/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserAutomationDaemonService } from './service';
 import type { BrowserAutomationAdapter } from './adapters/types';
+import { createBrowserAutomationCdpAdapter } from './adapters/cdp';
+import { createBrowserAutomationOwnerRegistry } from './owners';
 
 const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
 const agentRef = { kind: 'agent', id: 'agent_1' } as const;
@@ -15,6 +17,7 @@ type ViewLifecycleEvent = Readonly<{
   type: 'bound' | 'unbound';
   browserSessionId: string;
   viewId: string;
+  sourceDestroyed?: boolean;
 }>;
 
 function readOnlyAdapter(): BrowserAutomationAdapter {
@@ -48,6 +51,104 @@ function request(
 }
 
 describe('browser automation daemon service', () => {
+  it('preserves the physical producer native observation qualification on a prepared target', async () => {
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: {
+      ownsView: () => true,
+      dispatchControlCommand: async () => { throw new Error('unexpected navigation'); },
+      dispatchPageQuery: async () => ({ ok: true }),
+      // This is the physical CDP transport boundary; the service and shared input owner remain real.
+      prepareConfidentialFill: async () => ({ nativeObservation: 'not_observable',
+        recheck: async () => true, fill: async () => ({ status: 'filled', code: 'filled' }),
+        finish: async () => undefined,
+      }),
+    } }) });
+    const target = await service.prepareConfidentialFill({
+      serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in', ...view,
+      tabId: 'tab', frameId: 'frame', documentId: 'document', navigationGeneration: 0,
+      origin: 'https://example.test', field: { fieldId: '1', focusId: '1', locator: '#password' },
+    }, { authority: 'present_user', actionCaller: { kind: 'host' } });
+    try {
+      expect(target).toMatchObject({ nativeObservation: 'not_observable' });
+    } finally { if (!('status' in target)) await target.finish(); service.dispose(); }
+  });
+  it('refuses another confidential preparation while one is still active', async () => {
+    const owners = createBrowserAutomationOwnerRegistry();
+    const physicalPreparation: string[] = [];
+    let releasePreparation: () => void = () => undefined;
+    const preparing = new Promise<void>(resolve => { releasePreparation = resolve; });
+    let resolveStarted: () => void = () => undefined;
+    const started = new Promise<void>(resolve => { resolveStarted = resolve; });
+    const service = createBrowserAutomationDaemonService({ owners, adapter: createBrowserAutomationCdpAdapter({ transport: {
+      ownsView: () => true,
+      dispatchControlCommand: async () => { throw new Error('unexpected navigation'); },
+      dispatchPageQuery: async () => ({ ok: true }),
+      prepareConfidentialFill: async () => {
+        physicalPreparation.push('prepare');
+        resolveStarted();
+        await preparing;
+        return { recheck: async () => true, fill: async () => ({ status: 'filled', code: 'filled' }),
+          finish: async () => undefined };
+      },
+    } }) });
+    const confidentialRequest = {
+        serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in', ...view,
+        tabId: 'tab', frameId: 'frame', documentId: 'document', navigationGeneration: 0,
+        origin: 'https://example.test', field: { fieldId: '1', focusId: '1', locator: '#password' },
+    };
+    const firstPreparation = service.prepareConfidentialFill(confidentialRequest, { authority: 'present_user', actionCaller: { kind: 'host' } });
+    await started;
+    const overlapping = service.prepareConfidentialFill(confidentialRequest,
+      { authority: 'present_user', actionCaller: { kind: 'host' } });
+    releasePreparation();
+    const first = await firstPreparation;
+    try {
+      expect(await overlapping).toEqual({ status: 'refused', code: 'observation_unavailable' });
+      expect('status' in first).toBe(false);
+      expect(await service.prepareConfidentialFill(confidentialRequest,
+        { authority: 'present_user', actionCaller: { kind: 'host' } })).toEqual({ status: 'refused', code: 'observation_unavailable' });
+      expect(physicalPreparation).toEqual(['prepare']);
+      expect(owners.isObservationHeld(view)).toBe(true);
+    } finally { if (!('status' in first)) await first.finish(); service.dispose(); }
+  });
+
+  it.each(['filled', 'unknown'] as const)('admits a fresh exact human choice after %s without releasing older confidentiality', async firstStatus => {
+    const owners = createBrowserAutomationOwnerRegistry();
+    let preparation = 0;
+    const service = createBrowserAutomationDaemonService({ owners, adapter: createBrowserAutomationCdpAdapter({ transport: {
+      ownsView: () => true,
+      dispatchControlCommand: async () => { throw new Error('unexpected navigation'); },
+      dispatchPageQuery: async () => ({ ok: true }),
+      prepareConfidentialFill: async () => {
+        const ordinal = ++preparation;
+        return { recheck: async () => true,
+          isSafe: async () => ordinal === 3,
+          fill: async () => ordinal === 3 ? { status: 'refused', code: 'target_changed' }
+            : ordinal === 1 && firstStatus === 'unknown' ? { status: 'unknown', code: 'delivery_unknown' }
+              : { status: 'filled', code: 'filled' },
+          finish: async () => undefined,
+        };
+      },
+    } }) });
+    try {
+      for (const [index, locator] of ['#username', '#password', '#declined'].entries()) {
+        const target = await service.prepareConfidentialFill({
+          serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in', ...view,
+          tabId: 'tab', frameId: 'frame', documentId: 'document', navigationGeneration: 0,
+          origin: 'https://example.test', field: { fieldId: String(index + 1), focusId: String(index + 1), locator },
+        }, { authority: 'present_user', actionCaller: { kind: 'host' } });
+        expect('status' in target).toBe(false);
+        if ('status' in target) throw new Error('expected independently approved physical target');
+        try {
+          expect(await target.fill(new Uint8Array([1]))).toMatchObject({
+            status: index === 0 ? firstStatus : index === 1 ? 'filled' : 'refused',
+          });
+        } finally { await target.finish(); }
+        expect(owners.isObservationHeld(view)).toBe(true);
+      }
+      expect(preparation).toBe(3);
+      expect(await service.execute(request())).toMatchObject({ status: 'failed', errorCode: 'policy_denied' });
+    } finally { service.dispose(); }
+  });
   it('publishes the active target only while its admitted action owns the page', async () => {
     let release: () => void = () => undefined;
     const pending = new Promise<void>(resolve => { release = resolve; });
@@ -373,6 +474,42 @@ describe('browser automation daemon service', () => {
     }
 
     expect(service.getRuntimeStats().runtimeCount).toBe(baseline);
+  });
+
+  it('does not leave an ordinary closed view holding observation admission', () => {
+    const owners = createBrowserAutomationOwnerRegistry();
+    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter(), owners });
+    service.getStatus(view);
+    service.closeView(view);
+    expect(owners.isObservationHeld(view)).toBe(false);
+    expect(owners.getInputControl(view).isClosed()).toBe(false);
+    service.dispose();
+  });
+
+  it('releases a destroyed confidential source while its native input is still draining', async () => {
+    const owners = createBrowserAutomationOwnerRegistry();
+    let lifecycleListener: ((event: ViewLifecycleEvent) => void) | undefined;
+    let enter: () => void = () => undefined;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const service = createBrowserAutomationDaemonService({ owners,
+      adapter: { adapterKind: 'chromiumSidecar', execute: async () => {
+        enter();
+        await gate;
+        return { status: 'succeeded', fidelity: 'cdp', trustedInput: true };
+      } },
+      subscribeViewLifecycle: listener => { lifecycleListener = listener; return () => undefined; },
+    });
+    await owners.acquireConfidentiality(view);
+    const pending = service.execute(request({ requestedBy: 'user', actionKind: 'click' }));
+    try {
+      await entered;
+      lifecycleListener?.({ type: 'unbound', ...view, sourceDestroyed: true });
+      release();
+      await pending;
+      expect(owners.isObservationHeld(view)).toBe(false);
+    } finally { release(); await pending; service.dispose(); }
   });
 
   it('keeps still-bound view runtimes when one lifecycle view closes', async () => {

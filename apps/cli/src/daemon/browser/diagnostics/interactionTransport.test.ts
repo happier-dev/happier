@@ -3,8 +3,9 @@ import {
   BrowserDiagnosticsEvalResultV1Schema,
   BrowserDiagnosticsGetPropertiesResultV1Schema,
   BrowserDiagnosticsReleaseObjectGroupResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import { describe, expect, it, vi } from 'vitest';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
 
 import {
   createBrowserDiagnosticsInteractionTransport,
@@ -132,6 +133,113 @@ function deferred<T>() {
 }
 
 describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
+  it('drains a queued debugger mutation and refuses further held debugger input', async () => {
+    const control = createSurfaceInputControl();
+    const entered = deferred<void>();
+    const response = deferred<unknown>();
+    const harness = createHarness();
+    harness.dispatchPageCommand.mockImplementation(async input => {
+      if (input.method === 'Debugger.pause') { entered.resolve(); return response.promise; }
+      return {};
+    });
+    const transport = createBrowserDiagnosticsInteractionTransport({
+      contextCapture: harness.contextCapture, resolveInputControl: () => control,
+    });
+    harness.bindView();
+    const read = transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID, browserSessionId: BROWSER_SESSION_ID });
+    await entered.promise;
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    response.resolve({});
+    expect(await read).toMatchObject({ ok: false });
+    await hold;
+    const count = harness.dispatchPageCommand.mock.calls.length;
+    expect(await transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID })).toMatchObject({ ok: false });
+    expect(await transport.dispatch('browser.diagnostics.resume', { viewId: VIEW_ID })).toMatchObject({ ok: false });
+    expect(harness.dispatchPageCommand.mock.calls).toHaveLength(count);
+    await transport.dispose();
+  });
+
+  it('drains and suppresses queued eval output then refuses held eval and property reads', async () => {
+    const harness = createHarness();
+    const control = createSurfaceInputControl();
+    const value = deferred<unknown>();
+    const entered = deferred<void>();
+    harness.dispatchPageCommand.mockImplementation(async input => {
+      if (input.method === 'Runtime.evaluate') { entered.resolve(); return value.promise; }
+      return {};
+    });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture,
+      resolveInputControl: () => control });
+    harness.bindView();
+    const read = transport.dispatch('browser.diagnostics.eval', evalRequest());
+    await entered.promise;
+    let drained = false;
+    const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    value.resolve({ result: { type: 'string', value: 'fixture-secret' } });
+    const result = await read;
+    expect(JSON.stringify(result)).not.toContain('fixture-secret');
+    expect(result).toMatchObject({ status: 'failed' });
+    await hold;
+    const count = harness.dispatchPageCommand.mock.calls.length;
+    expect(await transport.dispatch('browser.diagnostics.eval', evalRequest())).toMatchObject({ status: 'failed' });
+    expect(await transport.dispatch('browser.diagnostics.getProperties', {
+      v: 1, propertyRequestId: 'property_held', viewId: VIEW_ID, navigationGeneration: 0,
+      tier: 'cdp', objectId: 'field', objectGroupId: 'group_1', diagnosticsInteractionEnabled: true,
+    })).toMatchObject({ status: 'failed', properties: [] });
+    expect(harness.dispatchPageCommand.mock.calls).toHaveLength(count);
+    await transport.dispose?.();
+  });
+
+  it('does not publish credential-echoing boundary errors after observation was held', async () => {
+    const control = createSurfaceInputControl();
+    const response = deferred<unknown>();
+    const entered = deferred<void>();
+    const harness = createHarness();
+    harness.dispatchPageCommand.mockImplementation(async input => {
+      if (input.method === 'Runtime.evaluate') { entered.resolve(); return response.promise; }
+      return {};
+    });
+    const onError = vi.fn();
+    const transport = createBrowserDiagnosticsInteractionTransport({
+      contextCapture: harness.contextCapture, resolveInputControl: () => control, onError,
+    });
+    harness.bindView();
+    const read = transport.dispatch('browser.diagnostics.eval', evalRequest());
+    await entered.promise;
+    const hold = control.beginConfidentialityHold();
+    response.reject(new Error('fixture-secret'));
+    expect(await read).toMatchObject({ status: 'failed' });
+    await hold;
+    expect(onError).not.toHaveBeenCalled();
+    await transport.dispose();
+  });
+
+  it('cancels a pending element picker before confidentiality drain settles', async () => {
+    const control = createSurfaceInputControl();
+    const entered = deferred<void>();
+    const harness = createHarness({ onSetInspectMode: () => { entered.resolve(); } });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture,
+      resolveInputControl: () => control });
+    harness.bindView();
+    const picker = transport.dispatch('browser.diagnostics.elementPicker.start', {
+      v: 1, pickerRequestId: 'picker_held', viewId: VIEW_ID, navigationGeneration: 0,
+      tier: 'cdp', action: 'start', diagnosticsInteractionEnabled: true,
+    });
+    await entered.promise;
+    try {
+      await control.beginConfidentialityHold();
+      expect(harness.dispatchPageCommand).toHaveBeenCalledWith(expect.objectContaining({
+        method: 'Overlay.setInspectMode', params: { mode: 'none' },
+      }));
+      expect(await picker).toMatchObject({ status: 'cancelled' });
+    } finally { await transport.dispose?.(); }
+  });
+
   it('maps eval to Runtime.evaluate and returns a completed remote-object result', async () => {
     const harness = createHarness({
       responses: {

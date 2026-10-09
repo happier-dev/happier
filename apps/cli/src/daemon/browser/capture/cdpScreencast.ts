@@ -1,6 +1,7 @@
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 import type { BrowserSidecarContextCaptureSurface, BrowserSidecarCdpPageHandle } from '../sidecar/controlAdapter';
+import type { SurfaceInputControl } from '../../surfaces/inputControl';
 
 export type BrowserCaptureView = Readonly<{ browserSessionId: string; viewId: string }>;
 export type BrowserCdpScreencastFrame = Readonly<{
@@ -11,6 +12,8 @@ export type BrowserCdpScreencastFrame = Readonly<{
     height?: number;
 }>;
 type Consumer = Readonly<{
+    /** Only the separately admitted present-human stream uses this purpose. */
+    purpose?: 'humanViewer';
     onFrame: (frame: BrowserCdpScreencastFrame) => void;
     onError?: (error: unknown) => void;
 }>;
@@ -32,6 +35,7 @@ type Capture = {
 /** One page screencast and one CDP ACK owner, shared by recording and live viewers. */
 export function createBrowserCdpScreencastProducer(input: Readonly<{
     contextCapture: BrowserSidecarContextCaptureSurface;
+    resolveInputControl?: (view: BrowserCaptureView) => SurfaceInputControl | undefined;
     nowMs?: () => number;
 }>): BrowserCdpScreencastProducer {
     const captures = new Map<string, Capture>();
@@ -76,6 +80,8 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
     return {
         async start(consumer) {
             if (disposed) return null;
+            const control = input.resolveInputControl?.(consumer.view);
+            if (consumer.purpose !== 'humanViewer' && control?.isObservationHeld()) return null;
             const key = browserViewKey(consumer.view);
             let capture = captures.get(key);
             while (capture?.stopping) {
@@ -111,6 +117,7 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                             ...(typeof dimensions.deviceHeight === 'number' && dimensions.deviceHeight > 0 ? { height: dimensions.deviceHeight } : {}),
                         };
                         for (const subscriber of [...created.consumers]) {
+                            if (subscriber.purpose !== 'humanViewer' && control?.isObservationHeld()) continue;
                             try { subscriber.onFrame(frame); } catch (error) { report(subscriber, error); }
                         }
                     } finally {
@@ -131,6 +138,11 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
             }
             const current = capture;
             if (!await current.started || current.closed) return null;
+            if (consumer.purpose !== 'humanViewer' && control?.isObservationHeld()) {
+                current.consumers.delete(consumer);
+                if (!current.consumers.size) await close(key, current);
+                return null;
+            }
             let released = false;
             return {
                 async stop() {

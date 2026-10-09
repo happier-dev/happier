@@ -301,6 +301,8 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             },
             contextCapture: {
                 resolvePageHandle,
+                resolveNativeObservation: (view) => resolvePageHandle(view)
+                    ? sessions.get(view.browserSessionId)?.result?.contextCapture?.resolveNativeObservation?.(view) : undefined,
                 getNavigationState: (view) => {
                     const session = sessions.get(view.browserSessionId);
                     return !session?.closing ? session?.result?.contextCapture?.getNavigationState?.(view) ?? null : null;

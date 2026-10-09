@@ -41,7 +41,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
     endpointSource: BrowserSidecarCdpEndpointSource;
     connectTransport?: ConnectBrowserSidecarCdpTransport;
 }>): BrowserSidecarControlAdapterFactory {
-    return async () => {
+    return async (factoryInput) => {
         const discovered = discoverBrowserSidecarCdpEndpoint(input.endpointSource);
         if (!discovered.ok) {
             return unavailable();
@@ -59,6 +59,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
             browserSessionId: input.browserSessionId,
             sidecarId: input.sidecarId,
             transport: connected.transport,
+            ...(factoryInput.resolveInputControl ? { resolveInputControl: factoryInput.resolveInputControl } : {}),
         });
 
         const subscribeCdpEvents = connected.transport.subscribeCdpEvents;

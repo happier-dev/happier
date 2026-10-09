@@ -5,6 +5,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { BrowserActiveTargetV1Schema, normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
 import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
 import { parseLocator } from '@happier-dev/protocol/browser/automation/locators';
+import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
+import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
+import type { ConfidentialSecretFillTarget } from '../../../surfaces/confidentialSecretFill';
 
 import type {
   BrowserSidecarCdpPageHandle,
@@ -201,6 +204,255 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
   }>) => Readonly<{ summary: string; truncated?: boolean }> | null;
 }>): BrowserAutomationCdpTransport {
   const contextCapture = input.contextCapture;
+
+  type CredentialTarget = Pick<BrowserAutomationSecretFillRequestV1,
+    'browserSessionId' | 'viewId' | 'tabId' | 'frameId' | 'documentId' | 'navigationGeneration' | 'origin' | 'field'>;
+  type Refusal = Extract<SecretFillSettlementV1, { status: 'refused' }>;
+
+  function currentCredentialHandle(target: CredentialTarget): BrowserSidecarCdpPageHandle | null {
+    if (!contextCapture || !input.adapter.ownsView(target)) return null;
+    const handle = contextCapture.resolvePageHandle(target);
+    const navigation = contextCapture.getNavigationState?.(target);
+    return handle?.targetId === target.tabId && navigation?.navigationGeneration === target.navigationGeneration
+      && navigation.loadingState === 'ready' ? handle : null;
+  }
+
+  function findFrame(tree: unknown, frameId: string): Record<string, unknown> | null {
+    const node = record(tree);
+    const frame = record(node?.frame);
+    if (frame?.id === frameId) return frame;
+    for (const child of Array.isArray(node?.childFrames) ? node.childFrames : []) {
+      const found = findFrame(child, frameId);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  async function releaseCredentialObjects(handle: BrowserSidecarCdpPageHandle, objects: string[]): Promise<void> {
+    for (const objectId of objects.splice(0)) {
+      try { await dispatchPageCommand(handle, 'Runtime.releaseObject', { objectId }); } catch { /* No private error escapes cleanup. */ }
+    }
+  }
+
+  async function proveCredentialTarget(target: CredentialTarget, objects: string[], signal?: AbortSignal): Promise<Readonly<{
+    handle: BrowserSidecarCdpPageHandle; fieldObjectId: string; executionContextId: number;
+  }> | null> {
+    const handle = currentCredentialHandle(target);
+    if (!handle || signal?.aborted || !/^[1-9]\d*$/u.test(target.field.fieldId)
+      || target.field.focusId !== target.field.fieldId) return null;
+    const isCurrent = () => {
+      const current = currentCredentialHandle(target);
+      return !signal?.aborted && current?.targetId === handle.targetId && current?.sessionId === handle.sessionId;
+    };
+    const read = async (method: string, params?: Record<string, unknown>) => {
+      if (!isCurrent()) return undefined;
+      const result = await dispatchPageCommand(handle, method, params);
+      return isCurrent() ? result : undefined;
+    };
+    const frame = findFrame(record(await read('Page.getFrameTree'))?.frameTree, target.frameId);
+    if (frame?.loaderId !== target.documentId || frame?.securityOrigin !== target.origin) return null;
+    // Isolated-world DOM bindings prevent page-defined getters/methods from supplying the proof.
+    const world = record(await read('Page.createIsolatedWorld', { frameId: target.frameId, worldName: 'happier-confidential-input' }));
+    const executionContextId = world?.executionContextId;
+    if (typeof executionContextId !== 'number') return null;
+    const elementExpression = synthesizeLocatorElementExpression(parseLocator(target.field.locator));
+    const resolve = async (expression: string) => {
+      const remote = record(await read('Runtime.evaluate', { expression, contextId: executionContextId,
+        returnByValue: false, awaitPromise: false, silent: true }));
+      const objectId = stringField(remote?.result, 'objectId');
+      if (objectId) objects.push(objectId);
+      return objectId;
+    };
+    const fieldObjectId = await resolve(elementExpression);
+    const activeObjectId = await resolve('document.activeElement');
+    if (!fieldObjectId || !activeObjectId || !isCurrent()) return null;
+    for (const objectId of [fieldObjectId, activeObjectId]) {
+      const node = record(record(await read('DOM.describeNode', { objectId, depth: 0 }))?.node);
+      if (String(node?.backendNodeId) !== target.field.fieldId) return null;
+    }
+    const finalFrame = findFrame(record(await read('Page.getFrameTree'))?.frameTree, target.frameId);
+    if (finalFrame?.loaderId !== target.documentId || finalFrame?.securityOrigin !== target.origin) return null;
+    const valid = evaluateValue(await read('Runtime.callFunctionOn', {
+      objectId: fieldObjectId, returnByValue: true, silent: true,
+      functionDeclaration: `function() { return this.isConnected && this.ownerDocument === document
+        && document.hasFocus() && document.activeElement === this && (${elementExpression}) === this
+        && location.origin === ${JSON.stringify(target.origin)} && !this.disabled && !this.readOnly
+        && (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement
+          && ['text','password','email','search','tel','url','number'].includes(this.type))); }`,
+    }));
+    return valid === true && isCurrent() ? { handle, fieldObjectId, executionContextId } : null;
+  }
+
+  async function prepareConfidentialFill(request: BrowserAutomationSecretFillRequestV1): Promise<ConfidentialSecretFillTarget | Refusal> {
+    if (!contextCapture?.getNavigationState) return { status: 'refused', code: 'field_verification_unsupported' };
+    const handle = contextCapture.resolvePageHandle(request);
+    if (!handle) return { status: 'refused', code: 'target_unavailable' };
+    const objects: string[] = [];
+    try {
+      if (!await proveCredentialTarget(request, objects)) {
+        await releaseCredentialObjects(handle, objects);
+        return { status: 'refused', code: 'target_changed' };
+      }
+    } catch {
+      await releaseCredentialObjects(handle, objects);
+      return { status: 'refused', code: 'field_verification_unsupported' };
+    }
+    let finished = false;
+    let fillStarted = false;
+    let settlement: SecretFillSettlementV1 | undefined;
+    let submitStarted = false;
+    let submitSettlement: NonNullable<Extract<SecretFillSettlementV1, { status: 'filled' }>['submit']> | undefined;
+    return {
+      ...(contextCapture.resolveNativeObservation?.(request) === 'not_observable'
+        ? { nativeObservation: 'not_observable' as const } : {}),
+      async recheck() {
+        if (finished) return false;
+        try { return !!await proveCredentialTarget(request, objects); } catch { return false; }
+      },
+      async isSafe() {
+        // A live invocation still needs its hold. Clearing a field or changing loaders cannot
+        // establish safety after delivery: page script and Chromium's back/forward cache can retain it.
+        return finished && settlement?.status !== 'filled' && settlement?.status !== 'unknown';
+      },
+      async fill(value, signal, beforeDelivery) {
+        let text: string | undefined;
+        let parameters: Record<string, unknown> | undefined;
+        let issued = false;
+        try {
+          if (fillStarted) return settlement ?? { status: 'unknown', code: 'delivery_unknown' };
+          fillStarted = true;
+          if (signal?.aborted) return settlement = { status: 'canceled', code: 'canceled' };
+          if (finished) return settlement = { status: 'refused', code: 'target_changed' };
+          if (!await proveCredentialTarget(request, objects, signal)) {
+            return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
+              : { status: 'refused', code: 'target_changed' };
+          }
+          if (beforeDelivery && !await beforeDelivery()) {
+            return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
+              : { status: 'refused', code: 'approval_changed' };
+          }
+          if (!await proveCredentialTarget(request, objects, signal)) {
+            return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
+              : { status: 'refused', code: 'target_changed' };
+          }
+          // The service's input owner serializes this CDP sequence. D46 accepts the residual
+          // verify→insert micro-race; no await or page script carrying material intervenes here.
+          text = new TextDecoder('utf-8', { fatal: true }).decode(value);
+          parameters = { text };
+          issued = true;
+          await dispatchPageCommand(handle, 'Input.insertText', parameters);
+          return settlement = { status: 'filled', code: 'filled' };
+        } catch {
+          return settlement = issued ? { status: 'unknown', code: 'delivery_unknown' }
+            : signal?.aborted ? { status: 'canceled', code: 'canceled' }
+              : { status: 'refused', code: 'target_changed' };
+        } finally {
+          value.fill(0);
+          if (parameters) delete parameters.text;
+          parameters = undefined;
+          text = undefined;
+        }
+      },
+      ...(request.submit ? { async submit(signal?: AbortSignal, beforeDelivery?: () => Promise<boolean>) {
+        if (submitStarted) return submitSettlement ?? { status: 'unknown' as const, code: 'submit_unknown' as const };
+        if (finished || settlement?.status !== 'filled' || signal?.aborted) {
+          return { status: 'refused' as const, code: 'submit_refused' as const };
+        }
+        const submit = request.submit!;
+        let issued = false;
+        try {
+          const proof = await proveCredentialTarget(request, objects, signal);
+          if (!proof || !/^[1-9]\d*$/u.test(submit.controlId)) return { status: 'refused' as const, code: 'submit_refused' as const };
+          const controlExpression = synthesizeLocatorElementExpression(parseLocator(submit.locator));
+          const remote = await dispatchPageCommand(handle, 'Runtime.evaluate', { expression: controlExpression,
+            contextId: proof.executionContextId, returnByValue: false, awaitPromise: false, silent: true });
+          const objectId = stringField(record(remote)?.result, 'objectId');
+          if (objectId) objects.push(objectId);
+          if (!objectId || !currentCredentialHandle(request) || signal?.aborted) return { status: 'refused' as const, code: 'submit_refused' as const };
+          const node = record(record(await dispatchPageCommand(handle, 'DOM.describeNode', { objectId, depth: 0 }))?.node);
+          if (String(node?.backendNodeId) !== submit.controlId || !currentCredentialHandle(request) || signal?.aborted) {
+            return { status: 'refused' as const, code: 'submit_refused' as const };
+          }
+          if (beforeDelivery && !await beforeDelivery()) return { status: 'refused' as const, code: 'submit_refused' as const };
+          const finalProof = await proveCredentialTarget(request, objects, signal);
+          if (!finalProof) return { status: 'refused' as const, code: 'submit_refused' as const };
+          submitStarted = true;
+          issued = true;
+          // Only the separately reviewed exact control is activated. There is no generic Enter
+          // fallback, coordinate click, caller script or credential argument in this step.
+          const response = await dispatchPageCommand(handle, 'Runtime.callFunctionOn', {
+            objectId, arguments: [{ objectId: finalProof.fieldObjectId }], returnByValue: true, silent: true,
+            functionDeclaration: `function(field) {
+              if (!this.isConnected || this.ownerDocument !== document || !field.isConnected
+                || field.ownerDocument !== document || !document.hasFocus() || document.activeElement !== field
+                || (${synthesizeLocatorElementExpression(parseLocator(request.field.locator))}) !== field
+                || (${controlExpression}) !== this || location.origin !== ${JSON.stringify(request.origin)}
+                || this.disabled || !(this instanceof HTMLButtonElement || (this instanceof HTMLInputElement
+                  && ['submit','button'].includes(this.type)))) return false;
+              HTMLElement.prototype.click.call(this); return true;
+            }`,
+          });
+          const clicked = record(response)?.exceptionDetails ? undefined : evaluateValue(response);
+          return submitSettlement = clicked === true ? { status: 'submitted', code: 'submitted' }
+            : clicked === false ? { status: 'refused', code: 'submit_refused' }
+              : { status: 'unknown', code: 'submit_unknown' };
+        } catch {
+          return submitSettlement = issued ? { status: 'unknown', code: 'submit_unknown' }
+            : { status: 'refused', code: 'submit_refused' };
+        }
+      } } : {}),
+      async finish() {
+        finished = true;
+        await releaseCredentialObjects(handle, objects);
+      },
+    };
+  }
+
+  async function readFocusedCredentialTarget(view: BrowserAutomationViewRef): Promise<CredentialTarget | undefined> {
+    const handle = contextCapture?.resolvePageHandle(view);
+    const navigation = contextCapture?.getNavigationState?.(view);
+    if (!handle || !navigation || navigation.loadingState !== 'ready' || !input.adapter.ownsView(view)) return undefined;
+    const objects: string[] = [];
+    const current = () => {
+      const bound = contextCapture?.resolvePageHandle(view);
+      const state = contextCapture?.getNavigationState?.(view);
+      return input.adapter.ownsView(view) && bound?.targetId === handle.targetId && bound?.sessionId === handle.sessionId
+        && state?.navigationGeneration === navigation.navigationGeneration && state.loadingState === 'ready';
+    };
+    try {
+      const tree = record(await dispatchPageCommand(handle, 'Page.getFrameTree'));
+      if (!current()) return undefined;
+      const frame = record(record(tree?.frameTree)?.frame);
+      const frameId = stringField(frame, 'id');
+      const documentId = stringField(frame, 'loaderId');
+      const origin = stringField(frame, 'securityOrigin');
+      if (!frameId || !documentId || !origin || !/^https?:\/\//u.test(origin)) return undefined;
+      const world = record(await dispatchPageCommand(handle, 'Page.createIsolatedWorld', { frameId, worldName: 'happier-confidential-input' }));
+      if (!current() || typeof world?.executionContextId !== 'number') return undefined;
+      const remote = await dispatchPageCommand(handle, 'Runtime.evaluate', { expression: 'document.activeElement',
+        contextId: world.executionContextId, returnByValue: false, awaitPromise: false, silent: true });
+      const objectId = stringField(record(remote)?.result, 'objectId');
+      if (objectId) objects.push(objectId);
+      if (!objectId || !current()) return undefined;
+      const node = record(record(await dispatchPageCommand(handle, 'DOM.describeNode', { objectId, depth: 0 }))?.node);
+      if (!current() || typeof node?.backendNodeId !== 'number' || !Number.isSafeInteger(node.backendNodeId) || node.backendNodeId < 1) return undefined;
+      const locator = evaluateValue(await dispatchPageCommand(handle, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true, silent: true,
+        functionDeclaration: `function() {
+          if (this.id) { const selector = '#' + CSS.escape(this.id); if (document.querySelectorAll(selector).length === 1) return selector; }
+          const id = Element.prototype.getAttribute.call(this, 'data-testid');
+          if (id) { const selector = '[data-testid="' + CSS.escape(id) + '"]'; if (document.querySelectorAll(selector).length === 1) return selector; }
+          return null;
+        }`,
+      }));
+      if (!current() || typeof locator !== 'string' || !locator || locator.length > 256) return undefined;
+      const target: CredentialTarget = { ...view, tabId: handle.targetId, frameId, documentId,
+        navigationGeneration: navigation.navigationGeneration, origin,
+        field: { fieldId: String(node.backendNodeId), focusId: String(node.backendNodeId), locator } };
+      return await proveCredentialTarget(target, objects) ? target : undefined;
+    } catch { return undefined; }
+    finally { await releaseCredentialObjects(handle, objects); }
+  }
 
   async function dispatchRichSnapshot(
     query: BrowserAutomationCdpPageQueryInput,
@@ -645,6 +897,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     getNavigationGeneration: (view) => contextCapture?.getNavigationState?.(view)?.navigationGeneration ?? null,
     dispatchControlCommand: async (command, context) => await input.adapter.dispatchCommand(command, context),
     dispatchPageQuery,
+    prepareConfidentialFill,
+    readFocusedCredentialTarget,
     ...(contextCapture ? {
       dispatchInputCommand,
       executePageOperation: (context: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext, execute: () => Promise<BrowserAutomationAdapterExecuteResult>) => {

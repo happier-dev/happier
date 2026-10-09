@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCdpBrowserContextSource } from './source';
+import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 import { createBrowserContextRoutes } from '../routes';
 import { createBrowserContextCaptureService, type BrowserContextRegionRect } from '../capture';
 import type { BrowserSidecarCdpCommandScope } from '../../sidecar/controlAdapter';
@@ -50,6 +51,35 @@ function fakeMediaWriter(): BrowserContextScreenshotMediaWriter & { writes: unkn
 }
 
 describe('cdp browser context source', () => {
+    it('drains a queued screenshot without persisting it and suppresses every held context read', async () => {
+        const control = createSurfaceInputControl();
+        const writer = fakeMediaWriter();
+        let finish: (result: unknown) => void = () => undefined;
+        const { transport, calls } = fakeTransport(() => new Promise(resolve => { finish = resolve; }));
+        const source = createCdpBrowserContextSource({ transport, resolveView: () => HANDLE,
+            screenshotMediaWriter: writer, resolveInputControl: () => control });
+        const screenshot = source.captureScreenshot(VIEW);
+        let drained = false;
+        const hold = control.beginConfidentialityHold().then(() => { drained = true; });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        finish({ data: 'fixture-secret' });
+        expect(await screenshot).toMatchObject({ ok: false });
+        await hold;
+        expect(writer.writes).toEqual([]);
+        const count = calls.length;
+        const results = await Promise.all([
+            source.capturePage(VIEW), source.captureScreenshot(VIEW),
+            source.captureSummary({ ...VIEW, kind: 'browserDomSnapshotSummary' }),
+            source.captureSelectedElement(VIEW), source.captureSnapshot?.(VIEW),
+            source.captureRegion?.({ ...VIEW, rect: { x: 0, y: 0, width: 10, height: 10 } }),
+            source.captureElement?.({ ...VIEW, selector: 'input' }),
+        ]);
+        expect(results.every(result => result?.ok === false)).toBe(true);
+        expect(calls).toHaveLength(count);
+        expect(writer.writes).toEqual([]);
+    });
+
     it('retains a privacy denial discovered at screenshot egress', async () => {
         let passwordPresent = false;
         const { transport } = fakeTransport(method => {

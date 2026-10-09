@@ -21,8 +21,9 @@ export type BrowserContextStoreClearResult = Readonly<{
 }>;
 
 export type BrowserContextItemStore = Readonly<{
-  record(item: BrowserContextItemV1): void;
+  record(item: BrowserContextItemV1, source?: Readonly<{ browserSessionId: string; viewId: string }>): void;
   item(contextId: string): BrowserContextItemV1 | undefined;
+  source(contextId: string): Readonly<{ browserSessionId: string; viewId: string }> | undefined;
   /** Items sharing an `annotationId`, in insertion order. Empty when the group is unknown. */
   group(annotationId: string): readonly BrowserContextItemV1[];
   /** The `annotationId` a `contextId` belongs to, or `undefined` for a non-annotation/unknown item. */
@@ -51,7 +52,7 @@ function mediaIdOf(item: BrowserContextItemV1): string | undefined {
 }
 
 export function createBrowserContextItemStore(): BrowserContextItemStore {
-  const itemsByContextId = new Map<string, BrowserContextItemV1>();
+  const itemsByContextId = new Map<string, Readonly<{ item: BrowserContextItemV1; source?: Readonly<{ browserSessionId: string; viewId: string }> }>>();
   const insertionOrder: string[] = [];
   const contextIdsByAnnotation = new Map<string, string[]>();
   // mediaId -> the set of contextIds that currently reference it (reference counting).
@@ -82,7 +83,7 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
     const removedItems: BrowserContextItemV1[] = [];
     const releasedMediaIds: string[] = [];
     for (const contextId of contextIds) {
-      const item = itemsByContextId.get(contextId);
+      const item = itemsByContextId.get(contextId)?.item;
       if (!item) continue;
       itemsByContextId.delete(contextId);
       const orderIndex = insertionOrder.indexOf(contextId);
@@ -103,8 +104,8 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
   }
 
   return {
-    record(item) {
-      const existing = itemsByContextId.get(item.contextId);
+    record(item, source) {
+      const existing = itemsByContextId.get(item.contextId)?.item;
       if (existing) {
         // Re-record (re-capture of the same contextId): drop the prior media reference first so the
         // ref set stays accurate, then re-index.
@@ -112,7 +113,7 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
       } else {
         insertionOrder.push(item.contextId);
       }
-      itemsByContextId.set(item.contextId, item);
+      itemsByContextId.set(item.contextId, { item, ...(source ? { source } : {}) });
       if (item.kind === 'browserAnnotation') {
         const group = contextIdsByAnnotation.get(item.annotationId) ?? [];
         if (!group.includes(item.contextId)) group.push(item.contextId);
@@ -122,23 +123,26 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
     },
 
     item(contextId) {
-      return itemsByContextId.get(contextId);
+      return itemsByContextId.get(contextId)?.item;
     },
+
+    source: contextId => itemsByContextId.get(contextId)?.source,
 
     group(annotationId) {
       const ids = contextIdsByAnnotation.get(annotationId) ?? [];
       return ids
-        .map((id) => itemsByContextId.get(id))
+        .map((id) => itemsByContextId.get(id)?.item)
         .filter((item): item is BrowserContextItemV1 => item !== undefined);
     },
 
     annotationIdForContext(contextId) {
-      const item = itemsByContextId.get(contextId);
+      const item = itemsByContextId.get(contextId)?.item;
       return item && item.kind === 'browserAnnotation' ? item.annotationId : undefined;
     },
 
     updateAnnotation(input) {
-      const item = itemsByContextId.get(input.contextId);
+      const entry = itemsByContextId.get(input.contextId);
+      const item = entry?.item;
       if (!item || item.kind !== 'browserAnnotation') return undefined;
       const next = BrowserContextItemV1Schema.parse({
         ...item,
@@ -146,7 +150,7 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
         ...(input.stroke !== undefined ? { stroke: input.stroke } : {}),
         ...(input.styleIntent !== undefined ? { styleIntent: input.styleIntent } : {}),
       });
-      itemsByContextId.set(input.contextId, next);
+      itemsByContextId.set(input.contextId, { ...entry, item: next });
       return next;
     },
 
@@ -156,7 +160,7 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
         return removeContextIds(ids);
       }
       if (input.contextId) {
-        const item = itemsByContextId.get(input.contextId);
+        const item = itemsByContextId.get(input.contextId)?.item;
         // A contextId that names an annotation item clears its WHOLE group atomically.
         if (item && item.kind === 'browserAnnotation') {
           const ids = [...(contextIdsByAnnotation.get(item.annotationId) ?? [])];

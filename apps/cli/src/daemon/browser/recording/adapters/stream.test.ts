@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { BrowserRecordingSessionV1, MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 
 function frame(sequence: number, bytes: Buffer, timestampMs = 1_000): MachineLiveStreamFrameV1 {
   return {
@@ -50,6 +51,47 @@ function createRecording(): BrowserRecordingSessionV1 {
 }
 
 describe('browser recording stream-frame adapter', () => {
+  it.each(['producer', 'encoder'] as const)('refuses a failed %s drain and suppresses late human-view frames while held', async (failure) => {
+    const [{ createMachineLiveStreamCaptureRegistry }, { createBrowserRecordingStreamFrameCaptureAdapter }] = await Promise.all([
+      import('../../../peer/mediation/stream/captureRegistry'),
+      import('./stream'),
+    ]);
+    const control = createSurfaceInputControl();
+    const encodedFrames: Buffer[] = [];
+    let offerFrame: (value: MachineLiveStreamFrameV1) => void = () => { throw new Error('capture not started'); };
+    const registry = createMachineLiveStreamCaptureRegistry();
+    registry.register({
+      sourceId: 'source_1',
+      streamFamily: 'simulator.preview',
+      capabilities: { v: 1, sourceId: 'source_1', sourceKind: 'simulator', supportedCodecs: ['image.mjpeg'], maxFramesPerSecond: 30, inputMode: 'none', sidebands: [], health: { status: 'available' } },
+      adapter: {
+        async start(input) {
+          offerFrame = input.offerFrame;
+          return { ok: true, session: { async stop() { if (failure === 'producer') throw new Error('source shutdown failed'); } } };
+        },
+      },
+    });
+    const adapter = createBrowserRecordingStreamFrameCaptureAdapter({
+      captureRegistry: registry,
+      resolveInputControl: () => control,
+      encoderFactory: async () => ({
+        appendFrame: ({ payload }) => { encodedFrames.push(payload); },
+        finish: async () => { throw new Error('unused'); },
+        discard: async () => { if (failure === 'encoder') throw new Error('encoder shutdown failed'); },
+      }),
+      nowMs: () => 1_500,
+    });
+    const recording = createRecording();
+    expect(await adapter.start({ recording, captureSource: { kind: 'machineLiveStream', sourceId: 'source_1', streamFamily: 'simulator.preview', targetMachineId: 'machine_1' } })).toMatchObject({ status: 'started' });
+    offerFrame(frame(1, Buffer.from('safe-frame')));
+    await control.beginConfidentialityHold();
+    const discarded = await adapter.discard({ recordingId: recording.recordingId, recording, reason: 'policy_revoked' }).then(() => true, () => false);
+    offerFrame(frame(2, Buffer.from('D26-stream-fixture-secret')));
+
+    expect(discarded).toBe(false);
+    expect(Buffer.concat(encodedFrames).toString()).toBe('safe-frame');
+  });
+
   it('captures machine-live-stream image frames through an encoder boundary', async () => {
     const [
       { createMachineLiveStreamCaptureRegistry },
