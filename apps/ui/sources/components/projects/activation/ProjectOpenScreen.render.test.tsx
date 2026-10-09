@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installFileFindAccountBoundaryMocks } from '@/components/appShell/panes/fileFindSeedTestHelpers';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import { t } from '@/text';
+import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 
 installFileFindAccountBoundaryMocks('home', 'account');
 installUiListsCommonModuleMocks();
@@ -52,6 +54,42 @@ async function seedOpenDraft(draftId: string) {
 }
 
 describe('Project Open rendered choices', () => {
+    it('exposes a page header exit that returns to the origin and keeps the draft', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const seeded = await seedOpenDraft(draftId);
+        const { useRouter } = await import('expo-router');
+        const router = useRouter();
+        vi.mocked(router.back).mockClear();
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.choices')).toBeTruthy());
+        await act(async () => { screen.findByTestId('projects.open')!.props.onLayout({ nativeEvent: { layout: { width: 390 } } }); });
+        expect(screen.findByTestId('projects.open.cancel')).toBeTruthy();
+        const before = seeded.read()?.selection.value;
+        await act(async () => { screen.pressByTestId('projects.open.cancel'); });
+        expect(router.back).toHaveBeenCalledOnce();
+        expect(seeded.read()?.selection.value).toEqual(before);
+    });
+
+    it.each([{ timed: true, connect: true }, { timed: false, connect: true }, { timed: true, connect: false }])
+      ('renders a rate-limit recovery banner (%j)', async ({ timed, connect }) => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        await seedOpenDraft(draftId);
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.choices')).toBeTruthy());
+        await act(async () => { writeProjectOpenDraft({ scope: { serverId: 'home', accountId: 'account' }, draftId,
+            patch: { result: { kind: 'refused', code: 'REMOTE_RATE_LIMITED',
+                ...(timed ? { retryNotBeforeMs: 1900000000000 } : {}),
+                remediation: { kind: 'retry', ...(connect ? { action: 'connect_github' } : {}) } } } }); });
+        const banner = screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'projects.open.refused');
+        expect(banner?.props.title).toBe(timed
+            ? t('projects.open.githubRateLimitedUntil', { time: formatResetAtTime(1900000000000) })
+            : t('projects.open.githubRateLimited'));
+        expect(banner?.props.description).toBe(connect ? t('projects.open.githubConnectHint') : undefined);
+        expect(banner?.props.details).toContain('REMOTE_RATE_LIMITED');
+        expect(banner?.props.action).toBeUndefined();
+    });
     it('selects a Machine and renders the named Use group without materializing a checkout', async () => {
         // The platform, router and applied Home are boundaries; the store, draft,
         // controller, chooser and shared radio-group presentation stay real.

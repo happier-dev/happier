@@ -37,6 +37,7 @@ import {
 } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import {
   getMachineDisplayName,
   isMachineOnline,
@@ -372,6 +373,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
               title={t('projects.open.title')}
               description={t('projects.open.purpose')}
               alwaysShowTitle
+              cancelAction={!twoPanes ? { title: t('common.cancel'), onPress: cancel, testID: 'projects.open.cancel' } : undefined}
             />
           )}
           <ProjectOpenSubjectSection
@@ -686,6 +688,12 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                 action={props.open.canCheck ? { label: t('projects.open.check'), onPress: () => { void props.open.check(); },
                     disabled: props.open.checking, loading: props.open.checking } : undefined} />;
         case 'refused':
+            if (result.code === 'REMOTE_RATE_LIMITED') return <AttentionBanner testID="projects.open.refused" tone="danger"
+                title={result.retryNotBeforeMs !== undefined
+                    ? t('projects.open.githubRateLimitedUntil', { time: formatResetAtTime(result.retryNotBeforeMs) })
+                    : t('projects.open.githubRateLimited')}
+                description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
+                details={[result.code]} />;
             return <AttentionBanner testID="projects.open.refused" tone="danger" title={refusalTitle(result.code, props.gitRef)} details={[result.code]} />;
     }
 }

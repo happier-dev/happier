@@ -60,6 +60,19 @@ function delayedTransport() {
     return { transport, started, resolve: (result: OpenProjectResultV1) => resolve(result) };
 }
 describe('Project Open screen behavior', () => {
+    it('retains a typed throttle and retry instant without replay, allowing a new explicit Open', async () => {
+        let effects = 0;
+        const refusal = { kind: 'refused', code: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000,
+            remediation: { kind: 'retry', action: 'connect_github' } } as const;
+        const { controller, navigation } = harness(async () => { effects += 1; return effects === 1 ? refusal : opened; });
+        await controller.submit();
+        expect(controller.getSnapshot()).toMatchObject({ pending: false, draft: folder, result: refusal, canCheck: false });
+        expect(effects).toBe(1);
+        expect(navigation).toEqual([]);
+        await controller.submit();
+        expect(effects).toBe(2);
+        expect(navigation).toEqual([opened]);
+    });
     beforeEach(() => installFileFindAccountBoundaryMocks('home', 'account'));
     it.each([opened, { kind: 'refused', code: 'invalid_directory' }, { kind: 'outcomeUnknown', operationId: 'original-attempt' }] as const)
         ('checks the original attempt without replaying Open (%j)', async settlement => {
