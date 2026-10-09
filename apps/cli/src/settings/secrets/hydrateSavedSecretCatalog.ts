@@ -584,7 +584,8 @@ export async function captureSavedSecretReferenceCatalogsForOperation(input: Rea
     } else if (row.status !== 'absent') throw new Error('saved_secret_reference_catalog_unavailable');
   }
   let remoteHostRevision: NonNullable<SavedSecretReferenceCensusV1['remoteHosts']>['revision'] = 'absent';
-  if (remoteHostRow.status === 'present') {
+  if (remoteHostRow.status === 'deleted') { remoteHostRevision = remoteHostRow.revision; catalogs.remoteHostRecords = null; }
+  else if (remoteHostRow.status === 'present') {
     const opened = openRemoteHostCatalogContentV1({ ...storage, content: remoteHostRow.content });
     if (opened.status !== 'ready') throw new Error('saved_secret_reference_catalog_unavailable');
     remoteHostRevision = remoteHostRow.revision; catalogs.remoteHostRecords = opened.hosts;

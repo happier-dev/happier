@@ -173,6 +173,7 @@ describe('SavedSecret material-demand legacy import', () => {
     ['plain', false, 'invocation-active-connected'], ['e2ee', false, 'invocation-active-connected'],
     ['plain', false, 'invocation-invalid-active-connected'],
     ['plain', false, 'invocation-active-reference-catalogs'], ['e2ee', false, 'invocation-active-reference-catalogs'],
+    ['plain', false, 'invocation-deleted-reference-catalogs'], ['e2ee', false, 'invocation-deleted-reference-catalogs'],
     ['plain', false, 'invocation-partial-notification'], ['e2ee', false, 'invocation-partial-notification'],
     ['plain', false, 'invocation-partial-remote-host'], ['e2ee', false, 'invocation-partial-remote-host'],
     ['plain', false, 'invocation-inference-history-retry'], ['e2ee', false, 'invocation-inference-history-retry']] as const)(
@@ -193,6 +194,7 @@ describe('SavedSecret material-demand legacy import', () => {
     const partialNotification = custody === 'invocation-partial-notification';
     const partialRemoteHost = custody === 'invocation-partial-remote-host';
     const activeReferenceCatalogs = custody === 'invocation-active-reference-catalogs' || partialNotification || partialRemoteHost;
+    const deletedReferenceCatalogs = custody === 'invocation-deleted-reference-catalogs';
     const inheritedRef = 'happier:shared-secret:v1:inherited';
     const maskedRef = 'happier:shared-secret:v1:masked';
     const remoteHostRecord = RemoteHostCatalogRecordV1Schema.parse({ v: 1, hosts: [{ id: 'host', name: 'Private host',
@@ -272,9 +274,9 @@ describe('SavedSecret material-demand legacy import', () => {
       expect(new URL(String(url)).origin).toBe('https://import-home.example');
       const path = new URL(String(url)).pathname;
       if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`) return { status: 200, data: connectedConfigurationRow };
-      if (path === REMOTE_HOST_ROWS_ROUTE_V1) return { status: 200, data: activeReferenceCatalogs
+      if (path === REMOTE_HOST_ROWS_ROUTE_V1) return { status: 200, data: deletedReferenceCatalogs ? { status: 'deleted', revision: 8 } : activeReferenceCatalogs
         ? { status: 'present', revision: 8, content: remoteHostContent } : { status: 'absent' } };
-      if (path === NOTIFICATION_CHANNELS_ROUTE_V1) return { status: 200, data: activeReferenceCatalogs
+      if (path === NOTIFICATION_CHANNELS_ROUTE_V1) return { status: 200, data: deletedReferenceCatalogs ? { status: 'deleted', revision: 9 } : activeReferenceCatalogs
         ? { status: 'present', revision: 9, content: notificationContent } : { status: 'absent' } };
       if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) return { status: 200, data: activeConnected ? { status: 'deleted', revision: 6 } : { status: 'absent' } };
       if (path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1 || path === ACP_CATALOG_ROWS_ROUTE_V1 || path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) {
@@ -372,9 +374,14 @@ describe('SavedSecret material-demand legacy import', () => {
       connectedConfigurations: activeConnected ? 5 : 'absent', connectedPurposes: activeConnected ? 6 : 'absent',
     } });
     expect(applied[0]!.referenceCensus).toMatchObject({
-      remoteHosts: { revision: activeReferenceCatalogs ? 8 : 'absent', resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
-      notificationChannels: { revision: activeReferenceCatalogs ? 9 : 'absent', resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
+      remoteHosts: { revision: activeReferenceCatalogs || deletedReferenceCatalogs ? 8 : 'absent', resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
+      notificationChannels: { revision: activeReferenceCatalogs || deletedReferenceCatalogs ? 9 : 'absent', resourceRefs: activeReferenceCatalogs ? [inheritedRef] : [] },
     });
+    if (deletedReferenceCatalogs) {
+      const captured = await savedSecretOperations.captureSavedSecretReferenceCatalogsForOperation({ credentials, operationContext });
+      expect(captured.catalogs.remoteHostRecords).toBeNull();
+      expect(captured.catalogs.notificationChannels).toBeNull();
+    }
     const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: 'import-account',
       source: inference ? { kind: 'legacy-inference-openai-key' } : { kind: 'personal-saved-secret', secretId: legacy.id } });
     const ref = `happier:shared-secret:v1:${resourceId}`;
@@ -422,7 +429,8 @@ describe('SavedSecret material-demand legacy import', () => {
     expect(applied).toHaveLength(1);
     expect(historyMutations).toHaveLength(1);
     expect(historyMutations[0]?.operation).toMatchObject({ kind: 'normalize', removedRoots: activeConnected
-      ? ['connectedAccountServiceConfigurationsV1', 'connectedAccountPurposeBindingsV1'] : [],
+      ? ['connectedAccountServiceConfigurationsV1', 'connectedAccountPurposeBindingsV1']
+      : activeReferenceCatalogs || deletedReferenceCatalogs ? ['notificationChannelsV1', 'remoteHostsV1'] : [],
       savedSecretTransfers: [{ ...(inference ? { source: { kind: 'legacy-inference-openai-key' } } : { savedSecretId: legacy.id }), resourceId, expectedRevision: 1 }] });
     if (inference) {
       const historical = retained?.t === 'plain' ? retained.v : retained?.t === 'encrypted' && material
