@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createAndroidAabFixture } from '../pipeline/expo/fixtures/android-elf.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
@@ -11,12 +12,12 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-function runSubmit({ withPath }) {
+function runSubmit(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
-  const artifactPath = path.join(dir, 'app.apk');
-  if (withPath) fs.writeFileSync(artifactPath, 'placeholder');
+  const artifactPath = createAndroidAabFixture(dir);
 
   const npxPath = path.join(binDir, 'npx');
   writeExecutable(
@@ -43,7 +44,7 @@ function runSubmit({ withPath }) {
     'dev',
     '--platform',
     'android',
-    ...(withPath ? ['--path', artifactPath] : []),
+    '--path', artifactPath,
   ];
 
   return execFileSync(process.execPath, args, {
@@ -55,17 +56,8 @@ function runSubmit({ withPath }) {
   });
 }
 
-test('expo submit uses --latest by default (cloud builds)', () => {
-  const out = runSubmit({ withPath: false });
-  assert.match(out, /NPX --yes eas-cli@/);
-  assert.match(out, /\ssubmit\b/);
-  assert.match(out, /\s--profile publicdev\b/);
-  assert.match(out, /\s--latest\b/);
-  assert.match(out, /\[pipeline\] expo submit: environment=dev platform=android/);
-});
-
-test('expo submit supports --path for local binaries', () => {
-  const out = runSubmit({ withPath: true });
+test('expo submit validates local AABs and uses the publicdev submit profile for dev', (t) => {
+  const out = runSubmit(t);
   assert.match(out, /APP_ENV=dev/);
   assert.match(out, /\ssubmit\b/);
   assert.match(out, /\s--path\b/);

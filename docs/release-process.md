@@ -510,6 +510,8 @@ not APK offsets. A failure lists the offending libraries and requires a native
 rebuild, not a store-only retry. See [Android's page-size guidance](https://developer.android.com/guide/practices/page-sizes).
 Nonproduction cloud submissions resolve latest to an immutable store-build ID;
 a pending build must finish before verification and submission can proceed.
+Prerelease Android verification failures return failure without suppressing a
+requested iOS submission; the Android upload is skipped.
 The Sherpa JNI CMake owner passes both max-page-size and common-page-size 16384
 to the linker; changing the NDK alone does not repair already built libraries.
 

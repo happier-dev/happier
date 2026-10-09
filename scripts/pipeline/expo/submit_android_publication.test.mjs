@@ -21,7 +21,7 @@ test('production Android refuses missing Play credentials before any EAS submiss
   assert.doesNotMatch(result.stdout, /eas-cli@.*submit/);
 });
 
-function submissionFixture(t, { cloud = false, sourceMismatch = false, versionMismatch = false, commitFailure = false, dryRun = false, wrongTrack = false, misaligned = false, nonproduction = false, latest = false, pendingLatest = false } = {}) {
+function submissionFixture(t, { cloud = false, sourceMismatch = false, versionMismatch = false, commitFailure = false, dryRun = false, wrongTrack = false, misaligned = false, nonproduction = false, latest = false, pendingLatest = false, allPlatforms = false } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'play-submit-flow-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const bundlePath = path.join(dir, 'notes.json');
@@ -34,7 +34,7 @@ function submissionFixture(t, { cloud = false, sourceMismatch = false, versionMi
   mkdirSync(projectDir);
   const easJson = JSON.stringify({ submit: {
     production: { android: { track: wrongTrack ? 'internal' : 'production', releaseStatus: 'completed' } },
-    preview: { android: { track: 'internal', releaseStatus: 'draft' } },
+    preview: { android: { track: 'internal', releaseStatus: 'draft' }, ios: { ascApiKeyId: 'fixture', ascApiKeyIssuerId: 'fixture', ascApiKeyPath: './.eas/keys/AuthKey_fixture.p8' } },
   } });
   writeFileSync(path.join(projectDir, 'eas.json'), easJson);
   const aabPath = createAndroidAabFixture(dir, { alignment: misaligned ? '4k' : '16k' });
@@ -74,8 +74,8 @@ function submissionFixture(t, { cloud = false, sourceMismatch = false, versionMi
       return Response.json({track:'production',releases:[{versionCodes:['4242'],status:'draft'}]});
     };
   `);
-  const args = ['--import', preloadPath, submit, '--environment', nonproduction ? 'preview' : 'production', '--platform', 'android', '--project-dir', projectDir, '--app-version', '1.2.3', '--source-sha', sourceSha, '--release-id', 'r1', '--release-notes-json', bundlePath, ...(latest ? [] : cloud ? ['--id', 'exact-build'] : ['--path', dryRun ? path.join(dir, 'future.aab') : aabPath]), ...(versionMismatch ? ['--android-version-code', '41'] : []), ...(dryRun ? ['--dry-run'] : [])];
-  const result = spawnSync(process.execPath, args, { cwd: fileURLToPath(new URL('../../../', import.meta.url)), env: { ...process.env, CI: '1', EXPO_TOKEN: 'fixture', GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: credentialJson, HAPPIER_EXPO_SUBMIT_APP_ENV: '' }, encoding: 'utf8' });
+  const args = ['--import', preloadPath, submit, '--environment', nonproduction ? 'preview' : 'production', '--platform', allPlatforms ? 'all' : 'android', '--project-dir', projectDir, '--app-version', '1.2.3', '--source-sha', sourceSha, '--release-id', 'r1', '--release-notes-json', bundlePath, ...(latest ? [] : cloud ? ['--id', 'exact-build'] : ['--path', dryRun ? path.join(dir, 'future.aab') : aabPath]), ...(versionMismatch ? ['--android-version-code', '41'] : []), ...(dryRun ? ['--dry-run'] : [])];
+  const result = spawnSync(process.execPath, args, { cwd: fileURLToPath(new URL('../../../', import.meta.url)), env: { ...process.env, CI: '1', EXPO_TOKEN: 'fixture', GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: credentialJson, HAPPIER_EXPO_SUBMIT_APP_ENV: '', ...(allPlatforms ? { APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nfixture\\n-----END PRIVATE KEY-----\\n' } : {}) }, encoding: 'utf8' });
   return { result, calls: readFileSync(marker, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)), restored: readFileSync(path.join(projectDir, 'eas.json'), 'utf8') === easJson, whatsNew };
 }
 
@@ -103,6 +103,16 @@ test('nonproduction local, exact cloud and latest cloud submissions cannot bypas
   assert.ok(upload.args.includes('--id') && upload.args.includes('exact-build'));
   assert.equal(upload.args.includes('--latest'), false);
   assert.equal(calls.some((call) => call.kind === 'http' && call.url.includes('androidpublisher')), false);
+});
+
+test('invalid prerelease Android artifacts do not prevent a requested iOS submission', (t) => {
+  const { result, calls, restored } = submissionFixture(t, { nonproduction: true, cloud: true, latest: true, misaligned: true, allPlatforms: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /LOAD alignment 4096/u);
+  const uploads = calls.filter((call) => call.kind === 'eas' && call.args.includes('submit'));
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].args[uploads[0].args.indexOf('--platform') + 1], 'ios');
+  assert.equal(restored, true);
 });
 
 test('a newer pending latest build never causes upload of the older finished binary', (t) => {
