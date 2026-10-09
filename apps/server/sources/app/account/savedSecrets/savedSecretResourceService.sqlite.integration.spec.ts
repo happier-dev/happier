@@ -39,6 +39,14 @@ import { mutateProfileRowsInTx } from '@/app/account/profiles/profileRows';
 import { prepareAcpCatalogTransferV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
 import { KIRO_ACP_STDERR_RULES } from '@happier-dev/plugins-kiro/agent/acp/transport';
 import { mutateRemoteHostCatalogRowInTx } from '@/app/account/remoteHosts/remoteHostRows';
+import { sealMcpServerCatalogContentV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { readMcpServerCatalogRowInTx } from '@/app/account/mcp/serverRows';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { readProviderConnectionsRowInTx } from '@/app/account/providers/connectionRows';
+import { readConnectedAccountCatalogRowInTx } from '@/app/account/connectedAccounts/configurationRows';
+import type { SavedSecretCatalogRevisionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
@@ -504,6 +512,84 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: '@happier/account/mcp/v1/catalog' } } }))
             .toMatchObject({ version: 0 });
         expect(await db.userKVStore.count({ where: { key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } })).toBe(0);
+    });
+
+    it.each(['mcp', 'providerConnections', 'connectedConfigurations', 'connectedPurposes'] as const)(
+        'refuses a captured encrypted %s census with a visible unclassified reference before resource deletion', async arm => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: material.account, select: { id: true } });
+        const resourceId = `resource_${arm}_outer_census`;
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId, displayName: 'Token', kind: 'token',
+            encryptionMode: 'e2ee', storedContent: sealTestResource(resourceId, 'Token'),
+            keyEnvelopes: [{ recipientAccountId: owner.id, encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                recipientContentPublicKeyFingerprint: material.fingerprint }],
+        }))).toMatchObject({ ok: true });
+        const key = arm === 'mcp' ? '@happier/account/mcp/v1/catalog'
+            : arm === 'providerConnections' ? '@happier/account/provider-connections/v1/catalog'
+            : arm === 'connectedConfigurations' ? '@happier/account/connected-configurations/v1/catalog'
+            : '@happier/account/connected-purposes/v1/catalog';
+        const cryptoMaterial = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(4) };
+        const content = arm === 'mcp'
+            ? sealMcpServerCatalogContentV1({ mode: 'e2ee', material: cryptoMaterial, catalog: { v: 1, servers: [], bindings: [] } })
+            : arm === 'providerConnections'
+                ? { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_provider_connections',
+                    material: cryptoMaterial, payload: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, randomBytes: tweetnacl.randomBytes }) }
+                : sealConnectedAccountCatalogContentV1({ mode: 'e2ee', material: cryptoMaterial,
+                    record: arm === 'connectedConfigurations'
+                        ? { key: 'configurations', value: { v: 1, entries: [] } }
+                        : { key: 'purposes', value: { v: 1, bindings: [] } } });
+        const storedContent = { ...content, retainedMetadata: { label: 'preserved' },
+            futureCredential: { t: 'savedSecret', secretId: formatSharedSavedSecretRefV1(resourceId) } };
+        await db.userKVStore.create({ data: { accountId: owner.id, key, version: 0,
+            value: Buffer.from(JSON.stringify(storedContent)) } });
+        const readRow = await inTx(tx => arm === 'mcp'
+            ? readMcpServerCatalogRowInTx(tx, { accountId: owner.id })
+            : arm === 'providerConnections' ? readProviderConnectionsRowInTx(tx, { accountId: owner.id })
+                : readConnectedAccountCatalogRowInTx(tx, { accountId: owner.id,
+                    key: arm === 'connectedConfigurations' ? 'configurations' : 'purposes' }));
+        expect(readRow.status).toBe('present');
+        const captures: SavedSecretCatalogRevisionsV1 = { mcp: 'absent', acp: 'absent', providerConnections: 'absent',
+            connectedConfigurations: 'absent', connectedPurposes: 'absent', [arm]: 0 };
+        const input = { accountId: owner.id, expectedSettingsVersion: 0,
+            referenceCensus: { accountMode: 'e2ee' as const,
+                profiles: { referenceGuardRevision: 'absent' as const, rows: [] }, catalogs: captures } };
+        const changesBefore = await db.accountChange.count();
+        const census = await inTx(tx => resourceService.readSavedSecretReferenceCensusInTx(tx, input));
+        expect(census.ok ? 'ready' : census.error).toBe('references_invalid');
+        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, { ...input, resourceId, expectedRevision: 1 })))
+            .toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toMatchObject({ revision: 1 });
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0 });
+        const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: owner.id, key } } });
+        expect(row.version).toBe(0);
+        expect(JSON.parse(Buffer.from(row.value!).toString('utf8'))).toEqual(storedContent);
+        expect(await db.userKVStore.count({ where: { key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } })).toBe(0);
+        expect(await db.accountChange.count()).toBe(changesBefore);
+
+        // Harmless retained metadata is not an incomplete reference inventory.
+        await db.userKVStore.update({ where: { accountId_key: { accountId: owner.id, key } },
+            data: { version: 1, value: Buffer.from(JSON.stringify({ ...content, retainedMetadata: { label: 'preserved' } })) } });
+        const harmlessCensus = await inTx(tx => resourceService.readSavedSecretReferenceCensusInTx(tx, {
+            ...input, referenceCensus: { ...input.referenceCensus, catalogs: { ...input.referenceCensus.catalogs, [arm]: 1 } },
+        }));
+        expect(harmlessCensus.ok ? 'ready' : harmlessCensus.error).toBe('ready');
+
+        await db.userKVStore.update({ where: { accountId_key: { accountId: owner.id, key } }, data: { version: 2, value: null } });
+        expect(await inTx(tx => resourceService.readSavedSecretReferenceCensusInTx(tx, {
+            ...input, referenceCensus: { ...input.referenceCensus, catalogs: { ...captures, [arm]: 2 } },
+        }))).toMatchObject({ ok: true, value: { catalogContents: { [arm]: { revision: 2, content: null } } } });
+
+        const plainPayload = arm === 'mcp' ? { v: 1, servers: [], bindings: [] }
+            : arm === 'providerConnections' ? DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1
+                : arm === 'connectedConfigurations' ? { key: 'configurations', value: { v: 1, entries: [] } }
+                    : { key: 'purposes', value: { v: 1, bindings: [] } };
+        await db.userKVStore.update({ where: { accountId_key: { accountId: owner.id, key } },
+            data: { version: 3, value: Buffer.from(JSON.stringify({ t: 'plain', v: plainPayload })) } });
+        const wrongModeCensus = await inTx(tx => resourceService.readSavedSecretReferenceCensusInTx(tx, {
+            ...input, referenceCensus: { ...input.referenceCensus, catalogs: { ...captures, [arm]: 3 } },
+        }));
+        expect(wrongModeCensus.ok ? 'ready' : wrongModeCensus.error).toBe('references_invalid');
     });
 
     it('proves each historical SavedSecret source identity against its current owned destination revision', async () => {

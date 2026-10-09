@@ -21,10 +21,10 @@ import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1
     type SavedSecretCatalogRevisionsV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deriveSavedSecretImportResourceIdV1, listAccountSettingsSavedSecretReferences,
     type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { openMcpServerCatalogContentV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { openMcpServerCatalogContentV1, parseMcpServerCatalogMigrationContentV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { openAcpCatalogContentV1, listAcpCatalogEnvelopeSavedSecretDiagnosticsV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { openProviderConnectionsContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
-import { openConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { openProviderConnectionsContentV1, parseProviderConnectionsMigrationContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { openConnectedAccountCatalogContentV1, parseConnectedAccountCatalogMigrationContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { AccountSettingsHistorySavedSecretTransferV1Schema, type AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ProfileRowMutationV1Schema, type ProfileRowMutationV1, type ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { type ProfileTransferControlV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
@@ -1515,7 +1515,10 @@ function savedSecretCatalogCaptureError(row: Readonly<{ status: string; revision
     return revision === (capture ?? 'absent') ? null : 'references_conflict' as const;
 }
 
-/** Closed domain arms reuse their actual row readers and complete opened projections. */
+/**
+ * Closed domain arms reuse their complete stored-envelope owners before census admission.
+ * E2EE payload inventory stays client-declared; visible envelope carriers cannot be skipped.
+ */
 async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
     accountId: string; accountMode: 'plain' | 'e2ee'; captures?: Partial<SavedSecretCatalogRevisionsV1>; destinationOnly?: boolean;
 }>): Promise<SavedSecretResourceServiceResult<{
@@ -1529,6 +1532,7 @@ async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
         const error = savedSecretCatalogCaptureError(row, input.captures?.mcp);
         if (error) return { ok: false, error };
         if (row.status === 'present') {
+            if (!parseMcpServerCatalogMigrationContentV1(row.content)) return { ok: false, error: 'references_invalid' };
             contents.mcp = { revision: row.revision, content: row.content };
             if (input.accountMode === 'plain') {
                 const opened = openMcpServerCatalogContentV1({ mode: 'plain', material: null, content: row.content });
@@ -1560,6 +1564,7 @@ async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
         const error = savedSecretCatalogCaptureError(row, input.captures?.providerConnections);
         if (error) return { ok: false, error };
         if (row.status === 'present') {
+            if (!parseProviderConnectionsMigrationContentV1(row.content)) return { ok: false, error: 'references_invalid' };
             contents.providerConnections = { revision: row.revision, content: row.content };
             if (input.accountMode === 'plain') {
                 const opened = openProviderConnectionsContentV1({ mode: 'plain', material: null, content: row.content });
@@ -1575,6 +1580,7 @@ async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
         const error = savedSecretCatalogCaptureError(row, input.captures?.connectedConfigurations);
         if (error) return { ok: false, error };
         if (row.status === 'present') {
+            if (!parseConnectedAccountCatalogMigrationContentV1(row.content, 'configurations')) return { ok: false, error: 'references_invalid' };
             contents.connectedConfigurations = { revision: row.revision, content: row.content };
             if (input.accountMode === 'plain') {
                 const opened = openConnectedAccountCatalogContentV1({ key: 'configurations', mode: 'plain', material: null, content: row.content });
@@ -1590,6 +1596,7 @@ async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
         const error = savedSecretCatalogCaptureError(row, input.captures?.connectedPurposes);
         if (error) return { ok: false, error };
         if (row.status === 'present') {
+            if (!parseConnectedAccountCatalogMigrationContentV1(row.content, 'purposes')) return { ok: false, error: 'references_invalid' };
             contents.connectedPurposes = { revision: row.revision, content: row.content };
             if (input.accountMode === 'plain') {
                 const opened = openConnectedAccountCatalogContentV1({ key: 'purposes', mode: 'plain', material: null, content: row.content });
