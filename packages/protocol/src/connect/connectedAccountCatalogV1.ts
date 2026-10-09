@@ -1,16 +1,14 @@
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
-import { createStoredReadSchema } from '../json/storedReadSchema.js';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema } from './connectedAccountPurposeBindings.js';
-import { listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
 import {
-  parseStoredConnectedAccountCatalogContentV1, openConnectedAccountCatalogContentV1,
+  openConnectedAccountCatalogContentV1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
+  emptyConnectedAccountCatalogRecordV1, readRetainedConnectedAccountCatalogRecordV1,
   type ConnectedAccountCatalogKeyV1, type ConnectedAccountCatalogRecordV1,
+  type ConnectedAccountCatalogDiagnosticV1,
   type ConnectedAccountCatalogRowReadResponseV1, type ConnectedAccountCatalogRowMutationResponseV1,
 } from './connectedAccountConfigurationRowsV1.js';
 
-export const CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1 = {
-  configurations: 'connectedAccountServiceConfigurationsV1', purposes: 'connectedAccountPurposeBindingsV1',
-} as const;
+export { CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1, emptyConnectedAccountCatalogRecordV1,
+  readRetainedConnectedAccountCatalogRecordV1 } from './connectedAccountConfigurationRowsV1.js';
 export type ConnectedAccountCatalogUnavailableReasonV1 = 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch'
   | 'encryption-material-unavailable' | 'invalid-stored-content' | 'invalid-reference' | 'unauthorized' | 'forbidden' | 'unsupported'
   | 'unreachable' | 'scope-retired' | 'cancelled' | 'source-version-conflict' | 'authority-not-confirmed';
@@ -19,6 +17,8 @@ export type ConnectedAccountCatalogSourceCleanupV1 = Readonly<{ status: 'complet
 }>;
 export type ConnectedAccountCatalogSnapshotV1 = Readonly<{ status: 'loading' }>
   | Readonly<{ status: 'unavailable'; reason: ConnectedAccountCatalogUnavailableReasonV1 }>
+  | Readonly<{ status: 'partial'; authority: 'active' | 'inactive'; revision: number | 'absent';
+    record: ConnectedAccountCatalogRecordV1; diagnostics: readonly ConnectedAccountCatalogDiagnosticV1[] }>
   | Readonly<{ status: 'ready'; record: ConnectedAccountCatalogRecordV1; revision: number; cleanup?: ConnectedAccountCatalogSourceCleanupV1 }>;
 export type ConnectedAccountCatalogSourceCutoverV1 = Readonly<{
   readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
@@ -37,27 +37,6 @@ type LoadInput = Readonly<{
   onReadyBeforeCleanup?: (catalog: Extract<ConnectedAccountCatalogSnapshotV1, { status: 'ready' }>) => Promise<void>;
 }>;
 
-export function emptyConnectedAccountCatalogRecordV1(key: ConnectedAccountCatalogKeyV1): ConnectedAccountCatalogRecordV1 {
-  return key === 'configurations' ? { key, value: { v: 1, entries: [] } } : { key, value: { v: 1, bindings: [] } };
-}
-const retainedPurposes = createStoredReadSchema(QualifiedConnectedAccountPurposeBindingsV1Schema);
-/** Undeployed source is opened once for an admitted in-place cutover, never served as destination authority. */
-export function readRetainedConnectedAccountCatalogRecordV1(raw: Readonly<Record<string, unknown>>, key: ConnectedAccountCatalogKeyV1) {
-  if (!Object.hasOwn(raw, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key])) {
-    return { status: 'ready' as const, record: emptyConnectedAccountCatalogRecordV1(key) };
-  }
-  let value = raw[CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key]];
-  if (key === 'purposes') {
-    // Purpose selections have no direct SavedSecret slots; future carriers cannot be discarded by source normalization.
-    if (listSavedSecretReferenceCarrierPathsV1(value).length > 0) return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
-    const earlier = retainedPurposes.safeParse(value);
-    if (!earlier.success) return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
-    value = earlier.data;
-  }
-  const parsed = parseStoredConnectedAccountCatalogContentV1({ t: 'plain', v: { key, value } });
-  return parsed?.t === 'plain' ? { status: 'ready' as const, record: parsed.v }
-    : { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
-}
 export function removeTransferredConnectedAccountCatalogSourcesV1(raw: Readonly<Record<string, unknown>>,
   activeKeys: readonly ConnectedAccountCatalogKeyV1[]): Record<string, unknown> {
   const next = { ...raw };
@@ -72,7 +51,8 @@ async function readDestination(input: LoadInput): Promise<Exclude<ConnectedAccou
   if (row.status === 'deleted') return { status: 'ready', record: emptyConnectedAccountCatalogRecordV1(input.key), revision: row.revision };
   if (row.status !== 'present') return { status: 'unavailable', reason: row.status };
   const opened = openConnectedAccountCatalogContentV1({ ...input, content: row.content });
-  return opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision } : opened;
+  return opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision }
+    : opened.status === 'partial' ? { ...opened, authority: 'active', revision: row.revision } : opened;
 }
 async function cleanupSource(input: LoadInput,
   source: Awaited<ReturnType<ConnectedAccountCatalogSourceCutoverV1['readSourceSnapshot']>>): Promise<ConnectedAccountCatalogSourceCleanupV1> {
@@ -101,7 +81,7 @@ export async function loadConnectedAccountCatalogV1(input: LoadInput): Promise<C
   if (input.mode === 'plain' && input.material !== null) return { status: 'unavailable', reason: 'account-mode-mismatch' };
   if (input.mode === 'e2ee' && !input.material) return { status: 'unavailable', reason: 'encryption-material-unavailable' };
   let destination = await readDestination(input);
-  if (destination.status === 'unavailable') return destination;
+  if (destination.status === 'unavailable' || destination.status === 'partial') return destination;
   if (!input.transfer) return destination.status === 'absent' ? { status: 'unavailable', reason: 'authority-not-confirmed' } : destination;
   if (destination.status === 'ready') await input.onReadyBeforeCleanup?.(destination);
   let source: Awaited<ReturnType<ConnectedAccountCatalogSourceCutoverV1['readSourceSnapshot']>>;
@@ -111,13 +91,14 @@ export async function loadConnectedAccountCatalogV1(input: LoadInput): Promise<C
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
   if (destination.status === 'absent') {
     const sourceRecord = readRetainedConnectedAccountCatalogRecordV1(source.raw, input.key);
-    if (sourceRecord.status !== 'ready') return sourceRecord;
+    if (sourceRecord.status !== 'ready') return sourceRecord.status === 'partial'
+      ? { ...sourceRecord, authority: 'inactive', revision: 'absent' } : sourceRecord;
     let receipt: ConnectedAccountCatalogRowMutationResponseV1 | undefined;
     try { receipt = await input.transfer.initializeRecord({ record: sourceRecord.record, expectedRevision: 'absent', sourceSettingsVersion: source.version }); }
     catch { /* Ambiguous transport outcome is decided by the actual row read below. */ }
     if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
     destination = await readDestination(input);
-    if (destination.status === 'unavailable') return destination;
+    if (destination.status === 'unavailable' || destination.status === 'partial') return destination;
     if (destination.status === 'absent') return { status: 'unavailable', reason: receipt?.status === 'settings-conflict'
       ? 'source-version-conflict' : receipt && receipt.status !== 'updated' && receipt.status !== 'conflict' ? receipt.status : 'authority-not-confirmed' };
     await input.onReadyBeforeCleanup?.(destination);

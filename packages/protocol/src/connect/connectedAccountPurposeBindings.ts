@@ -58,7 +58,7 @@ export const QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema = laz
  * an ordinary later write. An entry without its Team cannot be recovered and
  * keeps the source unavailable rather than silently disappearing.
  */
-function readEarlierTeamResourcePurposeTargets(value: unknown): unknown {
+export function readEarlierTeamResourcePurposeTargetsV1(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const record = value as Readonly<Record<string, unknown>>;
   if (!Array.isArray(record.bindings)) return value;
@@ -74,7 +74,6 @@ function readEarlierTeamResourcePurposeTargets(value: unknown): unknown {
     && (binding.target as { kind?: unknown }).kind === 'team_resource',
   );
   if (!record.bindings.some(isEarlierTeamTarget)) return value;
-  if (record.bindings.some(binding => isEarlierTeamTarget(binding) && typeof binding.target.teamId !== 'string')) return value;
   const migrated = record.bindings.flatMap((binding) => (
     isEarlierTeamTarget(binding) && typeof binding.target.teamId === 'string'
       ? [{ purpose: binding.purpose, teamId: binding.target.teamId, selection: binding.target.selection }]
@@ -82,7 +81,7 @@ function readEarlierTeamResourcePurposeTargets(value: unknown): unknown {
   ));
   return {
     ...record,
-    bindings: record.bindings.filter((binding) => !isEarlierTeamTarget(binding)),
+    bindings: record.bindings.filter((binding) => !isEarlierTeamTarget(binding) || typeof binding.target.teamId !== 'string'),
     teamResourceSelections: [
       ...(Array.isArray(record.teamResourceSelections) ? record.teamResourceSelections : []),
       ...migrated,
@@ -121,12 +120,12 @@ export const QualifiedConnectedAccountPurposeBindingsV1RecordSchema = lazyZodSch
 
 /** Read-only retained source normalization; it never admits a current row write. */
 export const QualifiedConnectedAccountPurposeBindingsV1Schema = defineStoredReadProjection(lazyZodSchema(() => z.preprocess(
-  readEarlierTeamResourcePurposeTargets,
+  readEarlierTeamResourcePurposeTargetsV1,
   QualifiedConnectedAccountPurposeBindingsV1RecordSchema.safeExtend({
     bindings: z.array(QualifiedConnectedAccountPurposeBindingV1Schema).max(256),
     teamResourceSelections: z.array(QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema).max(256).optional(),
   }),
-)), () => z.preprocess(readEarlierTeamResourcePurposeTargets,
+)), () => z.preprocess(readEarlierTeamResourcePurposeTargetsV1,
   createStoredReadSchema(QualifiedConnectedAccountPurposeBindingsV1RecordSchema)));
 
 export type QualifiedConnectedAccountPurposeBindingTargetV1 = z.infer<

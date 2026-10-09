@@ -2,15 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   ConnectedAccountCatalogRecordV1Schema, ConnectedAccountCatalogRowMutationV1Schema,
   StoredConnectedAccountCatalogRecordV1Schema, sealConnectedAccountCatalogContentV1, openConnectedAccountCatalogContentV1,
+  parseStoredConnectedAccountCatalogContentV1,
   listConnectedConfigurationCatalogSavedSecretRefsV1, rewriteConnectedConfigurationCatalogSavedSecretRefsV1,
   type ConnectedAccountCatalogRecordV1,
 } from './connectedAccountConfigurationRowsV1.js';
 import { loadConnectedAccountCatalogV1, readRetainedConnectedAccountCatalogRecordV1 } from './connectedAccountCatalogV1.js';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
+import { connectedAccountCatalogCipherKindV1 } from './connectedAccountConfigurationRowsV1.js';
 
 const service = { pluginId: 'happier.connected-account.example', localId: 'cloud' };
 const consumer = { pluginId: 'happier.agent.example', localId: 'coding' };
+const oldRef = formatSharedSavedSecretRefV1('secret-old');
+const newRef = formatSharedSavedSecretRefV1('secret-new');
 const configuration: ConnectedAccountCatalogRecordV1 = { key: 'configurations', value: { v: 1, entries: [
-  { service, modeId: 'native-api', revision: 'revision-1', values: { adapter: { arbitraryField: 'retained' } }, secretRefs: { token: 'secret-old' } },
+  { service, modeId: 'native-api', revision: 'revision-1', values: { adapter: { arbitraryField: 'retained' } }, secretRefs: { token: oldRef } },
 ] } };
 const purpose: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { v: 1, bindings: [
   { purpose: { consumer, purpose: 'native-api' }, target: { kind: 'group', service, groupId: 'pool' } },
@@ -19,19 +25,106 @@ const purpose: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { v: 
 ] } };
 
 describe('Connected Account private catalogs', () => {
-  it('refuses source projection that would discard future secret carriers', () => {
+  it.each(['plain', 'e2ee'] as const)('reads retained %s envelope metadata but denies outer reference authority', async mode => {
+    const material = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) };
+    const current = sealConnectedAccountCatalogContentV1({ record: purpose, mode, material });
+    const retained = { ...current, futureMetadata: { retained: true } };
+    expect(openConnectedAccountCatalogContentV1({ key: purpose.key, mode, material, content: retained }))
+      .toEqual({ status: 'opened', record: purpose });
+    expect(parseStoredConnectedAccountCatalogContentV1(retained)).toEqual(current);
+    expect(ConnectedAccountCatalogRowMutationV1Schema.safeParse({ expectedRevision: 4, content: retained }).success).toBe(false);
+    const reference = { ...retained, futureSecretId: oldRef };
+    const diagnostics = [{ path: 'content.futureSecretId', reason: 'unclassified-reference' }];
+    expect(openConnectedAccountCatalogContentV1({ key: purpose.key, mode, material, content: reference }))
+      .toEqual({ status: 'partial', record: purpose, diagnostics });
+    expect(parseStoredConnectedAccountCatalogContentV1(reference)).toBeNull();
+    let effects = 0;
+    expect(await loadConnectedAccountCatalogV1({ key: purpose.key, mode, material,
+      readRow: async () => ({ status: 'present', revision: 4, content: reference }),
+      transfer: { readSourceSnapshot: async () => { effects++; return { raw: {}, version: 3 }; },
+        initializeRecord: async () => { effects++; return { status: 'updated' as const, revision: 0, cursor: 0 }; } },
+      onReadyBeforeCleanup: async () => { effects++; } }))
+      .toEqual({ status: 'partial', authority: 'active', revision: 4, record: purpose, diagnostics });
+    expect(effects).toBe(0);
+  });
+  it('keeps personal references only in the genuine retained source, never active Plain or E2EE authority', () => {
+    if (configuration.key !== 'configurations') throw new Error('Wrong fixture catalog');
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) };
+    for (const reference of ['personal-secret', 'happier:shared-secret:v1:']) {
+      const record: ConnectedAccountCatalogRecordV1 = { ...configuration, value: { v: 1, entries: [
+        configuration.value.entries[0]!, { ...configuration.value.entries[0]!, modeId: 'other-mode', secretRefs: { token: reference } },
+      ] } };
+      const diagnostics = [{ path: 'entries[1].secretRefs.token', reason: 'invalid-stored-content' }];
+      for (const mode of ['plain', 'e2ee'] as const) {
+        const content = mode === 'plain' ? { t: 'plain' as const, v: record } : { t: 'encrypted' as const,
+          c: sealAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1('configurations'), material, payload: record,
+            randomBytes: length => new Uint8Array(length).fill(9) }) };
+        expect(openConnectedAccountCatalogContentV1({ key: 'configurations', mode, material: mode === 'plain' ? null : material, content }))
+          .toEqual({ status: 'partial', record, diagnostics });
+        expect(() => sealConnectedAccountCatalogContentV1({ record, mode, material: mode === 'plain' ? null : material })).toThrow();
+      }
+      expect(parseStoredConnectedAccountCatalogContentV1({ t: 'plain', v: record })).toBeNull();
+      expect(readRetainedConnectedAccountCatalogRecordV1({ connectedAccountServiceConfigurationsV1: record.value }, 'configurations'))
+        .toEqual(reference === 'personal-secret' ? { status: 'ready', record } : { status: 'partial', record, diagnostics });
+    }
+  });
+  it('diagnoses future source carriers without promoting a safe projection to complete authority', () => {
     expect(readRetainedConnectedAccountCatalogRecordV1({ connectedAccountServiceConfigurationsV1: {
       ...configuration.value, futureSecretId: 'future-secret',
-    } }, 'configurations')).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
+    } }, 'configurations')).toMatchObject({ status: 'partial', record: configuration,
+      diagnostics: [{ path: 'futureSecretId', reason: 'unclassified-reference' }] });
     expect(readRetainedConnectedAccountCatalogRecordV1({ connectedAccountPurposeBindingsV1: {
       ...purpose.value, futureSecretRef: 'future-secret',
-    } }, 'purposes')).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
+    } }, 'purposes')).toMatchObject({ status: 'partial', record: purpose,
+      diagnostics: [{ path: 'futureSecretRef', reason: 'unclassified-reference' }] });
   });
   it('refuses an unrecoverable earlier Team binding', () => {
     expect(readRetainedConnectedAccountCatalogRecordV1({ connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
       purpose: { consumer, purpose: 'native-api' }, target: { kind: 'team_resource',
         selection: { source: 'team_resource', resourceId: 'resource', deliveryMode: 'brokered' } },
-    }] } }, 'purposes')).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
+    }] } }, 'purposes')).toMatchObject({ status: 'partial', record: { key: 'purposes', value: { v: 1, bindings: [] } },
+      diagnostics: [{ path: 'bindings[0]', reason: 'invalid-stored-content' }] });
+  });
+  it('keeps original diagnostic positions while opening earlier Team selections beside current bindings', () => {
+    const team = purpose.key === 'purposes' ? purpose.value.teamResourceSelections![0]! : null;
+    if (!team || purpose.key !== 'purposes') throw new Error('Wrong fixture catalog');
+    expect(readRetainedConnectedAccountCatalogRecordV1({ connectedAccountPurposeBindingsV1: { v: 1, bindings: [
+      { purpose: team.purpose, target: { kind: 'team_resource', teamId: team.teamId, selection: team.selection } },
+      purpose.value.bindings[0],
+      { ...purpose.value.bindings[0], target: { kind: 'group', service, groupId: '' } },
+    ] } }, 'purposes')).toEqual({ status: 'partial', record: purpose,
+      diagnostics: [{ path: 'bindings[2]', reason: 'invalid-stored-content' }] });
+  });
+  it.each([configuration, purpose])('retains qualified safe neighbors for display while refusing incomplete authority (%s)', async record => {
+    const rawRecord = record.key === 'configurations'
+      ? { ...record, value: { ...record.value, entries: [...record.value.entries,
+        { ...record.value.entries[0]!, modeId: '', secretRefs: {} }], futureSecretId: 'opaque' } }
+      : { ...record, value: { ...record.value, bindings: [...record.value.bindings,
+        { ...record.value.bindings[0]!, target: { kind: 'group' as const, service, groupId: '' } }], futureSecretId: 'opaque' } };
+    const content = { t: 'plain' as const, v: rawRecord };
+    const diagnostics = [
+      { path: record.key === 'configurations' ? 'entries[1]' : 'bindings[1]', reason: 'invalid-stored-content' },
+      { path: 'futureSecretId', reason: 'unclassified-reference' },
+    ];
+    expect(openConnectedAccountCatalogContentV1({ key: record.key, mode: 'plain', material: null, content }))
+      .toEqual({ status: 'partial', record, diagnostics });
+    expect(parseStoredConnectedAccountCatalogContentV1(content)).toBeNull();
+    expect(ConnectedAccountCatalogRowMutationV1Schema.safeParse({ expectedRevision: 4, content }).success).toBe(false);
+    let effects = 0;
+    const transfer = { readSourceSnapshot: async () => { effects++; return { raw: {}, version: 3 }; },
+      initializeRecord: async () => { effects++; return { status: 'updated' as const, revision: 0, cursor: 0 }; },
+      replaceSource: async () => { effects++; return { status: 'applied' as const, settingsVersion: 4 }; },
+      normalizeHistory: async () => { effects++; return { status: 'complete' as const }; } };
+    expect(await loadConnectedAccountCatalogV1({ key: record.key, mode: 'plain', material: null,
+      readRow: async () => ({ status: 'present', revision: 4, content }), transfer,
+      onReadyBeforeCleanup: async () => { effects++; } })).toEqual({ status: 'partial', authority: 'active', revision: 4, record, diagnostics });
+    expect(effects).toBe(0);
+    expect(await loadConnectedAccountCatalogV1({ key: record.key, mode: 'plain', material: null,
+      readRow: async () => ({ status: 'absent' }), transfer: { ...transfer,
+        readSourceSnapshot: async () => ({ raw: { [record.key === 'configurations'
+          ? 'connectedAccountServiceConfigurationsV1' : 'connectedAccountPurposeBindingsV1']: rawRecord.value }, version: 3 }) },
+      onReadyBeforeCleanup: async () => { effects++; } })).toEqual({ status: 'partial', authority: 'inactive', revision: 'absent', record, diagnostics });
+    expect(effects).toBe(0);
   });
   it('retains full qualified configuration populations and adapter dictionaries while stripping only unknown stored fields', () => {
     const record = { ...configuration, extra: true, value: { ...configuration.value, extra: true,
@@ -45,9 +138,9 @@ describe('Connected Account private catalogs', () => {
     expect(parsed.value.entries[256]).toEqual({ ...configuration.value.entries[0], modeId: 'mode-256' });
     expect(ConnectedAccountCatalogRecordV1Schema.parse(parsed)).toEqual(parsed);
     const refs = listConnectedConfigurationCatalogSavedSecretRefsV1(configuration.value);
-    expect(refs).toEqual([{ path: 'entries[0].secretRefs.token', secretId: 'secret-old' }]);
-    expect(rewriteConnectedConfigurationCatalogSavedSecretRefsV1(configuration.value, 'secret-old', 'secret-new'))
-      .toEqual({ ...configuration.value, entries: [{ ...configuration.value.entries[0], secretRefs: { token: 'secret-new' } }] });
+    expect(refs).toEqual([{ path: 'entries[0].secretRefs.token', secretId: oldRef }]);
+    expect(rewriteConnectedConfigurationCatalogSavedSecretRefsV1(configuration.value, oldRef, newRef))
+      .toEqual({ ...configuration.value, entries: [{ ...configuration.value.entries[0], secretRefs: { token: newRef } }] });
   });
 
   it('preserves Team resource defaults and rejects duplicate authority and earlier Team targets at current write admission', () => {
@@ -99,7 +192,8 @@ describe('Connected Account private catalogs', () => {
         writes++; return { status: 'updated' as const, revision: 0, cursor: 0 };
       } },
     };
-    expect(await loadConnectedAccountCatalogV1(base)).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
+    expect(await loadConnectedAccountCatalogV1(base)).toMatchObject({ status: 'partial', authority: 'inactive', revision: 'absent',
+      diagnostics: [{ path: 'entries[0]', reason: 'invalid-stored-content' }] });
     expect(writes).toBe(0);
     const valid = { ...base, transfer: { ...base.transfer, readSourceSnapshot: async () => ({ raw: {}, version: 3 }) } };
     expect(await loadConnectedAccountCatalogV1(valid)).toEqual({ status: 'unavailable', reason: 'authority-not-confirmed' });

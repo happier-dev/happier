@@ -2,17 +2,21 @@ import { z } from 'zod';
 import tweetnacl from 'tweetnacl';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
-import { ConnectedAccountServiceConfigurationCatalogV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
-import { QualifiedConnectedAccountPurposeBindingsV1RecordSchema } from './connectedAccountPurposeBindings.js';
+import { ConnectedAccountServiceConfigurationCatalogV1Schema, ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
+import { QualifiedConnectedAccountPurposeBindingsV1RecordSchema, QualifiedConnectedAccountPurposeBindingV1Schema,
+  QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, qualifiedPurposeKey, readEarlierTeamResourcePurposeTargetsV1 } from './connectedAccountPurposeBindings.js';
 import { AccountSettingsStoredContentEnvelopeWriteSchema } from '../account/settings/accountSettingsStoredContentEnvelope.js';
-import { AccountRemoteAlertPolicyV1Schema } from '../account/settings/accountRemoteAlertPolicy.js';
-import { appendSavedSecretReferencePathV1, listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { AccountRemoteAlertPolicyV1Schema } from '../account/settings/accountRemoteAlertPolicySchema.js';
+import { appendSavedSecretReferencePathV1, listSavedSecretReferenceCarrierPathsV1, parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { isAccountScopedBlobCiphertextForKind } from '../crypto/accountScopedCipherEnvelope.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 
 export const CONNECTED_CONFIGURATION_ACCOUNT_ROW_PREFIX_V1 = '@happier/account/connected-configurations/v1/' as const;
 export const CONNECTED_PURPOSE_ACCOUNT_ROW_PREFIX_V1 = '@happier/account/connected-purposes/v1/' as const;
 export const CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 = '/v1/account/entity-rows/connected-accounts' as const;
+export const CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1 = {
+  configurations: 'connectedAccountServiceConfigurationsV1', purposes: 'connectedAccountPurposeBindingsV1',
+} as const;
 export const CONNECTED_CONFIGURATION_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_configuration' as const;
 export const CONNECTED_PURPOSE_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_purposes' as const;
 export const ConnectedAccountCatalogKeyV1Schema = lazyZodSchema(() => z.enum(['configurations', 'purposes']));
@@ -21,6 +25,18 @@ export const ConnectedConfigurationCatalogV1Schema = ConnectedAccountServiceConf
 export const ConnectedPurposeCatalogV1Schema = QualifiedConnectedAccountPurposeBindingsV1RecordSchema;
 export type ConnectedConfigurationCatalogV1 = z.infer<typeof ConnectedConfigurationCatalogV1Schema>;
 export type ConnectedPurposeCatalogV1 = z.infer<typeof ConnectedPurposeCatalogV1Schema>;
+
+export function emptyConnectedAccountCatalogRecordV1(key: ConnectedAccountCatalogKeyV1): ConnectedAccountCatalogRecordV1 {
+  return key === 'configurations' ? { key, value: { v: 1, entries: [] } } : { key, value: { v: 1, bindings: [] } };
+}
+/** Only this named retained-source entry participates in pre-admission SavedSecret promotion. */
+export function readRetainedConnectedAccountCatalogRecordV1(raw: Readonly<Record<string, unknown>>, key: ConnectedAccountCatalogKeyV1) {
+  if (!Object.hasOwn(raw, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key])) {
+    return { status: 'ready' as const, record: emptyConnectedAccountCatalogRecordV1(key) };
+  }
+  const opened = projectConnectedAccountCatalogRecordV1({ key, value: raw[CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key]] }, key, 'retained-source');
+  return opened.status === 'opened' ? { status: 'ready' as const, record: opened.record } : opened;
+}
 
 export function buildConnectedAccountCatalogPhysicalKeyV1(key: ConnectedAccountCatalogKeyV1): string {
   return (ConnectedAccountCatalogKeyV1Schema.parse(key) === 'configurations'
@@ -45,7 +61,96 @@ export const ConnectedAccountCatalogContentV1Schema = lazyZodSchema(() => z.disc
   z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
 ]));
 export type ConnectedAccountCatalogContentV1 = z.infer<typeof ConnectedAccountCatalogContentV1Schema>;
-export const StoredConnectedAccountCatalogContentV1Schema = createStoredReadSchema(ConnectedAccountCatalogContentV1Schema);
+// Keep original JSON until the domain owner classifies independent entries and references.
+export const StoredConnectedAccountCatalogContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
+  z.object({ t: z.literal('plain'), v: z.unknown() }).passthrough(),
+  z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).passthrough(),
+]));
+export type StoredConnectedAccountCatalogContentV1 = z.infer<typeof StoredConnectedAccountCatalogContentV1Schema>;
+export type ConnectedAccountCatalogDiagnosticV1 = Readonly<{ path: string; reason: 'invalid-stored-content' | 'unclassified-reference' }>;
+export type ConnectedAccountCatalogOpenResultV1 = Readonly<{ status: 'opened'; record: ConnectedAccountCatalogRecordV1 }>
+  | Readonly<{ status: 'partial'; record: ConnectedAccountCatalogRecordV1; diagnostics: readonly ConnectedAccountCatalogDiagnosticV1[] }>
+  | Readonly<{ status: 'unavailable'; reason: 'account-mode-mismatch' | 'encryption-material-unavailable' | 'invalid-stored-content' }>;
+
+const storedConfiguration = createStoredReadSchema(ConnectedAccountServiceConfigurationEntryV1Schema);
+const storedPurpose = createStoredReadSchema(QualifiedConnectedAccountPurposeBindingV1Schema);
+const storedTeamSelection = createStoredReadSchema(QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema);
+function storedObject(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
+}
+/** Safe projections are display/repair data only. Duplicate identities have no winning entry. */
+export function projectStoredConnectedAccountCatalogRecordV1(value: unknown, key: ConnectedAccountCatalogKeyV1): ConnectedAccountCatalogOpenResultV1 {
+  return projectConnectedAccountCatalogRecordV1(value, key, 'active');
+}
+function projectConnectedAccountCatalogRecordV1(value: unknown, key: ConnectedAccountCatalogKeyV1,
+  referenceAuthority: 'active' | 'retained-source'): ConnectedAccountCatalogOpenResultV1 {
+  const wrapper = storedObject(value);
+  const original = storedObject(wrapper?.value);
+  const unavailable = { status: 'unavailable', reason: 'invalid-stored-content' } as const;
+  if (wrapper?.key !== key || !original || original.v !== 1) return unavailable;
+  const diagnostics: ConnectedAccountCatalogDiagnosticV1[] = [];
+  const admittedPaths = new Set<string>();
+  let record: ConnectedAccountCatalogRecordV1;
+  if (key === 'configurations') {
+    if (!Array.isArray(original.entries)) return unavailable;
+    const candidates = original.entries.flatMap((entry, index) => {
+      const parsed = storedConfiguration.safeParse(entry);
+      if (!parsed.success) { diagnostics.push({ path: `entries[${index}]`, reason: 'invalid-stored-content' }); return []; }
+      for (const ref of listConnectedConfigurationCatalogSavedSecretRefsV1({ v: 1, entries: [parsed.data] })) {
+        const path = ref.path.replace(/^entries\[0\]/u, `entries[${index}]`);
+        admittedPaths.add(path);
+        try {
+          if (parseSavedSecretRefV1(ref.secretId).kind !== 'shared_resource' && referenceAuthority === 'active') {
+            diagnostics.push({ path, reason: 'invalid-stored-content' });
+          }
+        } catch { diagnostics.push({ path, reason: 'invalid-stored-content' }); }
+      }
+      return [{ entry: parsed.data, index, identity: JSON.stringify([parsed.data.service.pluginId, parsed.data.service.localId, parsed.data.modeId]) }];
+    });
+    const counts = new Map<string, number>();
+    candidates.forEach(candidate => counts.set(candidate.identity, (counts.get(candidate.identity) ?? 0) + 1));
+    const entries = candidates.flatMap(candidate => {
+      if (counts.get(candidate.identity) === 1) return [candidate.entry];
+      diagnostics.push({ path: `entries[${candidate.index}]`, reason: 'invalid-stored-content' }); return [];
+    });
+    record = { key, value: { v: 1, entries } };
+  } else {
+    if (!Array.isArray(original.bindings) || original.teamResourceSelections !== undefined && !Array.isArray(original.teamResourceSelections)) return unavailable;
+    // Normalize each earlier Team carrier independently, retaining its original
+    // position for diagnostics rather than reindexing remaining bindings.
+    const normalized = original.bindings.map((binding, index) => ({ index,
+      value: storedObject(readEarlierTeamResourcePurposeTargetsV1({ v: 1, bindings: [binding] }))! }));
+    const bindings = normalized.flatMap(({ value: current, index }) => Array.isArray(current.bindings) && current.bindings.length > 0
+      ? [{ parsed: storedPurpose.safeParse(current.bindings[0]), path: `bindings[${index}]` }] : []);
+    const movedTeams = normalized.flatMap(({ value: current, index }) => Array.isArray(current.teamResourceSelections) && current.teamResourceSelections.length > 0
+      ? [{ parsed: storedTeamSelection.safeParse(current.teamResourceSelections[0]), path: `bindings[${index}]` }] : []);
+    const teams = [...(Array.isArray(original.teamResourceSelections) ? original.teamResourceSelections : [])
+      .map((selection, index) => ({ parsed: storedTeamSelection.safeParse(selection), path: `teamResourceSelections[${index}]` })),
+    ...movedTeams];
+    const counts = new Map<string, number>();
+    for (const candidate of [...bindings, ...teams]) if (candidate.parsed.success) {
+      const identity = qualifiedPurposeKey(candidate.parsed.data.purpose);
+      counts.set(identity, (counts.get(identity) ?? 0) + 1);
+    }
+    const admittedBindings = bindings.flatMap(candidate => {
+      if (candidate.parsed.success && counts.get(qualifiedPurposeKey(candidate.parsed.data.purpose)) === 1) return [candidate.parsed.data];
+      diagnostics.push({ path: candidate.path, reason: 'invalid-stored-content' }); return [];
+    });
+    const admittedTeams = teams.flatMap(candidate => {
+      if (candidate.parsed.success && counts.get(qualifiedPurposeKey(candidate.parsed.data.purpose)) === 1) return [candidate.parsed.data];
+      diagnostics.push({ path: candidate.path, reason: 'invalid-stored-content' }); return [];
+    });
+    record = { key, value: { v: 1, bindings: admittedBindings,
+      ...(original.teamResourceSelections === undefined && movedTeams.length === 0 ? {} : { teamResourceSelections: admittedTeams }) } };
+  }
+  for (const path of listSavedSecretReferenceCarrierPathsV1(original)) {
+    if (!admittedPaths.has(path)) diagnostics.push({ path, reason: 'unclassified-reference' });
+  }
+  for (const path of listSavedSecretReferenceCarrierPathsV1(wrapper)) {
+    if (!path.startsWith('value.')) diagnostics.push({ path: `record.${path}`, reason: 'unclassified-reference' });
+  }
+  return diagnostics.length ? { status: 'partial', record, diagnostics } : { status: 'opened', record };
+}
 
 function hasDroppedReferenceCarrier(value: unknown, projected: unknown): boolean {
   const known = new Set(listSavedSecretReferenceCarrierPathsV1(projected));
@@ -54,10 +159,19 @@ function hasDroppedReferenceCarrier(value: unknown, projected: unknown): boolean
 /** Tolerant projection cannot silently discard a recognizable future credential reference. */
 export function parseStoredConnectedAccountCatalogContentV1(value: unknown): ConnectedAccountCatalogContentV1 | null {
   const parsed = StoredConnectedAccountCatalogContentV1Schema.safeParse(value);
-  return parsed.success && !hasDroppedReferenceCarrier(value, parsed.data) ? parsed.data : null;
+  if (!parsed.success) return null;
+  if (parsed.data.t === 'encrypted') {
+    const content = { t: 'encrypted', c: parsed.data.c } as const;
+    return hasDroppedReferenceCarrier(value, content) ? null : content;
+  }
+  const key = ConnectedAccountCatalogKeyV1Schema.safeParse(storedObject(parsed.data.v)?.key);
+  if (!key.success) return null;
+  const record = projectStoredConnectedAccountCatalogRecordV1(parsed.data.v, key.data);
+  return record.status === 'opened' && !hasDroppedReferenceCarrier(value, { t: 'plain', v: record.record })
+    ? { t: 'plain', v: record.record } : null;
 }
 
-export function assertConnectedAccountCatalogContentForModeV1(content: ConnectedAccountCatalogContentV1,
+export function assertConnectedAccountCatalogContentForModeV1(content: StoredConnectedAccountCatalogContentV1,
   mode: 'plain' | 'e2ee', key: ConnectedAccountCatalogKeyV1): void {
   if ((mode === 'plain') !== (content.t === 'plain') || (content.t === 'encrypted'
     && !isAccountScopedBlobCiphertextForKind({ kind: connectedAccountCatalogCipherKindV1(key), ciphertext: content.c }))) {
@@ -66,11 +180,10 @@ export function assertConnectedAccountCatalogContentForModeV1(content: Connected
 }
 export function openConnectedAccountCatalogContentV1(input: Readonly<{
   key: ConnectedAccountCatalogKeyV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; content: unknown;
-}>): Readonly<{ status: 'opened'; record: ConnectedAccountCatalogRecordV1 }> | Readonly<{
-  status: 'unavailable'; reason: 'account-mode-mismatch' | 'encryption-material-unavailable' | 'invalid-stored-content';
-}> {
-  const content = parseStoredConnectedAccountCatalogContentV1(input.content);
-  if (!content) return { status: 'unavailable', reason: 'invalid-stored-content' };
+}>): ConnectedAccountCatalogOpenResultV1 {
+  const parsed = StoredConnectedAccountCatalogContentV1Schema.safeParse(input.content);
+  if (!parsed.success) return { status: 'unavailable', reason: 'invalid-stored-content' };
+  const content = parsed.data;
   try { assertConnectedAccountCatalogContentForModeV1(content, input.mode, input.key); }
   catch { return { status: 'unavailable', reason: 'account-mode-mismatch' }; }
   if (input.mode === 'plain' && input.material !== null) return { status: 'unavailable', reason: 'account-mode-mismatch' };
@@ -80,15 +193,21 @@ export function openConnectedAccountCatalogContentV1(input: Readonly<{
     if (!input.material) return { status: 'unavailable', reason: 'encryption-material-unavailable' };
     value = openAccountScopedBlobCiphertext({ kind: connectedAccountCatalogCipherKindV1(input.key), material: input.material, ciphertext: content.c })?.value;
   }
-  const record = StoredConnectedAccountCatalogRecordV1Schema.safeParse(value);
-  return record.success && record.data.key === input.key && !hasDroppedReferenceCarrier(value, record.data)
-    ? { status: 'opened', record: record.data } : { status: 'unavailable', reason: 'invalid-stored-content' };
+  const projected = projectStoredConnectedAccountCatalogRecordV1(value, input.key);
+  if (projected.status === 'unavailable') return projected;
+  const outerDiagnostics: ConnectedAccountCatalogDiagnosticV1[] = listSavedSecretReferenceCarrierPathsV1(content)
+    .filter(path => content.t !== 'plain' || !path.startsWith('v.'))
+    .map(path => ({ path: `content.${path}`, reason: 'unclassified-reference' }));
+  if (!outerDiagnostics.length) return projected;
+  return { status: 'partial', record: projected.record,
+    diagnostics: [...(projected.status === 'partial' ? projected.diagnostics : []), ...outerDiagnostics] };
 }
 export function sealConnectedAccountCatalogContentV1(input: Readonly<{
   record: ConnectedAccountCatalogRecordV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null;
   randomBytes?: (length: number) => Uint8Array;
 }>): ConnectedAccountCatalogContentV1 {
   const record = ConnectedAccountCatalogRecordV1Schema.parse(input.record);
+  if (projectStoredConnectedAccountCatalogRecordV1(record, record.key).status !== 'opened') throw new Error('invalid-stored-content');
   if (input.mode === 'plain') {
     if (input.material !== null) throw new Error('account-mode-mismatch');
     return { t: 'plain', v: record };
@@ -104,7 +223,7 @@ export const ConnectedAccountCatalogRowFailureV1Schema = lazyZodSchema(() => z.o
   reason: z.string().optional(),
 }).strict());
 export const ConnectedAccountCatalogRowReadResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('present'), revision, content: ConnectedAccountCatalogContentV1Schema }).strict(),
+  z.object({ status: z.literal('present'), revision, content: StoredConnectedAccountCatalogContentV1Schema }).strict(),
   z.object({ status: z.literal('absent') }).strict(), z.object({ status: z.literal('deleted'), revision }).strict(),
   ConnectedAccountCatalogRowFailureV1Schema,
 ]));
