@@ -1,3 +1,28 @@
+import * as z from 'zod/mini';
+
+// A display-only projection of B9's presentation. Unknown fields are stripped at every level;
+// neither secret/config values nor private repository bytes enter the review model.
+const ProjectSetupReviewPresentationSchema = z.object({
+  bindings: z.array(z.object({
+    name: z.string(), ref: z.string(), revision: z.optional(z.number()),
+    source: z.enum(['personal', 'shared_resource']), displayName: z.nullable(z.string()),
+  })),
+  provenance: z.object({
+    file: z.literal('.happier/project.json'), kind: z.enum(['repository', 'nonRepository', 'unavailable']),
+    headCommit: z.optional(z.string()), branch: z.optional(z.string()),
+    fileState: z.enum(['modified', 'untracked', 'unknown', 'absent']),
+  }),
+});
+
+export type ProjectSetupReviewPresentation = z.infer<typeof ProjectSetupReviewPresentationSchema>;
+
+export function readProjectSetupReviewPresentation(reviewedEffect: unknown): ProjectSetupReviewPresentation | null {
+  const presentation = reviewedEffect && typeof reviewedEffect === 'object' && 'presentation' in reviewedEffect
+    ? reviewedEffect.presentation : undefined;
+  const parsed = ProjectSetupReviewPresentationSchema.safeParse(presentation);
+  return parsed.success ? parsed.data : null;
+}
+
 /**
  * The exact commands of a reviewed setup effect (the producer's safe `reviewedEffect` DTO), in run
  * order: `executable args…` per step, else its declared command or native target. Never secret

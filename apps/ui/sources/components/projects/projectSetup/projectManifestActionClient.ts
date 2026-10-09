@@ -36,7 +36,8 @@ export type ProjectScriptSelection = ActionOperationProjectScriptSelection;
 /**
  * The one Project Action client: inspection, guarded manifest writes, script runs and setup
  * preparation all reach the existing Action approval/execution front door with the host-captured
- * Account and exact checkout Machine. An Ask-first approval keeps the call pending until its
+ * Account and exact SOURCE checkout input; placement remains the canonical Action owner's
+ * decision. An Ask-first approval keeps the call pending until its
  * mounted continuation delivers the approved result; it never becomes a fake success.
  */
 export function createProjectManifestActionClient(
@@ -56,10 +57,6 @@ export function createProjectManifestActionClient(
     authority: 'present_user' as const,
     serverId: input.workspace.serverId,
     expectedAccountId: input.expectedAccountId,
-    externalActionTarget: {
-      kind: 'machine' as const,
-      machineId: input.workspace.machineId,
-    },
     ...(input.signal ? { signal: input.signal } : {}),
   };
   const scope = {
