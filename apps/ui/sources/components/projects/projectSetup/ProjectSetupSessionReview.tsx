@@ -13,16 +13,17 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import { rememberProjectSetupConsent } from './projectSetupConsentDecision';
-import { listReviewedSetupCommands } from './projectSetupEffectPresentation';
+import { ProjectSetupReviewFacts } from './ProjectSetupReview';
 
 type Decision = 'untilChanged';
+const SESSION_EFFECT_MANIFEST = { version: 1 } as const;
 
 /**
  * The session asks (lab `s-setup` ASK, plan 20s3 / D18): every live finite command this Session's
@@ -35,6 +36,8 @@ export const ProjectSetupSessionReviews = React.memo(
   function ProjectSetupSessionReviews(
     props: Readonly<{ sessionId: string; serverId?: string | null }>,
   ) {
+    const transcriptSource = useSessionTranscriptSource();
+    const interaction = transcriptSource.useInteraction();
     const serverId = props.serverId
       ? resolveServerProfileScopeIdForIdentifier(props.serverId)
       : null;
@@ -51,16 +54,28 @@ export const ProjectSetupSessionReviews = React.memo(
     const [decided, setDecided] = React.useState<
       ReadonlyMap<
         string,
-        Readonly<{ decision: Decision; operation: ActionOperationProjection }>
+        Readonly<{ decision: Decision; operation: ActionOperationProjection; binding: ServerCredentialAccountScopeBinding; digest: string }>
       >
     >(() => new Map());
+    React.useEffect(() => {
+      if (!binding) return;
+      const retirement = binding.onRetire(() => setDecided((current) =>
+        new Map([...current].filter(([, entry]) => entry.binding !== binding)),
+      ));
+      return () => retirement.dispose();
+    }, [binding]);
     const onDecided = React.useCallback(
       (operation: ActionOperationProjection, decision: Decision) => {
-        setDecided((current) =>
-          new Map(current).set(reviewKey(operation), { decision, operation }),
-        );
+        const digest = operation.snapshot.setupReview?.reviewedEffectDigest;
+        if (!binding?.isCurrent() || operation.snapshot.scope.accountId !== binding.accountId || !digest) return;
+        setDecided((current) => {
+          if (!binding.isCurrent()) return current;
+          const next = new Map([...current].filter(([, entry]) => reviewKey(entry.operation) !== reviewKey(operation)));
+          next.set(JSON.stringify([binding.accountId, reviewKey(operation), digest]), { decision, operation, binding, digest });
+          return next;
+        });
       },
-      [],
+      [binding],
     );
     if (!serverId || !accountId) return null;
     const scope: ServerAccountScope = { serverId, accountId };
@@ -71,27 +86,29 @@ export const ProjectSetupSessionReviews = React.memo(
     );
     const liveKeys = new Set(live.map(reviewKey));
     const settled = [...decided.values()].filter(
-      (entry) => !liveKeys.has(reviewKey(entry.operation)),
+      (entry) => entry.binding === binding && entry.binding.isCurrent() && !liveKeys.has(reviewKey(entry.operation)),
     );
     if (live.length === 0 && settled.length === 0) return null;
     return (
       <View style={styles.list}>
         {settled.map((entry) => (
-          <ProjectSetupSessionReviewCard
-            key={reviewKey(entry.operation)}
+          <ProjectSetupConsentReviewCard
+            key={JSON.stringify([entry.binding.accountId, reviewKey(entry.operation), entry.digest])}
             operation={entry.operation}
             scope={scope}
             decided={entry.decision}
             onDecided={onDecided}
+            canApprovePermissions={interaction.canApprovePermissions}
           />
         ))}
         {live.map((operation) => (
-          <ProjectSetupSessionReviewCard
-            key={reviewKey(operation)}
+          <ProjectSetupConsentReviewCard
+            key={JSON.stringify([accountId, reviewKey(operation), operation.snapshot.setupReview?.reviewedEffectDigest])}
             operation={operation}
             scope={scope}
-            decided={decided.get(reviewKey(operation))?.decision ?? null}
+            decided={null}
             onDecided={onDecided}
+            canApprovePermissions={interaction.canApprovePermissions}
           />
         ))}
       </View>
@@ -106,12 +123,16 @@ function reviewKey(operation: ActionOperationProjection): string {
   });
 }
 
-const ProjectSetupSessionReviewCard = React.memo(
-  function ProjectSetupSessionReviewCard(
+export const ProjectSetupConsentReviewCard = React.memo(
+  function ProjectSetupConsentReviewCard(
     props: Readonly<{
       operation: ActionOperationProjection;
       scope: ServerAccountScope;
       decided: Decision | null;
+      canApprovePermissions: boolean;
+      signal?: AbortSignal;
+      testID?: string;
+      onDeclined?: () => void;
       onDecided: (
         operation: ActionOperationProjection,
         decision: Decision,
@@ -119,8 +140,6 @@ const ProjectSetupSessionReviewCard = React.memo(
     }>,
   ) {
     const { theme } = useUnistyles();
-    const transcriptSource = useSessionTranscriptSource();
-    const interaction = transcriptSource.useInteraction();
     const { operation, scope, onDecided } = props;
     const attachment =
       operation.snapshot.domainRef?.kind === 'projectCommand'
@@ -141,11 +160,14 @@ const ProjectSetupSessionReviewCard = React.memo(
       props.decided === null ? operation : null,
     );
     const [deciding, setDeciding] = React.useState(false);
-    const testID = `project-setup-session-review:${operation.snapshot.operationId}`;
+    const testID = props.testID ?? `project-setup-session-review:${operation.snapshot.operationId}`;
+    React.useEffect(() => {
+      if (!stop.pending && stop.feedback !== null) props.onDeclined?.();
+    }, [props.onDeclined, stop.feedback, stop.pending]);
 
     const allow = React.useCallback(async () => {
       const workspace = attachment?.sourceWorkspace;
-      if (!review || !workspace || deciding) return;
+      if (!review || !workspace || deciding || props.signal?.aborted) return;
       setDeciding(true);
       try {
         const result = await rememberProjectSetupConsent({
@@ -153,7 +175,9 @@ const ProjectSetupSessionReviewCard = React.memo(
           workspace,
           operation,
           reviewedEffectDigest: review.reviewedEffectDigest,
+          signal: props.signal,
         });
+        if (props.signal?.aborted) return;
         if (result.kind === 'remembered') onDecided(operation, 'untilChanged');
         else
           Modal.alert(
@@ -163,7 +187,7 @@ const ProjectSetupSessionReviewCard = React.memo(
               : t('approvals.decisionError'),
           );
       } catch {
-        Modal.alert(t('common.error'), t('approvals.decisionError'));
+        if (!props.signal?.aborted) Modal.alert(t('common.error'), t('approvals.decisionError'));
       } finally {
         setDeciding(false);
       }
@@ -174,6 +198,7 @@ const ProjectSetupSessionReviewCard = React.memo(
       operation,
       review,
       scope,
+      props.signal,
     ]);
     const title = t('projects.authoring.sessionAsk', { machine: machineName });
     if (props.decided) {
@@ -203,7 +228,6 @@ const ProjectSetupSessionReviewCard = React.memo(
       );
     }
     if (!review) return null;
-    const commands = listReviewedSetupCommands(review.reviewedEffect);
     return (
       <ApprovalPromptChrome
         testID={testID}
@@ -233,7 +257,7 @@ const ProjectSetupSessionReviewCard = React.memo(
           ) : (
             <ApprovalDecisionFooter
               testIDPrefix={testID}
-              disabled={!interaction.canApprovePermissions}
+              disabled={!props.canApprovePermissions || props.signal?.aborted === true}
               approveDisabled={!attachment?.sourceWorkspace}
               isDeciding={deciding || stop.pending}
               approveLabel={t('projects.authoring.allowUntilChanged')}
@@ -246,25 +270,19 @@ const ProjectSetupSessionReviewCard = React.memo(
           )
         }
       >
+        <ProjectSetupReviewFacts
+          testID={testID}
+          manifest={SESSION_EFFECT_MANIFEST}
+          reviewedEffect={review.reviewedEffect}
+          machineName={machineName}
+          sharedRunAs={sharedRunAs}
+        />
         <Text
           style={[styles.body, { color: theme.colors.text.secondary }]}
           testID={`${testID}.effect`}
         >
-          {[commands?.join(' · '), t('projects.authoring.sessionAskScope')]
-            .filter(Boolean)
-            .join('. ')}
+          {t('projects.authoring.sessionAskScope')}
         </Text>
-        {sharedRunAs ? (
-          <Text
-            style={[styles.body, { color: theme.colors.text.secondary }]}
-            testID={`${testID}.shared`}
-          >
-            {t('projects.scripts.setup.sharedScope', {
-              osUser: sharedRunAs,
-              machine: machineName,
-            })}
-          </Text>
-        ) : null}
       </ApprovalPromptChrome>
     );
   },

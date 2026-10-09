@@ -7,6 +7,8 @@ import {
 import {
     buildLocalServiceInventoryRow,
     buildLocalServiceInventoryState,
+    createMachineFixture,
+    flushHookEffects,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
@@ -106,6 +108,85 @@ const openableTarget = {
 };
 
 describe('DetectedLocalServicesPane', () => {
+    it('uses the actual worker Machine for row facts and Last known independently of the Source', async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previous = storage.getState();
+        const source = createMachineFixture({ id: 'machine-a', active: false, activeAt: 0 });
+        const worker = createMachineFixture({ id: 'worker', activeAt: Date.now(), metadata: { ...source.metadata!, displayName: 'Build worker' } });
+        storage.setState({ machines: { 'machine-a': source, worker }, machineListByServerId: { home: [source, worker] } });
+        const target = { id: 'worker-jobs', source: 'managed_service' as const,
+            sourceClass: { kind: 'managed_service' as const, managedServiceId: 'worker-jobs' },
+            machineId: 'worker', title: 'Jobs', confidence: 'high' as const, state: 'available' as const,
+            serviceState: 'running' as const, actions: ['manage' as const] };
+        try {
+            const screen = await renderScreen(<DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={launcherStateWith([target])} machine={MACBOOK_OFFLINE}
+                sourceMachineId="machine-a" serverId="home" renderServicePlacement={() => <PlacementProbe />}
+                testID="worker-pane" />);
+            expect(collectText(screen.findByTestId('worker-pane-row:worker-jobs')!)).toContain('on Build worker');
+            expect(collectText(screen.findByTestId('worker-pane-row:worker-jobs')!)).not.toContain('Last known');
+            await act(async () => {
+                const offlineWorker = { ...worker, active: false, activeAt: 0 };
+                storage.setState({ machines: { 'machine-a': source, worker: offlineWorker }, machineListByServerId: { home: [source, offlineWorker] } });
+            });
+            expect(collectText(screen.findByTestId('worker-pane-row:worker-jobs')!)).toContain('Last known');
+            await screen.unmount();
+        } finally { storage.setState(previous); }
+    });
+
+    it('observes worker public policy and create/revoke snapshots without inheriting Source exposures', async () => {
+        const { resetLocalServicePublicPreviewStoreForTests, publishLocalServicePublicPreviewSnapshot } =
+            await import('@/sync/domains/local/services/publicPreview/sharedStore');
+        resetLocalServicePublicPreviewStoreForTests();
+        const workerTarget = { ...openableTarget, id: 'worker-preview', source: 'registered_preview' as const,
+            sourceClass: undefined, machineId: 'worker', sessionId: 'worker-session', browserTarget: {
+                kind: 'localServicePreview' as const, targetId: 'same-preview', machineId: 'worker', sessionId: 'worker-session',
+            } };
+        const exposure = { exposureId: 'same-exposure', previewId: 'same-preview', machineId: 'worker',
+            sessionId: 'worker-session', mode: 'secret_link' as const, state: 'active' as const,
+            publicUrl: 'https://worker.test/share', issuedAt: Date.now(), expiresAt: Date.now() + 600_000,
+            auditEventIds: [], rateLimitProfileId: 'default' };
+        const workerSnapshot = { v: 1 as const, machineId: 'worker', sessionId: 'worker-session', generatedAt: Date.now(),
+            refreshState: 'idle' as const, policy: { enabled: true, allowedModes: ['secret_link' as const], maxTtlMs: 600_000,
+                maxConcurrentExposures: 1, dnsTlsRequired: true, auditRequired: true, rateLimitProfileIds: ['default'] },
+            exposures: [] as (typeof exposure)[], diagnostics: [] };
+        const sourceState = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            ...workerSnapshot, machineId: 'machine-a', sessionId: undefined, policy: { ...workerSnapshot.policy, enabled: false },
+            exposures: [{ ...exposure, machineId: 'machine-a', sessionId: undefined, publicUrl: 'https://source.test/share' }],
+        });
+        const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
+        const actions = createLocalServicePublicPreviewActions({ machineId: 'machine-a', serverId: 'home',
+            runtimeActionExecute: async (request) => {
+                expect(request.input).toMatchObject({ machineId: 'worker', sessionId: 'worker-session' });
+                const exposures = request.actionId === 'localServices.publicPreview.create' ? [exposure] : [];
+                publishLocalServicePublicPreviewSnapshot({ machineId: 'worker', serverId: 'home', sessionId: 'worker-session' }, {
+                    ...workerSnapshot, exposures,
+                });
+                return { ok: true };
+            } });
+        try {
+            const screen = await renderScreen(<DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={launcherStateWith([workerTarget])}
+                sourceMachineId="machine-a" serverId="home" publicPreviewState={sourceState}
+                publicPreviewEnabled publicPreviewStatusClient={async ({ request }) => {
+                    expect(request.machineId).toBe('worker');
+                    return { ok: true, snapshot: workerSnapshot };
+                }} publicPreviewActions={actions} testID="worker-pane" />);
+            await flushHookEffects();
+            await expandRow(screen, 'worker-pane-row:worker-preview');
+            const prefix = 'worker-pane-row:worker-preview-public-preview';
+            expect(screen.findByTestId(`${prefix}-target:same-preview-create`)).toBeTruthy();
+            await act(async () => { await actions.create(workerTarget); });
+            expect(screen.findByTestId(`${prefix}-exposure:same-exposure`)).toBeTruthy();
+            expect(screen.getTextContent()).toContain('worker.test');
+            expect(screen.getTextContent()).not.toContain('source.test');
+            await act(async () => { await actions.revoke(exposure); });
+            expect(screen.findAllByTestId(`${prefix}-exposure:same-exposure`)).toHaveLength(0);
+            expect(screen.findByTestId(`${prefix}-target:same-preview-create`)).toBeTruthy();
+            await screen.unmount();
+        } finally { resetLocalServicePublicPreviewStoreForTests(); }
+    });
     it('renders loading state before the first inventory snapshot', async () => {
         const screen = await renderScreen(
             <DetectedLocalServicesPane
@@ -491,6 +572,7 @@ describe('DetectedLocalServicesPane', () => {
      */
     it('pushes the service detail on a phone and returns to the list on Back', async () => {
         deviceState.type = 'phone';
+        const focus = vi.fn();
         try {
             const screen = await renderScreen(
                 <DetectedLocalServicesPane
@@ -503,6 +585,7 @@ describe('DetectedLocalServicesPane', () => {
                     renderServicePlacement={() => <PlacementProbe />}
                     testID="local-services-pane"
                 />,
+                { createNodeMock: (element) => element.props.testID === 'local-services-pane-row:inventory:openable-row-item' ? { focus } : null },
             );
             const rowTestID = 'local-services-pane-row:inventory:openable-row';
             await expandRow(screen, rowTestID);
@@ -517,6 +600,7 @@ describe('DetectedLocalServicesPane', () => {
             expect(screen.findAllByTestId('local-services-pane-detail')).toHaveLength(0);
             expect(screen.findByTestId('local-services-pane-list')?.props.accessibilityElementsHidden).toBe(false);
             expect(screen.findByTestId(rowTestID)).toBeTruthy();
+            expect(focus).toHaveBeenCalled();
         } finally {
             deviceState.type = 'tablet';
         }

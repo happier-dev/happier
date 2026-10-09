@@ -9,7 +9,13 @@ import type {
   FeatureDecision,
   FeatureId,
   RuntimeActionExecute,
+  ActionOperationSnapshotV1,
 } from '@happier-dev/protocol';
+import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { buildLocalServiceInventoryState } from '@/dev/testkit/fixtures/localServices';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import {
@@ -33,6 +39,8 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const inventoryMachineRpc =
   await import('@/sync/domains/local/services/inventory/machineRpc');
+const operationMachineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+const { storage } = await import('@/sync/domains/state/storage');
 const { resetLocalServiceInventoryStoreForTests } =
   await import('@/sync/domains/local/services/inventory/sharedStore');
 const { resetLocalServiceLauncherStoreForTests } =
@@ -162,9 +170,130 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   afterEach(async () => {
+    actionOperationStore.reset();
     resetLocalServiceInventoryStoreForTests();
     resetLocalServiceLauncherStoreForTests();
     await home.reset();
+  });
+
+  it.each(['accept', 'decline', 'retire', 'askFirstReject'] as const)('continues an untrusted Service Start through the shared Setup Remember owner only after observed completion (%s)', async decision => {
+    const serverId = await home.addHome({ name: 'Service Setup Home', serverUrl: `https://services-setup-${decision}.test`,
+      accountId: 'initiating-account', currentAccount: true });
+    const scope = { serverId, accountId: 'initiating-account' };
+    const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
+    const previous = storage.getState();
+    storage.setState({ profileScope: scope, projectAccountRows: createProjectAccountRowsFixture(scope, { workspaceRefs: [
+      { id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1, projectKey: 'accepted-project' },
+    ] }) });
+    home.answer(serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } },
+    } } } });
+    home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+    home.answer(serverId, '/v1/account/project-trust/read', { body: { status: 'absent' } });
+    home.answer(serverId, '/v1/account/project-trust/mutate', { body: { status: 'updated', revision: 1, cursor: 1 } });
+    if (decision === 'askFirstReject') await home.requireUiApproval(serverId, 'projects.prepare');
+    const consent: ProjectSetupConsentFailureDetailsV1 = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup-digest',
+      reviewedEffect: { v: 1, purpose: 'setup', commands: [{ source: { kind: 'command', command: 'prepare-project' }, executable: 'prepare-project', args: [] }] } };
+    const held: ActionOperationSnapshotV1 = { version: 1, operationId: 'held-service-setup', revision: 1,
+      actionId: 'projects.prepare', state: 'accepted', scope: { accountId: scope.accountId, machineId: workspace.machineId },
+      title: 'Setup', createdAt: 1, cancellation: 'supported', setupReview: consent,
+      domainRef: { kind: 'projectCommand', purpose: 'setup', serverId, machineId: workspace.machineId,
+        workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } };
+    const running: ActionOperationSnapshotV1 = { ...held, revision: 2, state: 'running', setupReview: undefined };
+    // Only authenticated daemon RPC and Home HTTP leave the process; client, controller, retained
+    // operation store, shared review card and canonical Remember decision stay real.
+    const rpc = vi.spyOn(operationMachineRpc, 'machineRpcWithServerScope').mockImplementation(async <Response,>(request: Parameters<typeof operationMachineRpc.machineRpcWithServerScope>[0]) => {
+      const snapshot = home.requests.some(value => value.path === '/v1/account/project-trust/mutate') ? running : held;
+      const response: unknown = request.method === ACTION_OPERATION_RPC_METHODS_V2.get ? { kind: 'found', operation: snapshot }
+        : request.method === ACTION_OPERATION_RPC_METHODS_V2.list ? { items: [snapshot], nextCursor: null } : { kind: 'requested' };
+      // Authenticated RPC is the genuinely generic transport boundary; real readers parse its DTO.
+      return response as Response;
+    });
+    const requests: Parameters<RuntimeActionExecute>[0][] = [];
+    let prepareApprovalId: string | undefined;
+    const target: LocalServiceLaunchTarget = { id: 'project-service:web', source: 'managed_service',
+      sourceClass: { kind: 'managed_service', managedServiceId: 'declared-web' }, machineId: 'machine-a', workspaceId: 'accepted',
+      workspace, cwd: '/repo', declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } },
+      title: 'Web', confidence: 'high', state: 'available', actions: ['start'] };
+    const runtimeActionExecute: RuntimeActionExecute = async request => {
+      requests.push(request);
+      if (request.actionId === 'projects.prepare') {
+        if (decision === 'askFirstReject') {
+          prepareApprovalId = await createUiApprovalRequest({ serverId, actionId: request.actionId,
+            actionInput: request.input, actionRequestId: 'service-setup-prepare' });
+          return { kind: 'approval_request_created', actionId: request.actionId, artifactId: prepareApprovalId };
+        }
+        return { operation: held };
+      }
+      const serviceStarts = requests.filter(value => value.actionId === 'localServices.launcher.start');
+      if (serviceStarts.length === 1) return { ok: false, errorCode: consent.code, error: consent.code, details: consent };
+      return { protocolVersion: 1, machineId: 'machine-a', targetId: target.id, status: 'succeeded',
+        snapshot: { v: 1, machineId: 'machine-a', updatedAt: 2, targets: [] } };
+    };
+    try {
+      const screen = await renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId} workspaceRoot="/repo"
+        inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(),
+          { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [target] })}
+        runtimeActionExecute={runtimeActionExecute} testID="service-setup" />);
+      await flushHookEffects();
+      act(() => { screen.pressByTestId('service-setup-row:project-service:web-start'); });
+      await waitForHomeGovernance(() => expect(requests[0]?.actionId).toBe('localServices.launcher.start'));
+      await flushHookEffects();
+      expect(requests.map(value => value.actionId)).toEqual(['localServices.launcher.start', 'projects.prepare']);
+      expect(requests[1]?.input).toEqual({ workspace, phase: 'setup' });
+      if (decision === 'askFirstReject') {
+        await waitForHomeGovernance(() => expect(prepareApprovalId).toBeTruthy());
+        await flushHookEffects();
+        expect(screen.findByTestId('service-setup-setup-approval')).toBeTruthy();
+        await decideApprovalAsInbox(serverId, prepareApprovalId!, 'reject');
+        await flushHookEffects();
+      } else {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('service-setup-setup-review-approve')).toBeTruthy());
+      }
+      if (decision === 'retire') {
+        await act(async () => { await home.switchAccount(serverId, 'replacement-account'); });
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('service-setup-setup-review-approve')).toHaveLength(0));
+      } else if (decision === 'decline') {
+        act(() => screen.pressByTestId('service-setup-setup-review-reject'));
+        await flushHookEffects();
+      } else if (decision === 'accept') {
+        act(() => { screen.pressByTestId('service-setup-setup-review-approve'); });
+        // Await the real decision's visible pending state, not the desired Trust write. A refusal
+        // finishes that state too, so the following assertion reports it instead of timing out.
+        await waitForHomeGovernance(async () => {
+          await flushHookEffects();
+          expect(screen.findByTestId('service-setup-setup-review-approve')?.props.disabled === true).toBe(false);
+        });
+        expect(home.requests.filter(value => value.path === '/v1/account/project-trust/mutate'),
+          JSON.stringify({ rpc: rpc.mock.calls.map(([request]) => ({ method: request.method, payload: request.payload })),
+            paths: home.requests.map(value => value.path) })).toHaveLength(1);
+        await flushHookEffects();
+        expect(requests).toHaveLength(2);
+        act(() => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...running, revision: 3,
+          observation: { kind: 'outcome_uncertain', code: 'setup_ack_unknown' } }] }));
+        await flushHookEffects();
+        expect(requests).toHaveLength(2);
+        expect(screen.findByTestId('service-setup-setup-operation')).toBeTruthy();
+        act(() => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...running, revision: 4,
+          state: 'succeeded', settledAt: 4, result: { kind: 'success', reviewedEffectDigest: consent.reviewedEffectDigest } }] }));
+        await flushHookEffects();
+        expect(requests.filter(value => value.actionId === 'localServices.launcher.start'),
+          JSON.stringify({ operation: [...actionOperationStore.getSnapshot().operationsByKey.values()],
+            requests: requests.map(value => value.actionId) })).toHaveLength(2);
+        expect(requests[2]?.input).toEqual(requests[0]?.input);
+        expect(home.requests.find(value => value.path === '/v1/account/project-trust/mutate')?.input).toMatchObject({
+          project: { serverId, projectId: 'accepted-project' }, content: { t: 'plain', v: { reviewedEffectDigest: consent.reviewedEffectDigest } },
+        });
+      }
+      if (decision !== 'accept') {
+        expect(requests.filter(value => value.actionId === 'localServices.launcher.start')).toHaveLength(1);
+        expect(home.requests.filter(value => value.path === '/v1/account/project-trust/mutate')).toHaveLength(0);
+      }
+      expect(requests.every(value => Reflect.get(value.context, 'expectedAccountId') === scope.accountId)).toBe(true);
+    } finally {
+      rpc.mockRestore();
+      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+    }
   });
 
   it('renders the detected services pane and the Services-bound plugin stack under the testID prefix', async () => {

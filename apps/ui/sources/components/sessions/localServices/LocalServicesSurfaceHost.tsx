@@ -11,10 +11,7 @@ import type {
 import type { LocalServiceInventorySnapshotClient } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryState';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
-import {
-    type LocalServicePublicPreviewStatusClient,
-    useLocalServicePublicPreviewStateController,
-} from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
+import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -26,8 +23,9 @@ import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { ServiceRowOpenHandler } from './ServiceRowView';
 import { useLocalServiceLauncherStartAction } from './launcherStartAction';
-import type { LocalServiceActionAdmission, LocalServiceEffectReview } from './localServiceActionAdmission';
+import type { LocalServiceActionAdmission, LocalServiceEffectReview, LocalServiceSetupConsentReview } from './localServiceActionAdmission';
 import { LocalServiceEffectReviewCard } from './LocalServiceEffectReviewCard';
+import { LocalServiceSetupConsentContinuation } from './LocalServiceSetupConsentContinuation';
 import {
     useDetectedLocalServiceForgetAction,
     useDetectedLocalServiceTerminateAction,
@@ -95,13 +93,6 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         inventorySnapshotClient: props.inventorySnapshotClient,
         launcherSnapshotClient: props.launcherSnapshotClient,
     });
-    const livePublicPreviewState = useLocalServicePublicPreviewStateController({
-        machineId,
-        serverId,
-        sessionId,
-        enabled: props.publicPreviewState === undefined && publicPreviewFeatureEnabled,
-        statusClient: props.publicPreviewStatusClient,
-    });
     const { inventoryState, launcherState, refresh: onRefresh } = feeds;
     // Single front door (FINALIZATION-PLAN §3.1/§12.6): local-service runtime actions dispatch
     // through ActionExecutor.execute via the canonical bridge, so ActionsSettings enablement and
@@ -122,13 +113,15 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const approval = useActionApprovalContinuation({ scopeKey: actionScopeKey, serverId: serverId ?? '', onExecuted: refreshAfterApproval });
     const isActionScopeCurrent = React.useCallback(() => Boolean(credentialBinding?.isCurrent()) && !cancellation.signal.aborted,
         [credentialBinding, cancellation]);
-    const effectReview = useLocalServiceEffectReview();
+    const effectReview = useLocalServiceReview<LocalServiceEffectReview>();
+    const setupReview = useLocalServiceReview<LocalServiceSetupConsentReview>();
     const actionAdmission: LocalServiceActionAdmission = {
         expectedAccountId: credentialBinding?.accountId,
         signal: cancellation.signal,
         isCurrent: isActionScopeCurrent,
         onApprovalPending: approval.requestApproval,
         reviewEffect: effectReview.request,
+        reviewSetupConsent: setupReview.request,
     };
     const onTerminateDetectedService = useDetectedLocalServiceTerminateAction({
         ...actionAdmission,
@@ -177,9 +170,6 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         runtimeActionExecute, machineId, serverId, sessionId, scope, workspaceRoot,
         applyLauncherSnapshot: feeds.applyLauncherSnapshot,
     });
-    const publicPreviewState = props.publicPreviewState !== undefined
-        ? props.publicPreviewState
-        : livePublicPreviewState.state;
     const publicPreviewActions = useLocalServicePublicPreviewActions({
         ...actionAdmission,
         runtimeActionExecute,
@@ -223,7 +213,11 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         <DetectedLocalServicesPane
             inventoryState={inventoryState}
             launcherState={launcherState}
-            publicPreviewState={publicPreviewState}
+            publicPreviewState={props.publicPreviewState}
+            sourceMachineId={machineId}
+            serverId={serverId}
+            publicPreviewEnabled={publicPreviewFeatureEnabled}
+            publicPreviewStatusClient={props.publicPreviewStatusClient}
             sessionId={sessionId}
             scope={scope}
             onChangeScope={setScope}
@@ -242,7 +236,16 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             presentation={props.presentation}
             renderServicePlacement={props.renderServicePlacement}
             viewerAccountId={credentialBinding?.accountId ?? null}
-            effectReview={effectReview.pending && serverId ? (
+            effectReview={<>
+                {setupReview.pending && credentialBinding ? <LocalServiceSetupConsentContinuation
+                    key={JSON.stringify([setupReview.pending.review.target.id, setupReview.pending.review.consent.reviewedEffectDigest])}
+                    review={setupReview.pending.review}
+                    binding={credentialBinding}
+                    runtimeActionExecute={runtimeActionExecute}
+                    onComplete={setupReview.pending.settle}
+                    testID={props.testID}
+                /> : null}
+                {effectReview.pending && serverId ? (
                 <LocalServiceEffectReviewCard
                     review={effectReview.pending.review}
                     serverId={serverId}
@@ -250,14 +253,15 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
                     onDecide={effectReview.pending.settle}
                     testID={`${props.testID}-effect-review`}
                 />
-            ) : null}
+                ) : null}
+            </>}
             testID={props.testID}
             footer={pluginStack}
         />
     );
 }
 
-type PendingEffectReview = Readonly<{ review: LocalServiceEffectReview; settle: (accepted: boolean) => void }>;
+type PendingReview<T> = Readonly<{ review: T; settle: (accepted: boolean) => void }>;
 
 /**
  * The one current-effect review of this Services surface: Start/Restart hand it the effect the
@@ -265,13 +269,13 @@ type PendingEffectReview = Readonly<{ review: LocalServiceEffectReview; settle: 
  * that digest; Not now, a newer review or the scope's retirement (its Account, machine or checkout
  * changing aborts the signal) settles it as declined, so nothing re-enters on its own.
  */
-function useLocalServiceEffectReview(): Readonly<{
-    pending: PendingEffectReview | null;
-    request: (review: LocalServiceEffectReview) => Promise<boolean>;
+function useLocalServiceReview<T extends Readonly<{ signal?: AbortSignal }>>(): Readonly<{
+    pending: PendingReview<T> | null;
+    request: (review: T) => Promise<boolean>;
 }> {
-    const [pending, setPending] = React.useState<PendingEffectReview | null>(null);
-    const current = React.useRef<PendingEffectReview | null>(null);
-    const request = React.useCallback((review: LocalServiceEffectReview) => new Promise<boolean>((resolve) => {
+    const [pending, setPending] = React.useState<PendingReview<T> | null>(null);
+    const current = React.useRef<PendingReview<T> | null>(null);
+    const request = React.useCallback((review: T) => new Promise<boolean>((resolve) => {
         current.current?.settle(false);
         if (review.signal?.aborted) {
             resolve(false);
@@ -279,7 +283,7 @@ function useLocalServiceEffectReview(): Readonly<{
         }
         let settled = false;
         const onAbort = () => entry.settle(false);
-        const entry: PendingEffectReview = {
+        const entry: PendingReview<T> = {
             review,
             settle: (accepted) => {
                 if (settled) return;

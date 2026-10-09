@@ -6,7 +6,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
 
 import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
-import type { MachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { useRestoreFocusToTrigger, type FocusReturnTarget } from '@/keyboard/focusReturn';
+import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -37,6 +39,7 @@ import {
     type ServiceRowSection,
 } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
+import { useLocalServicePublicPreviewStateController, type LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -55,6 +58,33 @@ import {
     type ServiceRowStartHandler,
     type ServiceRowTerminateHandler,
 } from './ServiceRowView';
+
+/** Each occurrence reads its actual Machine through the existing qualified owners. */
+function TargetServiceRow(props: React.ComponentProps<typeof ServiceRowView> & Readonly<{
+    sourceMachineId?: string | null;
+    serverId?: string | null;
+    sourceMachine?: MachinePresenceSummary | null;
+    publicPreviewEnabled?: boolean;
+    publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
+}>): React.ReactElement {
+    const { sourceMachineId, serverId, sourceMachine, publicPreviewEnabled, publicPreviewStatusClient, ...rowProps } = props;
+    const target = props.row.target;
+    const sourceRow = !sourceMachineId || target.machineId === sourceMachineId;
+    const observedMachine = useMachinePresenceSummary(serverId, sourceRow ? null : target.machineId);
+    const machine = sourceRow ? sourceMachine : observedMachine;
+    // Explicit snapshots are scoped to their Machine; a Source snapshot never supplies worker policy.
+    const suppliedState = props.publicPreviewState;
+    const hasSuppliedState = suppliedState !== undefined && (suppliedState === null
+        ? sourceRow : suppliedState.machineId === target.machineId);
+    const preview = useLocalServicePublicPreviewStateController({
+        machineId: target.machineId, serverId, sessionId: target.sessionId,
+        enabled: publicPreviewEnabled === true && !hasSuppliedState,
+        statusClient: publicPreviewStatusClient,
+    });
+    return <ServiceRowView {...rowProps} machineName={machine?.name ?? null}
+        offline={machine?.reachability === 'unreachable'}
+        publicPreviewState={hasSuppliedState ? suppliedState : publicPreviewEnabled ? preview.state : null} />;
+}
 
 /**
  * Which services the surface is asking for. Owned here because the pane is the only component that
@@ -259,6 +289,10 @@ export function DetectedLocalServicesPane(props: Readonly<{
     inventoryState: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
     publicPreviewState?: LocalServicePublicPreviewState | null;
+    sourceMachineId?: string | null;
+    serverId?: string | null;
+    publicPreviewEnabled?: boolean;
+    publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
     sessionId?: string | null;
     scope?: ServicesScope;
     onChangeScope?: (scope: ServicesScope) => void;
@@ -342,7 +376,22 @@ export function DetectedLocalServicesPane(props: Readonly<{
     const phone = useDeviceType() === 'phone';
     const [detailRowId, setDetailRowId] = React.useState<string | null>(null);
     const detailRow = phone && detailRowId ? rows.find((row) => row.id === detailRowId) ?? null : null;
-    const closeDetail = React.useCallback(() => setDetailRowId(null), []);
+    const rowFocusTargets = React.useRef(new Map<string, FocusReturnTarget>());
+    const returnFocusTarget = React.useRef<FocusReturnTarget>(null);
+    const focusReturnPending = React.useRef(false);
+    const restoreFocus = useRestoreFocusToTrigger(returnFocusTarget);
+    const closeDetail = React.useCallback(() => {
+        focusReturnPending.current = true;
+        setDetailRowId(null);
+    }, []);
+    React.useLayoutEffect(() => {
+        if (!detailRow && focusReturnPending.current) {
+            focusReturnPending.current = false;
+            restoreFocus();
+            returnFocusTarget.current = null;
+        }
+    }, [detailRow, restoreFocus]);
+    useNativeBackLayerBackHandler(Boolean(detailRow), React.useCallback(() => { closeDetail(); return true; }, [closeDetail]));
     const starterNames = useServiceStarterNames(rows, props.viewerAccountId ?? null);
     // Happier's own listeners: one quiet group, closed until the person asks.
     const [happierOpen, setHappierOpen] = React.useState(false);
@@ -387,7 +436,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
     ));
 
     const renderRow = React.useCallback((row: ServiceRow) => (
-        <ServiceRowView
+        <TargetServiceRow
             key={row.id}
             row={row}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
@@ -397,8 +446,15 @@ export function DetectedLocalServicesPane(props: Readonly<{
             onStopManagedService={props.onStopManagedService}
             onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
-            machineName={machineName}
-            offline={offline}
+            sourceMachineId={props.sourceMachineId}
+            serverId={props.serverId}
+            sourceMachine={props.machine}
+            publicPreviewEnabled={props.publicPreviewEnabled}
+            publicPreviewStatusClient={props.publicPreviewStatusClient}
+            pressableRef={(target) => {
+                if (target) rowFocusTargets.current.set(row.id, target);
+                else rowFocusTargets.current.delete(row.id);
+            }}
             startedByName={row.target.startedByAccountId ? starterNames[row.target.startedByAccountId] ?? null : null}
             placement={props.renderServicePlacement?.(row)}
             publicPreviewState={props.publicPreviewState}
@@ -406,15 +462,21 @@ export function DetectedLocalServicesPane(props: Readonly<{
             publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
             expanded={expandedId === row.id}
             onExpandedChange={(next) => setExpandedRowId(next ? row.id : null)}
-            onOpenDetail={phone ? () => setDetailRowId(row.id) : undefined}
+            onOpenDetail={phone ? () => {
+                returnFocusTarget.current = rowFocusTargets.current.get(row.id) ?? null;
+                setDetailRowId(row.id);
+            } : undefined}
             animationEnabled={animationEnabled}
             testID={`${testID}-row:${row.id}`}
         />
     ), [
         animationEnabled,
         expandedId,
-        machineName,
-        offline,
+        props.sourceMachineId,
+        props.serverId,
+        props.machine,
+        props.publicPreviewEnabled,
+        props.publicPreviewStatusClient,
         phone,
         starterNames,
         props.onCopyServiceUrl,
@@ -617,7 +679,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
                         />
                     </View>
                     {effectReview}
-                    <ServiceRowView
+                    <TargetServiceRow
                         row={detailRow}
                         presentation="detail"
                         onOpenServiceInBrowser={props.onOpenServiceInBrowser}
@@ -627,8 +689,11 @@ export function DetectedLocalServicesPane(props: Readonly<{
                         onStopManagedService={props.onStopManagedService}
                         onRestartManagedService={props.onRestartManagedService}
                         onCopyServiceUrl={props.onCopyServiceUrl}
-                        machineName={machineName}
-                        offline={offline}
+                        sourceMachineId={props.sourceMachineId}
+                        serverId={props.serverId}
+                        sourceMachine={props.machine}
+                        publicPreviewEnabled={props.publicPreviewEnabled}
+                        publicPreviewStatusClient={props.publicPreviewStatusClient}
                         startedByName={detailRow.target.startedByAccountId ? starterNames[detailRow.target.startedByAccountId] ?? null : null}
                         placement={props.renderServicePlacement?.(detailRow)}
                         publicPreviewState={props.publicPreviewState}

@@ -64,6 +64,7 @@ export function useProjectScriptsController(
   workspace: WorkspaceAddressV1,
   onChanged: () => void,
   binding: ServerCredentialAccountScopeBinding | null,
+  options?: Readonly<{ execute?: Parameters<typeof createProjectManifestActionClient>[0]['execute'] }>,
 ) {
   const accountId = binding?.isCurrent() ? binding.accountId : null;
   const setupOperation = useProjectSetupRun(workspace, accountId);
@@ -118,12 +119,13 @@ export function useProjectScriptsController(
         ? createProjectManifestActionClient({
             workspace,
             expectedAccountId: accountId,
+            execute: options?.execute,
             signal: lifetime.signal,
             onApprovalPending: (registration) =>
               requestApprovalRef.current(registration),
           })
         : null,
-    [accountId, lifetime, workspace],
+    [accountId, lifetime, options?.execute, workspace],
   );
 
   const dispatch = React.useCallback(
@@ -189,7 +191,7 @@ export function useProjectScriptsController(
 
   const prepare = React.useCallback(
     async (expectedEffectDigest?: string, consentScope?: ProjectSetupConsentFailureDetailsV1['consentScope']) => {
-      if (!client) return;
+      if (!client) return null;
       const result = await dispatch('setup', async () => {
         // Remember remeasures and resumes the exact held invocation through its existing owner.
         // It must not launch a separate preparation after deciding the Script's setup review.
@@ -210,7 +212,7 @@ export function useProjectScriptsController(
           ...(expectedEffectDigest && consentScope ? { consentScope } : {}),
         });
       });
-      if (!result) return;
+      if (!result) return null;
       if ('kind' in result && result.kind === 'pendingApproval') {
         setConsent({
           scopeKey,
@@ -218,7 +220,7 @@ export function useProjectScriptsController(
           reviewedEffectDigest: result.reviewedEffectDigest,
           ...(result.consentScope ? { consentScope: result.consentScope } : {}),
         });
-        return;
+        return result;
       }
       setConsent(null);
       setReviewOpenScope(null);
@@ -227,6 +229,7 @@ export function useProjectScriptsController(
         setRetained({ scopeKey, address: { serverId: workspace.serverId, operationId: result.operation.operationId } });
       }
       onChanged();
+      return result;
     },
     [binding, client, dispatch, heldOperation, lifetime, onChanged, scopeKey, workspace],
   );
@@ -248,6 +251,7 @@ export function useProjectScriptsController(
   return {
     accountId,
     setupOperation,
+    retainedOperation,
     setupStop,
     setupReviewOpen: reviewOpenScope === scopeKey || consent?.scopeKey === scopeKey,
     openSetupReview,

@@ -26,7 +26,11 @@ import {
 } from '@/components/approvals/actionApprovalContinuation';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-type Execute = ReturnType<typeof createFrontDoorActionExecute>;
+type Execute = (
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare',
+  input: unknown,
+  context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
+) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
 type Outcome<T> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }>;

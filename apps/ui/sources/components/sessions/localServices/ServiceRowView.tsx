@@ -10,7 +10,7 @@ import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
-import { Item } from '@/components/ui/lists/Item';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -359,7 +359,7 @@ export function ServiceRowView(props: Readonly<{
     onStopManagedService?: ServiceRowManagedControlHandler;
     onRestartManagedService?: ServiceRowManagedControlHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
-    /** The machine the host is scoped to: rows say where they run ("on devbox"). */
+    /** The occurrence's actual Machine, independent of the pane's Source. */
     machineName?: string | null;
     /** The machine is unreachable: every fact on the row is last known. */
     offline?: boolean;
@@ -385,6 +385,7 @@ export function ServiceRowView(props: Readonly<{
      * pushed page: the same header and the same body, always open.
      */
     onOpenDetail?: () => void;
+    pressableRef?: ItemProps['pressableRef'];
     presentation?: 'row' | 'detail';
     showDivider?: boolean;
     animationEnabled?: boolean;
@@ -663,6 +664,7 @@ export function ServiceRowView(props: Readonly<{
                     showDivider={props.showDivider}
                     loading={pending}
                     onPress={onOpenDetail}
+                    pressableRef={props.pressableRef}
                     rightElement={rowControl}
                     // Open, ▶ and a worker's overflow are their own buttons: never nest them in the row's press.
                     rightElementOutsidePressable={rowControl !== null}
