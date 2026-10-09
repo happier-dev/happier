@@ -752,10 +752,12 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         if (!accountContext) throw new Error('Account settings context is unavailable');
         await accountContext.mutateRawSettings((raw) => ({ ...raw, ...delta }));
       },
-      mutateAccountSettings: async (mutate) => {
+      mutateAccountSettings: async (mutate, options) => {
         if (!accountContext) throw new Error('Account settings context is unavailable');
-        await accountContext.mutateRawSettings(mutate);
+        return await accountContext.mutateRawSettings(mutate, options);
       },
+      ...(accountContext ? { readAccountSettingsSnapshot: accountContext.readRawSettingsSnapshot,
+        readAccountSettingsHistory: accountContext.readSettingsHistorySnapshot } : {}),
       readLocalSettings: () => storage.getState().localSettings,
       writeLocalSettings: (delta) => storage.getState().applyLocalSettings(delta, { source: 'ui' }),
       ...(accountContext ? { automationSettings: {
@@ -1404,6 +1406,26 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         serverId: accountContext?.serverId ?? serverId,
         ...(accountContext ? { accountLifetime: accountContext.accountLifetime } : {}),
         ...(targetExecutionRunId ? { targetExecutionRunId } : {}),
+      }) };
+    },
+    sessionPendingResetStartSet: async ({ sessionId, localId, serverId, reset }) => {
+      if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      accountContext.assertCurrent();
+      if (serverId !== undefined && !areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId)) {
+        throw new Error('action_account_scope_changed');
+      }
+      return sync.updatePendingRequestedAction(sessionId, localId, { v: 1, kind: 'reset_start', reset }, {
+        serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+      });
+    },
+    sessionPendingResetStartCancel: async ({ sessionId, localId, serverId }) => {
+      if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      accountContext.assertCurrent();
+      if (serverId !== undefined && !areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId)) {
+        throw new Error('action_account_scope_changed');
+      }
+      return { outcome: await sync.withdrawPendingMessage(sessionId, localId, {
+        serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
       }) };
     },
 
@@ -2125,6 +2147,9 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     sessionModelSet: async (args) => {
       const { sessionId, modelId, providerConnectionId, serverId } = args;
+      if (args.teamCredentialModel !== undefined && (args.captureBefore || args.expected)) {
+        return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
+      }
       const normalizedSessionId = String(sessionId ?? '').trim();
       const normalizedModelId = String(modelId ?? '').trim();
       if (!normalizedSessionId || !normalizedModelId) {
@@ -2167,6 +2192,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         }
         const parsed = SessionModelTransitionRequestV1Schema.safeParse({
           v: 1,
+          ...(args.captureBefore !== undefined ? { captureBefore: args.captureBefore } : {}),
+          ...(args.expected ? { expected: args.expected } : {}),
           selection: {
             agentTargetKey,
             providerConnectionId: resolvedProviderConnectionId,
@@ -2200,6 +2227,9 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       const invokeActiveOwner = async (
         request: SessionModelTransitionRequestV1,
       ) => {
+        if (args.expected?.owner === 'inactive') {
+          return { ok: false, errorCode: 'superseded', error: 'superseded' };
+        }
         let transition: SessionModelTransitionResultV1;
         try {
           const result = await sessionRpcWithServerScope<
@@ -2246,8 +2276,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         invokeObservedActiveOwner: async () =>
           await invokeActiveOwner(initialRequest.request),
         updateInactiveIntent: async () => {
+          if (args.expected?.owner === 'active') {
+            return { ok: false, errorCode: 'superseded', error: 'superseded' };
+          }
           const candidate = createModelIntentMetadataCasCandidate({
             selection: initialRequest.request.selection,
+            captureBefore: args.captureBefore,
+            ...(args.expected ? { expected: args.expected } : {}),
           });
           await sync.patchSessionMetadataWithRetry(
             normalizedSessionId,
@@ -2268,8 +2303,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           ) {
             return {
               ok: false,
-              errorCode: 'superseded',
-              error: 'superseded',
+              errorCode: candidateState.refusal === 'unsupported' ? 'unsupported' : 'superseded',
+              error: candidateState.refusal === 'unsupported' ? 'unsupported' : 'superseded',
               details: {
                 status: 'superseded',
                 activeSelection:
@@ -2290,6 +2325,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
             modelId: initialRequest.request.selection.modelId,
             selection: initialRequest.request.selection,
             updatedAt: candidateState.updatedAt,
+            ...(candidateState.reversal ? { reversal: candidateState.reversal } : {}),
           };
         },
         resolveAndInvokeActiveOwnerAfterConflict: async () => {

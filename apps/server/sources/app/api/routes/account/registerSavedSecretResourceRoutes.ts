@@ -35,7 +35,6 @@ import {
     updateSavedSecretResourceInTx,
 } from "@/app/account/savedSecrets/savedSecretResourceService";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
-import { createTeamRouteApp } from "@/app/teams/teamRouteApp";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
@@ -76,16 +75,9 @@ function decodeEnvelopes(
 }
 
 export function registerSavedSecretResourceRoutes(app: Fastify): void {
-    // Shared Saved Secrets consume the existing `teams` decision, not either
-    // credential-resource bit, and remain unadvertised until their own atomic
-    // storage/catalog journey exists. A disabled `teams` gate must still answer
-    // in the strict SavedSecret vocabulary so a client decoding the refusal
-    // meets a body its schema accepts; the generic `{ error: "not_found" }`
-    // default is not a SavedSecretResourceActionErrorV1 member.
-    const routes = createTeamRouteApp(app, {
-        unavailableBody: { error: "forbidden" },
-        unavailableStatus: 403,
-    });
+    // Personal resource management does not require Teams. The resource owner
+    // still gates every Team-derived audience/access arm before admitting it.
+    const routes = app;
     routes.get(homeDomainActionPathForMethod("secrets.shared.list", "GET"), {
         preHandler: app.authenticate,
         // Catalog reads intentionally return metadata only. Raw plaintext or
@@ -262,6 +254,11 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         const body = parsed.data;
         const keyEnvelopes = decodeEnvelopes(body.keyEnvelopes);
         if (!keyEnvelopes) return reply.code(400).send({ error: "invalid_resource" });
+        const additionalResources = (body.additionalSavedSecretResources ?? []).map(resource => {
+            const decoded = decodeEnvelopes(resource.keyEnvelopes);
+            return decoded ? { ...resource, keyEnvelopes: decoded } : null;
+        });
+        if (additionalResources.some(resource => resource === null)) return reply.code(400).send({ error: "invalid_resource" });
         let result;
         try {
             result = await inTx((tx) => promoteSavedSecretResourceInTx(tx, {
@@ -280,6 +277,11 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 nextSettings: body.nextSettings,
                 referenceCensus: body.referenceCensus,
                 profileMutations: body.profileMutations,
+                catalogMutations: body.catalogMutations,
+                remoteHostMutation: body.remoteHostMutation,
+                notificationChannelMutation: body.notificationChannelMutation,
+                additionalSavedSecretResources: additionalResources.filter((resource): resource is NonNullable<typeof resource> => resource !== null),
+                personalSecretPromotions: body.personalSecretPromotions,
             }));
         } catch (error) {
             if (error instanceof SavedSecretResourceTransactionAbort) {

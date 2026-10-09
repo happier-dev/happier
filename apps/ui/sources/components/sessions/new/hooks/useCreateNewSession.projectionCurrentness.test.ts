@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
@@ -11,7 +12,7 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createNewSessionPromptStore } from './screenModel/newSessionPromptStore';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { AccountProfileSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { useCreateNewSession } from './useCreateNewSession';
@@ -20,12 +21,28 @@ import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machin
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { NewSessionLaunchAttempt } from '../modules/newSessionLaunchAttempt';
+import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRowMutationV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
+
+// Static owner imports can reach Socket.IO before runtime setup; replace only its external transport.
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 const identity = { pluginId: 'acme.review', localId: 'provider' } as const;
 const agentId = 'acme.review/provider';
 const agentTarget = { kind: 'agent', identity } as const;
+const connectedAccountDeclaration = { purpose: 'model-api', service: { pluginId: 'acme.review', localId: 'auth' } } as const;
 const spawnTarget = { kind: 'backend', backendId: agentId } as const;
 const spawnRequests: SessionSpawnNewInputV2[] = [];
+const projectionBoundaryRequests: string[] = [];
+const purposeInitializationRequests: ConnectedAccountCatalogRowMutationV1[] = [];
+const savedSecretImportRequests: string[] = [];
+let retainedPurposeDefaults: Record<string, unknown> | null = null;
+let initializedPurposeContent: ConnectedAccountCatalogRowMutationV1['content'] | null = null;
+let purposeRowReadGate: ReturnType<typeof createDeferred<void>> | null = null;
+let purposeRowReadCount = 0;
 let spawnResult: ReturnType<typeof createDeferred<SessionSpawnNewResultV1>>;
 let authoringHttp: ReturnType<typeof createAuthoringMemoryHttpBoundary>;
 let instructionsArtifacts: ReturnType<typeof createArtifactStoreBoundary>;
@@ -34,13 +51,24 @@ let restoreActionExecutorModuleLoader: (() => void) | undefined;
 let managedMachine: ManagedMachineV1 | null = null;
 let managedOperationSettled = false;
 let managedOperationWait: Promise<void> | null = null;
+let managedDeleteSettings: ReturnType<typeof ActionsSettingsV1Schema.parse> | null = null;
+const managedDeleteRequests: Array<{ actionId: string; target: unknown; input: unknown }> = [];
 const scopeRules = new Map<string, AutomationDefinitionDetail>();
 
 beforeEach(async () => {
     spawnRequests.length = 0;
+    projectionBoundaryRequests.length = 0;
+    purposeInitializationRequests.length = 0;
+    savedSecretImportRequests.length = 0;
+    retainedPurposeDefaults = null;
+    initializedPurposeContent = null;
+    purposeRowReadGate = null;
+    purposeRowReadCount = 0;
     managedMachine = null;
     managedOperationSettled = false;
     managedOperationWait = null;
+    managedDeleteSettings = null;
+    managedDeleteRequests.length = 0;
     scopeRules.clear();
     spawnResult = createDeferred<SessionSpawnNewResultV1>();
     authoringHttp = createAuthoringMemoryHttpBoundary();
@@ -55,8 +83,23 @@ afterEach(async () => {
 installNewSessionScreenModelCommonModuleMocks();
 const runtime = installSessionPaneRuntimeTestHarness({
     sessionId: 'created-session',
+    credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-a', tokenEpoch: 0,
+        provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'account', authority: 'present_user' }),
+    })).toString('base64url')}.signature` },
+    accountCurrentness: () => createPlainAccountEncryptionCurrentnessFixture(retainedPurposeDefaults ? { settingsVersion: 1 } : {}),
     request: async (url, init) => {
         const requestUrl = new URL(String(url));
+        if (retainedPurposeDefaults) {
+            if (requestUrl.pathname === '/v1/account/saved-secrets/resources/materials') {
+                savedSecretImportRequests.push(requestUrl.pathname);
+                return Response.json({ resources: [] });
+            }
+            if (requestUrl.pathname === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (requestUrl.pathname === '/v2/account/settings/history') {
+                savedSecretImportRequests.push(requestUrl.pathname);
+                return Response.json({ snapshots: [] });
+            }
+        }
         if (requestUrl.pathname === '/v3/automations') {
             if ((init?.method ?? 'GET') === 'GET') return Response.json({ automations: [...scopeRules.values()].map(({ executionRecipe: _private, ...row }) => ({
                 ...row, triggers: row.triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger),
@@ -79,8 +122,37 @@ const runtime = installSessionPaneRuntimeTestHarness({
         if (managedMachine && new URL(String(url)).pathname === managedMachineActionEndpointPathV1('machines.managed.get')) {
             return Response.json(managedMachine);
         }
+        if (managedMachine && ['/v1/actions/machines.managed.references.get', '/v1/actions/machines.managed.delete'].includes(requestUrl.pathname)) {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            const actionId = requestUrl.pathname.slice('/v1/actions/'.length);
+            managedDeleteRequests.push({ actionId, target: envelope.target, input: envelope.input });
+            const census = { homeId: managedMachine.homeId, machineId: managedMachine.enrolledMachineId ?? null,
+                coverage: 'complete', references: [], unavailable: [] };
+            return Response.json({ v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+                result: actionId === 'machines.managed.references.get' ? census : { kind: 'accepted',
+                    managedId: managedMachine.id, intentRevision: managedMachine.intentRevision + 1,
+                    operation: { operationId: 'delete' }, machineReferences: census } } });
+        }
         if (new URL(String(url)).pathname === '/v2/account/settings') {
+            if (managedDeleteSettings) return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: managedDeleteSettings } }, version: 1 });
+            if (retainedPurposeDefaults) return Response.json({ content: { t: 'plain', v: retainedPurposeDefaults }, version: 1 });
             return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        }
+        if (requestUrl.pathname === '/v1/account/entity-rows/connected-accounts/purposes') {
+            if (retainedPurposeDefaults) {
+                if (init?.method === 'POST') {
+                    const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                    purposeInitializationRequests.push(mutation);
+                    initializedPurposeContent = mutation.content;
+                    return Response.json({ status: 'updated', revision: 1, cursor: 1 });
+                }
+                purposeRowReadCount += 1;
+                await purposeRowReadGate?.promise;
+                return Response.json(initializedPurposeContent
+                    ? { status: 'present', revision: 1, content: initializedPurposeContent } : { status: 'absent' });
+            }
+            return Response.json({ status: 'present', revision: 1,
+                content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } });
         }
         const machineRead = /^\/v1\/machines\/(m1|controller)$/.exec(new URL(String(url)).pathname);
         if (machineRead) {
@@ -109,6 +181,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
                 throw new Error('Malformed daemon RPC');
             }
             const method = payload.method.slice(payload.method.indexOf(':') + 1);
+            projectionBoundaryRequests.push(method);
             if (method === ACTION_OPERATION_RPC_METHODS_V2.get && managedMachine) {
                 await managedOperationWait;
                 const state = managedOperationSettled ? 'succeeded' : 'running';
@@ -126,7 +199,9 @@ const runtime = installSessionPaneRuntimeTestHarness({
                     protocolVersion: 1,
                     projection: PluginProjectionV2Schema.parse({
                         v: 2, generation: 7, agentsById: {
-                            [agentId]: { id: agentId, identity, title: 'Acme Review Provider' },
+                            [agentId]: { id: agentId, identity, title: 'Acme Review Provider', connectedAccounts: [connectedAccountDeclaration] },
+                            codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, isBuiltIn: true,
+                                connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }] },
                         },
                         installedPackagesById: {}, actionsById: {}, toolsById: {}, commandsById: {},
                         resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
@@ -143,13 +218,21 @@ const runtime = installSessionPaneRuntimeTestHarness({
 });
 
 async function readCurrentProjection() {
-    const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs,
+        readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.setState({ profileScope: { serverId: runtime.serverId, accountId: 'account-a' },
+        profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: runtime.serverId });
     clearDaemonMergedProjectionCacheForTests();
     const inputs = await loadDaemonMergedProjectionInputs({
         machineId: 'm1', serverId: runtime.serverId,
         accountLifetime: captureActiveServerAccountScopeLifetime(),
     });
+    const entry = readCachedDaemonMergedProjectionCacheEntry({ machineId: 'm1', serverId: runtime.serverId });
+    if (entry?.kind !== 'ready') throw new Error(`Projection transport fixture: ${JSON.stringify({ entry, projectionBoundaryRequests })}`);
+    expect({ entry, projectionBoundaryRequests }).toMatchObject({ entry: { kind: 'ready' } });
     expect(inputs?.mergedProviderProjectionById[agentId]?.identity).toEqual(identity);
     return inputs;
 }
@@ -211,6 +294,143 @@ async function createManagedDraft(archiveEffect: 'keep' | 'stop' | 'delete' = 'k
 }
 
 describe('useCreateNewSession (projection currentness admission)', () => {
+    it('retires acknowledged failed-setup Delete custody without sending the held prompt or replaying its request', async () => {
+        const selection = await createManagedDraft();
+        managedMachine = { id: 'delete-paid', homeId: runtime.serverIdentityId, custodianAccountId: 'account-a',
+            launch: selection.receipt.launch, controller: selection.receipt.controller, enrolledMachineId: 'm1', allocation: 'bound',
+            resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: { nativeId: 'retained-native' } },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 4,
+            preset: { id: 'preset', revision: 1 }, environmentSetup: { environment: { setupScript: 'echo setup' },
+                state: 'failed', errorCode: 'setup_failed' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        managedDeleteSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.delete': ['ui'] } });
+        const inputs = await readCurrentProjection();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
+        storage.getState().applySettingsForScope(scope, { ...storage.getState().settings, actionsSettingsV1: managedDeleteSettings }, 1);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        const acquisitions: unknown[] = [];
+        const attempts: unknown[] = [];
+        const retired = vi.fn();
+        const hook = await mount(inputs, false, {
+            managedMachineSelection: selection,
+            managedMachineAcquisition: { requestId: 'original-send', selection: selection.selection, managedId: 'delete-paid' },
+            launchUserAttemptId: 'original-send', onLaunchUserAttemptIdChange: value => attempts.push(value),
+            onManagedMachineAcquisitionChange: value => acquisitions.push(value),
+            onManagedMachineEnrolled: async () => {}, onManagedMachineDeleteRequested: retired,
+        });
+        try {
+            hook.params.promptStore.setPrompt('Original held prompt');
+            await act(async () => { await hook.getCurrent().handleCreateSession({ inputTextOverride: 'Original held prompt' }); });
+            await vi.waitFor(() => expect(hook.getCurrent().managedMachineCreationProgress)
+                .toMatchObject({ kind: 'failed', code: 'setup_failed' }));
+            hook.params.promptStore.setPrompt('Preserve my later edits too');
+            await act(async () => { hook.getCurrent().deleteManagedMachineAfterFailedSetup(); });
+            await vi.waitFor(() => expect(retired, JSON.stringify({
+                progress: hook.getCurrent().managedMachineCreationProgress, requests: managedDeleteRequests,
+                acquisitions, attempts, confirmation: vi.mocked(Modal.confirm).mock.calls,
+            })).toHaveBeenCalledOnce());
+            expect(managedDeleteRequests).toContainEqual({ actionId: 'machines.managed.delete',
+                target: { kind: 'machine', machineId: 'controller' }, input: { homeId: runtime.serverIdentityId,
+                    managedId: 'delete-paid', when: 'now', expectedRevision: 4, intent: 'delete', reviewedDependencies: true } });
+            expect(acquisitions.at(-1)).toBeNull();
+            expect(attempts.at(-1)).toBeNull();
+            expect(hook.params.promptStore.getPrompt()).toBe('Preserve my later edits too');
+            expect(hook.getCurrent().managedMachineCreationProgress.kind).toBe('idle');
+            await act(async () => {
+                hook.getCurrent().retryManagedMachineSetup();
+                hook.getCurrent().continueWithoutManagedMachineSetup();
+                hook.getCurrent().deleteManagedMachineAfterFailedSetup();
+            });
+            expect(managedDeleteRequests.filter(request => request.actionId === 'machines.managed.delete')).toHaveLength(1);
+            expect(spawnRequests).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+    it.each(['settled', 'in-flight', 'same-turn'] as const)('activates retained ordinary purpose defaults only after the selected Machine supplies an admitted Agent descriptor (%s generic read)', async (phase) => {
+        retainedPurposeDefaults = { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+            codex: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' } } },
+        } } };
+        const inputs = await readCurrentProjection();
+        const { getResolvedAgentCatalogEntries } = await import('@/agents/backendCatalog/agentCatalogProjection');
+        const agent = getResolvedAgentCatalogEntries({ enabledAgentIds: ['codex'],
+            mergedProviderProjectionById: inputs?.mergedProviderProjectionById,
+            mergedBackendProjectionById: inputs?.mergedBackendProjectionById }).find(entry => entry.agentId === 'codex');
+        if (!agent?.identity) throw new Error('Expected actual admitted Codex descriptor');
+        const { resetConnectedAccountCatalogSnapshotsForTests, getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        const { resetConnectedAccountCatalogEngineForTests } = await import('@/sync/engine/settings/connectedAccountCatalogEngine');
+        resetConnectedAccountCatalogEngineForTests();
+        resetConnectedAccountCatalogSnapshotsForTests();
+        const { useNewSessionConnectedServicesAgentOptions } = await import('./screenModel/useNewSessionConnectedServicesAgentOptions');
+        const { useConnectedAccountCatalog } = await import('@/sync/store/settings/useConnectedAccountCatalog');
+        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
+        if (phase === 'in-flight') purposeRowReadGate = createDeferred<void>();
+        const hook = await renderHook((selectedMachineId: string | null) => {
+            // The existing generic Account reader stays mounted while New Session admits a Machine.
+            useConnectedAccountCatalog('purposes', scope);
+            return useNewSessionConnectedServicesAgentOptions({
+            staticAgentId: 'codex', runtimeCarrierAgentId: agent.agentId, selectedMachineId, targetServerId: runtime.serverId,
+            selectedBackendTargetKey: 'codex', connectedAccounts: agent.connectedAccounts, agentIdentity: agent.identity,
+            agentOptionState: null, settings: { connectedServicesDefaultProfileByServiceId: {} },
+            router: { push() {} }, setBackendNewSessionOptionStateByTargetKey() {},
+            });
+        }, { initialProps: phase === 'same-turn' ? 'm1' : null, wrapper: runtime.Wrapper });
+        try {
+            if (phase === 'in-flight') {
+                await vi.waitFor(() => expect(purposeRowReadCount).toBeGreaterThan(0));
+            } else if (phase === 'settled') {
+                await vi.waitFor(() => expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'unavailable' }));
+            }
+            if (phase !== 'same-turn') expect(purposeInitializationRequests).toEqual([]);
+            expect(retainedPurposeDefaults).toHaveProperty('connectedServicesDefaultAuthByAgentIdV1');
+            if (phase !== 'same-turn') await hook.rerender('m1');
+            purposeRowReadGate?.resolve();
+            await vi.waitFor(() => expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'ready', value: {
+                bindings: [{ purpose: { consumer: agent.identity, purpose: 'primary' }, target: {
+                    kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+                } }],
+            } }));
+            expect(purposeInitializationRequests).toHaveLength(1);
+            expect(purposeInitializationRequests[0]).toMatchObject({ expectedRevision: 'absent', sourceSettingsVersion: 1 });
+            expect(savedSecretImportRequests).toContain('/v1/account/saved-secrets/resources/materials');
+            expect(savedSecretImportRequests).toContain('/v2/account/settings/history');
+        } finally { purposeRowReadGate?.resolve(); await hook.unmount(); }
+    });
+    it('retains the authored draft and refuses spawn when inherited purpose authority withdraws before Send', async () => {
+        const inputs = await readCurrentProjection();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        const { useNewSessionConnectedServices } = await import('../modules/useNewSessionConnectedServices');
+        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
+        const declarations = inputs?.mergedProviderProjectionById[agentId]?.connectedAccounts;
+        if (!declarations) throw new Error('Expected actual projected Connected Account purpose');
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true);
+        const defaults = await renderHook(() => useNewSessionConnectedServices({
+            agentCore: null, defaultAuthAgentId: agentId, defaultAuthConsumer: identity, connectedAccounts: declarations,
+            agentOptionState: null, settings: storage.getState().settings,
+            targetServerId: runtime.serverId, router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+        }), { wrapper: runtime.Wrapper });
+        const params = { agentNewSessionOptions: null,
+            requireConnectedAccountDefaultsReady: defaults.getCurrent().requireConnectedAccountDefaultsReady };
+        const hook = await mount(inputs, false, params);
+        hook.params.promptStore.setPrompt('Keep this authored work');
+        const settlements: unknown[] = [];
+        try {
+            expect(defaults.getCurrent().connectedAccountDefaultsStatus).toBe('ready');
+            // A forbidden dispatch still settles through the real public daemon
+            // response, so the missing admission guard cannot hang the fixture.
+            spawnResult.resolve({ type: 'error', code: 'target_unavailable', retryable: false });
+            await act(async () => {
+                applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+                const send = hook.getCurrent().handleCreateSession({ onAfterCreatedSettled: value => { settlements.push(value); } });
+                await send;
+            });
+            expect(spawnRequests).toEqual([]);
+            expect(settlements).toEqual([{ status: 'rejected' }]);
+            expect(hook.params.promptStore.getPrompt()).toBe('Keep this authored work');
+        } finally { await hook.unmount(); await defaults.unmount(); }
+    });
     it.each([['keep', 'account-a'], ['stop', 'account-a'], ['delete', 'account-a'], ['stop', 'alice'], ['delete', 'alice']] as const)(
         'settles the managed Bot %s scope through controller custodian %s before finalizing its creation draft', async (effect, custodianAccountId) => {
         const bindsRule = effect !== 'keep' && custodianAccountId === 'account-a';

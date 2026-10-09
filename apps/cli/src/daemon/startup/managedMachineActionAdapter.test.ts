@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -8,7 +9,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { configuration } from '@/configuration';
-import { updateSettings } from '@/persistence';
+import { updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId, removeStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -120,6 +121,79 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
+    it.each(['signed-ui', 'local-host'] as const)('consumes exact requester-owned recorded setup execution instead of treating Ask as setup success (%s)', async origin => {
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const ownCredentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const guest = createCliActionExecutorHarness({ sessionId: 'setup-observer-fixture', token, credentials: ownCredentials, serverId: configuration.activeServerId,
+            serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null });
+        let artifact: { id: string; header: string; body: string; dataEncryptionKey: string } | undefined;
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+            if (new URL(String(url)).pathname !== '/v1/artifacts') throw new Error('Setup must not run before approval');
+            // Persistent Artifact transport is the only substituted boundary.
+            artifact = body as typeof artifact;
+            return { status: 200, data: { id: artifact!.id, headerVersion: 1, bodyVersion: 1 } };
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (new URL(String(url)).pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (!artifact || new URL(String(url)).pathname !== `/v1/artifacts/${artifact.id}`) throw new Error('Unexpected requester-private read');
+            const content = decodePlainArtifactStoredContent(artifact.body);
+            const original = StoredApprovalRequestSchema.parse(JSON.parse(String(content && typeof content === 'object' ? Reflect.get(content, 'body') : null)));
+            const recorded = StoredApprovalRequestSchema.parse({ ...original, status: 'executed', updatedAtMs: original.updatedAtMs + 1,
+                decision: { kind: 'approve', decidedAtMs: original.updatedAtMs + 1 },
+                execution: { executedAtMs: original.updatedAtMs + 1, ok: true, result: { operationId: 'actual-setup-operation', terminalId: 'actual-setup-terminal' } } });
+            return { status: 200, data: { ...artifact, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+                headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: original.createdAtMs, updatedAt: recorded.updatedAtMs,
+                header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(recorded)),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(recorded) }) } };
+        });
+        const input = { homeId: 'srv_home', machineId: 'actual-guest', presetId: 'preset', presetRevision: 4 };
+        const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account',
+            actionRequestId: 'creation', serverId: configuration.activeServerId, serverIdentityId: 'srv_home', signal: new AbortController().signal,
+            actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'machines.environment.apply': { approvalRequiredSurfaces: ['ui'] } } }) };
+        const guestSigning = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(10));
+        const guestAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-guest-setup', binding: {
+            accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+            machineId: 'actual-guest', installationId: 'guest-installation', serverIdentityId: 'srv_home', actionId: 'machines.environment.apply',
+            requestId: 'creation', requestEnvelopeDigest: 'b'.repeat(43), target: { kind: 'machine', machineId: 'actual-guest' },
+        } });
+        const guestContext: ActionExecutorContext = { ...context, externalActionExecutionAuthorization: guestAuthorization,
+            externalActionTarget: guestAuthorization.binding.target, signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({
+                authorizationToken: guestAuthorization.token, actionId: args.actionId, input: args.input, target: args.target, privateKey: guestSigning.secretKey,
+            }) };
+        expect(await guest.executor.execute('machines.environment.apply', input, guestContext)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+        const original = await projectExternalActionRequesterHttpAuthorization({
+            authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-original-ui-acquire', binding: {
+                accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+                machineId: 'controller', installationId: 'installation', serverIdentityId: 'srv_home', actionId: 'machines.managed.acquire',
+                requestId: 'creation', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'controller' },
+            } }), serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            target: { kind: 'machine', machineId: 'controller' }, installationId: 'installation', privateKey: signing.secretKey,
+            signal: context.signal,
+        });
+        expect(original).not.toBeNull();
+        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrolledMachineId: 'actual-guest',
+            controller: { machineId: 'controller', installationId: 'installation' }, launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} }, creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const installedProfile = `setup-observer-${randomUUID()}`;
+        try {
+            // Dedicated installed credential-file boundary; no existing profile material is read or overwritten.
+            await writeStoredCredentialsForServerId(installedProfile, ownCredentials);
+            const observer = createManagedSessionStartApprovalObserver({ actionId: 'machines.environment.apply', credentials: ownCredentials, machineId: 'controller',
+                isRequesterRuntimeCurrent: async () => sameStoredCredentials(ownCredentials, await readStoredCredentialsForServerId(installedProfile)),
+                observeRecordedApprovalExecution: args => guest.observeRecordedApprovalExecution(args) });
+            const observationContext = origin === 'signed-ui' ? { ...context, externalActionExecutionAuthorization: original! }
+                : { ...context, surface: 'cli' as const, externalActionTarget: { kind: 'machine' as const, machineId: 'controller' } };
+            expect(await observer({ artifactId: artifact!.id, context: observationContext, machine, isCurrent: async () => true })).toEqual({ ok: true,
+                result: { operationId: 'actual-setup-operation', terminalId: 'actual-setup-terminal' } });
+            const unsignedObserver = createManagedSessionStartApprovalObserver({ actionId: 'machines.environment.apply', credentials: ownCredentials, machineId: 'controller',
+                observeRecordedApprovalExecution: args => guest.observeRecordedApprovalExecution(args) });
+            expect(await unsignedObserver({ artifactId: artifact!.id, context, machine, isCurrent: async () => true }))
+                .toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+        } finally { await removeStoredCredentialsForServerId(installedProfile); }
+    });
     it('refuses a foreign finite requester without controller-scoped C42 custody before using custodian policy or native IO', async () => {
         const custodian = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'alice', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
@@ -887,9 +961,12 @@ describe('daemon managed Machine Action factory', () => {
                 signal: context.signal }), async context => Boolean(context.externalActionExecutionAuthorization?.requesterHttpProjection),
                 controllerKeys.secretKey, sourceCredentials, createManagedSessionStartApprovalObserver({ credentials: sourceCredentials,
                     machineId: 'controller', observeRecordedApprovalExecution: args => sourceExecutor.observeRecordedApprovalExecution(args) }));
+            let parentSettled!: () => void;
+            const parentSettlement = new Promise<void>(resolve => { parentSettled = resolve; });
             const parent = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
                 generateOperationId: () => 'original-parent', publishSnapshot: snapshot => {
                     if (snapshot.observation?.code === 'approval_pending') approvalPending();
+                    if (snapshot.state === 'succeeded' || snapshot.state === 'failed' || snapshot.state === 'cancelled') parentSettled();
                 } });
             const accepted = await parent.observeExecution({ actionId: 'machines.managed.acquire', input, actionRequestId: sessionActionOrigin.requestId,
                 execute: async context => ({ ok: true, result: await managed({ actionId: 'machines.managed.acquire', input, signal: context.signal,
@@ -913,7 +990,10 @@ describe('daemon managed Machine Action factory', () => {
             completeNative();
             expect(await decision).toMatchObject({ ok: true });
             for (const socket of approvalWire.sockets) socket.wake();
-            expect(await parent.handlers.getV2({ operationId: 'original-parent', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: {
+            // Public waits may return an unresolved approval observation. The
+            // existing publication boundary tells us when this parent settles.
+            await parentSettlement;
+            expect(await parent.handlers.getV2({ operationId: 'original-parent' })).toMatchObject({ kind: 'found', operation: {
                 state: scenario === 'foreign-source-home-withdrawal' ? 'failed' : settlement === 'success' ? 'succeeded' : settlement === 'cancel' ? 'cancelled' : 'failed',
                 ...(scenario === 'foreign-source-home-withdrawal' ? { error: { errorCode: 'approval_stale' } }
                     : settlement === 'error' ? { error: { errorCode: 'spawn_failed' } } : {}),

@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import type { Server } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER, PluginManifestV2Schema, encodePlainMachineStoredContent, ManagedAcquireInputV1Schema,
     SESSION_CREATION_AUTHORIZATION_HEADER_V1,
@@ -47,7 +47,7 @@ import { inTx, type Tx } from '@/storage/inTx';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { deriveAccountEncryptionCurrentnessFromRow } from '@/app/encryption/accountContentKeyAdmission';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
-import { cancelManagedCreation } from '@/app/machines/managed/managedRead';
+import { cancelManagedCreation, getManagedMachine } from '@/app/machines/managed/managedRead';
 
 describe('ordinary Account managed Action origination', () => {
     const homeId = `srv_${'a'.repeat(32)}`;
@@ -139,10 +139,11 @@ describe('ordinary Account managed Action origination', () => {
 
     async function app(forwardRpc: ExternalActionForwardRpcCall, afterSessionAuthentication?: () => Promise<void>,
         source?: Readonly<{ io: Server; presence: ReturnType<typeof createSessionPublisherPresence>;
-            afterResolution?: () => Promise<void> }>) {
+            afterResolution?: () => Promise<void> }>, onRequestError?: (error: Error) => void) {
         const instance = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
         instance.setValidatorCompiler(validatorCompiler);
         instance.setSerializerCompiler(serializerCompiler);
+        if (onRequestError) instance.addHook('onError', async (_request, _reply, error) => { onRequestError(error); });
         enableAuthentication(instance);
         if (source) {
             const resolvePublisher = async (input: Readonly<{ accountId: string; sessionId: string }>) => {
@@ -693,19 +694,27 @@ describe('ordinary Account managed Action origination', () => {
             const sessionBody = { tag: retained.tag, metadata: 'encrypted-resubmitted-metadata',
                 encryptionMode: 'e2ee', currentStorageState: 'machine_only' };
             let retiredAfterUniqueFailure = false;
-            const actualRead = db.session.findUnique.bind(db.session);
+            const originalRead = db.session.findUnique;
+            const actualRead = originalRead.bind(db.session);
+            let interleavedRead = false;
             // Transparent DB-boundary interleaving only: the actual first
             // transaction really loses the existing tag's unique insert.
             // Prisma's generic delegate return is retained by this boundary cast.
-            const readThenRetire = ((args: Parameters<typeof db.session.findUnique>[0]) => actualRead(args).then(async result => {
-                if (result?.id === retained.id) {
-                    retiredAfterUniqueFailure = true;
-                    await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled', intentRevision: 1 } });
-                }
-                return result;
-            })) as typeof db.session.findUnique;
-            const readInterleaving = vi.spyOn(db.session, 'findUnique').mockImplementationOnce(readThenRetire);
-            restoreRead = () => { readInterleaving.mockRestore(); };
+            const readThenRetire = ((args: Parameters<typeof db.session.findUnique>[0]) => {
+                if (interleavedRead) return actualRead(args);
+                interleavedRead = true;
+                return actualRead(args).then(async result => {
+                    if (result?.id === retained.id) {
+                        retiredAfterUniqueFailure = true;
+                        await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled', intentRevision: 1 } });
+                    }
+                    return result;
+                });
+            }) as typeof db.session.findUnique;
+            // Prisma's delegate is a lazy proxy, not an own method descriptor.
+            // Restore the actual method value rather than a spy descriptor.
+            db.session.findUnique = readThenRetire;
+            restoreRead = () => { db.session.findUnique = originalRead; };
             const rejoin = await instance.inject({ method: 'POST', url: '/v1/sessions', payload: sessionBody,
                 headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'session.spawn_new',
@@ -720,6 +729,223 @@ describe('ordinary Account managed Action origination', () => {
                 .toMatchObject({ currentStorageState: 'hosted', active: false, archivedAt,
                     metadata: retained.metadata, metadataLayoutVersion: 0 });
         } finally { restoreRead?.(); await instance.close(); }
+    });
+
+    it('refuses personal setup references on another custodian while preserving shared-reference authority', async () => {
+        const source = await fixture(true);
+        const target = await fixture(true);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: target.account.id, machineId: target.controller.machineId,
+            principal: { kind: 'account', accountId: source.account.id }, level: 'admin' }));
+        const presetId = crypto.randomUUID();
+        await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: source.account.id, name: 'Personal tools',
+            launch: source.input.selection.launch, controllerMachineId: source.controller.machineId,
+            controllerInstallationId: source.controller.installationId,
+            environment: { setupScript: 'echo configured', secretRefs: { v: 1, bindings: { TOKEN: { ref: 'same-personal-id' } } } } } });
+        const input = { homeId, machineId: target.controller.machineId, presetId, presetRevision: 0 };
+        const instance = await app(async () => { throw new Error('Resolving references cannot execute setup'); });
+        try {
+            const envelope = { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: input.machineId }, input };
+            const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.environment.apply'),
+                headers: { authorization: `Bearer ${source.token}` }, payload: { v: 1, machineId: input.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authority = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const path = '/v1/machines/environment/resolve';
+            const resolve = () => instance.inject({ method: 'POST', url: path, payload: input, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authority.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.environment.apply',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authority.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authority.token,
+                    effectActionId: 'machines.environment.apply', target: authority.binding.target, installationId: authority.binding.installationId,
+                    requestId: authority.binding.requestId, method: 'POST', path, body: input, privateKey: target.keys.secretKey }),
+            } });
+            const refused = await resolve();
+            expect(refused.statusCode, refused.body).toBe(409);
+            expect(refused.json()).toEqual({ code: 'credential_unavailable' });
+            const environment = { setupScript: 'echo configured', secretRefs: { v: 1,
+                bindings: { TOKEN: { ref: 'happier:shared-secret:v1:exact-resource', revision: 1 } } } };
+            await db.managedMachinePreset.update({ where: { id: presetId }, data: { environment } });
+            const shared = await resolve();
+            expect(shared.statusCode, shared.body).toBe(200);
+            expect(shared.json()).toEqual({ environment });
+        } finally { await instance.close(); }
+    });
+
+    it('requires controller authority before a guest-only manager reads or reports retained setup', async () => {
+        const owner = await fixture(true);
+        const actor = await fixture(true);
+        const guestKeys = tweetnacl.sign.keyPair();
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.account.id,
+            active: true, metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(guestKeys.publicKey),
+            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.account.id, machineId: guest.id,
+            principal: { kind: 'account', accountId: actor.account.id }, level: 'admin' }));
+        const presetId = crypto.randomUUID();
+        const environment = { setupScript: 'echo private admitted snapshot' };
+        await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: owner.account.id,
+            name: 'Edited archived preset', launch: owner.input.selection.launch, controllerMachineId: owner.controller.machineId,
+            controllerInstallationId: owner.controller.installationId, revision: 2,
+            archivedAt: new Date(), environment: { setupScript: 'echo changed' } } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.account.id,
+            controllerMachineId: owner.controller.machineId, controllerInstallationId: owner.controller.installationId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, presetId, presetRevision: 1,
+            launch: owner.input.selection.launch, retention: owner.input.selection.retention, wakeOnAcceptedMessage: false,
+            allocation: 'bound', enrolledMachineId: guest.id, environmentSetup: { environment, state: 'pending' },
+            resource: { contributionRef: owner.input.selection.launch.provider, schemaVersion: 1, value: { id: 'same-resource' } } } });
+        await expect(getManagedMachine({ actorAccountId: actor.account.id, input: { homeId, managedId: row.id } }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        const instance = await app(async () => { throw new Error('Resolving and reporting cannot execute setup'); });
+        try {
+            const input = { homeId, machineId: guest.id, presetId, presetRevision: 1 };
+            const envelope = { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: guest.id }, input };
+            const issued = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.environment.apply'),
+                headers: { authorization: `Bearer ${actor.token}` }, payload: { v: 1, machineId: guest.id, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authority = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const post = (path: string, body: unknown) => instance.inject({ method: 'POST', url: path, payload: body, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authority.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.environment.apply',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authority.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authority.token,
+                    effectActionId: 'machines.environment.apply', target: authority.binding.target, installationId: authority.binding.installationId,
+                    requestId: authority.binding.requestId, method: 'POST', path, body, privateKey: guestKeys.secretKey }),
+            } });
+            const resolved = await post('/v1/machines/environment/resolve', input);
+            const reported = await post('/v1/machines/environment/report', { ...input, managedId: row.id,
+                state: 'running', operation: { operationId: 'unauthorized-retry' } });
+            expect(resolved.statusCode, resolved.body).toBe(403);
+            expect(resolved.json()).toEqual({ code: 'permission_denied' });
+            expect(reported.statusCode, reported.body).toBe(403);
+            expect(reported.json()).toEqual({ code: 'permission_denied' });
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).environmentSetup)
+                .toEqual({ environment, state: 'pending' });
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.account.id,
+                machineId: owner.controller.machineId, principal: { kind: 'account', accountId: actor.account.id }, level: 'view' }));
+            const readable = await post('/v1/machines/environment/resolve', input);
+            expect(readable.statusCode, readable.body).toBe(200);
+            expect(readable.json()).toEqual({ environment, managedId: row.id });
+            const readOnlyReport = await post('/v1/machines/environment/report', { ...input, managedId: row.id,
+                state: 'running', operation: { operationId: 'read-only-retry' } });
+            expect(readOnlyReport.statusCode, readOnlyReport.body).toBe(403);
+            expect(readOnlyReport.json()).toEqual({ code: 'permission_denied' });
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).environmentSetup)
+                .toEqual({ environment, state: 'pending' });
+        } finally { await instance.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('delegates setup to the exact enrolled guest under the admitted %s creation authority', async mode => {
+        const selected = await fixture(true, mode);
+        const guestKeys = tweetnacl.sign.keyPair();
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: selected.account.id,
+            active: true, metadata: mode === 'e2ee' ? 'guest-ciphertext' : encodePlainMachineStoredContent({ host: 'guest', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: mode === 'e2ee' ? null : decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(guestKeys.publicKey),
+            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
+        const instance = await app(async () => { throw new Error('Authority minting cannot execute setup'); });
+        try {
+            const rootInput = ManagedAcquireInputV1Schema.parse({ ...selected.input, agentStart: {
+                directory: { kind: 'path', path: '/repo' }, creationKey: 'setup-waiting-session',
+                agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } },
+            } });
+            const rootEnvelope = mode === 'plain' ? { v: 1 as const, requestId: selected.requestId,
+                target: { kind: 'machine' as const, machineId: selected.controller.machineId }, input: rootInput }
+                : sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                    authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'machines.managed.acquire',
+                    requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId } },
+                    input: rootInput, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
+                    randomBytes: length => new Uint8Array(length).fill(2) });
+            const rootResponse = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId, envelope: rootEnvelope } });
+            expect(rootResponse.statusCode, rootResponse.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
+            const environment = { setupScript: 'echo snapshot' };
+            const presetId = crypto.randomUUID();
+            await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: selected.account.id, name: 'Setup',
+                launch: selected.input.selection.launch, controllerMachineId: selected.controller.machineId,
+                controllerInstallationId: selected.controller.installationId, environment: { setupScript: 'echo edited' }, revision: 2 } });
+            const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
+                controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
+                admittedActionRequestId: selected.requestId, admittedInput: { computeInput: selected.input, continuation: null,
+                    environmentSetup: { requestEnvelopeDigest: root.binding.requestEnvelopeDigest } },
+                presetId, presetRevision: 1, environmentSetup: { environment, state: 'pending' },
+                launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
+                    schemaVersion: 1, value: { id: 'setup-paid-resource' } }, enrolledMachineId: guest.id,
+                retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
+            // Session continuation has independent admitted custody. Setup must
+            // hold even an otherwise valid original Session start at this owner.
+            await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: {
+                computeInput: selected.input, continuation: { requestEnvelopeDigest: root.binding.requestEnvelopeDigest },
+                environmentSetup: { requestEnvelopeDigest: root.binding.requestEnvelopeDigest },
+            } } });
+            const spawnInput = { executionTarget: { serverId: homeId, machineId: guest.id },
+                directory: { kind: 'path' as const, path: '/repo' }, creationKey: 'setup-waiting-session',
+                agentTarget: { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } } };
+            const spawnPath = bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new');
+            const spawnEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'setup-waiting-session',
+                target: { kind: 'machine' as const, machineId: guest.id }, input: spawnInput }
+                : { ...sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                    authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'session.spawn_new',
+                    requestId: 'setup-waiting-session', target: { kind: 'machine', machineId: guest.id } }, input: spawnInput,
+                    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: length => new Uint8Array(length).fill(4) }),
+                    sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(spawnInput) };
+            const spawnBody = { v: 1, machineId: guest.id, envelope: spawnEnvelope,
+                managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } };
+            const mintSession = () => instance.inject({ method: 'POST', url: spawnPath, payload: spawnBody, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token, [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.managed.acquire',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId: 'machines.managed.acquire', target: root.binding.target, installationId: root.binding.installationId,
+                    requestId: root.binding.requestId, method: 'POST', path: spawnPath, body: spawnBody, privateKey: selected.keys.secretKey }),
+            } });
+            expect((await mintSession()).statusCode).not.toBe(200);
+            const path = bindExternalActionExecutionAuthorizationHttpPathV1('machines.environment.apply');
+            const target = { homeId, machineId: guest.id, presetId, presetRevision: 1 };
+            const makeBody = (input = target) => ({ v: 1, machineId: input.machineId,
+                envelope: mode === 'plain' ? { v: 1 as const, requestId: 'creation-setup', target: { kind: 'machine' as const, machineId: input.machineId }, input }
+                    : sealExternalActionRequestV2({ binding: { serverIdentityId: homeId, accountId: selected.account.id,
+                        authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId: 'machines.environment.apply',
+                        requestId: 'creation-setup', target: { kind: 'machine', machineId: input.machineId } }, input,
+                        material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(8) },
+                        randomBytes: length => new Uint8Array(length).fill(3) }),
+                managedContinuation: { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } });
+            const mint = (body: ReturnType<typeof makeBody>) => instance.inject({ method: 'POST', url: path, payload: body,
+                headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.managed.acquire',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: 'machines.managed.acquire', target: root.binding.target, installationId: root.binding.installationId,
+                        requestId: root.binding.requestId, method: 'POST', path, body, privateKey: selected.keys.secretKey }) } });
+            const childResponse = await mint(makeBody());
+            expect(childResponse.statusCode, childResponse.body).toBe(200);
+            const child = ExternalActionExecutionAuthorizationV1Schema.parse(childResponse.json());
+            expect(child.binding).toMatchObject({ machineId: guest.id, installationId: guest.installationId,
+                actionId: 'machines.environment.apply', managedContinuation: { managedId: row.id,
+                    acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest } });
+            expect(await verifyCurrentExternalActionPrincipal(child.binding)).not.toBeNull();
+            const resolvePath = '/v1/machines/environment/resolve';
+            const resolve = (input = target) => instance.inject({ method: 'POST', url: resolvePath, payload: input,
+                headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: child.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'machines.environment.apply',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(child.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: child.token,
+                        effectActionId: 'machines.environment.apply', target: child.binding.target, installationId: child.binding.installationId,
+                        requestId: child.binding.requestId, method: 'POST', path: resolvePath, body: input, privateKey: guestKeys.secretKey }) } });
+            const resolved = await resolve();
+            expect(resolved.statusCode, resolved.body).toBe(200);
+            expect(resolved.json()).toEqual({ environment, managedId: row.id });
+            expect((await resolve({ ...target, presetRevision: 2 })).statusCode).toBe(409);
+            expect((await mint(makeBody({ ...target, machineId: selected.controller.machineId }))).statusCode).not.toBe(200);
+            if (mode === 'plain') expect((await mint(makeBody({ ...target, presetRevision: 2 }))).statusCode).not.toBe(200);
+            await db.managedMachine.update({ where: { id: row.id }, data: { environmentSetup: { environment, state: 'succeeded' } } });
+            const released = await mintSession();
+            expect(released.statusCode, released.body).toBe(200);
+            await db.managedMachine.update({ where: { id: row.id }, data: { desired: 'delete', intentRevision: 1 } });
+            expect(await verifyCurrentExternalActionPrincipal(child.binding)).toBeNull();
+            expect((await mint(makeBody())).statusCode).not.toBe(200);
+        } finally { await instance.close(); }
     });
 
     it.each(['ui', 'session'] as const)('mints a sealed guest continuation only from the exact current %s controller creation proof', async originKind => {
@@ -741,10 +967,11 @@ describe('ordinary Account managed Action origination', () => {
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(guestKeys.publicKey) } });
         let deliveredChild: ReturnType<typeof ExternalActionDaemonDispatchRequestSchema.parse> | undefined;
         let retireBeforeSessionTransaction: (() => Promise<void>) | undefined;
+        const requestErrors: Error[] = [];
         const instance = await app(async params => {
             deliveredChild = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
             return { ok: true, result: { kind: 'invalid_request', errorCode: 'invalid_envelope', requestId: childRequestId } };
-        }, async () => { await retireBeforeSessionTransaction?.(); }, source);
+        }, async () => { await retireBeforeSessionTransaction?.(); }, source, error => { requestErrors.push(error); });
         try {
             const agentStart = { directory: { kind: 'path' as const, path: '/repo' },
                 agentTarget: { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } },
@@ -875,7 +1102,7 @@ describe('ordinary Account managed Action origination', () => {
             const admittedSession = sessionBody(crypto.randomUUID());
             const createdSession = await instance.inject({ method: 'POST', url: '/v1/sessions', payload: admittedSession,
                 headers: sessionHeaders(admittedSession) });
-            expect(createdSession.statusCode, createdSession.body).toBe(200);
+            expect(createdSession.statusCode, `${createdSession.body}\n${requestErrors.map(error => error.stack ?? error.message).join('\n')}`).toBe(200);
             if (!('authentication' in child.binding)) throw new Error('Expected genuine ordinary child');
             const differentChild = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: homeId,
                 accountId: selected.account.id, authentication: child.binding.authentication, machineId: guest.id,
@@ -901,6 +1128,10 @@ describe('ordinary Account managed Action origination', () => {
                 const interleave = async <T>(callback: (tx: Tx) => Promise<T>, options?: Parameters<typeof db.$transaction>[1]) => {
                     try {
                         return await actualTransaction(async tx => {
+                            // Only the losing create lookup is interleaved. The
+                            // owner's recovery transaction consumes Prisma's
+                            // original client/delegates without another wrapper.
+                            if (missedWinner) return await callback(tx);
                             const session = tx.session;
                             const interceptedSession = new Proxy(session, { get(delegate, property) {
                                 if (property === 'findUnique') return (args: Parameters<typeof session.findUnique>[0]) => {
@@ -911,13 +1142,11 @@ describe('ordinary Account managed Action origination', () => {
                                     }
                                     return delegate.findUnique(args);
                                 };
-                                const value = Reflect.get(delegate, property, delegate);
-                                return typeof value === 'function' ? value.bind(delegate) : value;
+                                return Reflect.get(delegate, property, delegate);
                             } });
                             const intercepted = new Proxy(tx, { get(client, property) {
                                 if (property === 'session') return interceptedSession;
-                                const value = Reflect.get(client, property, client);
-                                return typeof value === 'function' ? value.bind(client) : value;
+                                return Reflect.get(client, property, client);
                             } });
                             return await callback(intercepted);
                         }, options);
@@ -941,7 +1170,7 @@ describe('ordinary Account managed Action origination', () => {
                     const currentUniqueLoser = await instance.inject({ method: 'POST', url: '/v1/sessions', payload: admittedSession,
                         headers: sessionHeaders(admittedSession) });
                     expect(uniqueLossObserved, currentUniqueLoser.body).toBe(true);
-                    expect(currentUniqueLoser.statusCode, currentUniqueLoser.body).toBe(200);
+                    expect(currentUniqueLoser.statusCode, `${currentUniqueLoser.body}\n${requestErrors.map(error => error.stack ?? error.message).join('\n')}`).toBe(200);
                     expect(await db.session.findUniqueOrThrow({ where: { id: retainedSession.id } }))
                         .toMatchObject({ archivedAt: null, metadata: retainedSession.metadata, ownerMetadata: retainedSession.ownerMetadata });
                     await db.session.update({ where: { id: retainedSession.id }, data: { active: false, archivedAt } });

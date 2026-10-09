@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import { FILESYSTEM_TRANSFER_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import { logger } from '@/ui/logger';
+import { registerManagedActivityRpcHandlers, type ManagedActivityRpcOwner } from './rpcHandlers.managedActivity';
+import { registerMachineWorkSummaryRpcHandlers, type MachineWorkSummaryRpcOwner } from './rpcHandlers.machineWorkSummary';
+import type { NativeUsageDaemonRuntimeInput } from '@/usage/collector/nativeUsageDaemonRuntime';
+import type { LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
 
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -52,7 +61,7 @@ import {
   type MachineVoiceClientMediatedCredentialRpcRegistration,
 } from './rpcHandlers.voiceClientMediatedCredentials';
 import { registerMachineSpawnSessionNonceRpcHandlers } from './rpcHandlers.spawnSessionNonce';
-import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
+import { registerMachineTerminalRpcHandlers, type MachineTerminalRpcRegistration, type MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import {
   registerMachineProviderRpcHandlers,
@@ -90,6 +99,8 @@ import {
   type MachineWorkspaceSyncRpcService,
 } from './rpcHandlers.workspaceSync';
 import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
+import { registerProjectOpenRpcHandlers } from '@/rpc/handlers/projects/registerProjectOpenRpcHandlers';
+import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
 import { registerMachineConnectedServiceQuotaRpcHandlers } from './rpcHandlers.connectedServiceQuotas';
 import {
@@ -199,6 +210,10 @@ import {
 } from '@/rpc/handlers/externalAction';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { WORKFLOW_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
@@ -251,7 +266,7 @@ export type MachineRpcHandlers = {
   }>;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   directTransferImport?: Readonly<{
-    prepareImportSession: (input: DirectTransferImportOpenRequest) => Promise<Readonly<{
+    prepareImportSession: (input: DirectTransferImportOpenRequest, filesystemScope?: PreparedFilesystemTransferScope) => Promise<Readonly<{
       uploadId: string;
       destDisplayPath: string;
       expectedSizeBytes: number;
@@ -262,19 +277,35 @@ export type MachineRpcHandlers = {
     }>>;
     abortImportSession: (
       input: Readonly<{ uploadId: string }>,
+      filesystemScope?: PreparedFilesystemTransferScope | null,
     ) => Promise<void | Readonly<{ aborted: boolean }>>;
   }>;
   directTransferExport?: Readonly<{
-    prepareExportSession: (input: DirectTransferExportPrepareRequest) => Promise<Readonly<{
+    prepareExportSession: (input: DirectTransferExportPrepareRequest, filesystemScope?: PreparedFilesystemTransferScope) => Promise<Readonly<{
       transferId: string;
       endpointCandidates: readonly TransferEndpointCandidate[];
       expiresAt: number;
     }>>;
-    releaseExportSession?: (transferId: string) => Promise<void> | void;
+    releaseExportSession?: (transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null) => Promise<void> | void;
   }>;
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  requesterSessionRuntime?: NonNullable<Parameters<typeof import('@/rpc/handlers/sessionLifecycle').registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
+  requesterBootstrapBoundary?: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['requesterBootstrapBoundary']>;
+  ownSessionRuntime?: MachineTerminalRpcHandlerDeps['ownSessionRuntime'];
+  managedActivity?: ManagedActivityRpcOwner;
+  machineWorkSummary?: MachineWorkSummaryRpcOwner;
+  nativeUsage?: Omit<NativeUsageDaemonRuntimeInput, 'observation' | 'budgetRegistry'>;
+  executionBudgetRegistry?: ReturnType<typeof createExecutionBudgetRegistry>;
+  /** Exact installed daemon owners plus current authenticated requester material. */
+  createProjectFiniteRuntime?: (ports: Readonly<{
+    operationRuntime: Pick<HostActionOperationRuntime, 'observeExecution' | 'waitForProjectTerminalAttachment'>;
+    terminalSessions: TerminalPtySessionManager;
+  }>, ingress: RpcHandlerContext) => Promise<(ProjectFiniteActionRuntime & Readonly<{
+    operationRuntime: Pick<HostActionOperationRuntime, 'observeExecution' | 'waitForProjectTerminalAttachment'>;
+  }>) | null>;
+  beforeProjectFiniteRetire?: () => Promise<void>;
   sessionRunnerStatus?: Readonly<{
     get: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
     getV2: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
@@ -283,12 +314,16 @@ export type MachineRpcHandlerDeps = Readonly<{
     attachOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
     handlers: ActionOperationRpcHandlers;
     observeExecution: NonNullable<RegisterActionSpecRpcHandlersParams['observeExecution']>;
+    waitForProjectTerminalAttachment?: HostActionOperationRuntime['waitForProjectTerminalAttachment'];
+    retireProjectFiniteOperations?: HostActionOperationRuntime['retireProjectFiniteOperations'];
   }>;
   sessionHandoffCoordinator?: NonNullable<
     Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['coordinateSessionHandoff']
   >;
   resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
   workspaceSync?: MachineWorkspaceSyncRpcService;
+  /** Passive Project setup producer plus authenticated Account row composition. */
+  projectOpen?: ProjectOpenRuntime;
   /**
    * Host-private server-origin Session-start binding. The session RPC owner
    * supplies its lifecycle and nonce handlers at registration time.
@@ -348,6 +383,8 @@ export type MachineRpcHandlerDeps = Readonly<{
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
   currentMachineId?: string;
+  /** Authenticated Home at this Machine RPC receiver, never a request-body selector. */
+  currentServerId?: string;
   executionRunRuntimeAccountId?: string;
   /** Review transport bound to this daemon's exact authenticated Home credentials. */
   executionRunApprovalDeps?: Parameters<typeof registerExecutionRunHandlers>[1]['actionApprovalDeps'];
@@ -387,6 +424,14 @@ export type MachineRpcHandlerDeps = Readonly<{
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
+  /** Close this ingress occurrence while retaining observation until actual finite settlement. */
+  retireFiniteExecution(): Promise<void>;
+  liveWorkProducers?: readonly LiveWorkProducerV1[];
+  cleanupRequesterMachineTerminals: MachineTerminalRpcRegistration['cleanupRequesterMachineTerminals'];
+  getFiniteTerminalSessions: MachineTerminalRpcRegistration['getSessionManager'];
+  projectFiniteExecutionInstalled: boolean;
+  /** The same installed PTY/operation factory consumed by finite and Service effects. */
+  resolveProjectFiniteRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /** The one fenced external-session executor retained for host Action ingress. */
   externalSessionHostActionExecutor?: RpcActionExecutor;
@@ -430,6 +475,10 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   transferRelayV2DownloadResponderCleanupByManager.get(rpcHandlerManager)?.();
   transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
   const { spawnSession, stopSession, requestShutdown } = handlers;
+  if (params.deps?.machineWorkSummary) registerMachineWorkSummaryRpcHandlers({ rpcHandlerManager, ...params.deps.machineWorkSummary });
+  if (params.deps?.managedActivity) registerManagedActivityRpcHandlers({
+    rpcHandlerManager, ...params.deps.managedActivity,
+  });
   const memoryWorker = handlers.memory ?? null;
   const voiceInferenceWorker = handlers.voiceInference ?? null;
   const externalSessionOperationExclusion =
@@ -453,6 +502,15 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       : {}),
   });
 
+  registerProjectOpenRpcHandlers(rpcHandlerManager, {
+    serverId: params.deps?.currentServerId ?? configuration.activeServerId,
+    machineId: params.deps?.currentMachineId ?? '',
+    ...(params.deps?.actionOperations ? { observeExecution: params.deps.actionOperations.observeExecution } : {}),
+    ...(params.deps?.projectOpen ? { runtime: params.deps.projectOpen } : {}),
+    ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
+    ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
+  });
+
   const sessionRpcRegistration = registerMachineSessionRpcHandlers({
     rpcHandlerManager,
     handlers,
@@ -463,10 +521,12 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     registerExternalActionRpcHandler(rpcHandlerManager, externalAction);
     registerActionSpecRpcHandlers({
       rpcHandlerManager,
-      actionIds: [...WORKFLOW_ACTION_IDS_V1, 'notifications.notify_me', 'action.options.resolve', 'action.invoke'],
+      actionIds: [...WORKFLOW_ACTION_IDS_V1, ...MANAGED_MACHINE_ACTION_IDS_V1, 'machines.environment.apply', 'notifications.notify_me', 'action.options.resolve', 'action.invoke',
+        'projects.worker.status', 'projects.worker.copy.retire'],
       ...(params.deps?.currentMachineId
         ? { targetMachineId: params.deps.currentMachineId }
         : {}),
+      ...(params.deps?.actionOperations ? { observeExecution: params.deps.actionOperations.observeExecution } : {}),
       actionExecutor: {
         execute: async (actionId, input, context) => await externalAction.executor.execute(
           actionId as Parameters<typeof externalAction.executor.execute>[0],
@@ -506,9 +566,10 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
   registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager });
   let detachedExecutionRunManager: ExecutionRunHostBridge | null = null;
+  const executionBudgetRegistry = params.deps?.executionBudgetRegistry ?? createExecutionBudgetRegistry();
   registerExecutionRunHandlers(rpcHandlerManager, {
     sessionId: null,
-    budgetRegistry: createExecutionBudgetRegistry(),
+    budgetRegistry: executionBudgetRegistry,
     serverId: configuration.activeServerId,
     ...(params.deps?.executionRunRuntimeAccountId
       ? { runtimeAccountId: params.deps.executionRunRuntimeAccountId }
@@ -600,14 +661,65 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
   });
 
+  const operationRuntime = params.deps?.actionOperations;
+  const createProjectFiniteRuntime = params.deps?.createProjectFiniteRuntime;
+  let projectFiniteIngressClosed = false;
+  const resolveProjectFiniteRuntime = createProjectFiniteRuntime
+    && operationRuntime?.waitForProjectTerminalAttachment && operationRuntime.retireProjectFiniteOperations
+    ? async (ingress: RpcHandlerContext) => {
+      if (projectFiniteIngressClosed) return null;
+      const runtime = await createProjectFiniteRuntime({
+        operationRuntime: { observeExecution: operationRuntime.observeExecution,
+          waitForProjectTerminalAttachment: operationRuntime.waitForProjectTerminalAttachment! },
+        terminalSessions: terminalRegistration.getSessionManager(),
+      }, ingress);
+      if (projectFiniteIngressClosed || !runtime) return null;
+      return { ...runtime, isCurrent: async () => !projectFiniteIngressClosed
+        && (!runtime.isCurrent || await runtime.isCurrent()) };
+    }
+    : undefined;
+  const createProjectActionExecutor = (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => (
+    createCliActionExecutorFromCredentials({
+      credentials: runtime.credentials, serverId: runtime.serverId,
+      serverApiUrl: runtime.serverHttpBaseUrl, machineId: runtime.machineId,
+      pluginActionExecutionOwner: 'current_process',
+      ...(params.deps?.actionsSettingsProvider ? { actionsSettingsProvider: params.deps.actionsSettingsProvider } : {}),
+      projectAction: createProjectFiniteAction(runtime, ingress),
+    })
+  );
   const terminalRegistration = registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
     deps: {
+      serverId: params.deps?.currentServerId,
       workingDirectory: params.deps?.workingDirectory,
       accessPolicy: params.deps?.filesystemAccessPolicy,
+      ...(params.deps?.managedActivity ? { admissionDrain: params.deps.managedActivity.admissionDrain } : {}),
+      ...(params.deps?.ownSessionRuntime ? { ownSessionRuntime: params.deps.ownSessionRuntime } : {}),
       ...(params.deps?.terminalRegistry ? { terminalRegistry: params.deps.terminalRegistry } : {}),
+      ...(resolveProjectFiniteRuntime ? {
+        projectFiniteRuntime: resolveProjectFiniteRuntime,
+        projectScriptExecutor: createProjectActionExecutor,
+      } : {}),
     },
   });
+  if (resolveProjectFiniteRuntime && params.deps?.currentMachineId && params.deps.currentServerId) {
+    registerProjectFiniteRpcHandlers(rpcHandlerManager, {
+      machineId: params.deps.currentMachineId, serverId: params.deps.currentServerId,
+      runtime: resolveProjectFiniteRuntime,
+      createActionExecutor: createProjectActionExecutor,
+    });
+  }
+  let finiteRetirement: Promise<void> | null = null;
+  const retireFiniteExecution = (): Promise<void> => {
+    projectFiniteIngressClosed = true;
+    if (finiteRetirement) return finiteRetirement;
+    finiteRetirement = (async () => {
+      if (!resolveProjectFiniteRuntime) return;
+      await params.deps?.beforeProjectFiniteRetire?.();
+      await operationRuntime!.retireProjectFiniteOperations!();
+    })();
+    return finiteRetirement;
+  };
   registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
   if (params.deps?.providerRpc) {
     registerMachineProviderRpcHandlers({
@@ -696,6 +808,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     transferRelayV2DownloadResponderCleanupByManager.set(rpcHandlerManager, transferRelayV2ResponderCleanup);
   }
   const externalSessionsRegistration = registerMachineExternalSessionsRpcHandlers({
+    ...(params.deps?.nativeUsage && params.deps.executionBudgetRegistry
+      ? { nativeUsage: { ...params.deps.nativeUsage, budgetRegistry: params.deps.executionBudgetRegistry } }
+      : {}),
     rpcHandlerManager,
     ...(params.deps?.actionOperations?.attachOwner ? { actionOperations: { attachOwner: params.deps.actionOperations.attachOwner } } : {}),
     operationExclusion: externalSessionOperationExclusion,
@@ -814,22 +929,36 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({
       rpcHandlerManager,
+      admissionDrain: params.deps?.managedActivity?.admissionDrain,
       prepareImportSession: handlers.directTransferImport.prepareImportSession,
       abortImportSession: handlers.directTransferImport.abortImportSession,
+    });
+  }
+  if (externalAction && (handlers.directTransferImport || handlers.directTransferExport)) {
+    registerActionSpecRpcHandlers({ rpcHandlerManager, actionIds: FILESYSTEM_TRANSFER_ACTION_IDS,
+      actionExecutor: externalAction.executor,
+      ...(params.deps?.currentMachineId ? { targetMachineId: params.deps.currentMachineId, defaultMachineTarget: true } : {}),
+      ...(params.deps?.actionOperations ? { observeExecution: params.deps.actionOperations.observeExecution } : {}),
     });
   }
   if (handlers.directTransferExport) {
     registerMachineDirectTransferExportRpcHandlers({
       rpcHandlerManager,
+      admissionDrain: params.deps?.managedActivity?.admissionDrain,
       prepareExportSession: handlers.directTransferExport.prepareExportSession,
       releaseExportSession: handlers.directTransferExport.releaseExportSession,
     });
   }
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
+    ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
     sessionOperationExclusion: externalSessionOperationExclusion,
     spawnSessionForHandoff: handlers.spawnSession,
-    stopSessionForHandoff: async (sessionId) => {
+    stopSessionForHandoff: async (sessionId, options) => {
+      if (options?.expectedSpawnNonce) {
+        return await params.deps?.requesterSessionRuntime?.stopForHandoff?.(sessionId, options.expectedSpawnNonce) ?? 'failed';
+      }
       const isActive = await handlers.isSessionActive?.(sessionId) ?? false;
       if (!isActive) {
         return 'already_inactive';
@@ -937,6 +1066,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     actionExecutor: createMachineSessionStopLifecycleActionExecutor({
       stopSession,
     }),
+    ...(params.deps?.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
     scopes: MACHINE_SESSION_STOP_RPC_SCOPES,
   });
 
@@ -954,6 +1084,15 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
 
   return {
+    retireFiniteExecution,
+    getFiniteTerminalSessions: terminalRegistration.getSessionManager,
+    liveWorkProducers: [
+      executionBudgetRegistry.getLiveWorkProducer(),
+      terminalRegistration.getSessionManager().getLiveWorkProducer(),
+    ],
+    cleanupRequesterMachineTerminals: terminalRegistration.cleanupRequesterMachineTerminals,
+    projectFiniteExecutionInstalled: Boolean(resolveProjectFiniteRuntime && params.deps?.currentMachineId && params.deps.currentServerId),
+    ...(resolveProjectFiniteRuntime ? { resolveProjectFiniteRuntime } : {}),
     ...(sessionRpcRegistration.sessionSpawnDirectTargetTransport
       ? { sessionSpawnDirectTargetTransport: sessionRpcRegistration.sessionSpawnDirectTargetTransport }
       : {}),
@@ -976,6 +1115,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     voiceClientMediatedCredentials: voiceClientMediatedCredentialRegistration,
     ...(voiceInferenceRegistration ? { voiceInference: voiceInferenceRegistration } : {}),
     dispose: async () => {
+      await retireFiniteExecution();
       const cleanup = transferRelayV2ResponderCleanup;
       transferRelayV2ResponderCleanup = null;
       const executionRunManager = detachedExecutionRunManager;

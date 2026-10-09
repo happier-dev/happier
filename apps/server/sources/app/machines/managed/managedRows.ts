@@ -18,7 +18,7 @@ import {
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { SubmittedNativeEffectV1Schema } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import type { MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
-import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins";
+import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { pluginJsonValuesEqual } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
 import { markAccountChanged, markAccountsChanged } from "@/app/changes/markAccountChanged";
@@ -32,7 +32,7 @@ import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter'
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
-export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
+export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
 }>;
 export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {
@@ -54,6 +54,7 @@ export class ManagedMachineError extends Error {
 const StoredManagedAdmissionSchema = z.strictObject({
     computeInput: z.optional(ManagedAdmissionComputeInputV1Schema),
     continuation: z.optional(z.nullable(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) }))),
+    environmentSetup: z.optional(z.strictObject({ requestEnvelopeDigest: z.string().check(z.minLength(1)) })),
     currentAdmission: z.optional(z.discriminatedUnion("kind", [
         z.strictObject({ kind: z.literal("control"), request: ManagedControlAdmissionInputV1Schema,
             rebuildSettled: z.optional(z.literal(true)) }),
@@ -121,6 +122,7 @@ export function projectManagedMachine(row: StoredManagedMachine, declaration?: M
         ...(row.presetId && row.presetRevision !== null ? { preset: { id: row.presetId, revision: row.presetRevision } } : {}),
         launch: row.launch, controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId },
         ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
+        ...(row.environmentSetup !== null ? { environmentSetup: row.environmentSetup } : {}),
         allocation: row.allocation, creationState: row.creationState,
         ...(resource ? { resource } : {}),
         ...(devcontainerChild ? { devcontainerChild } : {}),

@@ -1,7 +1,10 @@
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
+import { canRequestActionOperationStop } from './actionOperationPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
+export type MachineEnvironmentOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineEnvironment' }>;
 
 export type ActionOperationDetailField = Readonly<{
     id: 'strategy' | 'result' | 'session' | 'phase' | 'reference';
@@ -19,7 +22,9 @@ export type ActionOperationDetailRecovery =
     | Readonly<{ kind: 'handoff'; actions: readonly string[] }>;
 
 export type ActionOperationDetailProjection = Readonly<{
-    kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin';
+    kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin' | 'projectCommand' | 'machineEnvironment';
+    projectCommand: ProjectCommandAttachmentV1 | null;
+    machineEnvironment: MachineEnvironmentOutputAttachment | null;
     fields: readonly ActionOperationDetailField[];
     resultSummary: readonly ActionOperationDetailSummaryRow[];
     errorSummary: readonly ActionOperationDetailSummaryRow[];
@@ -28,6 +33,7 @@ export type ActionOperationDetailProjection = Readonly<{
     nextAction:
         | Readonly<{ kind: 'open_session'; sessionId: string }>
         | Readonly<{ kind: 'resume_handoff'; handoffId: string; sessionId: string; targetMachineId: string }>
+        | Readonly<{ kind: 'open_output'; serverId: string; machineId: string; workspaceRefId?: string; cwd?: string; terminalId: string }>
         | null;
     canCancel: boolean;
 }>;
@@ -38,6 +44,8 @@ type DetailProjector = (
 ) => Omit<ActionOperationDetailProjection, 'canCancel'>;
 
 const EMPTY_DETAIL = Object.freeze({
+    projectCommand: null,
+    machineEnvironment: null,
     fields: Object.freeze([]),
     resultSummary: Object.freeze([]),
     errorSummary: Object.freeze([]),
@@ -236,16 +244,54 @@ const DETAIL_PROJECTORS_BY_ACTION_ID: Readonly<Record<string, DetailProjector>> 
     'sessions.external.takeover.start': projectExternal,
 });
 
+function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+    const attachment = snapshot.domainRef;
+    if (attachment?.kind !== 'projectCommand') return projectPlugin(snapshot);
+    return {
+        ...EMPTY_DETAIL,
+        kind: 'projectCommand',
+        projectCommand: attachment,
+        errorSummary: summarizeError(snapshot),
+        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        nextAction: attachment.terminalId ? {
+            kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId,
+            workspaceRefId: attachment.workspaceRefId, cwd: attachment.cwd, terminalId: attachment.terminalId,
+        } : null,
+    };
+}
+
+/** Only declared retained output targets; never infer a Project from a Machine setup. */
+export function readActionOperationOutputAttachment(snapshot: ActionOperationSnapshot): ProjectCommandAttachmentV1 | MachineEnvironmentOutputAttachment | null {
+    const attachment = snapshot.domainRef;
+    return attachment?.kind === 'projectCommand' || attachment?.kind === 'machineEnvironment' ? attachment : null;
+}
+
+function projectMachineEnvironment(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+    const attachment = snapshot.domainRef;
+    if (attachment?.kind !== 'machineEnvironment') return projectPlugin(snapshot);
+    return {
+        ...EMPTY_DETAIL,
+        kind: 'machineEnvironment',
+        machineEnvironment: attachment,
+        errorSummary: summarizeError(snapshot),
+        resultSummary: snapshot.state === 'succeeded' ? summarizeResult(snapshot.result) : [],
+        nextAction: attachment.terminalId ? {
+            kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId, terminalId: attachment.terminalId,
+        } : null,
+    };
+}
+
 export function projectActionOperationDetail(
     snapshot: ActionOperationSnapshot,
     observation: ActionOperationObservation,
 ): ActionOperationDetailProjection {
-    const projector = DETAIL_PROJECTORS_BY_ACTION_ID[snapshot.actionId] ?? projectPlugin;
+    const projector = snapshot.domainRef?.kind === 'projectCommand'
+        ? projectProjectCommand : snapshot.domainRef?.kind === 'machineEnvironment'
+            ? projectMachineEnvironment : DETAIL_PROJECTORS_BY_ACTION_ID[snapshot.actionId] ?? projectPlugin;
     const detail = projector(snapshot, observation);
-    const active = snapshot.state === 'accepted' || snapshot.state === 'running';
     return {
         ...detail,
         errorSummary: detail.errorSummary.length > 0 ? detail.errorSummary : summarizeError(snapshot),
-        canCancel: active && snapshot.cancellation === 'supported' && observation === 'available',
+        canCancel: canRequestActionOperationStop(snapshot, observation),
     };
 }

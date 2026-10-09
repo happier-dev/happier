@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createDeferred } from '@/dev/testkit';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { readMachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { loadProfileCatalogV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { MachinePoolListOutputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { AutomationTriggerDetailSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { createWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
@@ -85,45 +92,196 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
     return { rows, machine, executeAction: createFrontDoorActionExecute(executor) };
 }
 
-function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; custodianAccountId?: string }> = {}) {
+function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string;
+    environmentSetup?: ManagedMachineV1['environmentSetup'] }> = {}) {
+    // Persisted actor policy is fixture input, not a mocked policy decision or production waiver.
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+        'machines.environment.apply': ['ui'], 'machines.managed.setup.skip': ['ui'],
+        'machines.managed.acquire': ['ui'], 'machines.managed.bootstrap.retry': ['ui'],
+        'machines.managed.delete': ['ui'],
+    } });
     const actions: Array<{ actionId: string; input: unknown }> = [];
     let machine = { ...baseMachine, custodianAccountId: input.custodianAccountId ?? baseMachine.custodianAccountId,
-        ...(input.enrolled ? { enrolledMachineId: 'guest' } : {}) };
+        ...(input.enrolled ? { enrolledMachineId: 'guest' } : {}),
+        ...(input.environmentSetup ? { preset: { id: 'preset', revision: 4 }, environmentSetup: input.environmentSetup } : {}) };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
+        managedMachineReferences: async ({ input: request, signal }) => readMachineReferenceCensusV1({
+            homeId: request.homeId, machineId: machine.enrolledMachineId ?? null, signal,
+        }, {
+            // Genuine Account persistence ports; requester census and Profile authority remain real.
+            artifacts: { list: async () => ({ items: [], coverage: 'complete' }), read: async () => null },
+            readSettings: async () => ({}),
+            readProfileCatalog: () => loadProfileCatalogV1({ mode: 'plain', material: null,
+                readPage: async () => ({ status: 'listed', rows: [], nextCursor: null, complete: true,
+                    referenceGuardRevision: 'absent', transferControl: { status: 'absent' }, diagnostics: [] }),
+                readReferenceGuard: async () => ({ status: 'ready', revision: 'absent' }),
+                readTransfer: async () => ({ status: 'absent' }), readSource: async () => ({}), signal }),
+            readPools: async () => MachinePoolListOutputV1Schema.parse({ pools: [{
+                pool: { id: '00000000-0000-4000-8000-000000000001', name: 'Guest pool', description: null,
+                    revision: 1, createdAt: 1, updatedAt: 1,
+                    members: [{ machineId: 'guest', enabled: true, priorityTier: 0, state: 'connected' }] },
+                availability: { state: 'known', connectedCount: 1, enabledCount: 1 },
+            }] }),
+            readAssignments: async () => ({ automations: [], nextCursor: null }),
+        }),
         // These ports are the controller socket and Account HTTP boundaries;
         // real Action admission, strict schemas, output validation and continuation remain active.
         managedMachineAction: async request => {
             actions.push(request);
             if (request.actionId === 'machines.managed.get') return machine;
+            if (request.actionId === 'machines.managed.delete') return {
+                kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision + 1,
+                operation: { operationId: 'delete' }, machineReferences: {
+                    homeId: machine.homeId, machineId: machine.enrolledMachineId ?? null, coverage: 'complete',
+                    references: [{ kind: 'machine_pool', id: 'pool', name: 'Guest pool' }], unavailable: [],
+                },
+            };
             if (request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry') {
                 return { managedId: machine.id, operation: { operationId: 'install' } };
             }
+            if (request.actionId === 'machines.managed.setup.skip' && machine.environmentSetup) {
+                machine = { ...machine, environmentSetup: { ...machine.environmentSetup, state: 'skipped', errorCode: undefined } };
+                return machine;
+            }
             throw new Error('unexpected_machine_action');
+        },
+        machineEnvironmentApply: async request => {
+            actions.push({ actionId: 'machines.environment.apply', input: request.input });
+            if (!machine.environmentSetup) throw new Error('unexpected_environment_setup');
+            machine = { ...machine, environmentSetup: { ...machine.environmentSetup, state: 'running', errorCode: undefined,
+                operation: { operationId: 'setup' } } };
+            return { operationId: 'setup' };
         },
         actionOperationAction: async request => {
             actions.push(request);
             await input.wait?.();
+            if ('operationId' in request.input && request.input.operationId === 'setup') {
+                if (machine.environmentSetup) machine = { ...machine, environmentSetup: { ...machine.environmentSetup, state: 'succeeded' } };
+                return { kind: 'found', operation: { version: 1, operationId: 'setup', revision: 2,
+                    actionId: 'machines.environment.apply', state: 'succeeded',
+                    scope: { accountId: 'account', machineId: 'guest' }, title: 'Set up',
+                    createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported' } };
+            }
             if (!input.failed) machine = { ...machine, enrolledMachineId: 'guest' };
+            if (input.setupFails && machine.environmentSetup) machine = { ...machine,
+                environmentSetup: { ...machine.environmentSetup, state: 'failed', errorCode: 'setup_failed' } };
+            if (input.setupSucceeds && machine.environmentSetup) machine = { ...machine,
+                environmentSetup: { ...machine.environmentSetup, state: 'succeeded', errorCode: undefined } };
             return { kind: 'found', operation: { version: 1, operationId: 'install', revision: 2,
-                actionId: 'machines.managed.acquire', state: input.failed ? 'failed' : 'succeeded',
+                actionId: 'machines.managed.acquire', state: input.failed || input.setupFails ? 'failed' : 'succeeded',
                 scope: { accountId: 'account', machineId: 'controller' }, title: 'Install',
                 createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
-                ...(input.failed ? { error: { errorCode: 'installation_failed', error: 'Installation failed' } } : {}) } };
+                ...(input.failed || input.setupFails ? { error: { errorCode: input.setupFails ? 'setup_failed' : 'installation_failed', error: 'Creation stage failed' } } : {}) } };
         },
     }));
     let acquisition = initial;
     const progress: unknown[] = [];
-    const run = (options: Readonly<{ retryInstallation?: boolean; acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft }> = {}) => runNewSessionManagedCreation({
+    const run = (options: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' | 'delete';
+        reviewDelete?: (census: MachineReferenceCensusV1) => Promise<boolean>;
+        acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft }> = {}) => runNewSessionManagedCreation({
         draft: options.draft ?? draft, acquisition: options.acquisition ?? acquisition, scope: { serverId: 'server', accountId: 'account' },
         signal: new AbortController().signal, isCurrent: input.current ?? (() => true),
         executeAction: createFrontDoorActionExecute(executor),
         onAcquisitionChange: value => { acquisition = value; }, onProgress: value => progress.push(value),
         onApprovalPending: () => { throw new Error('unexpected_approval'); }, ...options,
     });
-    return { run, actions, progress, getAcquisition: () => acquisition };
+    return { run, actions, progress, getAcquisition: () => acquisition,
+        changeIntentRevision: (intentRevision: number) => { machine = { ...machine, intentRevision }; } };
 }
 
 describe('ordinary managed creation continuation', () => {
+    it('deletes the same failed-setup row only after reviewing its references, without reacquiring or continuing enrollment', async () => {
+        const boundary = transport({ enrolled: true,
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        const reviewed: MachineReferenceCensusV1[] = [];
+        const result = await boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'delete',
+            reviewDelete: async census => { reviewed.push(census); return true; } });
+        expect(result, JSON.stringify(result)).toEqual({ kind: 'delete_requested', managedId: 'paid' });
+        expect(reviewed).toEqual([{ homeId: 'home', machineId: 'guest', coverage: 'complete',
+            references: [{ kind: 'machine_pool', id: '00000000-0000-4000-8000-000000000001', name: 'Guest pool' }], unavailable: [] }]);
+        expect(boundary.actions.filter(value => value.actionId === 'machines.managed.delete').map(value => value.input))
+            .toEqual([{ homeId: 'home', managedId: 'paid', when: 'now', expectedRevision: 1,
+                intent: 'delete', reviewedDependencies: true }]);
+        expect(boundary.actions.some(value => ['machines.managed.acquire', 'machines.managed.bootstrap.retry',
+            'machines.environment.apply', 'machines.managed.setup.skip'].includes(value.actionId))).toBe(false);
+    });
+    it('keeps failed-setup recovery when the Delete review is declined', async () => {
+        const boundary = transport({ enrolled: true,
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        expect(await boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'delete',
+            reviewDelete: async () => false })).toEqual({ kind: 'failed', code: 'setup_failed' });
+        expect(boundary.actions.some(value => value.actionId === 'machines.managed.delete')).toBe(false);
+        expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'failed', retrySetupAvailable: true }));
+    });
+    it('requires a fresh Delete review when the retained row intent changes during confirmation', async () => {
+        const boundary = transport({ enrolled: true,
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        expect(await boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'delete',
+            reviewDelete: async () => { boundary.changeIntentRevision(2); return true; } }))
+            .toEqual({ kind: 'failed', code: 'intent_changed' });
+        expect(boundary.actions.some(value => value.actionId === 'machines.managed.delete')).toBe(false);
+        expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'failed', retrySetupAvailable: true }));
+    });
+    it('rejoins the retained acquisition while an enrolled target awaits setup without a guest operation', async () => {
+        const boundary = transport({ enrolled: true, setupSucceeds: true,
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'pending' } });
+        expect(await boundary.run({ acquisition: { ...initial, managedId: 'paid', operation: { operationId: 'install' } } }))
+            .toMatchObject({ kind: 'enrolled', machine: { id: 'paid', enrolledMachineId: 'guest', environmentSetup: { state: 'succeeded' } } });
+        expect(boundary.actions.some(value => value.actionId === 'machines.managed.acquire')).toBe(false);
+    });
+    it('holds the enrolled target until setup succeeds or is explicitly skipped without reacquisition', async () => {
+        for (const state of ['pending', 'running', 'failed', 'succeeded', 'skipped'] as const) {
+            const boundary = transport({ enrolled: true, environmentSetup: { environment: { setupScript: 'echo ready' }, state,
+                ...(state === 'failed' ? { errorCode: 'setup_failed' } : {}) } });
+            const result = await boundary.run({ acquisition: { ...initial, managedId: 'paid' } });
+            expect(result.kind).toBe(state === 'succeeded' || state === 'skipped' ? 'enrolled' : state === 'failed' ? 'failed' : 'pending');
+            if (state === 'pending' || state === 'running') expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'setup_pending', state }));
+            if (state === 'failed') expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'failed',
+                code: 'setup_failed', retrySetupAvailable: true, environmentSetup: expect.objectContaining({ state: 'failed' }) }));
+            expect(boundary.actions.map(value => value.actionId)).not.toContain('machines.managed.acquire');
+        }
+    });
+    it('retries the admitted preset setup on the joined machine and waits its operation before returning the target', async () => {
+        const boundary = transport({ enrolled: true, environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        const result = await boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'retry' });
+        expect(result, JSON.stringify(result))
+            .toMatchObject({ kind: 'enrolled', machine: { id: 'paid', environmentSetup: { state: 'succeeded' } } });
+        expect(boundary.actions.filter(value => value.actionId === 'machines.environment.apply').map(value => value.input))
+            .toEqual([{ homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 4 }]);
+        expect(boundary.actions.find(value => value.actionId === 'action.operations.get')?.input)
+            .toMatchObject({ machineId: 'guest', operationId: 'setup', waitForTerminal: true });
+        expect(boundary.actions.some(value => value.actionId === 'machines.managed.acquire' || value.actionId === 'machines.managed.bootstrap.retry')).toBe(false);
+    });
+    it('continues only after the ordinary skip Action records setup skipped on the same creation row', async () => {
+        const boundary = transport({ enrolled: true, environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        const result = await boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'skip' });
+        expect(result, JSON.stringify(result))
+            .toMatchObject({ kind: 'enrolled', machine: { id: 'paid', environmentSetup: { state: 'skipped' } } });
+        expect(boundary.actions.find(value => value.actionId === 'machines.managed.setup.skip')?.input)
+            .toEqual({ homeId: 'home', managedId: 'paid', expectedIntentRevision: 1 });
+        expect(boundary.actions.some(value => value.actionId === 'machines.environment.apply' || value.actionId === 'machines.managed.acquire')).toBe(false);
+    });
+    it('observes the admitted retry running on its actual row while its guest operation is still pending', async () => {
+        const waiting = createDeferred<void>();
+        const finish = createDeferred<void>();
+        const boundary = transport({ enrolled: true, wait: () => { waiting.resolve(); return finish.promise; },
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });
+        const run = boundary.run({ acquisition: { ...initial, managedId: 'paid' }, setupRecovery: 'retry' });
+        await waiting.promise;
+        const progressWhilePending = boundary.progress.slice();
+        finish.resolve();
+        await run;
+        expect(progressWhilePending).toContainEqual(expect.objectContaining({ kind: 'setup_pending', state: 'running',
+            environmentSetup: expect.objectContaining({ state: 'running', operation: { operationId: 'setup' } }) }));
+    });
+    it('offers setup recovery after a newly admitted creation joins but its setup stage fails', async () => {
+        const boundary = transport({ setupFails: true,
+            environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'pending' } });
+        expect(await boundary.run()).toEqual({ kind: 'failed', code: 'setup_failed' });
+        expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'failed', managedId: 'paid',
+            environmentSetup: expect.objectContaining({ state: 'failed' }), retrySetupAvailable: true, retryInstallationAvailable: false }));
+    });
     it('keeps foreign-controller acquisition usable but makes automatic archive rules owner-only before any FIN write', async () => {
         const created = transport({ custodianAccountId: 'alice' });
         expect(await created.run()).toMatchObject({ kind: 'enrolled', machine: { enrolledMachineId: 'guest' } });

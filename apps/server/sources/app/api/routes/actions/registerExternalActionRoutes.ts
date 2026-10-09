@@ -36,7 +36,7 @@ import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { ManagedMachineActionIdV1Schema, projectApiTokenSessionSpawnAdmissionV1, resolveCredentialActionAdmissionV1,
-    SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol';
+    SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1, MachineEnvironmentApplyInputV1Schema } from '@happier-dev/protocol';
 import { getActionSpec, PublicActionIdSchema } from '@happier-dev/protocol/actions';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SessionRequesterHandoffBootstrapRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -48,7 +48,7 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     isOriginalAccountExecutionAction, isOriginalAccountHandoffAction, resolveExternalActionExecutionMachineAdmissionInTx,
     readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource,
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
-import { ManagedMachineError, readManagedAcquisitionIdentity, requireCurrentManagedMachineInTx, sameManagedInput } from '@/app/machines/managed/managedRows';
+import { ManagedMachineError, readManagedAdmissionState, projectManagedMachine, requireCurrentManagedMachineInTx, sameManagedInput } from '@/app/machines/managed/managedRows';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 
@@ -341,7 +341,7 @@ async function readManagedGuestContinuation(
     managedContinuation: NonNullable<ExternalActionExecutionAuthorizationBindingV1['managedContinuation']>;
     sessionActionSource?: ExternalActionExecutionAuthorizationBindingV1['sessionActionSource'];
 }> | null> {
-    if (!body.managedContinuation || actionId !== 'session.spawn_new'
+    if (!body.managedContinuation || !['session.spawn_new', 'machines.environment.apply'].includes(actionId)
         || request.externalActionExecutionAuthorized !== true) return null;
     const token = request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
     if (typeof token !== 'string') return null;
@@ -351,7 +351,7 @@ async function readManagedGuestContinuation(
     if (mode?.status !== 'ready' || !isExternalActionRequestVersionAllowedForAccountModeV1({
         accountEncryptionMode: mode.mode, envelopeVersion: body.envelope.v })) return null;
     let spawnAdmission = body.envelope.sessionSpawnAdmission;
-    if (body.envelope.v === 1) {
+    if (actionId === 'session.spawn_new' && body.envelope.v === 1) {
         try { spawnAdmission = projectApiTokenSessionSpawnAdmissionV1(body.envelope.input); }
         catch { return null; }
     }
@@ -359,8 +359,8 @@ async function readManagedGuestContinuation(
         || request.externalActionEffectActionId !== root.actionId
         || root.accountId !== request.userId || root.requestId !== body.managedContinuation.creationRequestId
         || body.envelope.target?.kind !== 'machine' || body.envelope.target.machineId !== body.machineId
-        || !spawnAdmission || spawnAdmission.executionTarget?.machineId !== body.machineId
-        || spawnAdmission.executionTarget?.serverId !== root.serverIdentityId) return null;
+        || actionId === 'session.spawn_new' && (!spawnAdmission || spawnAdmission.executionTarget?.machineId !== body.machineId
+            || spawnAdmission.executionTarget?.serverId !== root.serverIdentityId)) return null;
     const principal = await verifyCurrentExternalActionPrincipal(root);
     if (!principal) return null;
     // An accepted Session caller's request identity is part of its installed
@@ -372,11 +372,25 @@ async function readManagedGuestContinuation(
             managedId: body.managedContinuation!.managedId,
             expectedIntentRevision: body.managedContinuation!.expectedIntentRevision,
             requestId: root.requestId, controller }, { requestAuthority: 'creation' });
-        const acquisition = readManagedAcquisitionIdentity(row.admittedInput);
+        const acquisition = readManagedAdmissionState(row.admittedInput);
+        const setup = projectManagedMachine(row).environmentSetup;
+        const digest = actionId === 'machines.environment.apply' ? acquisition.environmentSetup?.requestEnvelopeDigest
+            : acquisition.continuation?.requestEnvelopeDigest;
         if (row.custodianAccountId !== root.custodianAccountId || row.enrolledMachineId !== body.machineId
-            || row.allocation !== 'bound' || !row.resource
-            || acquisition.continuation?.requestEnvelopeDigest !== root.requestEnvelopeDigest) {
+            || row.allocation !== 'bound' || !row.resource || row.desired === 'delete'
+            || digest !== root.requestEnvelopeDigest
+            || actionId === 'session.spawn_new' && setup && !['succeeded', 'skipped'].includes(setup.state)
+            || actionId === 'machines.environment.apply' && (!setup || ['succeeded', 'skipped'].includes(setup.state))) {
             throw new ManagedMachineError('request_conflict');
+        }
+        // The sealed input is opened only on the guest, then checked again by
+        // environment/resolve. Plain inputs can establish this exact snapshot now.
+        if (actionId === 'machines.environment.apply' && body.envelope.v === 1) {
+            const input = MachineEnvironmentApplyInputV1Schema.safeParse(body.envelope.input);
+            if (!input.success || input.data.homeId !== row.homeId || input.data.machineId !== row.enrolledMachineId
+                || input.data.presetId !== row.presetId || input.data.presetRevision !== row.presetRevision) {
+                throw new ManagedMachineError('request_conflict');
+            }
         }
     });
     let continuationPrincipal: ExternalActionServerPrincipalV1;

@@ -21,6 +21,7 @@ import {
     decodeManagedPolicyProofV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1,
     ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema,
     ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema,
+    MachineEnvironmentApplyInputV1Schema, MachineEnvironmentResolveResultV1Schema, MachineEnvironmentReportInputV1Schema,
 } from "@happier-dev/protocol";
 import { inTx } from "@/storage/inTx";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
@@ -31,6 +32,7 @@ import { getManagedMachine, listManagedMachines, cancelManagedCreation } from ".
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
+import { resolveMachineEnvironment, reportMachineEnvironment, skipManagedMachineSetup } from './machineEnvironment';
 
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
 export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
@@ -99,6 +101,25 @@ async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
 
 /** Internal controller transitions consume the existing signed Action HTTP authority. */
 export function registerManagedMachineRoutes(app: Fastify): void {
+    app.post('/v1/machines/environment/resolve', { preHandler: app.authenticate,
+        schema: { body: MachineEnvironmentApplyInputV1Schema, response: { 200: MachineEnvironmentResolveResultV1Schema } } },
+        async (request, reply) => respond(reply, async () => {
+            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.environment.apply']);
+            return resolveMachineEnvironment({ actorAccountId: request.userId, custodianAccountId,
+                authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body,
+                creationManagedId: request.externalActionExecutionAuthorizationBinding?.managedContinuation?.managedId });
+        }));
+    app.post('/v1/machines/environment/report', { preHandler: app.authenticate,
+        schema: { body: MachineEnvironmentReportInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } },
+        async (request, reply) => respond(reply, async () => {
+            const { custodianAccountId } = requireManagedControllerProof(request, request.body.machineId, ['machines.environment.apply']);
+            return reportMachineEnvironment({ actorAccountId: request.userId, custodianAccountId, input: request.body,
+                creationManagedId: request.externalActionExecutionAuthorizationBinding?.managedContinuation?.managedId });
+        }));
+    app.post(managedMachineActionEndpointPathV1('machines.managed.setup.skip'), { preHandler: app.authenticate,
+        schema: { body: ManagedMachineActionInputSchemasV1['machines.managed.setup.skip'],
+            response: { 200: ManagedMachineActionOutputSchemasV1['machines.managed.setup.skip'] } } },
+        async (request, reply) => respond(reply, () => skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body })));
     app.post('/v1/machines/managed/controller/policies', { preHandler: app.authenticate, schema: { body: ManagedPolicyCensusInputV1Schema, response: { 200: ManagedPolicyCensusOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
         const { homeId, controller, proof } = request.body;
         const machines = await inTx(async tx => {

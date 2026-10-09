@@ -10,6 +10,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Socket } from 'socket.io-client';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
@@ -24,6 +25,9 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
     sessionId?: string;
     scopeId?: string | ((scope: Readonly<{ sessionId: string; serverId: string }>) => string);
     features?: () => ReturnType<typeof createRootLayoutFeaturesResponse>;
+    accountCurrentness?: () => ReturnType<typeof createPlainAccountEncryptionCurrentnessFixture>;
+    /** Current signed provenance when a journey exercises the ordinary Home Action front door. */
+    credentials?: AuthCredentials;
     request?: (...args: Parameters<RuntimeFetch>) => Promise<Response | null>;
     configureSocket?: (socket: Socket) => void;
 }> = {}) {
@@ -50,6 +54,7 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
             serverUrl: 'https://session-pane.test',
             serverIdentityId,
             accountId,
+            ...(params.credentials ? { credentials: params.credentials } : {}),
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
                 const json = (value: unknown) => Response.json(value);
@@ -61,7 +66,7 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
                 }
                 if ((init?.method ?? 'GET') === 'GET' && path === '/v2/cursor') return json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
                 if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 1 });
-                if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v1/account/encryption/currentness') return json(params.accountCurrentness?.() ?? createPlainAccountEncryptionCurrentnessFixture());
                 if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: accountId }));
                 const response = await params.request?.(url, init);
                 if (response) return response;

@@ -23,6 +23,36 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it('keeps machine setup output on its exact joined target without inventing a Project', () => {
+        const attachment = { kind: 'machineEnvironment' as const, serverId: 'target-home', machineId: 'joined-guest',
+            preset: { id: 'preset', revision: 4 }, managedId: 'paid', terminalId: 'setup-output',
+            terminals: { install: 'install-output', setup: 'setup-output' }, exitCode: 1 };
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.environment.apply', state: 'failed',
+            scope: { accountId: 'account-1', machineId: 'joined-guest' }, domainRef: attachment,
+            settledAt: 2_000, error: { errorCode: 'setup_failed', error: 'Exit 1' } }), 'available');
+        expect(detail).toMatchObject({ kind: 'machineEnvironment', machineEnvironment: attachment });
+        expect(detail.nextAction).toEqual({ kind: 'open_output', serverId: 'target-home', machineId: 'joined-guest', terminalId: 'setup-output' });
+    });
+    it('retains exact command output targets before exit and after failure or cancellation', () => {
+        const attachment = {
+            kind: 'projectCommand' as const, purpose: 'script' as const,
+            serverId: 'target-home', machineId: 'worker', workspaceRefId: 'workspace',
+            cwd: '/project', terminalId: 'terminal',
+            originRun: { kind: 'workflow_run' as const, serverId: 'workflow-home', runId: 'run' },
+        };
+        for (const state of ['accepted', 'failed', 'cancelled'] as const) {
+            const detail = projectActionOperationDetail(operation({
+                actionId: 'projects.script.run', state, domainRef: attachment,
+                ...(state === 'accepted' ? { startedAt: undefined } : { settledAt: 2_000 }),
+                ...(state === 'failed' ? { error: { errorCode: 'process_exited', error: 'Exit 1' } } : {}),
+            }), 'available');
+            expect(detail).toMatchObject({ kind: 'projectCommand', projectCommand: attachment });
+            expect(detail.nextAction).toEqual({ kind: 'open_output', serverId: 'target-home', machineId: 'worker',
+                workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' });
+            expect(detail.canCancel).toBe(false);
+        }
+    });
+
     it('projects fork strategy, created child, and unavailable-status recovery from canonical references', () => {
         const completed = projectActionOperationDetail(operation({
             actionId: 'session.fork',

@@ -13,15 +13,15 @@ import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/
 
 export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     scopeId: string;
-    workspaceRefId: string;
+    workspaceRefId?: string;
     machineId: string;
-    rootPath: string;
+    rootPath: string | null;
     serverId: string;
     terminalInstanceId?: string;
     attachedTerminalId?: string | null;
     toolbarActionsStart?: React.ReactNode;
     closeOnUnmount?: boolean;
-    workspace: WorkspaceAddressV1;
+    workspace?: WorkspaceAddressV1;
     terminalKey: string;
     title?: string;
     focused?: boolean;

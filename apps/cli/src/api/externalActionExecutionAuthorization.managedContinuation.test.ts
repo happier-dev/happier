@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import { dispatchManagedSessionStart } from './externalActionExecutionAuthorization';
+import { dispatchLocalManagedMachineEnvironment, dispatchManagedMachineEnvironment, dispatchManagedSessionStart } from './externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { updateSettings } from '@/persistence';
 
@@ -30,6 +31,68 @@ describe('managed continuation through the ordinary public Action transport', ()
         } }));
     });
     afterEach(() => vi.restoreAllMocks());
+
+    it('originates setup for a genuine local host creation through the existing exact Account signer and refuses borrowed origins', async () => {
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 2,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const setup = { homeId: 'srv_home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };
+        const machine = { id: 'guest', kind: 'persistent', active: true, installationId: 'guest-installation', revokedAt: null,
+            replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+            access: { custodian: { accountId: 'account', displayName: 'Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+        vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
+            ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+            : url.endsWith('/v1/machines/guest') ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
+        let delivered = 0;
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(carrier).not.toHaveProperty('managedContinuation');
+            expect(carrier.envelope).toMatchObject({ v: 1, requestId: 'creation', target: { kind: 'machine', machineId: 'guest' }, input: setup });
+            if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'exact-local-setup-root', binding: {
+                accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 2 }, accountEncryptionMode: 'plain',
+                serverIdentityId: 'srv_home', machineId: 'guest', installationId: 'guest-installation', actionId: 'machines.environment.apply',
+                requestId: 'creation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(carrier.envelope), target: carrier.envelope.target,
+            } } };
+            expect(url).toBe('https://home.example/v1/actions/machines.environment.apply');
+            expect(carrier.executionAuthorization.token).toBe('exact-local-setup-root');
+            delivered++;
+            return { status: 200, data: { v: 1, actionId: 'machines.environment.apply', requestId: 'creation', execution: { ok: true, result: { operationId: 'actual-setup' } } } };
+        });
+        const args = { input: setup, credentials: { token, encryption: null, credentialProvenance: 'stored_session' as const },
+            custodianAccountId: 'account', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+            context: { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+                actionRequestId: 'creation', serverIdentityId: 'srv_home', signal: new AbortController().signal } };
+        expect(await dispatchLocalManagedMachineEnvironment(args)).toEqual({ ok: true, result: { operationId: 'actual-setup' } });
+        expect(delivered).toBe(1);
+        post.mockClear();
+        expect(await dispatchLocalManagedMachineEnvironment({ ...args, custodianAccountId: 'other-account' })).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        expect(await dispatchLocalManagedMachineEnvironment({ ...args, context: { ...args.context, surface: 'agent',
+            actionCaller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 } } })).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        expect(post).not.toHaveBeenCalled();
+    });
+
+    it('seals setup for the exact joined guest using the existing creation proof without Session admission', async () => {
+        const setup = { homeId: 'srv_home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };
+        let opened: unknown;
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+            expect(url).toBe('https://home.example/v1/actions/machines.environment.apply');
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(request.managedContinuation).toEqual(continuation);
+            expect(request.envelope.requestId).toBe('creation');
+            expect(request.envelope).not.toHaveProperty('sessionSpawnAdmission');
+            expect(config?.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
+            const binding = { serverIdentityId: 'srv_home', accountId: 'account', authentication: { kind: 'account' as const, tokenEpoch: 2 },
+                actionId: 'machines.environment.apply', requestId: 'creation', target: { kind: 'machine' as const, machineId: 'guest' } };
+            if (request.envelope.v !== 2) throw new Error('Expected sealed setup');
+            opened = openExternalActionRequestV2({ envelope: request.envelope, binding, material })?.input;
+            return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope, material,
+                randomBytes: length => new Uint8Array(length).fill(4), executedMachineId: 'guest',
+                execution: { ok: true, result: { operationId: 'setup-operation' } } }).response };
+        });
+        expect(await dispatchManagedMachineEnvironment({ input: setup, serverId: 'home-profile', continuation, authorization: root,
+            serverHttpBaseUrl: 'https://home.example', installationId: 'installation', privateKey: keyPair.secretKey, material }))
+            .toMatchObject({ ok: true, result: { operationId: 'setup-operation' } });
+        expect(opened).toEqual(setup);
+    });
 
     it('qualifies a real local profile to its exact Home before sealing guest input and admission facts', async () => {
         let emittedRequestId: string | undefined;

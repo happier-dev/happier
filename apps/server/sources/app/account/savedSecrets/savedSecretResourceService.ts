@@ -1,5 +1,7 @@
 import {
+    type ManagedResourceDependencyV1, type ManagedResourceDispositionV1,
     formatSharedSavedSecretRefV1,
+    SHARED_SAVED_SECRET_REF_V1_PREFIX,
     isSessionEncryptionModeAllowedByStoragePolicy,
     TeamRoleV1Schema,
     parseEncryptedDataKeyEnvelopeV1,
@@ -12,11 +14,42 @@ import {
     type SavedSecretResourceStoredContentV1,
     type AccountSettingsStoredContentEnvelope,
 } from "@happier-dev/protocol";
+import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { isTeamPrincipalRoleV1 } from "@happier-dev/protocol/teams";
+import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
+    type SavedSecretReferenceCensusV1, type SavedSecretPromoteReferenceCensusV1, type SavedSecretCatalogMutationsV1,
+    type SavedSecretCatalogRevisionsV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { deriveSavedSecretImportResourceIdV1, listAccountSettingsSavedSecretReferences,
+    type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { openMcpServerCatalogContentV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { openAcpCatalogContentV1, listAcpCatalogEnvelopeSavedSecretDiagnosticsV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { openProviderConnectionsContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { openConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { AccountSettingsHistorySavedSecretTransferV1Schema, type AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { ProfileRowMutationV1Schema, type ProfileRowMutationV1, type ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { type ProfileTransferControlV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { listTransferredProfileIdsV1, loadAiLaunchProfileArtifacts, removeTransferredProfileSourcesV1, resolveProfileCatalogAuthorityV1 } from '@happier-dev/protocol/profiles/read';
+import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { readLaunchProfileArtifactForReferenceCensusV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { parseSavedSecretRefV1, listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { RemoteHostCatalogRowMutationV1Schema, isCompleteRetainedRemoteHostCatalogV1, readRetainedRemoteHostCatalogV1, type RemoteHostCatalogRowMutationV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { MachineEnvironmentV1ReadSchema } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
+import { invalidatePresetInTx } from '@/app/machines/managed/machinePresetService';
+import { invalidateManagedMachineInTx } from '@/app/machines/managed/managedRows';
+import { readRemoteHostCatalogRowInTx, mutateRemoteHostCatalogRowInTx, validateRemoteHostReferenceCensusInTx } from '@/app/account/remoteHosts/remoteHostRows';
+import { NotificationChannelCatalogMutationV1Schema, readLegacyNotificationChannelInventoryV1, isCompleteLegacyNotificationChannelSourceV1,
+    type NotificationChannelCatalogMutationV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { readNotificationChannelCatalogInTx, mutateNotificationChannelCatalogInTx, validateNotificationChannelReferenceCensusInTx } from '@/app/account/notifications/channelRows';
 import type { Prisma } from "@prisma/client";
 import { isDeepStrictEqual } from "node:util";
 import * as privacyKit from "privacy-kit";
 import { writeAccountSettingsInTx } from "@/app/accountSettings/writeAccountSettingsInTx";
+import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
+import { openPlainAccountSettingsDbValue } from '@/app/encryption/accountSettingsStorage';
+import { advanceProfileReferenceGuardInTx, mutateProfileRowsInTx, validateProfileReferenceCensusInTx } from '@/app/account/profiles/profileRows';
+import { readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferControl';
+import { readArtifactForCallerInTx, projectPlainArtifactSharingResourceV1 } from '@/app/artifacts/artifactAccessService';
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
@@ -71,6 +104,43 @@ type StoredResourceRow = Readonly<{
         recipientContentPublicKeyFingerprint: string;
     }>[];
 }>;
+
+type SavedSecretResourceReferenceCaptureInput = Readonly<{
+    references: readonly string[];
+    savedSecretRevisions: readonly Readonly<{ resourceId: string; expectedRevision: number }>[];
+    /** Only the genuine Profile importer can retain personal ids before S2 promotion. */
+    allowPersonal?: boolean;
+}>;
+
+/** The incumbent resource owner makes every catalog's use/access/currentness decision. */
+export function validateSavedSecretResourceReferenceCapturesV1(
+    resources: readonly SavedSecretCatalogResultV1[], input: SavedSecretResourceReferenceCaptureInput,
+): boolean {
+    for (const reference of input.references) {
+        let parsed: ReturnType<typeof parseSavedSecretRefV1>;
+        try {
+            parsed = parseSavedSecretRefV1(reference);
+        } catch {
+            return false;
+        }
+        if (parsed.kind === 'personal') {
+            if (!input.allowPersonal) return false;
+            continue;
+        }
+        const entry = resources.find(resource => 'ref' in resource && resource.ref === formatSharedSavedSecretRefV1(parsed.resourceId));
+        const capture = input.savedSecretRevisions.find(candidate => candidate.resourceId === parsed.resourceId);
+        if (!entry || !('ref' in entry) || !entry.capabilities.use || !capture || capture.expectedRevision !== entry.revision) return false;
+    }
+    return true;
+}
+
+export async function validateSavedSecretResourceReferencesInTx(tx: Tx, input: SavedSecretResourceReferenceCaptureInput & Readonly<{
+    accountId: string; authentication?: TeamOperationAuthenticationContext;
+}>): Promise<boolean> {
+    const resources = input.references.length > 0
+        ? await listSavedSecretResourcesForAccountInTx(tx, input.accountId, input.authentication) : [];
+    return validateSavedSecretResourceReferenceCapturesV1(resources, input);
+}
 
 /**
  * The archive state of a Saved Secret's Team-derived grant arms, as one filter
@@ -204,6 +274,8 @@ async function qualifiedSavedSecretTeamIdsInTx(
 ): Promise<ReadonlySet<string>> {
     const teamIds = [...new Set(input.teamIds)];
     if (teamIds.length === 0) return new Set();
+    const { isServerFeatureEnabledForHome } = await import("@/app/features/catalog/serverFeatureGate");
+    if (!await isServerFeatureEnabledForHome('teams', { tx })) return new Set();
     const contexts = await resolveTeamActorContextsInTx(tx, {
         teamIds,
         actorAccountId: input.actorAccountId,
@@ -576,11 +648,18 @@ export type SavedSecretResourceServiceError =
     | "invalid_cursor"
     | "recipient_mode_unsupported"
     | "settings_conflict"
-    | "settings_invalid";
+    | "settings_invalid"
+    | "references_conflict"
+    | "references_invalid"
+    | "resource_in_use";
 
 export type SavedSecretResourceServiceResult<T> =
     | Readonly<{ ok: true; value: T }>
     | Readonly<{ ok: false; error: SavedSecretResourceServiceError }>;
+
+export type SavedSecretResourceDeleteResult =
+    | SavedSecretResourceServiceResult<{ resourceId: string }>
+    | Readonly<{ ok: false; error: "managed_resources_review_required"; resources: readonly ManagedResourceDependencyV1[] }>;
 
 /**
  * A typed business rejection discovered after promotion has already written rows.
@@ -588,9 +667,9 @@ export type SavedSecretResourceServiceResult<T> =
  * back; the HTTP owner catches it only after `inTx` has completed that rollback.
  */
 export class SavedSecretResourceTransactionAbort extends Error {
-    readonly error: Extract<SavedSecretResourceServiceError, "settings_conflict" | "settings_invalid">;
+    readonly error: SavedSecretResourceServiceError;
 
-    constructor(error: Extract<SavedSecretResourceServiceError, "settings_conflict" | "settings_invalid">) {
+    constructor(error: SavedSecretResourceServiceError) {
         super(`Saved Secret resource transaction aborted: ${error}`);
         this.name = "SavedSecretResourceTransactionAbort";
         this.error = error;
@@ -1125,8 +1204,15 @@ export async function createSavedSecretResourceInTx(
 }
 
 export type PromoteSavedSecretResourceInput = CreateSavedSecretResourceInput & Readonly<{
-    expectedSettingsVersion: number;
+    expectedSettingsVersion?: number;
     nextSettings: AccountSettingsStoredContentEnvelope | null;
+    referenceCensus: SavedSecretPromoteReferenceCensusV1;
+    profileMutations: readonly ProfileRowMutationV1[];
+    catalogMutations?: SavedSecretCatalogMutationsV1;
+    additionalSavedSecretResources?: readonly Omit<CreateSavedSecretResourceInput, 'accountId' | 'authentication'>[];
+    personalSecretPromotions?: SavedSecretPersonalPromotionsV1;
+    remoteHostMutation?: RemoteHostCatalogRowMutationV1;
+    notificationChannelMutation?: NotificationChannelCatalogMutationV1;
 }>;
 
 export type SetSavedSecretResourceGrantsInput = Readonly<{
@@ -1418,10 +1504,273 @@ export async function updateSavedSecretResourceInTx(
     return { ok: true, value: { resourceId: input.resourceId, revision: input.expectedRevision + 1 } };
 }
 
+type SavedSecretCatalogReferenceFacets = Pick<SavedSecretReferenceCatalogsV1,
+    'mcp' | 'acp' | 'providerConnections' | 'connectedConfigurations' | 'connectedPurposes'>;
+type SavedSecretCatalogCapturedContents = Partial<Record<keyof SavedSecretCatalogRevisionsV1,
+    Readonly<{ revision: number | 'absent'; content: unknown | null }>>>;
+
+function savedSecretCatalogCaptureError(row: Readonly<{ status: string; revision?: number }>, capture: number | 'absent' | undefined) {
+    if (row.status !== 'present' && row.status !== 'absent' && row.status !== 'deleted') return 'references_invalid' as const;
+    const revision = row.status === 'absent' ? 'absent' : row.revision;
+    return revision === (capture ?? 'absent') ? null : 'references_conflict' as const;
+}
+
+/** Closed domain arms reuse their actual row readers and complete opened projections. */
+async function readSavedSecretCatalogCensusInTx(tx: Tx, input: Readonly<{
+    accountId: string; accountMode: 'plain' | 'e2ee'; captures?: Partial<SavedSecretCatalogRevisionsV1>; destinationOnly?: boolean;
+}>): Promise<SavedSecretResourceServiceResult<{
+    catalogs: SavedSecretCatalogReferenceFacets; contents: SavedSecretCatalogCapturedContents;
+}>> {
+    const catalogs: { -readonly [K in keyof SavedSecretCatalogReferenceFacets]: SavedSecretCatalogReferenceFacets[K] } = {};
+    const contents: SavedSecretCatalogCapturedContents = {};
+    if (!input.destinationOnly || input.captures?.mcp !== undefined) {
+        const { readMcpServerCatalogRowInTx } = await import('@/app/account/mcp/serverRows');
+        const row = await readMcpServerCatalogRowInTx(tx, input);
+        const error = savedSecretCatalogCaptureError(row, input.captures?.mcp);
+        if (error) return { ok: false, error };
+        if (row.status === 'present') {
+            contents.mcp = { revision: row.revision, content: row.content };
+            if (input.accountMode === 'plain') {
+                const opened = openMcpServerCatalogContentV1({ mode: 'plain', material: null, content: row.content });
+                if (opened.status !== 'opened') return { ok: false, error: 'references_invalid' };
+                catalogs.mcp = opened.catalog;
+            }
+        } else if (row.status === 'deleted') { catalogs.mcp = null; contents.mcp = { revision: row.revision, content: null }; }
+        else contents.mcp = { revision: 'absent', content: null };
+    }
+    if (!input.destinationOnly || input.captures?.acp !== undefined) {
+        const { readConfiguredAgentCatalogRowInTx } = await import('@/app/account/agents/configuredAgentRows');
+        const row = await readConfiguredAgentCatalogRowInTx(tx, input);
+        const error = savedSecretCatalogCaptureError(row, input.captures?.acp);
+        if (error) return { ok: false, error };
+        if (row.status === 'present') {
+            if (listAcpCatalogEnvelopeSavedSecretDiagnosticsV1(row.content).length > 0) return { ok: false, error: 'references_invalid' };
+            contents.acp = { revision: row.revision, content: row.content };
+            if (input.accountMode === 'plain') {
+                const opened = openAcpCatalogContentV1({ mode: 'plain', material: null, content: row.content });
+                if (opened.status !== 'opened') return { ok: false, error: 'references_invalid' };
+                catalogs.acp = opened.record;
+            }
+        } else if (row.status === 'deleted') { catalogs.acp = null; contents.acp = { revision: row.revision, content: null }; }
+        else contents.acp = { revision: 'absent', content: null };
+    }
+    if (!input.destinationOnly || input.captures?.providerConnections !== undefined) {
+        const { readProviderConnectionsRowInTx } = await import('@/app/account/providers/connectionRows');
+        const row = await readProviderConnectionsRowInTx(tx, input);
+        const error = savedSecretCatalogCaptureError(row, input.captures?.providerConnections);
+        if (error) return { ok: false, error };
+        if (row.status === 'present') {
+            contents.providerConnections = { revision: row.revision, content: row.content };
+            if (input.accountMode === 'plain') {
+                const opened = openProviderConnectionsContentV1({ mode: 'plain', material: null, content: row.content });
+                if (opened.status !== 'opened') return { ok: false, error: 'references_invalid' };
+                catalogs.providerConnections = opened.catalog;
+            }
+        } else if (row.status === 'deleted') { catalogs.providerConnections = null; contents.providerConnections = { revision: row.revision, content: null }; }
+        else contents.providerConnections = { revision: 'absent', content: null };
+    }
+    if (!input.destinationOnly || input.captures?.connectedConfigurations !== undefined) {
+        const { readConnectedAccountCatalogRowInTx } = await import('@/app/account/connectedAccounts/configurationRows');
+        const row = await readConnectedAccountCatalogRowInTx(tx, { accountId: input.accountId, key: 'configurations' });
+        const error = savedSecretCatalogCaptureError(row, input.captures?.connectedConfigurations);
+        if (error) return { ok: false, error };
+        if (row.status === 'present') {
+            contents.connectedConfigurations = { revision: row.revision, content: row.content };
+            if (input.accountMode === 'plain') {
+                const opened = openConnectedAccountCatalogContentV1({ key: 'configurations', mode: 'plain', material: null, content: row.content });
+                if (opened.status !== 'opened' || opened.record.key !== 'configurations') return { ok: false, error: 'references_invalid' };
+                catalogs.connectedConfigurations = opened.record.value;
+            }
+        } else if (row.status === 'deleted') { catalogs.connectedConfigurations = null; contents.connectedConfigurations = { revision: row.revision, content: null }; }
+        else contents.connectedConfigurations = { revision: 'absent', content: null };
+    }
+    if (!input.destinationOnly || input.captures?.connectedPurposes !== undefined) {
+        const { readConnectedAccountCatalogRowInTx } = await import('@/app/account/connectedAccounts/configurationRows');
+        const row = await readConnectedAccountCatalogRowInTx(tx, { accountId: input.accountId, key: 'purposes' });
+        const error = savedSecretCatalogCaptureError(row, input.captures?.connectedPurposes);
+        if (error) return { ok: false, error };
+        if (row.status === 'present') {
+            contents.connectedPurposes = { revision: row.revision, content: row.content };
+            if (input.accountMode === 'plain') {
+                const opened = openConnectedAccountCatalogContentV1({ key: 'purposes', mode: 'plain', material: null, content: row.content });
+                if (opened.status !== 'opened' || opened.record.key !== 'purposes') return { ok: false, error: 'references_invalid' };
+                catalogs.connectedPurposes = opened.record.value;
+            }
+        } else if (row.status === 'deleted') { catalogs.connectedPurposes = null; contents.connectedPurposes = { revision: row.revision, content: null }; }
+        else contents.connectedPurposes = { revision: 'absent', content: null };
+    }
+    return { ok: true, value: { catalogs, contents } };
+}
+
+/** The Account fence serializes Settings, Profile CRUD and this resource write. */
+export async function readSavedSecretReferenceCensusInTx(tx: Tx, input: Readonly<{
+    accountId: string; expectedSettingsVersion: number; referenceCensus: SavedSecretReferenceCensusV1;
+}>): Promise<SavedSecretResourceServiceResult<{
+    rows: readonly ProfileRowV1[]; settingsContent: AccountSettingsStoredContentEnvelope | null;
+    profileControl: ProfileTransferControlV1 | null;
+    artifactsById: ReadonlyMap<string, ArtifactSharingResourceV1>;
+    catalogs: SavedSecretCatalogReferenceFacets;
+    catalogContents: SavedSecretCatalogCapturedContents;
+    remoteHostRecords?: SavedSecretReferenceCatalogsV1['remoteHostRecords'];
+    remoteHostResourceRefs: readonly string[];
+    notificationChannelResourceRefs: readonly string[];
+}>> {
+    const parsed = SavedSecretReferenceCensusV1Schema.safeParse(input.referenceCensus);
+    if (!parsed.success) return { ok: false, error: 'references_invalid' };
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
+    if (fence.status !== 'ready') return { ok: false, error: 'settings_invalid' };
+    if (fence.account.currentness.encryptionMode !== parsed.data.accountMode) return { ok: false, error: 'references_conflict' };
+    if (fence.account.settingsVersion !== input.expectedSettingsVersion) return { ok: false, error: 'settings_conflict' };
+    const catalogs = await readSavedSecretCatalogCensusInTx(tx, { accountId: input.accountId,
+        accountMode: parsed.data.accountMode, captures: parsed.data.catalogs });
+    if (!catalogs.ok) return catalogs;
+    const remoteHosts = await validateRemoteHostReferenceCensusInTx(tx, { accountId: input.accountId, capture: parsed.data.remoteHosts });
+    if (remoteHosts.status !== 'ready') return { ok: false, error: remoteHosts.status === 'references-conflict' ? 'references_conflict' : 'references_invalid' };
+    const notificationChannels = await validateNotificationChannelReferenceCensusInTx(tx, { accountId: input.accountId, capture: parsed.data.notificationChannels });
+    if (notificationChannels.status !== 'ready') return { ok: false, error: notificationChannels.status === 'references-conflict' ? 'references_conflict' : 'references_invalid' };
+    const control = await readProfileTransferControlInTx(tx, { accountId: input.accountId });
+    if (control.status !== 'present' && control.status !== 'deleted' && control.status !== 'absent') {
+        return { ok: false, error: 'references_invalid' };
+    }
+    if ((control.status === 'absent' ? 'absent' : control.revision) !== (parsed.data.profileTransferRevision ?? 'absent')) {
+        return { ok: false, error: 'references_conflict' };
+    }
+    const profiles = await validateProfileReferenceCensusInTx(tx, { accountId: input.accountId,
+        referenceGuardRevision: parsed.data.profiles.referenceGuardRevision, rows: parsed.data.profiles.rows,
+        expectedAccountMode: parsed.data.accountMode });
+    if (profiles.status !== 'ready') return { ok: false,
+        error: profiles.status === 'reference-conflict' ? 'references_conflict' : 'references_invalid' };
+    try {
+        const settingsContent = parsed.data.accountMode === 'plain'
+            ? openPlainAccountSettingsDbValue({ accountId: input.accountId, dbValue: fence.account.settings })
+            : fence.account.settings ? { t: 'encrypted' as const, c: fence.account.settings } : null;
+        const profileControl = control.status === 'present' && control.envelope.t === 'plain' ? control.envelope.v : null;
+        const capturedArtifacts = new Map((parsed.data.artifacts ?? []).map(artifact => [artifact.artifactId, artifact]));
+        const reachedArtifacts = new Set<string>();
+        let artifactFailure: 'references_conflict' | 'references_invalid' | null = null;
+        const readCapturedArtifact = async (artifactId: string): Promise<ArtifactSharingResourceV1 | null> => {
+            reachedArtifacts.add(artifactId);
+            const captured = capturedArtifacts.get(artifactId);
+            if (!captured) { artifactFailure = 'references_conflict'; return null; }
+            const current = await readArtifactForCallerInTx(tx, { actorAccountId: input.accountId, artifactId });
+            if (!current.ok || current.artifact.headerVersion !== captured.headerVersion
+                || current.artifact.bodyVersion !== captured.bodyVersion) {
+                artifactFailure = 'references_conflict'; return null;
+            }
+            if (current.artifact.encryptionMode !== 'plain') {
+                // The admitted E2EE client opens its captured Artifact. The
+                // server checks only its real access and exact revisions.
+                if (parsed.data.accountMode === 'plain') artifactFailure = 'references_invalid';
+                return null;
+            }
+            const resource = projectPlainArtifactSharingResourceV1(current.artifact);
+            if (!resource || !readLaunchProfileArtifactForReferenceCensusV1(resource)) { artifactFailure = 'references_invalid'; return null; }
+            return resource;
+        };
+        let artifactsById: ReadonlyMap<string, ArtifactSharingResourceV1>;
+        if (parsed.data.accountMode === 'plain') {
+            const raw = settingsContent?.t === 'plain' ? settingsContent.v : {};
+            const source = profileControl && resolveProfileCatalogAuthorityV1({ rawSettings: raw, control: profileControl }) === 'destination'
+                ? removeTransferredProfileSourcesV1(raw, listTransferredProfileIdsV1(profileControl)) : raw;
+            artifactsById = await loadAiLaunchProfileArtifacts([
+                ...profiles.rows.flatMap(row => row.content?.t === 'plain' ? [row.content.v] : []),
+                ...(Array.isArray(source.profiles) ? source.profiles : []),
+            ], { read: readCapturedArtifact });
+            if (reachedArtifacts.size !== capturedArtifacts.size) return { ok: false, error: 'references_conflict' };
+        } else {
+            const opened = new Map<string, ArtifactSharingResourceV1>();
+            for (const artifactId of capturedArtifacts.keys()) {
+                const resource = await readCapturedArtifact(artifactId);
+                if (resource) opened.set(artifactId, resource);
+            }
+            artifactsById = opened;
+        }
+        if (artifactFailure) return { ok: false, error: artifactFailure };
+        return { ok: true, value: { rows: profiles.rows, settingsContent, profileControl, artifactsById,
+            catalogs: catalogs.value.catalogs, catalogContents: catalogs.value.contents,
+            remoteHostRecords: remoteHosts.remoteHostRecords, remoteHostResourceRefs: remoteHosts.resourceRefs,
+            notificationChannelResourceRefs: notificationChannels.resourceRefs } };
+    } catch {
+        return { ok: false, error: 'settings_invalid' };
+    }
+}
+
+/**
+ * History's caller holds its current Account/Settings/control fences. This
+ * read-only proof admits only a characterized source identity's real, usable,
+ * owner-controlled destination at the captured revision; it never opens E2EE.
+ */
+async function readSavedSecretHistoryResourceValueInTx(tx: Tx, input: Readonly<{
+    resourceId: string; expectedRevision: number;
+}>): Promise<string | null> {
+    const row = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId },
+        select: { revision: true, encryptionMode: true, storedContent: true } });
+    if (!row || row.revision !== input.expectedRevision || row.encryptionMode !== 'plain') return null;
+    const content = readStoredContent(input.resourceId, row.storedContent);
+    return content?.t === 'plain' ? content.v.value : null;
+}
+
+export async function validateSavedSecretHistoryTransferProofsInTx(tx: Tx, input: Readonly<{
+    accountId: string; transfers: readonly AccountSettingsHistorySavedSecretTransferV1[];
+    recordedContent?: AccountSettingsStoredContentEnvelope | null;
+}>): Promise<Readonly<{ status: 'ready' | 'conflict' | 'invalid' }>> {
+    const sourceIds = new Set<string>();
+    for (const transfer of input.transfers) {
+        const parsed = AccountSettingsHistorySavedSecretTransferV1Schema.safeParse(transfer);
+        if (!parsed.success) return { status: 'invalid' };
+        try {
+            const source = 'savedSecretId' in parsed.data
+                ? { kind: 'personal-saved-secret' as const, secretId: parsed.data.savedSecretId } : parsed.data.source;
+            const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: input.accountId, source });
+            if (sourceIds.has(resourceId) || resourceId !== transfer.resourceId) return { status: 'invalid' };
+            sourceIds.add(resourceId);
+        } catch {
+            return { status: 'invalid' };
+        }
+    }
+    if (input.transfers.length === 0) return { status: 'ready' };
+    const resources = await listSavedSecretResourcesForAccountInTx(tx, input.accountId);
+    for (const transfer of input.transfers) {
+        const ref = formatSharedSavedSecretRefV1(transfer.resourceId);
+        const resource = resources.find(candidate => 'ref' in candidate && candidate.ref === ref);
+        if (!resource || !('ref' in resource)) return { status: 'conflict' };
+        if (resource.relationship !== 'owner' || !resource.capabilities.use) return { status: 'invalid' };
+        if (resource.revision !== transfer.expectedRevision) return { status: 'conflict' };
+        if ('source' in transfer && transfer.source.kind === 'remote-host-ssh-credential' && input.recordedContent == null)
+            return { status: 'invalid' };
+        if ('source' in transfer && transfer.source.kind === 'remote-host-ssh-credential' && input.recordedContent?.t === 'plain') {
+            const raw = input.recordedContent.v.remoteHostsV1;
+            if (!isCompleteRetainedRemoteHostCatalogV1(raw)) return { status: 'invalid' };
+            const inventory = readRetainedRemoteHostCatalogV1(raw);
+            const source = transfer.source;
+            const host = inventory.status === 'ready' ? inventory.hosts.find(host => host.id === source.hostId) : null;
+            const secret = host?.ssh[source.slot === 'password' ? 'passwordEnc' : 'identityPrivateKeyEnc'];
+            if (secret == null) return { status: 'invalid' };
+            // Opaque nested E2EE material retains the existing exact client proof boundary.
+            const value = decryptSecretValueWithKeysV1(secret, []);
+            if (value !== null && resource.encryptionMode === 'plain'
+                && await readSavedSecretHistoryResourceValueInTx(tx, transfer) !== value) return { status: 'invalid' };
+        }
+        if ('source' in transfer && transfer.source.kind === 'notification-channel-signing-secret' && input.recordedContent?.t === 'plain') {
+            if (!isCompleteLegacyNotificationChannelSourceV1(input.recordedContent.v)) return { status: 'invalid' };
+            const inventory = readLegacyNotificationChannelInventoryV1(input.recordedContent.v);
+            const source = transfer.source;
+            const channel = inventory.status === 'ready' ? inventory.channels.find(channel => channel.id === source.channelId) : null;
+            if (channel?.kind !== 'webhook' || channel.signingSecret == null) return { status: 'invalid' };
+            const value = decryptSecretValueWithKeysV1(channel.signingSecret, []);
+            if (value !== null && resource.encryptionMode === 'plain'
+                && await readSavedSecretHistoryResourceValueInTx(tx, transfer) !== value) return { status: 'invalid' };
+        }
+    }
+    return { status: 'ready' };
+}
+
 export async function deleteSavedSecretResourceInTx(
     tx: Tx,
-    input: Readonly<{ accountId: string; resourceId: string; expectedRevision: number }>,
-): Promise<SavedSecretResourceServiceResult<{ resourceId: string }>> {
+    input: Readonly<{ accountId: string; resourceId: string; expectedRevision: number;
+        expectedSettingsVersion: number; referenceCensus: SavedSecretReferenceCensusV1;
+        managedResourceDispositions?: readonly ManagedResourceDispositionV1[] }>,
+): Promise<SavedSecretResourceDeleteResult> {
     const existing = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
         select: { ownerAccountId: true, revision: true },
@@ -1429,47 +1778,505 @@ export async function deleteSavedSecretResourceInTx(
     if (!existing) return { ok: false, error: "resource_not_found" };
     if (existing.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
     if (existing.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
+    const resources = await readManagedResourceDependenciesInTx(tx, { kind: "saved-secret", resourceId: input.resourceId });
+    if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
+        return { ok: false, error: "managed_resources_review_required", resources };
+    }
+    const census = await readSavedSecretReferenceCensusInTx(tx, input);
+    if (!census.ok) return census;
+    const referenceCandidate = `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${input.resourceId}`;
+    if (census.value.notificationChannelResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
+    const presets = await tx.managedMachinePreset.findMany({ select: { environment: true } });
+    if (presets.some(preset => listSavedSecretReferenceCarrierPathsV1(preset.environment, { secretId: referenceCandidate }).length > 0)
+        || census.value.remoteHostResourceRefs.includes(referenceCandidate)) return { ok: false, error: 'resource_in_use' };
+    // Plain references are derived from the real stored payload, never the
+    // caller's projection. E2EE is opened and classified by the captured client.
+    if (input.referenceCensus.accountMode === 'plain') {
+        try {
+            const settings = census.value.settingsContent?.t === 'plain' ? census.value.settingsContent.v : {};
+            const profileRecords = census.value.rows.flatMap(row => row.content?.t === 'plain' ? [row.content.v] : []);
+            // Recovery can target a retained invalid opaque identity. This is
+            // a conservative reference search, not a producer of valid refs.
+            if (listAccountSettingsSavedSecretReferences(settings, referenceCandidate, { ...census.value.catalogs, profileRecords,
+                profileControl: census.value.profileControl, artifactsById: census.value.artifactsById,
+                remoteHostRecords: census.value.remoteHostRecords }).length > 0) {
+                return { ok: false, error: 'resource_in_use' };
+            }
+        } catch {
+            return { ok: false, error: 'references_invalid' };
+        }
+    }
+    const guard = await advanceProfileReferenceGuardInTx(tx, { accountId: input.accountId,
+        expectedRevision: input.referenceCensus.profiles.referenceGuardRevision });
+    if (guard.status !== 'updated') return { ok: false, error: guard.status === 'conflict' ? 'references_conflict' : 'references_invalid' };
     const authorizedAccountIds = await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId);
     const deleted = await tx.savedSecretResource.deleteMany({
         where: { id: input.resourceId, ownerAccountId: input.accountId, revision: input.expectedRevision },
     });
-    if (deleted.count !== 1) return { ok: false, error: "resource_changed" };
+    if (deleted.count !== 1) throw new SavedSecretResourceTransactionAbort('resource_changed');
     await markResourceChangedForAccounts(tx, input.resourceId, input.expectedRevision + 1, authorizedAccountIds);
     return { ok: true, value: { resourceId: input.resourceId } };
 }
 
-/** Couples resource creation with the canonical Account Settings CAS writer. */
+const savedSecretCatalogMutationKeys = ['mcp', 'acp', 'providerConnections', 'connectedConfigurations', 'connectedPurposes'] as const;
+
+function rejectSavedSecretCatalogMutation(result: Readonly<{ status: string }>): void {
+    if (result.status !== 'updated') throw new SavedSecretResourceTransactionAbort(result.status === 'conflict'
+        ? 'references_conflict' : result.status === 'settings-conflict' ? 'settings_conflict' : 'references_invalid');
+}
+
+/** The domain transaction remains the only catalog writer and resource-reference classifier. */
+async function mutateSavedSecretCatalogsInTx(tx: Tx, input: Readonly<{
+    accountId: string; authentication?: TeamOperationAuthenticationContext; mutations: SavedSecretCatalogMutationsV1;
+    savedSecretRefs?: ReadonlyMap<string, string>;
+}>): Promise<void> {
+    const actor = { accountId: input.accountId, authentication: input.authentication };
+    if (input.mutations.mcp) {
+        const { mutateMcpServerCatalogRowInTx } = await import('@/app/account/mcp/serverRows');
+        rejectSavedSecretCatalogMutation(await mutateMcpServerCatalogRowInTx(tx, { ...actor, ...input.mutations.mcp }));
+    }
+    if (input.mutations.acp) {
+        const { mutateConfiguredAgentCatalogRowInTx, transferConfiguredAgentCatalogSourceInTx } = await import('@/app/account/agents/configuredAgentRows');
+        const mutation = input.mutations.acp;
+        if (mutation.expectedRevision === 'absent' && mutation.source && mutation.sourceSettingsVersion !== undefined) {
+            rejectSavedSecretCatalogMutation(await transferConfiguredAgentCatalogSourceInTx(tx, { ...actor,
+                mutation: { ...mutation, expectedRevision: 'absent', source: mutation.source, sourceSettingsVersion: mutation.sourceSettingsVersion },
+                savedSecretRefs: input.savedSecretRefs }));
+        } else rejectSavedSecretCatalogMutation(await mutateConfiguredAgentCatalogRowInTx(tx, { ...actor, ...mutation }));
+    }
+    if (input.mutations.providerConnections) {
+        const { mutateProviderConnectionsRowInTx } = await import('@/app/account/providers/connectionRows');
+        rejectSavedSecretCatalogMutation(await mutateProviderConnectionsRowInTx(tx, { ...actor, ...input.mutations.providerConnections }));
+    }
+    if (input.mutations.connectedConfigurations) {
+        const { mutateConnectedAccountCatalogRowInTx } = await import('@/app/account/connectedAccounts/configurationRows');
+        rejectSavedSecretCatalogMutation(await mutateConnectedAccountCatalogRowInTx(tx,
+            { ...actor, key: 'configurations', ...input.mutations.connectedConfigurations }));
+    }
+    if (input.mutations.connectedPurposes) {
+        const { mutateConnectedAccountCatalogRowInTx } = await import('@/app/account/connectedAccounts/configurationRows');
+        rejectSavedSecretCatalogMutation(await mutateConnectedAccountCatalogRowInTx(tx,
+            { ...actor, key: 'purposes', ...input.mutations.connectedPurposes }));
+    }
+}
+
+function savedSecretPromotionResources(input: PromoteSavedSecretResourceInput): readonly CreateSavedSecretResourceInput[] {
+    return [input, ...(input.additionalSavedSecretResources ?? []).map(resource => ({ ...resource,
+        accountId: input.accountId, authentication: input.authentication }))];
+}
+
+async function validateNotificationPromotionReferencesInTx(tx: Tx, input: PromoteSavedSecretResourceInput,
+    mutation: NotificationChannelCatalogMutationV1): Promise<boolean> {
+    return validateSavedSecretResourceReferencesInTx(tx, { accountId: input.accountId, authentication: input.authentication,
+        references: mutation.savedSecretRevisions.map(capture => capture.resourceRef),
+        savedSecretRevisions: mutation.savedSecretRevisions.map(capture => {
+            const parsed = parseSavedSecretRefV1(capture.resourceRef);
+            if (parsed.kind !== 'shared_resource') throw new Error('Non-resource notification reference');
+            return { resourceId: parsed.resourceId, expectedRevision: capture.revision };
+        }) });
+}
+
+async function validatePersonalPromotionSourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput, removesSettingsSources = false): Promise<boolean> {
+    if (!input.personalSecretPromotions?.length && !removesSettingsSources) return true;
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
+    if (fence.status !== 'ready') return false;
+    // Encrypted Settings remain the admitted client's captured source declaration.
+    const settings = fence.account.currentness.encryptionMode === 'plain'
+        ? openPlainAccountSettingsDbValue({ accountId: input.accountId, dbValue: fence.account.settings }) : null;
+    const secrets = settings?.t === 'plain' && Array.isArray(settings.v.secrets) ? settings.v.secrets : [];
+    const mapped = new Set(input.personalSecretPromotions?.map(promotion => promotion.personalSecretId) ?? []);
+    if (settings?.t === 'plain' && [...mapped].some(id => !secrets.some(secret => secret !== null && typeof secret === 'object'
+        && !Array.isArray(secret) && 'id' in secret && secret.id === id))) return false;
+    const nextSecrets = input.nextSettings?.t === 'plain' && Array.isArray(input.nextSettings.v.secrets) ? input.nextSettings.v.secrets : [];
+    const removed = removesSettingsSources ? secrets.flatMap(secret => secret !== null && typeof secret === 'object' && !Array.isArray(secret)
+        && 'id' in secret && typeof secret.id === 'string' && !mapped.has(secret.id)
+        && !nextSecrets.some(next => next !== null && typeof next === 'object' && !Array.isArray(next) && 'id' in next && next.id === secret.id)
+        ? [secret.id] : []) : [];
+    if (mapped.size === 0 && removed.length === 0) return true;
+    const controllers = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
+    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } }, select: { environment: true } });
+    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: input.accountId }, select: { environmentSetup: true } });
+    const snapshots = machines.map(machine => machine.environmentSetup);
+    const carriers = [...presets.map(preset => preset.environment), ...snapshots];
+    if (removed.some(secretId => carriers.some(value => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0))) return false;
+    const snapshotEnvironments = snapshots.map(setup => setup !== null && typeof setup === 'object' && !Array.isArray(setup) ? setup.environment ?? null : null);
+    if (snapshots.some((setup, index) => [...mapped].some(secretId =>
+        listSavedSecretReferenceCarrierPathsV1(setup, { secretId }).length !== listSavedSecretReferenceCarrierPathsV1(snapshotEnvironments[index], { secretId }).length))) return false;
+    const environments = [...presets.map(preset => preset.environment), ...snapshotEnvironments];
+    return environments.every(value => isPromotedMachineEnvironmentRewritable(value, [...mapped]));
+}
+
+async function createSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<void> {
+    const promoted = new Map<string, Readonly<{ ref: string; revision: number }>>();
+    for (const resource of savedSecretPromotionResources(input)) {
+        const result = await createSavedSecretResourceInTx(tx, resource);
+        if (!result.ok) throw new SavedSecretResourceTransactionAbort(result.error);
+        if (result.value.revision !== 1) throw new SavedSecretResourceTransactionAbort('resource_changed');
+        const source = input.personalSecretPromotions?.find(promotion => promotion.resourceId === result.value.resourceId);
+        if (source) promoted.set(source.personalSecretId, { ref: formatSharedSavedSecretRefV1(result.value.resourceId), revision: result.value.revision });
+    }
+    await rewritePromotedMachineReferencesInTx(tx, input.accountId, promoted);
+}
+
+/** A lost-response receipt can inspect existing resources, never create while proving a prior commit. */
+async function proveSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<SavedSecretResourceServiceResult<null>> {
+    const resources = savedSecretPromotionResources(input);
+    const existing = await tx.savedSecretResource.count({ where: { id: { in: resources.map(resource => resource.resourceId) } } });
+    if (existing !== resources.length) return { ok: false, error: 'references_conflict' };
+    for (const resource of resources) {
+        // All identities already exist: this canonical exact-retry branch is
+        // read-only, so a refusal can safely return without rolling back writes.
+        const result = await createSavedSecretResourceInTx(tx, resource);
+        if (!result.ok) return result;
+        if (result.value.revision !== 1) return { ok: false, error: 'resource_changed' };
+    }
+    return { ok: true, value: null };
+}
+
+async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput,
+    census: Extract<SavedSecretPromoteReferenceCensusV1, { scope: 'catalogs' }>, mutations: SavedSecretCatalogMutationsV1,
+): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1> }>> {
+    if (input.nextSettings !== null || input.profileMutations.length !== 0) return { ok: false, error: 'references_invalid' };
+    let count = 0;
+    const postCaptures: Partial<SavedSecretCatalogRevisionsV1> = {};
+    const declaredReferences = new Set<string>();
+    for (const key of savedSecretCatalogMutationKeys) {
+        const mutation = mutations[key];
+        const capture = census.catalogs[key];
+        if (!mutation) {
+            if (capture !== undefined) return { ok: false, error: 'references_invalid' };
+            continue;
+        }
+        count += 1;
+        if (typeof capture !== 'number' || mutation.expectedRevision !== capture || mutation.sourceSettingsVersion !== undefined
+            || 'source' in mutation && mutation.source !== undefined) return { ok: false, error: 'references_invalid' };
+        postCaptures[key] = capture + 1;
+        mutation.referencedSavedSecretIds.forEach(reference => declaredReferences.add(reference));
+    }
+    const remote = input.remoteHostMutation;
+    if (remote) {
+        if (census.remoteHosts?.revision !== remote.expectedRevision) return { ok: false, error: 'references_invalid' };
+        count += 1;
+        remote.referencedSavedSecretRevisions.forEach(capture => declaredReferences.add(formatSharedSavedSecretRefV1(capture.resourceId)));
+    } else if (census.remoteHosts !== undefined) return { ok: false, error: 'references_invalid' };
+    const notification = input.notificationChannelMutation;
+    if (notification) {
+        if (typeof notification.expectedRevision !== 'number' || notification.sourceSettingsVersion !== undefined
+            || notification.settingsMutation !== undefined || census.notificationChannels?.revision !== notification.expectedRevision)
+            return { ok: false, error: 'references_invalid' };
+        count += 1;
+        notification.savedSecretRevisions.forEach(capture => declaredReferences.add(capture.resourceRef));
+    } else if (census.notificationChannels !== undefined) return { ok: false, error: 'references_invalid' };
+    if (count === 0) return { ok: false, error: 'references_invalid' };
+    const receiptValue = (settingsVersion: number) => ({ resourceId: input.resourceId, settingsVersion,
+        ...(Object.keys(postCaptures).length ? { catalogRevisions: postCaptures } : {}),
+        ...(remote ? { remoteHostRevision: typeof remote.expectedRevision === 'number' ? remote.expectedRevision + 1 : 0 } : {}),
+        ...(notification ? { notificationChannelRevision: typeof notification.expectedRevision === 'number' ? notification.expectedRevision + 1 : 0 } : {}) });
+    const resources = savedSecretPromotionResources(input);
+    if (new Set(resources.map(resource => resource.resourceId)).size !== resources.length) return { ok: false, error: 'references_invalid' };
+    let resourcesBound: boolean;
+    try { resourcesBound = resources.every(resource => declaredReferences.has(formatSharedSavedSecretRefV1(resource.resourceId))); }
+    catch { return { ok: false, error: 'invalid_resource' }; }
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
+    if (fence.status !== 'ready') return { ok: false, error: 'settings_invalid' };
+    if (fence.account.currentness.encryptionMode !== census.accountMode) return { ok: false, error: 'references_conflict' };
+    let current = await readSavedSecretCatalogCensusInTx(tx, { accountId: input.accountId, accountMode: census.accountMode,
+        captures: census.catalogs, destinationOnly: true });
+    if (remote) {
+        const hostCensus = await validateRemoteHostReferenceCensusInTx(tx, { accountId: input.accountId, capture: census.remoteHosts });
+        if (hostCensus.status !== 'ready') current = { ok: false, error: hostCensus.status === 'references-conflict' ? 'references_conflict' : 'references_invalid' };
+    }
+    if (notification) {
+        const channelCensus = await validateNotificationChannelReferenceCensusInTx(tx, { accountId: input.accountId, capture: census.notificationChannels });
+        if (channelCensus.status !== 'ready') current = { ok: false, error: channelCensus.status === 'references-conflict' ? 'references_conflict' : 'references_invalid' };
+    }
+    if (!current.ok) {
+        if (current.error !== 'references_conflict') return current;
+        const receipt = await readSavedSecretCatalogCensusInTx(tx, { accountId: input.accountId, accountMode: census.accountMode,
+            captures: postCaptures, destinationOnly: true });
+        if (!resourcesBound || !receipt.ok || savedSecretCatalogMutationKeys.some(key => mutations[key]
+            && !isDeepStrictEqual(receipt.value.contents[key]?.content, mutations[key]!.content))) return current;
+        if (remote) {
+            const row = await readRemoteHostCatalogRowInTx(tx, { accountId: input.accountId });
+            if (row.status !== 'present' || row.revision !== receiptValue(fence.account.settingsVersion).remoteHostRevision
+                || !isDeepStrictEqual(row.content, remote.content)) return current;
+        }
+        if (notification) {
+            const row = await readNotificationChannelCatalogInTx(tx, { accountId: input.accountId });
+            if (row.status !== 'present' || row.revision !== receiptValue(fence.account.settingsVersion).notificationChannelRevision
+                || !isDeepStrictEqual(row.content, notification.content)) return current;
+        }
+        const resourcesReceipt = await proveSavedSecretPromotionResourcesInTx(tx, input);
+        if (!resourcesReceipt.ok) return resourcesReceipt;
+        if (remote && !await validateSavedSecretResourceReferencesInTx(tx, { accountId: input.accountId, authentication: input.authentication,
+            references: remote.referencedSavedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)),
+            savedSecretRevisions: remote.referencedSavedSecretRevisions.map(capture => ({ resourceId: capture.resourceId, expectedRevision: capture.revision })) })) return { ok: false, error: 'references_invalid' };
+        if (notification && !await validateNotificationPromotionReferencesInTx(tx, input, notification)) return { ok: false, error: 'references_invalid' };
+        for (const key of savedSecretCatalogMutationKeys) {
+            const mutation = mutations[key];
+            if (mutation && !await validateSavedSecretResourceReferencesInTx(tx, { accountId: input.accountId,
+                authentication: input.authentication, references: mutation.referencedSavedSecretIds,
+                savedSecretRevisions: mutation.savedSecretRevisions ?? [] })) return { ok: false, error: 'references_invalid' };
+        }
+        return { ok: true, value: receiptValue(fence.account.settingsVersion) };
+    }
+    if (!resourcesBound) return { ok: false, error: 'references_invalid' };
+    if (!await validatePersonalPromotionSourcesInTx(tx, input)) return { ok: false, error: 'references_invalid' };
+    await createSavedSecretPromotionResourcesInTx(tx, input);
+    await mutateSavedSecretCatalogsInTx(tx, { accountId: input.accountId, authentication: input.authentication, mutations });
+    if (remote) rejectSavedSecretCatalogMutation(await mutateRemoteHostCatalogRowInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...remote }));
+    if (notification) rejectSavedSecretCatalogMutation(await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...notification }));
+    return { ok: true, value: receiptValue(fence.account.settingsVersion) };
+}
+
+function isPromotedMachineEnvironmentRewritable(value: Prisma.JsonValue, sourceIds: readonly string[]): boolean {
+    const reached = sourceIds.filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
+    if (reached.length === 0) return true;
+    const parsed = MachineEnvironmentV1ReadSchema.safeParse(value);
+    return parsed.success && parsed.data.secretRefs !== undefined && reached.every(secretId =>
+        listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length === listSavedSecretReferenceCarrierPathsV1(parsed.data, { secretId }).length);
+}
+
+function rewritePromotedMachineEnvironment(value: Prisma.JsonValue, promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Prisma.InputJsonObject | null {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+    const reached = [...promotions.keys()].filter(secretId => listSavedSecretReferenceCarrierPathsV1(value, { secretId }).length > 0);
+    if (reached.length === 0) return null;
+    const parsed = MachineEnvironmentV1ReadSchema.safeParse(value);
+    if (!parsed.success || !parsed.data.secretRefs || !isPromotedMachineEnvironmentRewritable(value, reached)) {
+        throw new SavedSecretResourceTransactionAbort('references_invalid');
+    }
+    const bindings = Object.fromEntries(Object.entries(parsed.data.secretRefs.bindings).map(([key, binding]) => {
+        const promoted = promotions.get(binding.ref);
+        return [key, promoted ? { ref: promoted.ref, revision: promoted.revision } : binding];
+    }));
+    return { ...value, secretRefs: { ...parsed.data.secretRefs, bindings } };
+}
+
+/** Personal ids are scoped to the controller/custodian Account, including Team-owned presets. */
+async function rewritePromotedMachineReferencesInTx(tx: Tx, accountId: string,
+    promotions: ReadonlyMap<string, Readonly<{ ref: string; revision: number }>>): Promise<void> {
+    if (promotions.size === 0) return;
+    const controllers = await tx.machine.findMany({ where: { accountId }, select: { id: true } });
+    const presets = await tx.managedMachinePreset.findMany({ where: { controllerMachineId: { in: controllers.map(machine => machine.id) } } });
+    for (const preset of presets) {
+        const environment = rewritePromotedMachineEnvironment(preset.environment, promotions);
+        if (!environment) continue;
+        const changed = await tx.managedMachinePreset.updateMany({ where: { id: preset.id, revision: preset.revision },
+            data: { environment, revision: { increment: 1 } } });
+        if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
+        await invalidatePresetInTx(tx, await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } }));
+    }
+    const machines = await tx.managedMachine.findMany({ where: { custodianAccountId: accountId } });
+    for (const machine of machines) {
+        const setup = machine.environmentSetup;
+        if (setup === null || typeof setup !== 'object' || Array.isArray(setup) || setup.environment === undefined) continue;
+        const environment = rewritePromotedMachineEnvironment(setup.environment, promotions);
+        if (!environment) continue;
+        const changed = await tx.managedMachine.updateMany({ where: { id: machine.id, environmentSetup: { equals: setup } },
+            data: { environmentSetup: { ...setup, environment } } });
+        if (changed.count !== 1) throw new SavedSecretResourceTransactionAbort('references_conflict');
+        await invalidateManagedMachineInTx(tx, await tx.managedMachine.findUniqueOrThrow({ where: { id: machine.id } }));
+    }
+}
+
+/** Couples creation, private references and Settings in one rollback boundary. */
 export async function promoteSavedSecretResourceInTx(
     tx: Tx,
-    input: PromoteSavedSecretResourceInput,
-): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number }>> {
-    const created = await createSavedSecretResourceInTx(tx, input);
-    if (!created.ok) return created;
+    candidate: PromoteSavedSecretResourceInput,
+): Promise<SavedSecretResourceServiceResult<{ resourceId: string; settingsVersion: number; remoteHostRevision?: number; notificationChannelRevision?: number; catalogRevisions?: Partial<SavedSecretCatalogRevisionsV1> }>> {
+    const parsedPromotionCensus = SavedSecretPromoteReferenceCensusV1Schema.safeParse(candidate.referenceCensus);
+    const parsedCatalogMutations = SavedSecretCatalogMutationsV1Schema.safeParse(candidate.catalogMutations ?? {});
+    const parsedSources = SavedSecretPersonalPromotionsV1Schema.safeParse(candidate.personalSecretPromotions ?? []);
+    const destinationIds = new Set(savedSecretPromotionResources(candidate).map(resource => resource.resourceId));
+    if (!parsedSources.success || parsedSources.data.some(source => !destinationIds.has(source.resourceId))) return { ok: false, error: 'references_invalid' };
+    const parsedRemote = candidate.remoteHostMutation ? RemoteHostCatalogRowMutationV1Schema.safeParse(candidate.remoteHostMutation) : null;
+    if (parsedRemote && !parsedRemote.success) return { ok: false, error: 'references_invalid' };
+    const parsedNotification = candidate.notificationChannelMutation ? NotificationChannelCatalogMutationV1Schema.safeParse(candidate.notificationChannelMutation) : null;
+    if (parsedNotification && (!parsedNotification.success || parsedNotification.data.settingsMutation !== undefined)) return { ok: false, error: 'references_invalid' };
+    if (!parsedPromotionCensus.success || !parsedCatalogMutations.success) return { ok: false, error: 'references_invalid' };
+    if (!Array.isArray(candidate.profileMutations)) return { ok: false, error: 'references_invalid' };
+    if ('scope' in parsedPromotionCensus.data) {
+        return promoteCatalogOnlySavedSecretResourcesInTx(tx, { ...candidate,
+            ...(parsedRemote?.success ? { remoteHostMutation: parsedRemote.data } : {}),
+            ...(parsedNotification?.success ? { notificationChannelMutation: parsedNotification.data } : {}) }, parsedPromotionCensus.data, parsedCatalogMutations.data);
+    }
+    if (candidate.expectedSettingsVersion === undefined) return { ok: false, error: 'references_invalid' };
+    const input = { ...candidate, expectedSettingsVersion: candidate.expectedSettingsVersion,
+        referenceCensus: parsedPromotionCensus.data };
+    if (parsedNotification?.success && input.referenceCensus.notificationChannels?.revision !== parsedNotification.data.expectedRevision)
+        return { ok: false, error: 'references_invalid' };
+    if (parsedNotification?.success && parsedNotification.data.expectedRevision === 'absent'
+        && parsedNotification.data.sourceSettingsVersion !== input.expectedSettingsVersion) return { ok: false, error: 'settings_conflict' };
+    if (input.nextSettings === null && input.profileMutations.length === 0 && (parsedRemote?.success || parsedNotification?.success)
+        && savedSecretCatalogMutationKeys.every(key => !parsedCatalogMutations.data[key])) {
+        const remote = parsedRemote?.success ? parsedRemote.data : undefined;
+        const notification = parsedNotification?.success ? parsedNotification.data : undefined;
+        if (remote && input.referenceCensus.remoteHosts?.revision !== remote.expectedRevision
+            && !(input.referenceCensus.remoteHosts === undefined && remote.expectedRevision === 'absent')
+            || notification && input.referenceCensus.notificationChannels?.revision !== notification.expectedRevision)
+            return { ok: false, error: 'references_invalid' };
+        const declaredRefs = new Set([
+            ...(remote?.referencedSavedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)) ?? []),
+            ...(notification?.savedSecretRevisions.map(capture => capture.resourceRef) ?? []),
+        ]);
+        const resources = savedSecretPromotionResources(input);
+        if (new Set(resources.map(resource => resource.resourceId)).size !== resources.length
+            || !resources.every(resource => declaredRefs.has(formatSharedSavedSecretRefV1(resource.resourceId)))) return { ok: false, error: 'references_invalid' };
+        const remoteRow = remote ? await readRemoteHostCatalogRowInTx(tx, { accountId: input.accountId }) : null;
+        const notificationRow = notification ? await readNotificationChannelCatalogInTx(tx, { accountId: input.accountId }) : null;
+        const rowRevision = (row: typeof remoteRow | typeof notificationRow) => row?.status === 'absent' ? 'absent' : row && 'revision' in row ? row.revision : null;
+        const remoteRevision = remote ? remote.expectedRevision === 'absent' ? 0 : remote.expectedRevision + 1 : undefined;
+        const notificationRevision = notification ? notification.expectedRevision === 'absent' ? 0 : notification.expectedRevision + 1 : undefined;
+        const receipt = { resourceId: input.resourceId, settingsVersion: input.expectedSettingsVersion,
+            ...(remote ? { remoteHostRevision: remoteRevision } : {}),
+            ...(notification ? { notificationChannelRevision: notificationRevision } : {}) };
+        if (remote && rowRevision(remoteRow) !== remote.expectedRevision || notification && rowRevision(notificationRow) !== notification.expectedRevision) {
+            if (remote && (remoteRow?.status !== 'present' || remoteRow.revision !== remoteRevision || !isDeepStrictEqual(remoteRow.content, remote.content))
+                || notification && (notificationRow?.status !== 'present' || notificationRow.revision !== notificationRevision || !isDeepStrictEqual(notificationRow.content, notification.content))) return { ok: false, error: 'references_conflict' };
+            const census = await readSavedSecretReferenceCensusInTx(tx, { ...input, referenceCensus: { ...input.referenceCensus,
+                ...(remote && remoteRevision !== undefined ? { remoteHosts: { revision: remoteRevision, resourceRefs: remote.referencedSavedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)) } } : {}),
+                ...(notification && notificationRevision !== undefined ? { notificationChannels: { revision: notificationRevision, resourceRefs: notification.savedSecretRevisions.map(capture => capture.resourceRef) } } : {}) } });
+            if (!census.ok) return census;
+            const resourcesReceipt = await proveSavedSecretPromotionResourcesInTx(tx, input);
+            if (!resourcesReceipt.ok) return resourcesReceipt;
+            if (remote && !await validateSavedSecretResourceReferencesInTx(tx, { accountId: input.accountId, authentication: input.authentication,
+                references: remote.referencedSavedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)),
+                savedSecretRevisions: remote.referencedSavedSecretRevisions.map(capture => ({ resourceId: capture.resourceId, expectedRevision: capture.revision })) })) return { ok: false, error: 'references_invalid' };
+            if (notification && !await validateNotificationPromotionReferencesInTx(tx, input, notification)) return { ok: false, error: 'references_invalid' };
+            return { ok: true, value: receipt };
+        }
+        const census = await readSavedSecretReferenceCensusInTx(tx, input);
+        if (!census.ok) return census;
+        if (!await validatePersonalPromotionSourcesInTx(tx, input)) return { ok: false, error: 'references_invalid' };
+        await createSavedSecretPromotionResourcesInTx(tx, input);
+        if (remote) rejectSavedSecretCatalogMutation(await mutateRemoteHostCatalogRowInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...remote }));
+        if (notification) rejectSavedSecretCatalogMutation(await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...notification }));
+        return { ok: true, value: receipt };
+    }
+    if (parsedNotification?.success && input.nextSettings === null) return { ok: false, error: 'references_invalid' };
+    const parsedCensus = SavedSecretReferenceCensusV1Schema.safeParse(input.referenceCensus);
+    if (!parsedCensus.success) return { ok: false, error: 'references_invalid' };
+    if (!Array.isArray(input.profileMutations)) return { ok: false, error: 'references_invalid' };
+    const parsedMutations = input.profileMutations.map(mutation => ProfileRowMutationV1Schema.safeParse(mutation));
+    if (parsedMutations.some(mutation => !mutation.success)) return { ok: false, error: 'references_invalid' };
+    const capturedRows = new Map(parsedCensus.data.profiles.rows.map(row => [row.id, row.revision]));
+    if (new Set(input.profileMutations.map(row => row.id)).size !== input.profileMutations.length
+        || input.profileMutations.some(row => (row.operation !== 'update' && row.operation !== 'import')
+            || row.content === null || row.settingsCleanup !== undefined || capturedRows.get(row.id) !== row.expectedRevision)) {
+        return { ok: false, error: 'references_invalid' };
+    }
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
+    if (fence.status !== 'ready') return { ok: false, error: 'settings_invalid' };
+    if (fence.account.currentness.encryptionMode !== parsedCensus.data.accountMode) return { ok: false, error: 'references_conflict' };
+    if (fence.account.settingsVersion !== input.expectedSettingsVersion) {
+        // A lost-response retry must prove the exact committed resource,
+        // Settings bytes AND complete post-write Profile census. Never create
+        // a resource while testing whether a prior attempt committed.
+        const existing = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId }, select: { id: true } });
+        if (!existing || fence.account.settingsVersion !== input.expectedSettingsVersion + 1) throw new SavedSecretResourceTransactionAbort('settings_conflict');
+        const current = await writeAccountSettingsInTx({ tx, accountId: input.accountId,
+            expectedVersion: input.expectedSettingsVersion,
+            expectedProfileTransferRevision: parsedCensus.data.profileTransferRevision ?? 'absent',
+            next: { kind: 'v2', content: input.nextSettings } });
+        if (current.status === 'profile_transfer_mismatch') throw new SavedSecretResourceTransactionAbort('references_conflict');
+        if (current.status !== 'version_mismatch' || !isDeepStrictEqual(current.currentContent, input.nextSettings)) throw new SavedSecretResourceTransactionAbort('settings_conflict');
+        const resourcesReceipt = await proveSavedSecretPromotionResourcesInTx(tx, input);
+        if (!resourcesReceipt.ok) return resourcesReceipt;
+        const changedRows = new Map(input.profileMutations.map(row => [row.id, row]));
+        const postCatalogs = parsedCensus.data.catalogs ? { ...parsedCensus.data.catalogs } : undefined;
+        for (const key of savedSecretCatalogMutationKeys) if (postCatalogs && parsedCatalogMutations.data[key]) {
+            const expected = parsedCatalogMutations.data[key]!.expectedRevision;
+            postCatalogs[key] = expected === 'absent' ? 0 : expected + 1;
+        }
+        const remoteHostRevision = parsedRemote?.success ? (parsedRemote.data.expectedRevision === 'absent' ? 0 : parsedRemote.data.expectedRevision + 1) : undefined;
+        const notificationChannelRevision = parsedNotification?.success ? (parsedNotification.data.expectedRevision === 'absent' ? 0 : parsedNotification.data.expectedRevision + 1) : undefined;
+        const retryCensus = await readSavedSecretReferenceCensusInTx(tx, { ...input,
+            expectedSettingsVersion: fence.account.settingsVersion,
+            referenceCensus: { ...parsedCensus.data, catalogs: postCatalogs,
+                ...(parsedNotification?.success ? { notificationChannels: { revision: notificationChannelRevision!, resourceRefs: parsedNotification.data.savedSecretRevisions.map(capture => capture.resourceRef) } } : {}),
+                ...(parsedRemote?.success ? { remoteHosts: { revision: remoteHostRevision!, resourceRefs: parsedRemote.data.referencedSavedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)) } } : {}), profiles: {
+                referenceGuardRevision: parsedCensus.data.profiles.referenceGuardRevision === 'absent' ? 0 : parsedCensus.data.profiles.referenceGuardRevision + 1,
+                rows: parsedCensus.data.profiles.rows.map(row => ({ ...row, revision: row.revision + (changedRows.has(row.id) ? 1 : 0) })),
+            } } });
+        if (!retryCensus.ok) return retryCensus;
+        if (retryCensus.value.rows.some(row => changedRows.has(row.id) && !isDeepStrictEqual(row.content, changedRows.get(row.id)!.content))) return { ok: false, error: 'references_conflict' };
+        if (savedSecretCatalogMutationKeys.some(key => parsedCatalogMutations.data[key]
+            && !isDeepStrictEqual(retryCensus.value.catalogContents[key]?.content, parsedCatalogMutations.data[key]!.content))) return { ok: false, error: 'references_conflict' };
+        if (parsedRemote?.success) {
+            const row = await readRemoteHostCatalogRowInTx(tx, { accountId: input.accountId });
+            if (row.status !== 'present' || row.revision !== remoteHostRevision || !isDeepStrictEqual(row.content, parsedRemote.data.content)) return { ok: false, error: 'references_conflict' };
+        }
+        if (parsedNotification?.success) {
+            const row = await readNotificationChannelCatalogInTx(tx, { accountId: input.accountId });
+            if (row.status !== 'present' || row.revision !== notificationChannelRevision || !isDeepStrictEqual(row.content, parsedNotification.data.content)
+                || !await validateNotificationPromotionReferencesInTx(tx, input, parsedNotification.data)) return { ok: false, error: 'references_conflict' };
+        }
+        return { ok: true, value: { resourceId: input.resourceId, settingsVersion: fence.account.settingsVersion,
+            ...(notificationChannelRevision === undefined ? {} : { notificationChannelRevision }),
+            ...(remoteHostRevision === undefined ? {} : { remoteHostRevision }) } };
+    }
+    const census = await readSavedSecretReferenceCensusInTx(tx, input);
+    if (!census.ok) return census;
+    const sourceCleanup = parsedCatalogMutations.data.acp?.settingsCleanup?.nextSettings;
+    const proposedSettings = input.nextSettings?.t === 'plain' ? input.nextSettings.v : null;
+    if (census.value.settingsContent?.t === 'plain' && sourceCleanup?.t === 'plain' && proposedSettings
+        && Object.keys(census.value.settingsContent.v).some(key => !Object.hasOwn(sourceCleanup.v, key)
+            && Object.hasOwn(proposedSettings, key))) return { ok: false, error: 'references_invalid' };
+    if (!await validatePersonalPromotionSourcesInTx(tx, input, true)) return { ok: false, error: 'references_invalid' };
+    const savedSecretRefs = new Map<string, string>();
+    if (census.value.settingsContent?.t === 'plain' && Array.isArray(census.value.settingsContent.v.secrets)) {
+        for (const secret of census.value.settingsContent.v.secrets) {
+            if (secret === null || typeof secret !== 'object' || Array.isArray(secret) || !('id' in secret) || typeof secret.id !== 'string') continue;
+            const destination = deriveSavedSecretImportResourceIdV1({ accountId: input.accountId,
+                source: { kind: 'personal-saved-secret', secretId: secret.id } });
+            if (savedSecretPromotionResources(input).some(resource => resource.resourceId === destination)) savedSecretRefs.set(secret.id, formatSharedSavedSecretRefV1(destination));
+        }
+    }
+    for (const key of savedSecretCatalogMutationKeys) if (parsedCatalogMutations.data[key]
+        && parsedCensus.data.catalogs?.[key] !== parsedCatalogMutations.data[key]!.expectedRevision) return { ok: false, error: 'references_invalid' };
+    await createSavedSecretPromotionResourcesInTx(tx, input);
+    await mutateSavedSecretCatalogsInTx(tx, { accountId: input.accountId, authentication: input.authentication,
+        mutations: parsedCatalogMutations.data, savedSecretRefs });
+    let remoteHostRevision: number | undefined;
+    let notificationChannelRevision: number | undefined;
+    if (parsedNotification?.success) {
+        const result = await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...parsedNotification.data });
+        rejectSavedSecretCatalogMutation(result);
+        if (result.status !== 'updated') throw new SavedSecretResourceTransactionAbort('references_invalid');
+        notificationChannelRevision = result.revision;
+    }
+    if (parsedRemote?.success) {
+        const result = await mutateRemoteHostCatalogRowInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...parsedRemote.data });
+        rejectSavedSecretCatalogMutation(result);
+        if (result.status !== 'updated') throw new SavedSecretResourceTransactionAbort('references_invalid');
+        remoteHostRevision = result.revision;
+    }
+    if (input.profileMutations.length > 0) {
+        const profiles = await mutateProfileRowsInTx(tx, { accountId: input.accountId,
+            authentication: input.authentication, mutations: input.profileMutations,
+            expectedReferenceGuardRevision: parsedCensus.data.profiles.referenceGuardRevision });
+        if (profiles.status !== 'updated') throw new SavedSecretResourceTransactionAbort(
+            profiles.status === 'conflict' ? 'references_conflict' : profiles.status === 'settings-conflict' ? 'settings_conflict' : 'references_invalid');
+    } else {
+        const guard = await advanceProfileReferenceGuardInTx(tx, { accountId: input.accountId,
+            expectedRevision: parsedCensus.data.profiles.referenceGuardRevision });
+        if (guard.status !== 'updated') throw new SavedSecretResourceTransactionAbort(guard.status === 'conflict' ? 'references_conflict' : 'references_invalid');
+    }
     const settingsWrite = await writeAccountSettingsInTx({
         tx,
         accountId: input.accountId,
         expectedVersion: input.expectedSettingsVersion,
+        expectedProfileTransferRevision: parsedCensus.data.profileTransferRevision ?? 'absent',
         next: { kind: "v2", content: input.nextSettings },
     });
     if (settingsWrite.status === "version_mismatch") {
-        // Creation is idempotent only for an exact resource request. When the
-        // Settings CAS is exactly one revision ahead with the requested bytes,
-        // this transaction is a retry whose original committed response was
-        // lost; do not create another settings revision or mutable source.
-        if (settingsWrite.currentVersion === input.expectedSettingsVersion + 1
-            && isDeepStrictEqual(settingsWrite.currentContent, input.nextSettings)) {
-            return {
-                ok: true,
-                value: {
-                    resourceId: created.value.resourceId,
-                    settingsVersion: settingsWrite.currentVersion,
-                },
-            };
-        }
         throw new SavedSecretResourceTransactionAbort("settings_conflict");
     }
+    if (settingsWrite.status === 'profile_transfer_mismatch') throw new SavedSecretResourceTransactionAbort('references_conflict');
     if (settingsWrite.status !== "success") {
         throw new SavedSecretResourceTransactionAbort("settings_invalid");
     }
-    return { ok: true, value: { resourceId: created.value.resourceId, settingsVersion: settingsWrite.version } };
+    return { ok: true, value: { resourceId: input.resourceId, settingsVersion: settingsWrite.version,
+        ...(notificationChannelRevision === undefined ? {} : { notificationChannelRevision }),
+        ...(remoteHostRevision === undefined ? {} : { remoteHostRevision }) } };
 }

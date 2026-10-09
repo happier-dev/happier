@@ -25,6 +25,44 @@ import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 
 describe('finite host operation custody', () => {
+  it('offers Stop for machine setup without settling until its process owner observes exit', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'owner', generateOperationId: () => 'setup' });
+    let exited!: () => void;
+    const exit = new Promise<void>(resolve => { exited = resolve; });
+    let stopRequested = false;
+    let started!: () => void;
+    const start = new Promise<void>(resolve => { started = resolve; });
+    const request = runtime.observeExecution({ actionId: 'machines.environment.apply', input: { homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 1 },
+      actionRequestId: 'setup-request', execute: async ({ signal, operationOwnerUpdate }) => {
+        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest', preset: { id: 'preset', revision: 1 }, terminalId: 'actual-terminal' } });
+        // Only physical process exit is substituted. Real host runner/store
+        // owns the cancellation signal and cannot turn Stop into settlement.
+        signal.addEventListener('abort', () => { stopRequested = true; }, { once: true });
+        started(); await exit;
+        return signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : { ok: true, result: { operationId: 'setup', terminalId: 'actual-terminal' } };
+      } });
+    await start;
+    try {
+      expect(await runtime.handlers.cancel({ operationId: 'setup' })).toEqual({ kind: 'requested' });
+      expect(stopRequested).toBe(true);
+      expect(await runtime.handlers.getV2({ operationId: 'setup' })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+      exited(); await request;
+      expect(await runtime.handlers.getV2({ operationId: 'setup', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+    } finally { exited(); await request; }
+  });
+  it('does not project an unknown machine setup process outcome as terminal failure', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'owner', generateOperationId: () => 'uncertain-setup' });
+    expect(await runtime.observeExecution({ actionId: 'machines.environment.apply', input: {}, actionRequestId: 'setup-request',
+      execute: async ({ operationOwnerUpdate }) => {
+        operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'machineEnvironment', serverId: 'home', machineId: 'guest',
+          preset: { id: 'preset', revision: 1 }, terminalId: 'actual-terminal' } });
+        // Native terminal supervision is the system boundary. An unavailable
+        // exit observation is not proof that the owned process stopped.
+        return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' };
+      } })).toMatchObject({ ok: false, errorCode: 'outcome_uncertain' });
+    expect(await runtime.handlers.getV2({ operationId: 'uncertain-setup' })).toMatchObject({ kind: 'found', operation: {
+      state: 'running', observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' }, domainRef: { kind: 'machineEnvironment', terminalId: 'actual-terminal' } } });
+  });
   it('keeps ordinary pending Session creation unconfirmed and re-enters its same request with resume-only admission', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'requester',
       generateOperationId: () => 'actual-spawn-operation' });

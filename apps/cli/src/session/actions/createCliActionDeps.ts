@@ -14,7 +14,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
-import { withdrawPendingQueueV2Message } from '@/api/session/pendingQueueV2Transport';
+import { withdrawPendingQueueV2Message, updatePendingQueueV2RequestedAction } from '@/api/session/pendingQueueV2Transport';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -1517,6 +1517,8 @@ export function createCliActionDeps(params: Readonly<{
   };
 
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
+    authorizeConnectedAccountRequest: (context, request) => resolveServerRequestHeaders(context,
+      context?.externalActionExecutionAuthorization?.binding.actionId ?? 'sessions.spawn.connected_services.list', request),
     readCurrentSessionMetadata: () => readCurrentSessionMetadata(),
     resolveTransportForSession: (id) => resolveTransportForSession(id),
   });
@@ -3321,6 +3323,8 @@ export function createCliActionDeps(params: Readonly<{
     },
     connectedServiceAction: params.credentials ? createCliConnectedServiceAction({
       credentials: params.credentials, ...exactHome, resolveHeaders: resolveServerRequestHeaders, callMachineAction,
+      ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
+      ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
     }) : undefined,
     profileActionExecute: params.credentials ? createCliProfileActionExecuteV1({
       credentials: params.credentials, serverId: projectHomeId,
@@ -5599,9 +5603,14 @@ export function createCliActionDeps(params: Readonly<{
       return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, read) : read());
     },
     usageSourceAction: createUsageSourceActionPort({
-      assertCurrent: context => {
+      assertCurrent: async context => {
         context.signal?.throwIfAborted();
         if (context.serverId && context.serverId !== projectHomeId) throw Object.assign(new Error('server_target_mismatch'), { code: 'server_target_mismatch' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()
+          || params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
+          throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        }
+        context.signal?.throwIfAborted();
       },
       rpc: async (request, context) => {
         if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -6389,7 +6398,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: true, sessionId: res.sessionId, permissionMode: parsed, updatedAt };
     },
 
-    sessionModelSet: async ({ context, callerInputConstraints, sessionId, modelId, providerConnectionId, teamCredentialModel, teamVisibilityGrantConsent }) => {
+    sessionModelSet: async ({ context, callerInputConstraints, sessionId, modelId, providerConnectionId, teamCredentialModel, teamVisibilityGrantConsent, captureBefore, expected }) => {
       const credentials = params.credentials;
       if (!credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -6408,6 +6417,8 @@ export function createCliActionDeps(params: Readonly<{
       const mutate = () => setSessionModel({
         credentials,
         idOrPrefix: sessionId,
+        ...(captureBefore !== undefined ? { captureBefore } : {}),
+        ...(expected ? { expected } : {}),
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
         ...(teamCredentialModel !== undefined ? { teamCredentialModel } : {}),
@@ -6448,6 +6459,7 @@ export function createCliActionDeps(params: Readonly<{
           modelId: 'ref' in res.selection ? res.selection.ref.modelId : res.selection.modelId,
           selection: res.selection,
           updatedAt: res.updatedAt,
+          ...('reversal' in res && res.reversal ? { reversal: res.reversal } : {}),
         };
       }
       return {
@@ -6494,6 +6506,22 @@ export function createCliActionDeps(params: Readonly<{
       return withProjectHome(() => withdrawPendingQueueV2Message({ token: params.token, sessionId, localId,
         ...(targetExecutionRunId ? { targetExecutionRunId } : {}), ...(context.signal ? { signal: context.signal } : {}),
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.pending.withdraw', request),
+      }));
+    },
+    sessionPendingResetStartSet: async ({ sessionId, localId, serverId, reset, context }) => {
+      const denied = projectHomeAdmission(serverId, context);
+      if (denied) return denied;
+      return withProjectHome(() => updatePendingQueueV2RequestedAction({ token: params.token, sessionId, localId,
+        requestedAction: { v: 1, kind: 'reset_start', reset }, ...(context.signal ? { signal: context.signal } : {}),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.pending.resetStart.set', request),
+      }));
+    },
+    sessionPendingResetStartCancel: async ({ sessionId, localId, serverId, context }) => {
+      const denied = projectHomeAdmission(serverId, context);
+      if (denied) return denied;
+      return withProjectHome(() => withdrawPendingQueueV2Message({ token: params.token, sessionId, localId,
+        ...(context.signal ? { signal: context.signal } : {}),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.pending.resetStart.cancel', request),
       }));
     },
 

@@ -48,6 +48,7 @@ function projectPreset(row: StoredPreset, declaration?: ManagedDeclaration | nul
         owner: ownerOf(row),
         recipe: row.launch,
         controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId },
+        ...(row.environment !== null ? { environment: row.environment } : {}),
         ...(row.retentionOverride !== null ? { retention: row.retentionOverride } : {}),
         ...(row.wakeOnAcceptedMessage !== null ? { wakeOnAcceptedMessage: row.wakeOnAcceptedMessage } : {}),
         ...(row.simultaneousMaximum !== null ? { simultaneousLimit: { maximum: row.simultaneousMaximum } } : {}),
@@ -77,7 +78,7 @@ async function requireHomeInTx(tx: Tx, homeId: string): Promise<void> {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
 }
 
-async function invalidatePresetInTx(tx: Tx, row: StoredPreset): Promise<void> {
+export async function invalidatePresetInTx(tx: Tx, row: StoredPreset): Promise<void> {
     const accountIds = row.teamId
         ? (await tx.teamMembership.findMany({ where: { teamId: row.teamId, status: TeamMembershipStatus.active, account: { status: AccountStatus.active } }, select: { accountId: true } })).map(member => member.accountId)
         : row.custodianAccountId ? [row.custodianAccountId] : [];
@@ -145,6 +146,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
             teamId: input.owner.kind === "team" ? input.owner.teamId : null,
             launch: input.recipe, controllerMachineId: input.controller.machineId, controllerInstallationId: input.controller.installationId,
+            ...(input.environment !== undefined ? { environment: input.environment } : {}),
             ...(input.retention ? { retentionOverride: input.retention } : {}),
             wakeOnAcceptedMessage: input.wakeOnAcceptedMessage,
             simultaneousMaximum: input.simultaneousLimit?.maximum,
@@ -157,12 +159,15 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
 }
 
 export async function getMachinePreset(params: PresetContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
-    try { return await inTx(async tx => {
-        await requireHomeInTx(tx, params.input.homeId);
-        const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
-        if (!row || !await mayAccessInTx(tx, params, ownerOf(row), false)) return { kind: "refused", code: "preset_not_found" } as const;
-        return { kind: "found", preset: await projectPresetInTx(tx, row) } as const;
-    }); } catch (error) { return refusal(error); }
+    try { return await inTx(tx => getMachinePresetInTx(tx, params)); } catch (error) { return refusal(error); }
+}
+
+/** Setup consumes the same current preset reader in its exact-target transaction. */
+export async function getMachinePresetInTx(tx: Tx, params: PresetContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
+    await requireHomeInTx(tx, params.input.homeId);
+    const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
+    if (!row || !await mayAccessInTx(tx, params, ownerOf(row), false)) return { kind: "refused", code: "preset_not_found" };
+    return { kind: "found", preset: await projectPresetInTx(tx, row) };
 }
 
 export async function listMachinePresets(params: PresetContext & Readonly<{ input: ManagedMachinePresetListInputV1 }>): Promise<ManagedMachinePresetListResultV1> {
@@ -197,8 +202,10 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         if (!row || !await mayAccessInTx(tx, params, ownerOf(row), true)) return { kind: "refused", code: "preset_not_found" } as const;
         const current = await projectPresetInTx(tx, row);
         if (row.revision !== input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
-        const { retention, wakeOnAcceptedMessage, simultaneousLimit, ...definitionPatch } = input.patch;
+        const { retention, wakeOnAcceptedMessage, simultaneousLimit, environment, ...definitionPatch } = input.patch;
         const nextDefinition = { ...current, ...definitionPatch };
+        if (environment === null) delete nextDefinition.environment;
+        else if (environment !== undefined) nextDefinition.environment = environment;
         if (retention === null) delete nextDefinition.retention;
         else if (retention !== undefined) nextDefinition.retention = retention;
         if (wakeOnAcceptedMessage === null) delete nextDefinition.wakeOnAcceptedMessage;
@@ -210,6 +217,7 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         if (sameManagedInput(next, current)) return { kind: "saved", preset: current } as const;
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
             name: next.name, launch: next.recipe, controllerMachineId: next.controller.machineId, controllerInstallationId: next.controller.installationId,
+            environment: next.environment ?? getActivePrismaRuntime().DbNull,
             retentionOverride: next.retention ?? getActivePrismaRuntime().DbNull,
             wakeOnAcceptedMessage: next.wakeOnAcceptedMessage ?? null,
             simultaneousMaximum: next.simultaneousLimit?.maximum ?? null, revision: { increment: 1 },

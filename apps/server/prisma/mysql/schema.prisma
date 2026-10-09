@@ -2360,6 +2360,7 @@ model ManagedMachine {
     presetRevision Int?
     launch Json
     reviewedFacts Json?
+    environmentSetup Json?
     allocation String @default("unsubmitted")
     creationState String @default("active")
     resource Json?
@@ -2395,6 +2396,7 @@ model ManagedMachinePreset {
     name String @db.LongText
     revision Int @default(0)
     launch Json
+    environment Json?
     controllerMachineId String
     controllerInstallationId String
     retentionOverride Json?
@@ -3072,11 +3074,25 @@ model ProviderAccountUsageRecord {
     updatedAt  DateTime  @updatedAt
 
     sources ConnectedServiceUsageSource[]
+    history ProviderAccountUsageHistory[]
 
     @@unique([accountId, recordId])
 
     @@index([accountId, providerId])
     @@index([accountId, status])
+}
+
+/// Material revisions accepted by the canonical Provider Account Usage writer.
+/// Payload remains plain or account-sealed exactly as in the latest record.
+model ProviderAccountUsageHistory {
+    id String @id @default(cuid())
+    accountId String
+    recordId String
+    observedAt DateTime
+    payload Json
+    record ProviderAccountUsageRecord @relation(fields: [accountId, recordId], references: [accountId, recordId], onDelete: Cascade, onUpdate: Cascade)
+
+    @@index([accountId, recordId, observedAt, id], map: "pauh_record_time_idx")
 }
 
 /// Bounded compatibility storage for sealed quota snapshots written by the

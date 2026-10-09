@@ -97,6 +97,71 @@ function driver() {
     const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
+describe('creation environment stage', () => {
+    it.each(['succeeded', 'skipped'] as const)('retains the original first message across failed setup until exact paid row becomes %s', async state => {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
+            preset: { id: 'preset', revision: 4 }, environmentSetup: { environment: { setupScript: 'echo admitted' }, state: 'pending' },
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const writes: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            writes.push(String(url));
+            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+        });
+        let wake: (() => void) | undefined;
+        let disposed = false;
+        let started = 0;
+        let setup = 0;
+        let settled = false;
+        const execution = driver().execute('machines.managed.acquire', { ...input, agentStart: {
+            creationKey: 'first-message', directory: { kind: 'managed' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
+        } }, { requestId: 'create', signal: new AbortController().signal,
+            context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
+            // Genuine external Account socket boundary; the notification grants no row authority.
+            subscribeEnvironmentSetupChanges: async callbacks => { wake = callbacks.onChange; return { dispose() { disposed = true; } }; },
+            runEnvironmentSetup: async () => { setup++; retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state: 'failed' } };
+                throw Object.assign(new Error('setup failed'), { code: 'machine_environment_setup_failed' }); },
+            runAgentStart: async ({ machine: prepared, isCurrent }) => { expect(await isCurrent()).toBe(true);
+                expect(prepared.environmentSetup?.state).toBe(state); started++; },
+        });
+        const observed = execution.then(value => { settled = true; return value; }, error => { settled = true; return error; });
+        await expect.poll(() => setup).toBe(1);
+        expect(settled).toBe(false);
+        expect(started).toBe(0);
+        retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state } };
+        wake!();
+        expect(await observed).toMatchObject({ managedId: 'managed', operation: { operationId: 'creation' } });
+        expect(started).toBe(1);
+        expect(disposed).toBe(true);
+        expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
+    });
+    it('runs setup after Join and before the admitted first message without buying again', async () => {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
+            preset: { id: 'preset', revision: 4 }, environmentSetup: { environment: { setupScript: 'echo admitted' }, state: 'pending' },
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const writes: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            writes.push(String(url));
+            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+        });
+        const sequence: string[] = [];
+        await driver().execute('machines.managed.acquire', { ...input, agentStart: {
+            creationKey: 'first-message', directory: { kind: 'managed' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
+        } }, { requestId: 'create', context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
+            runEnvironmentSetup: async ({ machine: joined, isCurrent }) => {
+                expect(joined.enrolledMachineId).toBe('guest');
+                expect(await isCurrent()).toBe(true);
+                sequence.push('setup');
+                retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state: 'succeeded' } };
+                return retained;
+            }, runAgentStart: async ({ machine: prepared }) => {
+                expect(prepared.environmentSetup?.state).toBe('succeeded'); sequence.push('message');
+            } });
+        expect(sequence).toEqual(['setup', 'message']);
+        expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
+    });
+});
 function originAuthorization(homeId: string, requestId = 'original-request') {
     // Home-issued wire facts enter the real private projection below; the
     // issuer's HTTP verification remains the only substituted boundary.

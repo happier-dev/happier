@@ -1,5 +1,5 @@
 import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { StoredCredentials } from '@/persistence';
@@ -24,14 +24,9 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActio
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ResolveExternalActionTarget } from './executeExternalAction';
-
-function readNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 type CurrentMachineExecutionOrigin = Readonly<{
   serverIdentityId: string;
@@ -102,10 +97,12 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
 }>): ((args: Readonly<{
   origin: ApprovalExecutionOriginV1;
   request?: Parameters<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>[0]['request'];
+  /** Actual signed continuation input; no synthetic consent record is needed. */
+  actionInput?: unknown;
   signal?: AbortSignal;
 }>) => Promise<boolean>) {
   const now = input.now ?? Date.now;
-  return async ({ origin, request, signal }) => {
+  return async ({ origin, request, actionInput, signal }) => {
     try {
       // Descriptive PAT ids from legacy API approvals are never sufficient to
       // begin replay currentness checks. They lack the signed exact invocation.
@@ -123,21 +120,34 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           : origin.serverId !== input.serverId)
       ) return false;
       const externalAuthorization = origin.externalActionExecutionAuthorization;
+      let hasVerifiedManagedGuestSource = false;
       if (externalAuthorization) {
+        const binding = externalAuthorization.binding;
+        const sessionOrigin = 'authentication' in binding ? binding.sessionActionOrigin : undefined;
+        const acceptedSession = sessionOrigin !== undefined
+          && origin.authority === 'account_automation' && origin.surface === 'agent'
+          && origin.caller.kind === 'session'
+          && sameStrictJsonValue(origin.caller, sessionOrigin.caller)
+          && origin.sessionInputSource?.sourceSessionId === sessionOrigin.caller.sessionId
+          && origin.sessionInputSource.sourceTurnId === sessionOrigin.sourceTurnId
+          && origin.callerPermissionMode === sessionOrigin.callerPermissionMode
+          && sameStrictJsonValue(origin.causalPermissionAuthority ?? null, sessionOrigin.causalPermissionAuthority ?? null);
+        const principalMatches = 'authentication' in binding
+          ? (sessionOrigin ? acceptedSession : origin.authority === 'present_user' && origin.surface === 'ui')
+            && origin.principalId === undefined && origin.credentialId === undefined
+          : origin.surface === 'api' && origin.principalId === binding.principalId
+            && origin.credentialId === binding.credentialId;
         if (
-          !request
-          || request.v !== 2
+          (request ? request.v !== 2 : actionInput === undefined)
           || !origin.externalActionInputSignature
           || !origin.target
           || !input.externalActionMachinePublicKey
           || !input.verifyExternalExecutionAuthorization
-          || origin.surface !== 'api'
-          || (origin.caller.kind !== 'host' && origin.caller.kind !== 'plugin')
+          || !principalMatches
+          || (!acceptedSession && origin.caller.kind !== 'host' && origin.caller.kind !== 'plugin')
           || origin.serverIdentityId !== externalAuthorization.binding.serverIdentityId
           || origin.accountId !== input.accountId
           || origin.accountId !== externalAuthorization.binding.accountId
-          || origin.principalId !== externalAuthorization.binding.principalId
-          || origin.credentialId !== externalAuthorization.binding.credentialId
           || origin.machineId !== input.machineId
           || origin.machineId !== externalAuthorization.binding.machineId
           || origin.requestId !== externalAuthorization.binding.requestId
@@ -145,7 +155,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             authorizationToken: externalAuthorization.token,
             actionId: origin.actionId,
             target: origin.target,
-            input: request.actionArgs,
+            input: request ? request.actionArgs : actionInput,
             publicKey: input.externalActionMachinePublicKey,
             signature: origin.externalActionInputSignature,
           })
@@ -156,6 +166,17 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           target: origin.target,
           ...(signal ? { signal } : {}),
         })) return false;
+        // The managed child is executed on a new guest, while its accepted
+        // Session source remains on the controller. Home's current verifier
+        // rechecks that exact source installation/Session/publisher together
+        // with the managed creation tuple; the guest cannot host its runner.
+        // This replaces only local source custody. Permission, causal ceiling
+        // and Account spawn policy still pass their ordinary owners below.
+        hasVerifiedManagedGuestSource = acceptedSession
+          && binding.actionId === 'session.spawn_new'
+          && binding.managedContinuation !== undefined
+          && binding.sessionActionSource !== undefined
+          && binding.sessionActionSource.machineId !== input.machineId;
         if (origin.caller.kind === 'plugin') {
           const sourceCustody = await (
             input.resolveCurrentPluginSourceCustody
@@ -164,7 +185,10 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           return sourceCustody !== null
             && pluginSourceCustodyV1Equal(origin.caller.sourceCustody, sourceCustody);
         }
-        return true;
+        // Home admitted the exact original turn. Accepted Session work still
+        // passes the ordinary current Session/permission/Account checks below;
+        // naturally ending the old turn is not itself a revocation.
+        if (!acceptedSession) return true;
       }
       if (
         (origin.accountId !== undefined && origin.accountId !== input.accountId)
@@ -207,7 +231,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
         if (!await input.isAutomationRunCurrent(origin.caller)) return false;
       }
 
-      if (origin.caller.kind === 'session') {
+      if (origin.caller.kind === 'session' && !hasVerifiedManagedGuestSource) {
         if (!input.isSessionCallerCurrent) return false;
         if (!await input.isSessionCallerCurrent({ caller: origin.caller,
           ...(signal ? { signal } : {}) })) return false;
@@ -432,37 +456,6 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
   return (args) => runWithServerHttpBaseUrl(input.serverApiUrl, () => checker(args));
 }
 
-function readSessionLocality(
-  transport: Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, { ok: true }>,
-  credentials: StoredCredentials,
-): Readonly<{
-  machineId: string | null;
-  host: string | null;
-  homeDir: string | null;
-}> | null {
-  const metadata = tryDecryptSessionOwnerMetadataView({
-    credentials,
-    accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
-    rawSession: transport.rawSession,
-  });
-  // An unreadable private owner envelope is not permission to trust a raw
-  // projection. Layout-0 owner metadata retains the incumbent row fallback.
-  if (!metadata && transport.rawSession.metadataLayoutVersion === 1) return null;
-  const session = transport.rawSession;
-  const legacyRowField = (field: string) => session.metadataLayoutVersion === 1
-    ? null : readNonEmptyString(Reflect.get(session, field));
-  return {
-    // New rows keep owner-locality in encrypted metadata. The raw projection is
-    // retained only for older rows that have no readable metadata value.
-    machineId: readNonEmptyString(metadata?.machineId)
-      ?? legacyRowField('machineId'),
-    host: readNonEmptyString(metadata?.host)
-      ?? legacyRowField('host'),
-    homeDir: readNonEmptyString(metadata?.homeDir)
-      ?? legacyRowField('homeDir'),
-  };
-}
-
 /**
  * Rechecks the effect target through the existing Account Session owner. Only
  * machine/session-placed execution also requires daemon locality; Account
@@ -507,7 +500,11 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
       ? await runWithServerHttpBaseUrl(input.serverApiUrl, resolveTransport)
       : await resolveTransport();
     if (!transport.ok || transport.sessionId !== target.sessionId || transport.rawSession.id !== target.sessionId) return null;
-    const localityRecord = readSessionLocality(transport, input.credentials);
+    const localityRecord = readSessionOwnerLocality({
+      metadata: tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
+        accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession }),
+      rawSession: transport.rawSession,
+    });
     if (!localityRecord?.machineId) return null;
 
     const locality = await resolveMachineControlLocalityProof({

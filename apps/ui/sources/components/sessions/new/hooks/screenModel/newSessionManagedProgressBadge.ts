@@ -74,5 +74,6 @@ export function buildNewSessionManagedProgressBadge(
             ? draft.retryInstallation : undefined,
         onRetrySetup: progress.kind === 'failed' && progress.retrySetupAvailable === true ? draft.retrySetup : undefined,
         onContinueWithoutSetup: progress.kind === 'failed' && progress.retrySetupAvailable === true ? draft.continueWithoutSetup : undefined,
+        onDeleteMachine: progress.kind === 'failed' && progress.retrySetupAvailable === true ? draft.deleteMachine : undefined,
     });
 }

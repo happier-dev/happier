@@ -198,7 +198,8 @@ installed-tool availability or completed setup.
 
 The strict `projects.inspect` Action takes the qualified checkout address
 `{serverId, workspaceId, machineId, rootPath}` under `workspace` and returns
-`{definition, detection, importCandidates, commands, tools}`. The definition includes exact file
+`{definition, detection, importCandidates, commands, tools}` and the development
+`setupReadiness` projection. The definition includes exact file
 text and its absent/present basis. CLI
 `projectNativeResolution.ts#inspectProjectImportCandidates` owns the import
 selection projection: offers are available, unavailable, unresolved or ambiguous,
@@ -280,16 +281,28 @@ human continuation owner; choosing a scope cannot silently resume it.
 
 The Scripts review's explicit human “Until it changes” decision separately uses
 `projectSetupConsentDecision.ts` and the approving-Account Trust API to remember
-the exact accepted Project and reviewed effect before requesting preparation.
-This is not authority supplied by the Action's scope field. The Session-mounted
-human continuation and its original held invocation remain a separate integration
-contract, not a request replay or an invocation-approval waiver.
+the exact accepted Project and current producer-reviewed effect. For a held finite
+operation, authorized V2 inspection refreshes its review before the Trust write
+and rechecks consent afterward; the runner resumes the original retained invocation
+without submitting a different preparation request. A missing current review
+producer is typed unavailable, not permission to grant the displayed old effect.
+This is not authority supplied by the Action's scope field or an invocation-approval
+waiver. Per-invocation Session human decisions remain a separate integration seam.
 
 `projectSetupSuccess.ts` stores completion under the target's Happier home,
 outside the checkout and Workspace Sync. Reuse requires the same qualified
 target, platform, reviewed effect, setup inputs and environment references.
 Execution invalidates that fact before a new attempt; only observed success of
 every applicable setup step can write it again. Consent is not completion.
+
+Development `projects.inspect` readiness uses `projectSetupPreparation.ts#inspectProjectSetupReadiness`
+to compare that target completion with the current reviewed `successBasis`, inside
+the requester's private review and native-invocation lifetime. Retained operation
+success is history, not current readiness. The installed inspection owner has no
+captured requester configuration/secret-binding review producer yet; it returns
+typed `unknown` until that producer is wired, rather than borrowing custodian
+settings or claiming Ready. This passive comparison does not execute setup or
+grant consent.
 
 `projectFiniteAction.ts` owns `projects.prepare`, `projects.script.run` and
 `projects.compute.exec` intake through the shared Action policy and authenticated
@@ -316,6 +329,14 @@ private shell `initialCommand`; literal interactive terminals remain unchanged.
 These are development-source contracts, not a claim of released availability or
 completed package and loaded-runtime certification.
 
+Fresh Project-custody interactive terminals and Restart use that same current
+preparation owner before opening a shell. The PTY consumes B4's complete
+host-authorized command, arguments, cwd and environment rather than reconstructing
+a login shell or restoring variables removed by native resolution. Restart reviews
+before Stop and revalidates after retirement; refusal leaves the incumbent intact.
+Warm exact-custody reuse does not reactivate setup. Literal non-Project terminals
+retain their existing launch behavior.
+
 The existing operation attachment separates original admitted
 `sourceWorkspace` and actual Script `{name?,source}` from the current output
 Home/Machine/checkout/cwd/terminal. Script identity survives its setup steps;
@@ -325,6 +346,10 @@ when one was observed, including failed setup and Script runs. Unknown exit
 observations are not converted to zero. These facts feed Account-qualified
 operation selectors for runs started by any client, not a client-local run log;
 arbitrary executor failure details remain private.
+
+Ordinary Action Wait returns an already-recorded uncertain observation even while
+the operation retains process custody. Retirement still waits for actual physical
+settlement; observing uncertainty neither claims an exit nor releases that custody.
 
 ### Sessionless Project Services (0.3 development)
 
@@ -440,6 +465,40 @@ This producer neither grants setup consent nor captures launch authorization.
 Cold-launch integration, plugin adapter qualification and composed process
 validation remain separate obligations; this internal source contract does not
 establish an available end-to-end Project execution flow.
+
+### Preset Machine environments (0.3 development)
+
+`workspaces/environment/applyMachineEnvironment.ts` owns Machine-wide preset
+setup. It consumes the revisioned preset environment, writes the selected native
+tool's global configuration as the Happier OS user, then runs native installation
+and the setup script through the existing finite terminal/process owner. It does
+not create a Project or Session, escalate privileges, or install a missing native
+adapter binary. The native install may download the runtimes requested by its
+configuration.
+Global installation is characterized only for the same Linux Mise version as
+native environment production above. A script without a toolchain uses the
+ordinary platform shell. Exact Saved Secret bindings are added only to the setup
+process after native environment production, never to tool installation.
+
+Managed acquisition retains the admitted environment on its existing creation
+row. Set up follows Join; the original first-message continuation waits for
+observed success or an explicit skip. Retry addresses the enrolled guest rather
+than acquiring another resource. Failed-setup Delete reviews the actual Machine
+reference census and uses the ordinary Delete Action on that same retained row.
+Declining review preserves recovery; an acknowledged Delete retires the local
+composer continuation without creating a Session or discarding its prompt.
+Apply uses the ordinary Ask-first
+`machines.environment.apply` Action and exact-Machine authorization; managed
+creation delegates through its existing signed creation proof, without granting
+Session admission. Installation and setup output remain associated with that
+same Action operation and actual guest, not a fabricated Workspace.
+Retained snapshot reads require access to the managed row's controller; setup
+stage reports require controller Manage as well as guest Manage. A guest-only
+grant does not disclose a private controller preset or mutate its creation row.
+
+These are development-source contracts. Shared-development migration deployment,
+integrated package validation and composed loaded-runtime qualification are
+owned by the corridor integration boundary, not evidence of released availability.
 
 ### Devcontainer native roles (0.3 development)
 
@@ -1538,6 +1597,20 @@ identity. Switching Home or account does not redirect the update, its original-H
 its completion attribution; the reread replaces shared status only while that initiating scope is
 still active. Newly planned actions rebuild their context when the canonical Home snapshot changes,
 including an endpoint refresh, while callbacks already queued retain their original context.
+
+In the current development daemon, `tool.systemTasks` advertises `wait` alongside
+its existing task methods. Consumers discover that method before starting an
+operation that requires terminal completion; an older daemon without it is not
+treated as a completion-capable executor. `wait` resolves the canonical task result.
+Completion is kind-specific: a detached CLI update completes this task at updater
+admission, whereas a Home runtime restart requires the reported runtime health
+before settings reload. Losing the connection is not evidence that the runtime is up.
+An invocation without an authored acknowledgement deadline uses the server's
+existing caller-lifecycle forwarding policy (the Socket.IO platform maximum),
+not the generic capability timeout. Authored finite invocation budgets and
+capability discovery budgets retain their configured floor and ceiling. Waiting
+observes the daemon's existing in-memory task settlement; it does not add task
+cancellation, reconnect recovery or cross-daemon-restart persistence.
 
 **Remote.** The daemon's `tool.systemTasks` capability lists `cli.update.v1` only when
 `canUpdateRemotely` (presence = capability; older daemons never list it). The kind starts

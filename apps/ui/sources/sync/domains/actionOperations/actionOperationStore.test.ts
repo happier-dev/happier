@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectCommandSourceV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { createActionOperationSelectors } from './actionOperationSelectors';
 import { createActionOperationStore, type ActionOperationStore } from './actionOperationStore';
 import { actionOperationAddressKey, actionOperationMachineAddressKey } from './qualifiedActionOperation';
+import type { ActionOperationProjectScriptQuery } from './qualifiedActionOperation';
 
 const SERVER_ID = 'home-a';
 
@@ -39,6 +43,90 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation store', () => {
+    it.each([{ actionId: 'machines.environment.apply', scopeMachineId: 'joined-guest' },
+        { actionId: 'machines.managed.acquire', scopeMachineId: 'controller' }] as const)(
+        'selects retained $actionId output only for the same Account, joined machine and managed row', ({ actionId, scopeMachineId }) => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const homeId = 'portable-home';
+        const setup = operation({ actionId, operationId: 'setup', state: 'failed', settledAt: 150,
+            scope: { accountId: 'account-a', machineId: scopeMachineId },
+            domainRef: { kind: 'machineEnvironment', serverId: homeId, machineId: 'joined-guest',
+                preset: { id: 'preset', revision: 4 }, managedId: 'paid', terminalId: 'output' } });
+        merge(store, [setup, { ...setup, operationId: 'other-managed', createdAt: 300,
+            domainRef: { kind: 'machineEnvironment', serverId: homeId, machineId: 'joined-guest',
+                preset: { id: 'preset', revision: 4 }, managedId: 'other' } },
+            { ...setup, operationId: 'other-account', createdAt: 300, scope: { accountId: 'other', machineId: 'joined-guest' } }]);
+        const query = { serverId: SERVER_ID, homeId, accountId: 'account-a', machineId: 'controller', enrolledMachineId: 'joined-guest', managedId: 'paid' };
+        expect(selectors.selectForManagedMachine(store.getSnapshot(), query)?.snapshot.operationId).toBe('setup');
+        expect(selectors.selectForManagedMachine(store.getSnapshot(), { ...query, enrolledMachineId: 'other-guest' })).toBeNull();
+        expect(selectors.selectForManagedMachine(store.getSnapshot(), { ...query, homeId: 'other-home' })).toBeNull();
+    });
+    it('selects the current or last named Script from every client by authenticated Source, including dismissed success', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const workspace: WorkspaceAddressV1 = { serverId: SERVER_ID, machineId: 'source-machine', workspaceId: 'source-workspace', rootPath: '/source' };
+        const attachment: ProjectCommandAttachmentV1 = { kind: 'projectCommand', purpose: 'setup', serverId: 'execution-home', machineId: 'execution-machine',
+                workspaceRefId: 'execution-workspace', cwd: '/execution', sourceWorkspace: workspace,
+                script: { name: 'build', source: { kind: 'command', command: 'old-build-command' } } };
+        const script = operation({ actionId: 'projects.script.run', operationId: 'external-active', createdAt: 90, domainRef: attachment });
+        const last = { ...script, operationId: 'last', state: 'succeeded' as const, startedAt: 100, settledAt: 200,
+            domainRef: { ...attachment, purpose: 'script' as const, terminalId: 'terminal-last' } };
+        merge(store, [last, script, { ...script, operationId: 'foreign-account', createdAt: 999, scope: { ...script.scope, accountId: 'account-b' } },
+            { ...script, operationId: 'foreign-source', createdAt: 999, domainRef: { ...attachment, sourceWorkspace: { ...workspace, machineId: 'other-source' } } },
+            { ...script, operationId: 'foreign-root', createdAt: 999, domainRef: { ...attachment, sourceWorkspace: { ...workspace, rootPath: '/other' } } }]);
+        store.mergeSnapshots({ serverId: 'other-home', snapshots: [{ ...script, operationId: 'foreign-home', createdAt: 999 }] });
+        expect(store.getSnapshot().operationsByKey.size).toBe(6);
+        const read = (query: ActionOperationProjectScriptQuery) => selectors.selectForProjectScript(store.getSnapshot(), query);
+        const query = { accountId: 'account-a', workspace, selection: { kind: 'named' as const, name: 'build' } };
+        expect(read(query)?.snapshot.operationId).toBe('external-active');
+        expect(read({ ...query, accountId: null })).toBeNull();
+        merge(store, [{ ...script, revision: 2, state: 'failed', startedAt: 100, settledAt: 150, error: { errorCode: 'project_setup_step_failed', error: 'Setup failed' } }]);
+        expect(store.dismissRecentSucceeded()).toBe(true);
+        expect(selectors.selectAll(store.getSnapshot()).some(item => item.snapshot.operationId === 'last')).toBe(false);
+        const selected = read(query);
+        expect(selected?.snapshot.operationId).toBe('last');
+        merge(store, [operation({ operationId: 'unrelated' })]);
+        selectors.selectAll(store.getSnapshot());
+        expect(read(query)).toBe(selected);
+        expect(selectors.selectById(store.getSnapshot(), operationAddress('last'))?.snapshot.operationId).toBe('last');
+        const windowsWorkspace = { ...workspace, rootPath: 'C:\\PROJECT\\' };
+        merge(store, [{ ...script, operationId: 'windows-script', domainRef: { ...attachment, sourceWorkspace: windowsWorkspace, script: { ...attachment.script!, name: 'windows-build' } } }]);
+        expect(read({ ...query, workspace: { ...windowsWorkspace, rootPath: 'c:/project' }, selection: { kind: 'named', name: 'windows-build' } })?.snapshot.operationId).toBe('windows-script');
+    });
+
+    it('selects unnamed native Scripts by the entire source reference rather than target text', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const workspace: WorkspaceAddressV1 = { serverId: SERVER_ID, machineId: 'machine-a', workspaceId: 'workspace', rootPath: '/repo' };
+        const source: ProjectCommandSourceV1 = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'build' };
+        const attachment: ProjectCommandAttachmentV1 = { kind: 'projectCommand', purpose: 'script',
+            serverId: SERVER_ID, machineId: 'machine-a', workspaceRefId: 'workspace', cwd: '/repo', sourceWorkspace: workspace, script: { source } };
+        const script = operation({ actionId: 'projects.script.run', operationId: 'native', domainRef: attachment });
+        merge(store, [script, { ...script, operationId: 'different-file', createdAt: 999, domainRef: { ...attachment, script: { source: { ...source, file: 'nested/package.json' } } } },
+            { ...script, operationId: 'named', createdAt: 999, domainRef: { ...attachment, script: { name: 'build', source } } }]);
+        expect(store.getSnapshot().operationsByKey.size).toBe(3);
+        expect(selectors.selectForProjectScript(store.getSnapshot(), { accountId: 'account-a', workspace, selection: { kind: 'native', source } })?.snapshot.operationId).toBe('native');
+        const pluginSource = { kind: 'pluginNative' as const, adapter: { pluginId: 'dev.example.scripts', localId: 'runner' }, file: 'tasks.json', target: 'build' };
+        merge(store, [{ ...script, operationId: 'plugin-native', domainRef: { ...attachment, script: { source: pluginSource } } },
+            { ...script, operationId: 'other-adapter', createdAt: 999, domainRef: { ...attachment, script: { source: { ...pluginSource, adapter: { ...pluginSource.adapter, pluginId: 'dev.other.scripts' } } } } }]);
+        expect(selectors.selectForProjectScript(store.getSnapshot(), { accountId: 'account-a', workspace, selection: { kind: 'native', source: pluginSource } })?.snapshot.operationId).toBe('plugin-native');
+    });
+
+    it('selects Session operations for the authenticated Account without sharing the selector cache', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        merge(store, [operation(), operation({ operationId: 'other-account', scope: {
+            accountId: 'account-b', machineId: 'machine-a', sessionId: 'session-a',
+        } })]);
+        const address = { ...sessionAddress('session-a'), accountId: 'account-a' };
+        const selected = selectors.selectForSession(store.getSnapshot(), address);
+        expect(selected.map((item) => item.snapshot.operationId)).toEqual(['operation-a']);
+        expect(selectors.selectForSession(store.getSnapshot(), { ...address, accountId: 'account-b' }).map((item) => item.snapshot.operationId))
+            .toEqual(['other-account']);
+        expect(selectors.selectForSession(store.getSnapshot(), address)).toBe(selected);
+        expect(selectors.selectForSession(store.getSnapshot(), { ...address, accountId: null })).toEqual([]);
+    });
     it('keeps identical operation, machine, session, and request IDs isolated by exact Home', () => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();

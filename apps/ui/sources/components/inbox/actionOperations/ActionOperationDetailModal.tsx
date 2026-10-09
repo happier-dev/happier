@@ -20,12 +20,14 @@ import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySu
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
 import { t } from '@/text';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
 import { useSessionListHomeObservations } from '@/sync/store/hooks';
 
 import {
+    describeActionOperationStatusLabel,
     formatActionOperationAge,
     readActionOperationDestinationSessionId,
     readActionOperationDestinationServerId,
@@ -34,24 +36,14 @@ import {
 } from './actionOperationPresentation';
 import {
     projectActionOperationDetail,
+    readActionOperationOutputAttachment,
     type ActionOperationDetailField,
     type ActionOperationDetailProjection,
 } from './actionOperationDetailPresentation';
 import { resumeActionOperationHandoff } from './resumeActionOperationHandoff';
 import { ActionOperationDetailControls } from './ActionOperationDetailControls';
+import { ProjectCommandOutputPane } from './ProjectCommandOutputPane';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
-
-function translateHostStatus(value: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'reconnecting' | 'unavailable'): string {
-    switch (value) {
-        case 'accepted': return t('inbox.actionOperations.status.accepted');
-        case 'running': return t('inbox.actionOperations.status.running');
-        case 'succeeded': return t('inbox.actionOperations.status.succeeded');
-        case 'failed': return t('inbox.actionOperations.status.failed');
-        case 'cancelled': return t('inbox.actionOperations.status.cancelled');
-        case 'reconnecting': return t('inbox.actionOperations.observation.reconnecting');
-        case 'unavailable': return t('inbox.actionOperations.observation.unavailable');
-    }
-}
 
 function translateDetailField(field: ActionOperationDetailField): string {
     switch (field.id) {
@@ -97,6 +89,15 @@ function translateRecovery(detail: ActionOperationDetailProjection): string | nu
     }
 }
 
+function describeProjectCommandPurpose(purpose: 'setup' | 'teardown' | 'script' | 'exec'): string {
+    switch (purpose) {
+        case 'setup': return t('projects.scripts.output.purpose.setup');
+        case 'teardown': return t('projects.scripts.output.purpose.teardown');
+        case 'exec': return t('projects.scripts.output.purpose.exec');
+        case 'script': return t('projects.scripts.output.purpose.script');
+    }
+}
+
 export type ActionOperationDetailModalProps = CustomModalInjectedProps & Readonly<{
     serverId: string | null;
     operationId: string;
@@ -124,6 +125,9 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
         : [], [exactServerId, sessionId]);
     const audienceContext = useSessionAudienceContext(sessionAddresses);
     const homeObservations = useSessionListHomeObservations();
+    const projectCommandRef = operation ? readActionOperationOutputAttachment(operation.snapshot) : null;
+    const projectCommandMachine = useServerScopedMachine(projectCommandRef?.serverId ?? null, projectCommandRef?.machineId ?? '');
+    const projectCommandMachineName = projectCommandMachine ? getMachineDisplayName(projectCommandMachine) ?? null : null;
     const [resumePending, setResumePending] = React.useState(false);
     const [resumeFeedback, setResumeFeedback] = React.useState<string | null>(null);
     const mountedRef = React.useRef(true);
@@ -172,9 +176,7 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
         homeObservation: operation.serverId ? homeObservations[operation.serverId] ?? null : null,
     });
     const status = resolveActionOperationStatus(snapshot, observation);
-    const statusLabel = status.label.kind === 'producer'
-        ? status.label.value
-        : translateHostStatus(status.label.value);
+    const statusLabel = describeActionOperationStatusLabel(status.label);
     const destinationSessionId = readActionOperationDestinationSessionId(snapshot);
     const terminal = isActionOperationTerminal(snapshot.state);
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
@@ -226,7 +228,7 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
                 )}
                 <View style={styles.heroCopy}>
                     <Text style={[styles.status, status.tone === 'danger' ? styles.danger : undefined]}>
-                        {translateHostStatus(snapshot.state)}
+                        {describeActionOperationStatusLabel({ kind: 'host', value: snapshot.state })}
                     </Text>
                     {showStatusDetail ? <Text style={styles.progress}>{statusLabel}</Text> : null}
                     {snapshot.progress?.kind === 'determinate' ? (
@@ -281,6 +283,22 @@ export const ActionOperationDetailModal = React.memo(function ActionOperationDet
                     />
                 ))}
             </ItemGroup>
+
+            {detail.projectCommand || detail.machineEnvironment ? (
+                <ItemGroup title={t('projects.scripts.output.title')}>
+                    <Item
+                        testID="action-operation-project-command.target"
+                        mode="info"
+                        title={t('projects.scripts.output.ranOn')}
+                        subtitle={detail.projectCommand ? `${projectCommandMachineName ?? detail.projectCommand.machineId} · ${detail.projectCommand.cwd}`
+                            : projectCommandMachineName ?? detail.machineEnvironment!.machineId}
+                    />
+                    <View style={styles.output}>
+                        <ProjectCommandOutputPane operation={operation} title={detail.projectCommand ? describeProjectCommandPurpose(detail.projectCommand.purpose)
+                            : t('managedMachines.creation.setup')} height={280} />
+                    </View>
+                </ItemGroup>
+            ) : null}
 
             {detail.warning ? (
                 <View
@@ -481,6 +499,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     recoveryBody: {
         color: theme.colors.text.secondary,
+    },
+    output: {
+        paddingHorizontal: 12,
+        paddingBottom: 12,
     },
     cancelFeedback: {
         color: theme.colors.text.primary,

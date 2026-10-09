@@ -3,10 +3,12 @@ import {
     type ManagedMachineActionInputV1,
     ManagedResourceDependencyV1Schema,
     SharedSavedSecretRefV1Schema,
+    SHARED_SAVED_SECRET_REF_V1_PREFIX,
     sameQualifiedConnectedAccountRef,
     type ManagedResourceDependencyV1, type ManagedResourceDispositionV1, type QualifiedConnectedAccountRef,
 } from "@happier-dev/protocol";
 import { inTx, type Tx } from "@/storage/inTx";
+import { listSavedSecretReferenceCarrierPathsV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { listMachineCandidatesInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
 import {
@@ -44,11 +46,14 @@ export async function readManagedResourceDependenciesInTx(tx: Tx, target: Manage
         const bootstrap = SharedSavedSecretRefV1Schema.safeParse(row.bootstrapCredentialRef);
         const launch = target.kind === "plugin" || target.kind === "connected-account" ? readManagedLaunchSnapshot(row.launch) : undefined;
         const credentials = launch?.credentials?.map(credential => credential.account) ?? [];
+        const setupReferencesSecret = (resourceId: string) => listSavedSecretReferenceCarrierPathsV1(row.environmentSetup,
+            { secretId: `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}` }).length > 0;
         const matches = target.kind === "account"
             ? row.custodianAccountId === target.accountId || machineIds.has(row.controllerMachineId)
                 || (bootstrap.success && secretIds.has(bootstrap.data.resourceId))
+                || [...secretIds].some(setupReferencesSecret)
             : target.kind === "saved-secret"
-                ? bootstrap.success && bootstrap.data.resourceId === target.resourceId
+                ? (bootstrap.success && bootstrap.data.resourceId === target.resourceId) || setupReferencesSecret(target.resourceId)
                 : target.kind === "plugin"
                     ? launch?.provider.pluginId === target.pluginId || credentials.some(credential => credential.service.pluginId === target.pluginId)
                     : credentials.some(credential => sameQualifiedConnectedAccountRef(credential, target.ref));
@@ -80,7 +85,7 @@ export function acceptsManagedResourceDispositions(resources: readonly ManagedRe
 async function requireHome(tx: Tx, homeId: string) {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
 }
-async function requireRowAccess(tx: Tx, row: StoredManagedMachine, actorAccountId: string, manage: boolean) {
+export async function requireManagedMachineAccessInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, manage: boolean) {
     const role = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: row.controllerMachineId });
     if (!role || (manage && role !== "manage")) throw new ManagedMachineError("permission_denied");
 }
@@ -89,7 +94,7 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
     return await inTx(async tx => {
         await requireHome(tx, input.homeId);
         const row = await readManagedMachineInTx(tx, input);
-        await requireRowAccess(tx, row, params.actorAccountId, false);
+        await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
         return await projectManagedMachineInTx(tx, row);
     });
 }
@@ -112,7 +117,7 @@ export async function cancelManagedCreation(params: Readonly<{ actorAccountId: s
     return await inTx(async tx => {
         await requireHome(tx, input.homeId);
         const row = await readManagedMachineInTx(tx, input);
-        await requireRowAccess(tx, row, params.actorAccountId, true);
+        await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, true);
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError("intent_changed");
         if (row.creationState !== "active") return { machine: await projectManagedMachineInTx(tx, row) };
         if (row.enrolledMachineId) throw new ManagedMachineError("intent_changed");

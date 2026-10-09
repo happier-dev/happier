@@ -34,6 +34,7 @@ import { projectRequesterSessionCredentialDisclosure, sealExternalActionRequeste
 import { encodeStoredCredentials } from '@/persistence';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { MachineEnvironmentApplyInputV1Schema, type MachineEnvironmentApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;
 
@@ -73,6 +74,12 @@ type OriginalAccountActionInput = Readonly<{
 }>;
 
 /** A positively observed own target retains the caller's incumbent daemon path. */
+/** These finite receivers require an exact installed-Machine proof even for
+ * an original requester's own target; no local bearer bridge can replace it. */
+export function requiresOriginalAccountMachineActionProof(actionId: string): boolean {
+  return Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'machines.environment.apply';
+}
+
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
 /** Original Account/terminal delivery enters Home before a retained guest can accept it.
@@ -85,7 +92,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const provenance = readAuthTokenProvenance(claims, { allowLegacyHome: false });
   const accountId = readAccountIdFromToken(input.credentials.token);
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
-  const finiteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, input.actionId);
+  const requiresMachineProof = requiresOriginalAccountMachineActionProof(input.actionId);
   const isCurrent = async () => !input.signal?.aborted && (!input.isCurrent || await input.isCurrent());
   if (!await isCurrent()) return fail('target_unavailable');
   // This branch only chooses the incumbent own-account path. Home still owns
@@ -97,7 +104,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (!await isCurrent()) return fail('target_unavailable');
     const own = machines.find(row => row.id === input.target.machineId);
     const ordinary = readAuthTokenProvenance(claims, { allowLegacyHome: true });
-    if (!finiteProjectAction && ordinary?.provenance.kind === 'account'
+    if (!requiresMachineProof && ordinary?.provenance.kind === 'account'
       && ordinary.provenance.authority === 'present_user' && input.authority !== 'account_automation'
       && accountId && own?.access?.custodian.accountId === accountId) return null;
   }
@@ -142,7 +149,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const envelope = binding && material ? sealExternalActionRequestV2({ binding, material, input: input.input, randomBytes })
     : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: input.requestId, target: input.target, input: input.input });
   let body: unknown = envelope;
-  if (foreign || finiteProjectAction) {
+  if (foreign || requiresMachineProof) {
     if (!input.serverIdentityId) return fail('admission_unavailable');
     if (foreign && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
@@ -625,7 +632,7 @@ export function isManagedSessionStartTransportAvailable(params: Readonly<{
     && (root.accountEncryptionMode === 'plain' || (root.accountEncryptionMode === 'e2ee' && params.material?.machineKey.length === 32));
 }
 
-export async function dispatchManagedSessionStart(params: Readonly<{
+type ManagedChildDispatchParams = Readonly<{
   input: SessionSpawnNewInputV2;
   continuation: NonNullable<ExternalActionExecutionAuthorizationRequestV1['managedContinuation']>;
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -634,16 +641,24 @@ export async function dispatchManagedSessionStart(params: Readonly<{
   serverHttpBaseUrl: string;
   material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
   signal?: AbortSignal;
+}>;
+export async function dispatchManagedSessionStart(params: ManagedChildDispatchParams): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'session.spawn_new', serverId: params.input.executionTarget.serverId,
+    targetMachineId: params.input.executionTarget.machineId });
+}
+
+async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
+  input: SessionSpawnNewInputV2 | MachineEnvironmentApplyInputV1;
+  actionId: 'session.spawn_new' | 'machines.environment.apply'; serverId: string; targetMachineId: string;
 }>): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
   const root = params.authorization.binding;
   if (!isManagedSessionStartTransportAvailable(params)
     || root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
   if (params.signal?.aborted) return fail('cancelled');
-  let input: SessionSpawnNewInputV2;
+  let input: SessionSpawnNewInputV2 | MachineEnvironmentApplyInputV1;
   try {
-    const parsed = SessionSpawnNewInputV2Schema.parse(params.input);
-    const home = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: parsed.executionTarget.serverId });
+    const home = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: params.serverId });
     const serverIdentityId = assertResolvedHomeTargetIdentity(home, root.serverIdentityId);
     const destination = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
     const capturedHome = params.authorization.requesterHttpProjection;
@@ -654,24 +669,31 @@ export async function dispatchManagedSessionStart(params: Readonly<{
     // Only the existing verified private Home port can admit that destination.
     if (normalizeServerHttpBaseUrl(home.applicationUrl) !== destination
       && (!capturedDestination || !await capturedHome!.isCurrent())) return fail('target_unavailable');
-    input = { ...parsed, executionTarget: { ...parsed.executionTarget, serverId: serverIdentityId } };
+    if (params.actionId === 'session.spawn_new') {
+      const parsed = SessionSpawnNewInputV2Schema.parse(params.input);
+      input = { ...parsed, executionTarget: { ...parsed.executionTarget, serverId: serverIdentityId } };
+    } else {
+      const parsed = MachineEnvironmentApplyInputV1Schema.parse(params.input);
+      if (parsed.homeId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
+      input = parsed;
+    }
   } catch { return fail('target_unavailable'); }
   if (params.signal?.aborted) return fail('cancelled');
   // The ordinary spawn owner namespaces identity by Action and requester.
   // Preserve its fresh acquisition correlation across an explicit retry.
   const requestId = root.requestId;
-  const target = { kind: 'machine' as const, machineId: input.executionTarget.machineId };
+  const target = { kind: 'machine' as const, machineId: params.targetMachineId };
   const binding: ExternalActionEncryptionBindingV2 = { serverIdentityId: root.serverIdentityId,
-    accountId: root.accountId, actionId: 'session.spawn_new', requestId, target,
+    accountId: root.accountId, actionId: params.actionId, requestId, target,
     ...('authentication' in root ? { authentication: { kind: root.authentication.kind, tokenEpoch: root.authentication.tokenEpoch } }
       : { credentialId: root.credentialId }) };
   const envelope = root.accountEncryptionMode === 'e2ee'
     ? sealExternalActionRequestV2({ binding, input, material: params.material!, randomBytes,
-        sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(input) })
+        ...(params.actionId === 'session.spawn_new' ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(SessionSpawnNewInputV2Schema.parse(input)) } : {}) })
     : { v: 1 as const, requestId, target, input };
   const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: target.machineId,
     envelope, managedContinuation: params.continuation });
-  const path = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}session.spawn_new`;
+  const path = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${params.actionId}`;
   const headers = createExternalActionAuthorizedRequestHeaders({ authorization: params.authorization,
     effectActionId: 'machines.managed.acquire', target: root.target, installationId: params.installationId,
     method: 'POST', path, body, privateKey: params.privateKey });
@@ -687,11 +709,56 @@ export async function dispatchManagedSessionStart(params: Readonly<{
     if (envelope.v === 2 && params.material) return openExternalActionResponseV2({ envelope: response.data,
       binding, request: envelope, material: params.material }) ?? fail('invalid_encrypted_envelope');
     const responseEnvelope = ExternalActionResponseEnvelopeV1Schema.safeParse(response.data);
-    return responseEnvelope.success && responseEnvelope.data.actionId === 'session.spawn_new'
+    return responseEnvelope.success && responseEnvelope.data.actionId === params.actionId
       && responseEnvelope.data.requestId === requestId ? responseEnvelope.data.execution : fail('invalid_envelope');
   } catch {
     return fail(params.signal?.aborted ? 'cancelled' : 'target_unavailable');
   }
+}
+
+export async function dispatchManagedMachineEnvironment(params: Omit<Parameters<typeof dispatchManagedSessionStart>[0], 'input'> & Readonly<{
+  input: MachineEnvironmentApplyInputV1;
+  serverId: string;
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'machines.environment.apply', targetMachineId: params.input.machineId });
+}
+
+/** Provenance for the incumbent local host Account path, not effect authority.
+ * Home still mints and verifies every setup Action's exact target proof. */
+export function isOriginalLocalManagedSetupContext(input: Readonly<{
+  context: ActionExecutorContext; credentials: StoredCredentials; custodianAccountId: string; homeId: string;
+}>): boolean {
+  const { context, credentials } = input;
+  const accountId = readAccountIdFromToken(credentials.token);
+  const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: false });
+  return Boolean(accountId && accountId === input.custodianAccountId
+    && credentials.credentialProvenance === 'stored_session' && provenance?.provenance.kind === 'account'
+    && provenance.provenance.authority === 'present_user'
+    && (context.surface === 'cli' || context.surface === 'ui') && context.actionCaller?.kind === 'host'
+    && context.actionRequestId && context.serverIdentityId === input.homeId
+    && (!context.runtimeAccountId || context.runtimeAccountId === accountId)
+    && !context.machineAdmission && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+    && !context.rpcSessionAuthorization && !context.causalPermissionAuthority && !context.sessionInputSource
+    && !context.runtimeRunId && !context.executionRunWorkflowRunId);
+}
+
+/** Original local host creation has no Session continuation proof. Its setup
+ * re-enters the incumbent Account Action ingress, never an unsigned guest RPC. */
+export async function dispatchLocalManagedMachineEnvironment(params: Readonly<{
+  input: MachineEnvironmentApplyInputV1;
+  context: ActionExecutorContext;
+  credentials: StoredCredentials;
+  custodianAccountId: string;
+  serverHttpBaseUrl: string;
+  isCurrent(): Promise<boolean>;
+}>): Promise<ActionExecuteResult> {
+  if (!isOriginalLocalManagedSetupContext({ ...params, homeId: params.input.homeId }))
+    return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+  return dispatchOriginalAccountAction({ actionId: 'machines.environment.apply', input: params.input,
+    requestId: params.context.actionRequestId!, target: { kind: 'machine', machineId: params.input.machineId },
+    credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl, serverIdentityId: params.input.homeId,
+    ...(params.context.authority ? { authority: params.context.authority } : {}), isCurrent: params.isCurrent,
+    ...(params.context.signal ? { signal: params.context.signal } : {}) });
 }
 
 export async function mintExternalActionExecutionAuthorization(input: Readonly<{

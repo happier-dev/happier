@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -51,6 +50,7 @@ import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation'
 import { useDeviceType } from '@/utils/platform/responsive';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
+import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview, type ManagedMachineDeleteReview } from './managedMachineDeleteReview';
 
 const execute = createFrontDoorActionExecute();
 type Execute = ReturnType<typeof createFrontDoorActionExecute>;
@@ -91,14 +91,15 @@ export function ManagedMachineSections(props: SectionProps) {
     const [pending, setPending] = React.useState<ManagedMachineActionIdV1 | null>(null);
     const pendingRef = React.useRef(false);
     const [error, setError] = React.useState<string | null>(null);
-    const [deleteReview, setDeleteReview] = React.useState<Readonly<{ key: string; census: MachineReferenceCensusV1 }> | null>(null);
+    const [deleteReview, setDeleteReview] = React.useState<Readonly<{ key: string; review: ManagedMachineDeleteReview }> | null>(null);
     const [moveReview, setMoveReview] = React.useState<Readonly<{ key: string; candidates: readonly ManagedMachineMoveCandidate[] }> | null>(null);
     const [moveLoading, setMoveLoading] = React.useState(false);
     const moveLoadingRef = React.useRef(false);
     const [removeReviewKey, setRemoveReviewKey] = React.useState<string | null>(null);
     const deleteReviewKey = JSON.stringify([props.serverId, props.binding?.accountId, props.binding?.revision,
         machine.id, machine.intentRevision, machine.controller, machine.resource]);
-    const reviewedDependencies = deleteReview?.key === deleteReviewKey ? deleteReview.census : null;
+    const currentDeleteReview = deleteReview?.key === deleteReviewKey ? deleteReview.review : null;
+    const reviewedDependencies = currentDeleteReview?.census;
     const interestRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         const interest = new AbortController();
@@ -284,11 +285,9 @@ export function ManagedMachineSections(props: SectionProps) {
         if (!canMutate) return;
         setDeleteReview(null);
         fireAndForget(run('machines.managed.references.get', target, result => {
-            const census = ManagedMachineActionOutputSchemasV1['machines.managed.references.get'].parse(result);
-            if (census.homeId !== machine.homeId || census.machineId !== null && census.machineId !== machine.enrolledMachineId) {
-                setError('managed_response_invalid'); return;
-            }
-            setDeleteReview({ key: deleteReviewKey, census });
+            const review = qualifyManagedMachineDeleteReview(machine, result);
+            if (!review) { setError('managed_response_invalid'); return; }
+            setDeleteReview({ key: deleteReviewKey, review });
         }), { tag: 'ManagedMachineSections.dependencies' });
     };
     const changePolicy = (next: MachineRetentionPolicyV1) => {
@@ -429,9 +428,12 @@ export function ManagedMachineSections(props: SectionProps) {
             <Item title={t('managedMachines.actions.deleteMachine')} mode="info" showChevron={false} rightElement={
                 <RoundButton title={t('managedMachines.actions.deleteMachine')} display="destructive" size="small"
                     testID="managed-machine.delete-confirm" disabled={!canMutate} loading={pending === 'machines.managed.delete'}
-                    onPress={() => { if (canMutate && reviewedDependencies) fireAndForget(run('machines.managed.delete', {
-                        ...target, when: 'now', expectedRevision: machine.intentRevision, intent: 'delete', reviewedDependencies: true,
-                    }), { tag: 'ManagedMachineSections.delete' }); }} />
+                    onPress={() => {
+                        if (!canMutate || !currentDeleteReview) return;
+                        const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
+                        if (!input) { setError('intent_changed'); return; }
+                        fireAndForget(run('machines.managed.delete', input), { tag: 'ManagedMachineSections.delete' });
+                    }} />
             } />
             <Item title={t('common.cancel')} mode="info" showChevron={false} rightElement={
                 <RoundButton title={t('common.cancel')} display="secondary" size="small" disabled={!canMutate}

@@ -51,6 +51,32 @@ function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: Ne
 }
 
 describe('buildNewSessionScreenVariantModel', () => {
+    it.each([false, true])('offers Delete alongside failed-setup recovery without installation retry (wizard=%s)', async (wizard) => {
+        const deleteMachine = vi.fn();
+        const retrySetup = vi.fn();
+        const continueWithoutSetup = vi.fn();
+        const draft: NewSessionManagedMachineDraftModel & { deleteMachine: () => void } = {
+            selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },
+            select: vi.fn(), retryInstallation: vi.fn(), retrySetup, continueWithoutSetup, deleteMachine,
+            progress: { kind: 'failed', managedId: 'paid', code: 'setup_failed', retrySetupAvailable: true,
+                environmentSetup: { environment: { setupScript: 'echo setup' }, state: 'failed', errorCode: 'setup_failed' } },
+        };
+        const badge = buildVariant(wizard, draft).statusBadges?.find(item => item.key === 'managed-machine-progress');
+        const screen = await renderScreen(React.createElement(React.Fragment, null, badge?.renderPopover?.({
+            open: true, anchorRef: React.createRef(), onRequestClose: () => {},
+        })));
+        try {
+            expect(screen.findByTestId('managed-machine-progress-retry')).toBeNull();
+            const remove = screen.findByTestId('managed-machine-progress-delete');
+            expect(remove).not.toBeNull();
+            await act(async () => remove!.props.onPress());
+            await act(async () => screen.findByTestId('managed-machine-progress-retry-setup')!.props.onPress());
+            await act(async () => screen.findByTestId('managed-machine-progress-skip-setup')!.props.onPress());
+            expect(deleteMachine).toHaveBeenCalledOnce();
+            expect(retrySetup).toHaveBeenCalledOnce();
+            expect(continueWithoutSetup).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
     it('projects Set up after Join from the durable stage instead of showing allocation waiting', async () => {
         const draft: NewSessionManagedMachineDraftModel = {
             selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },

@@ -1,4 +1,20 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { z } from 'zod';
+
+export type ActionOperationProjectScriptSelection = z.infer<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)['projects.script.run']>['selection'];
+
+export type ActionOperationProjectWorkspaceQuery = Readonly<{
+    /** Required authenticated Account evidence; unresolved identity fails closed. */
+    accountId: string | null;
+    /** Original Source checkout, not the operation's execution placement. */
+    workspace: WorkspaceAddressV1;
+}>;
+
+export type ActionOperationProjectScriptQuery = ActionOperationProjectWorkspaceQuery & Readonly<{
+    selection: ActionOperationProjectScriptSelection;
+}>;
 
 export type ActionOperationAddress = Readonly<{
     serverId: string | null;
@@ -10,9 +26,20 @@ export type ActionOperationMachineAddress = Readonly<{
     machineId: string;
 }>;
 
+export type ActionOperationManagedMachineQuery = ActionOperationMachineAddress & Readonly<{
+    accountId: string | null;
+    managedId: string;
+    /** Portable identity from the actual managed row, not this device's profile id. */
+    homeId?: string | null;
+    /** Actual joined target, distinct from the allocating controller. */
+    enrolledMachineId?: string | null;
+}>;
+
 export type ActionOperationSessionAddress = Readonly<{
     serverId: string | null;
     sessionId: string;
+    /** When supplied, unresolved Account evidence fails closed. */
+    accountId?: string | null;
 }>;
 
 export type ActionOperationRequestAddress = Readonly<{
@@ -60,7 +87,7 @@ export function actionOperationMachineAddressKey(address: ActionOperationMachine
 }
 
 export function actionOperationSessionAddressKey(address: ActionOperationSessionAddress): string {
-    return JSON.stringify([normalizeActionOperationServerId(address.serverId), address.sessionId]);
+    return JSON.stringify([normalizeActionOperationServerId(address.serverId), address.sessionId, address.accountId]);
 }
 
 export function actionOperationRequestAddressKey(address: ActionOperationRequestAddress): string {

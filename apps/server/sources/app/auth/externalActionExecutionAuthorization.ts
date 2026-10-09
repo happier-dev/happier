@@ -25,7 +25,9 @@ import {
     type ExternalActionRequestEnvelope,
     computeExternalActionRequestEnvelopeDigestV1,
 } from "@happier-dev/protocol/actions";
-import { SOCKET_RPC_EVENTS, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from "@happier-dev/protocol/socketRpc";
+import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1,
+    type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1 } from "@happier-dev/protocol/socketRpc";
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, resolveCredentialActionAdmissionV1, ManagedMachineActionIdV1Schema,
     managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema,
@@ -38,7 +40,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
-import { ManagedMachineError, readManagedAcquisitionIdentity, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState,
+import { ManagedMachineError, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, projectManagedMachine,
     readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { db } from "@/storage/db";
@@ -248,23 +250,29 @@ async function readCurrentExternalActionPrincipal(
             runId: binding.workflowActionOrigin.runId, requireCurrentScopeEnd: true }))) return null;
     if (binding.managedContinuation) {
         const continuation = binding.managedContinuation;
-        if (binding.actionId !== 'session.spawn_new' || binding.target.kind !== 'machine'
+        if (!['session.spawn_new', 'machines.environment.apply'].includes(binding.actionId) || binding.target.kind !== 'machine'
             || binding.target.machineId !== binding.machineId) return null;
         try {
             const row = await requireCurrentManagedMachineInTx(reader, { homeId: binding.serverIdentityId,
                 managedId: continuation.managedId, requestId: continuation.creationRequestId,
                 expectedIntentRevision: continuation.expectedIntentRevision, controller: continuation.controller },
                 { requestAuthority: 'creation' });
+            const admissionState = readManagedAdmissionState(row.admittedInput);
+            const setup = projectManagedMachine(row).environmentSetup;
+            const acquisitionDigest = binding.actionId === 'machines.environment.apply'
+                ? admissionState.environmentSetup?.requestEnvelopeDigest : admissionState.continuation?.requestEnvelopeDigest;
             if (row.custodianAccountId !== binding.custodianAccountId || row.enrolledMachineId !== binding.machineId
                 || row.allocation !== 'bound' || !row.resource
-                || readManagedAcquisitionIdentity(row.admittedInput).continuation?.requestEnvelopeDigest !== continuation.acquireRequestEnvelopeDigest) return null;
+                || row.desired === 'delete' || acquisitionDigest !== continuation.acquireRequestEnvelopeDigest
+                || binding.actionId === 'machines.environment.apply' && (!setup || setup.state === 'skipped')
+                || binding.actionId === 'session.spawn_new' && setup && !['succeeded', 'skipped'].includes(setup.state)) return null;
             const guest = await reader.machine.findUnique({ where: { id: binding.machineId }, select: {
                 accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true,
             } });
             if (!guest || guest.accountId !== binding.custodianAccountId || guest.installationId !== binding.installationId
                 || classifyMachineAvailabilityState(guest) !== 'available') return null;
             const guestAdmission = await resolveMachineAdmissionInTx(reader, { actorAccountId: binding.accountId,
-                machineId: binding.machineId, actionId: 'session.spawn_new' });
+                machineId: binding.machineId, actionId: binding.actionId });
             if (guestAdmission.kind !== 'admitted' || guestAdmission.custodianAccountId !== binding.custodianAccountId
                 || guestAdmission.installationId !== binding.installationId) return null;
             const controller = await resolveMachineAdmissionInTx(reader, { actorAccountId: binding.accountId,
@@ -278,7 +286,7 @@ async function readCurrentExternalActionPrincipal(
     }
     if ('authentication' in binding) {
         if (!isOriginalAccountExecutionAction(binding.actionId)
-            && !(binding.actionId === 'session.spawn_new' && binding.managedContinuation)
+            && !(['session.spawn_new', 'machines.environment.apply'].includes(binding.actionId) && binding.managedContinuation)
             && !(binding.actionId === 'session.spawn_new' && binding.handoffContinuation)
             && !(binding.handoffContinuation && isOriginalAccountHandoffAction(binding.actionId))) return null;
         if (!await auth.isSignedCredentialCurrent(reader, binding.accountId, binding.authentication.tokenEpoch)) return null;
@@ -609,16 +617,19 @@ export async function verifyExternalActionDomainExecutionRequest(
         const controllerPurpose = method === 'POST' && /^\/v1\/machines\/managed\/controller\/[^/]+$/u.test(path);
         const readPurpose = method === 'POST' && path === managedMachineActionEndpointPathV1('machines.managed.get');
         const directPurpose = method === 'POST'
-            && ['machines.managed.list', 'machines.managed.get', 'machines.managed.cancel'].includes(managedRoot.data)
+            && ['machines.managed.list', 'machines.managed.get', 'machines.managed.cancel', 'machines.managed.setup.skip'].includes(managedRoot.data)
             && path === managedMachineActionEndpointPathV1(managedRoot.data);
         const continuation = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
         const childPurpose = managedRoot.data === 'machines.managed.acquire' && method === 'POST'
-            && (path === bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new')
-                || path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}session.spawn_new`)
+            && ['session.spawn_new', 'machines.environment.apply'].some(action =>
+                path === bindExternalActionExecutionAuthorizationHttpPathV1(action)
+                || path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${action}`)
             && continuation.success && continuation.data.managedContinuation !== undefined;
+        const setupPurpose = managedRoot.data === 'machines.environment.apply' && method === 'POST'
+            && ['/v1/machines/environment/resolve', '/v1/machines/environment/report'].includes(path);
         const guestPath = method === 'GET' ? /^\/v1\/machines\/([^/]+)$/u.exec(path) : null;
         const guestPurpose = guestPath && await readCurrentManagedGuestActivityInTx(db, verified.binding, guestPath[1]);
-        if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose) return null;
+        if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose) return null;
         if (guestPurpose) managedGuestActivity = guestPurpose;
     } else if (isOriginalAccountProjectAction(verified.binding.actionId)) {
         const actionId = verified.binding.actionId;
@@ -709,6 +720,7 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
 export async function verifyWorkspaceSyncHandoffSourceAuthorization(
     authorization: ExternalActionExecutionAuthorizationV1,
     routing: WorkspaceSyncSourceRoutingV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     const context = routing.sourceContext;
@@ -718,6 +730,7 @@ export async function verifyWorkspaceSyncHandoffSourceAuthorization(
         || routing.originalActionEnvelope || !context || !claimed
         || binding.serverIdentityId !== await getOrCreateServerIdentityId()
         || routing.accountServerId !== binding.serverIdentityId
+        || routing.operationId !== binding.requestId
         || routing.sourceMachineId !== binding.handoffAdmission.sourceMachineId
         || routing.sourceSessionId !== binding.handoffAdmission.sessionId
         || binding.machineId !== routing.sourceMachineId
@@ -727,32 +740,100 @@ export async function verifyWorkspaceSyncHandoffSourceAuthorization(
         || !sameManagedInput(context.sessionActionOrigin, binding.sessionActionOrigin)
         || ('grant' in binding && !sameManagedInput(context.callerInputConstraints,
             { models: binding.grant.models, permissionModes: binding.grant.permissionModes }))) return null;
+    return readCurrentWorkspaceSyncSourceAuthorization(binding, routing, resolveCurrentSessionMachine);
+}
+
+/** Both source purposes retain the issuer's principal and independently recheck logical Source access. */
+async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActionExecutionAuthorizationBindingV1,
+    routing: WorkspaceSyncSourceRoutingV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine']): Promise<VerifiedExternalActionExecutionRequest | null> {
+    const context = routing.sourceContext;
+    const claimed = context?.machineAdmission;
+    const action = PublicActionIdSchema.safeParse(binding.actionId);
+    if (!action.success || !context || !claimed || claimed.machineId !== routing.sourceMachineId || claimed.actorAccountId !== binding.accountId
+        || !sameManagedInput(context.sessionActionOrigin, binding.sessionActionOrigin)
+        || ('grant' in binding && !sameManagedInput(context.callerInputConstraints,
+            { models: binding.grant.models, permissionModes: binding.grant.permissionModes }))) return null;
     const current = await verifyCurrentExternalActionPrincipal(binding);
     const principal = current && projectExternalActionBoundPrincipal(binding, current);
     if (!principal || narrowCredentialAuthority(principal.authority, context.callerAuthority) !== context.callerAuthority
         || !await hasCurrentExecutionMachineAdmission(binding)
-        || !resolveCredentialActionAdmissionV1({ spec: getActionSpec('session.handoff'), authority: context.callerAuthority,
+        || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: context.callerAuthority,
             ...('grant' in binding ? { grant: binding.grant } : {}) }).ok) return null;
     if (binding.sessionActionOrigin && ((context.callerPermissionMode != null
         && context.callerPermissionMode !== binding.sessionActionOrigin.callerPermissionMode)
         || (context.causalPermissionAuthority != null
             && !sameManagedInput(context.causalPermissionAuthority, binding.sessionActionOrigin.causalPermissionAuthority))
-        || (context.workspaceWrites !== undefined && context.workspaceWrites !== binding.sessionActionOrigin.workspaceWrites))) return null;
-    const source = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId: binding.machineId, requiredRole: claimed.role });
+        || context.workspaceWrites !== binding.sessionActionOrigin.workspaceWrites)) return null;
+    const source = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId: routing.sourceMachineId, requiredRole: claimed.role });
     if (source.kind !== 'admitted' || source.custodianAccountId !== claimed.custodianAccountId
         || source.installationId !== claimed.installationId || source.encryptionMode !== claimed.encryptionMode) return null;
-    return { binding, principal: { ...principal, authority: context.callerAuthority }, effectActionId: 'session.handoff', target: binding.target };
+    if (!await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine)) return null;
+    return { binding, principal: { ...principal, authority: context.callerAuthority }, effectActionId: binding.actionId, target: binding.target };
+}
+
+/** The current installed D's original packet attests verified decryption; P1 never signs as D. */
+export async function verifyWorkspaceSyncProjectSourceAuthorization(
+    authorization: ExternalActionExecutionAuthorizationV1,
+    routing: WorkspaceSyncSourceRoutingV1,
+    execution: WorkspaceSyncSourceExecutionV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
+): Promise<Readonly<{ verified: VerifiedExternalActionExecutionRequest;
+    route: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> }> | null> {
+    const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
+    const envelope = routing.originalActionEnvelope;
+    const packet = execution.externalActionExecution;
+    if (!binding || !matchesExternalActionAuthorizationBinding(binding, authorization.binding)
+        || binding.actionId !== 'projects.open' || binding.handoffAdmission || binding.handoffContinuation
+        || routing.phase !== 'prepare' || routing.sourceSessionId !== undefined || !envelope
+        || binding.serverIdentityId !== await getOrCreateServerIdentityId() || routing.accountServerId !== binding.serverIdentityId
+        || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: 'projects.open', machineId: binding.machineId, envelope })
+        || packet.authorization.token !== authorization.token || !matchesExternalActionAuthorizationBinding(binding, packet.authorization.binding)
+        || packet.effectActionId !== 'projects.open' || packet.installationId !== binding.installationId
+        || encodeExternalActionResolvedTargetV1(packet.target) !== encodeExternalActionResolvedTargetV1(binding.target)) return null;
+    const suffix = `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    if (!execution.method.endsWith(suffix)) return null;
+    const writerMachineId = execution.method.slice(0, -suffix.length);
+    const verified = await readCurrentWorkspaceSyncSourceAuthorization(binding, routing, resolveCurrentSessionMachine);
+    if (!verified) return null;
+    // Plain decoded packets can also be checked against the canonical Open input.
+    // For opaque transport params, the same installed D signature binds the
+    // unchanged envelope and exact Source facts after D's verified decryption.
+    if (typeof execution.params !== 'string') {
+        const input = OpenProjectInputV1Schema.safeParse(execution.params);
+        if (!input.success || input.data.serverId !== binding.serverIdentityId || input.data.machineId !== binding.machineId
+            || input.data.materialization.kind !== 'sync'
+            || (input.data.source.kind !== 'workspace' && input.data.source.kind !== 'source')
+            || input.data.source.checkout?.machineId !== routing.sourceMachineId
+            || input.data.source.checkout.rootPath !== routing.sourceRootPath
+            || envelope.v === 1 && !sameManagedInput(envelope.input, input.data)) return null;
+    }
+    const rootMachine = await db.machine.findUnique({ where: { id: binding.machineId } });
+    if (!rootMachine?.installationPublicKey || rootMachine.installationId !== binding.installationId
+        || classifyMachineAvailabilityState(rootMachine) !== 'available'
+        || !verifyExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+            effectActionId: packet.effectActionId, target: packet.target, installationId: packet.installationId,
+            event: SOCKET_RPC_EVENTS.CALL, method: execution.method, requestId: execution.requestId,
+            ...(execution.params === undefined ? {} : { params: execution.params }), workspaceSyncSourceRouting: routing,
+            publicKey: rootMachine.installationPublicKey, signature: packet.machineSignature })) return null;
+    const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.accountServerId,
+        childMachineId: routing.sourceMachineId, childRootPath: routing.sourceRootPath,
+        parentMachineId: writerMachineId, releaseOnly: false });
+    return route && await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine) ? { verified, route } : null;
 }
 
 /** One currentness decision for the original handoff's installed source writer and chosen target. */
 export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     authorization: ExternalActionExecutionAuthorizationV1,
     routing: WorkspaceSyncSourceWriterTargetRoutingV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
+    targetReceiver?: Readonly<{ routing: WorkspaceSyncTargetRoutingV1; machineId: string }>,
 ): Promise<Readonly<{ verified: VerifiedExternalActionExecutionRequest;
     writer: Extract<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'admitted' }>;
-    target: Extract<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'admitted' }> }> | null> {
+    target: Extract<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'admitted' }>;
+    targetRoute?: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> }> | null> {
     if (routing.target.phase === 'release') return null;
-    const verified = await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source);
+    const verified = await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, resolveCurrentSessionMachine);
     if (!verified || verified.binding.handoffAdmission?.targetMachineId !== routing.target.targetMachineId) return null;
     const writer = await resolveMachineAdmission({ actorAccountId: routing.source.sourceContext.machineAdmission.custodianAccountId,
         machineId: routing.sourceWriter.machineId, requiredRole: 'manage' });
@@ -766,18 +847,34 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     const target = await resolveMachineAdmission({ actorAccountId: verified.binding.accountId,
         machineId: routing.target.targetMachineId, requiredRole: 'use' });
     if (target.kind !== 'admitted' || target.installationId !== verified.binding.handoffAdmission.targetInstallationId) return null;
-    const enrollment = await db.managedMachine.findUnique({ where: { enrolledMachineId: target.machineId },
-        select: { controllerMachineId: true } });
-    if (enrollment && !await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.target.accountServerId,
-        childMachineId: target.machineId, childRootPath: routing.target.targetRootPath,
-        parentMachineId: enrollment.controllerMachineId, releaseOnly: false })) return null;
-    return { verified, writer, target };
+    let targetRoute: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> | undefined;
+    if (targetReceiver) {
+        const { targetContext, ...phase } = targetReceiver.routing;
+        const { kind: _kind, ...targetAdmission } = target;
+        if (!sameManagedInput(phase, routing.target) || !sameManagedInput(targetContext.machineAdmission, targetAdmission)
+            || !sameManagedInput({ ...targetContext, machineAdmission: routing.source.sourceContext.machineAdmission }, routing.source.sourceContext)) return null;
+        const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.target.accountServerId,
+            childMachineId: target.machineId, childRootPath: routing.target.targetRootPath,
+            parentMachineId: targetReceiver.machineId, releaseOnly: false });
+        if (!route) return null;
+        targetRoute = route;
+    } else {
+        const enrollment = await db.managedMachine.findUnique({ where: { enrolledMachineId: target.machineId },
+            select: { controllerMachineId: true } });
+        if (enrollment && !await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.target.accountServerId,
+            childMachineId: target.machineId, childRootPath: routing.target.targetRootPath,
+            parentMachineId: enrollment.controllerMachineId, releaseOnly: false })) return null;
+    }
+    if (!await hasCurrentExternalActionSessionSource(verified.binding, resolveCurrentSessionMachine)) return null;
+    return { verified, writer, target, ...(targetRoute ? { targetRoute } : {}) };
 }
 
 export async function verifyExternalActionMachineRpcExecution(
     execution: ExternalActionMachineRpcExecutionV1,
     request: Readonly<{ method: string; requestId?: string; params?: unknown; event?: ExternalActionMachineRpcEventV1;
+        workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+        workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
         resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'] }>,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     if (!request.requestId) return null;
@@ -788,21 +885,35 @@ export async function verifyExternalActionMachineRpcExecution(
         || !isExternalActionResolvedTargetAllowedV1({ authorizedTarget: binding.target,
             resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return null;
 
+    if (request.workspaceSyncSourceRouting?.originalActionEnvelope) {
+        if (request.workspaceSyncSourceWriterTargetRouting
+            || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL) return null;
+        const parsed = WorkspaceSyncSourceExecutionV1Schema.safeParse({
+            method: request.method, requestId: request.requestId,
+            ...(request.params === undefined ? {} : { params: request.params }), externalActionExecution: execution });
+        return parsed.success ? (await verifyWorkspaceSyncProjectSourceAuthorization(execution.authorization,
+            request.workspaceSyncSourceRouting, parsed.data, request.resolveCurrentSessionMachine))?.verified ?? null : null;
+    }
+
     if (request.workspaceSyncSourceWriterTargetRouting) {
         const routing = request.workspaceSyncSourceWriterTargetRouting;
-        const admitted = await readCurrentWorkspaceSyncHandoffWriterTarget(execution.authorization, routing);
+        const admitted = await readCurrentWorkspaceSyncHandoffWriterTarget(execution.authorization, routing, request.resolveCurrentSessionMachine,
+            request.workspaceSyncTargetRouting ? { routing: request.workspaceSyncTargetRouting,
+                machineId: request.method.slice(0, request.method.indexOf(':')) } : undefined);
         const phaseMethod = routing.target.phase === 'preflight' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
             : routing.target.phase === 'prepare' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE : null;
         if (!admitted || execution.effectActionId !== 'session.handoff' || !phaseMethod
-            || request.method !== `${routing.target.targetMachineId}:${phaseMethod}`
-            || execution.installationId !== admitted.writer.installationId) return null;
-        const writer = await db.machine.findUnique({ where: { id: admitted.writer.machineId }, select: { installationPublicKey: true } });
+            || request.method !== `${admitted.targetRoute?.parentMachineId ?? routing.target.targetMachineId}:${phaseMethod}`) return null;
+        const signer = request.workspaceSyncTargetRouting ? admitted.target : admitted.writer;
+        if (execution.installationId !== signer.installationId) return null;
+        const writer = await db.machine.findUnique({ where: { id: signer.machineId }, select: { installationPublicKey: true } });
         if (!writer?.installationPublicKey || !verifyExternalActionMachineRpcRequestV1({
             authorizationToken: execution.authorization.token, effectActionId: execution.effectActionId, target: execution.target,
             installationId: execution.installationId, event: request.event ?? SOCKET_RPC_EVENTS.CALL,
             method: request.method, requestId: request.requestId, ...(request.params === undefined ? {} : { params: request.params }),
             workspaceSyncSourceWriterTargetRouting: routing, publicKey: writer.installationPublicKey,
             signature: execution.machineSignature })) return null;
+        if (!await hasCurrentExternalActionSessionSource(admitted.verified.binding, request.resolveCurrentSessionMachine)) return null;
         return admitted.verified;
     }
 

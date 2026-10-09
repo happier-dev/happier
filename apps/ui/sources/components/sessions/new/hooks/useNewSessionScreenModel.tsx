@@ -11,6 +11,7 @@ import { useAiLaunchProfiles, useAiLaunchProfilesForLegacyUi } from '@/sync/stor
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import React from 'react';
+import { useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import { Platform, View, useWindowDimensions } from 'react-native';
 import {
     storage,
@@ -19,6 +20,7 @@ import {
     useCurrentSecretBindingsByProfileIdMutable,
     useLaunchSelectionMachines,
     useMachineListByServerId,
+    useMachineListStatusByServerId,
     useSetting,
     useSettingMutable,
     useSettings,
@@ -108,6 +110,8 @@ import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
 import { useNewSessionBackendTargetState } from '@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
+import { managedMachineCreationIntent, type ManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachinePoolGroups } from '@/components/sessions/new/hooks/machines/useMachinePoolGroups';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -204,13 +208,13 @@ import {
     projectAiLaunchProfileForLegacyUi,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { useDeleteAiLaunchProfile } from '@/sync/store/settingsWriters';
-import { getMaterializedSavedSecrets } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { getMaterializedSavedSecrets, resolveSavedSecretReference as resolveScopedSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { prepareRunnerMcpMaterial } from '@/sync/domains/ephemeralRunner/prepareRunnerMcpMaterial';
 import { createRunnerCreatorSecretReader } from '@/sync/domains/ephemeralRunner/runnerCreatorSecretReader';
 import { readProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
@@ -237,7 +241,13 @@ import {
     readNewSessionDraftFromRepository,
     readNewSessionDraftProjectionFromRepository,
     writeTemporaryComputerActivationRefToRepository,
+    writeNewSessionNameToRepository,
+    writeNewSessionInstructionsToRepository,
 } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { sessionInstructionsActions, type SessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
+import { buildSessionInstructionsContextIntentV1 } from '@happier-dev/protocol/actions/sessionStateFieldActions';
+import { SessionPromptStackV1Schema, writeSessionContextIntentV1ToMetadata } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
 import { moveNewSessionDraftToScope, subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { createApiSessionDraftsTransport } from '@/sync/api/account/apiSessionDrafts';
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
@@ -316,6 +326,7 @@ import {
 } from '@/components/sessions/new/navigation/settleMaterializedTemporaryComputerSession';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { AgentSessionStartBlocker } from '@/components/machines/agents/AgentSessionStartBlocker';
+import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 
 
@@ -353,6 +364,9 @@ function buildNewSessionScreenAuthoringDraftSignature(draft: NewSessionDraft | n
         const screenAuthoringDraft = Object.fromEntries(
             Object.entries(draft).filter(([field]) => (
                 field !== 'input'
+                && field !== 'sessionName'
+                && field !== 'instructionsDraft'
+                && field !== 'promptStack'
                 && field !== 'composerAttachments'
                 && field !== 'updatedAt'
             )),
@@ -434,6 +448,7 @@ export type TemporaryComputerCreatorDependencies = Readonly<{
 
 export function useNewSessionScreenModel(input?: Readonly<{
     composerTopContent?: React.ReactNode;
+    composerBottomContent?: React.ReactNode;
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
@@ -573,6 +588,75 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const scopedPersistedDraftAccessConflict = hasNewSessionDraftAccessConflict(scopedPersistedDraftProjection?.conflict);
     const scopedPersistedDraftPrimaryTeamConflict = hasNewSessionDraftPrimaryTeamConflict(scopedPersistedDraftProjection?.conflict);
     const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const sessionNameStore = useComposerTextStore(() => persistedDraft?.sessionName ?? tempSessionData?.sessionName ?? '');
+    React.useEffect(() => {
+        const hydrateName = () => {
+            const current = draftScope ? readNewSessionDraftFromRepository({ scope: draftScope, draftId }) : null;
+            sessionNameStore.setPrompt(current?.sessionName ?? tempSessionData?.sessionName ?? '');
+        };
+        hydrateName();
+        return draftScope ? subscribeSessionDraft(draftScope, { kind: 'newSession', draftId }, hydrateName) : undefined;
+    }, [draftScope, draftId, sessionNameStore, tempSessionData?.sessionName]);
+    const onSessionNameChange = React.useCallback((value: string) => {
+        sessionNameStore.setPrompt(value);
+        if (draftScope) writeNewSessionNameToRepository({ scope: draftScope, draftId, sessionName: value });
+    }, [draftScope, draftId, sessionNameStore]);
+    const instructionsDraftRef = React.useRef<SessionInstructionsAuthoringDraft | null>(
+        persistedDraft?.instructionsDraft !== undefined
+            ? persistedDraft.instructionsDraft : tempSessionData?.instructionsDraft ?? null);
+    const instructionsStackRef = React.useRef(persistedDraft?.promptStack ?? tempSessionData?.promptStack);
+    const instructionsTitleStore = useComposerTextStore(() => instructionsDraftRef.current?.title ?? '');
+    const instructionsMarkdownStore = useComposerTextStore(() => instructionsDraftRef.current?.markdown ?? '');
+    React.useEffect(() => {
+        const hydrate = () => {
+            const current = draftScope ? readNewSessionDraftFromRepository({ scope: draftScope, draftId }) : null;
+            instructionsDraftRef.current = current?.instructionsDraft !== undefined
+                ? current.instructionsDraft : tempSessionData?.instructionsDraft ?? null;
+            instructionsStackRef.current = current?.promptStack ?? tempSessionData?.promptStack;
+            instructionsTitleStore.setPrompt(instructionsDraftRef.current?.title ?? '');
+            instructionsMarkdownStore.setPrompt(instructionsDraftRef.current?.markdown ?? '');
+        };
+        hydrate();
+        return draftScope ? subscribeSessionDraft(draftScope, { kind: 'newSession', draftId }, hydrate) : undefined;
+    }, [draftScope, draftId, instructionsTitleStore, instructionsMarkdownStore, tempSessionData?.instructionsDraft, tempSessionData?.promptStack]);
+    const getInstructionsDraft = React.useCallback(() => instructionsDraftRef.current, []);
+    const getInstructionsPromptStack = React.useCallback(() => instructionsStackRef.current, []);
+    const onInstructionsDraftChange = React.useCallback((draft: SessionInstructionsAuthoringDraft) => {
+        instructionsDraftRef.current = draft;
+        instructionsTitleStore.setPrompt(draft.title);
+        instructionsMarkdownStore.setPrompt(draft.markdown);
+        if (draftScope) writeNewSessionInstructionsToRepository({ scope: draftScope, draftId, instructionsDraft: draft });
+    }, [draftScope, draftId, instructionsTitleStore, instructionsMarkdownStore]);
+    const selectInstructionsReference = React.useCallback((ref: PromptDocArtifactRefV1 | null) => {
+        const metadata = writeSessionContextIntentV1ToMetadata({ work: { promptStack: instructionsStackRef.current ?? [] } },
+            buildSessionInstructionsContextIntentV1(ref));
+        const promptStack = SessionPromptStackV1Schema.parse(metadata.work.promptStack);
+        instructionsStackRef.current = promptStack;
+        instructionsDraftRef.current = null;
+        instructionsTitleStore.setPrompt('');
+        instructionsMarkdownStore.setPrompt('');
+        if (draftScope) writeNewSessionInstructionsToRepository({ scope: draftScope, draftId, instructionsDraft: null, promptStack });
+    }, [draftScope, draftId, instructionsTitleStore, instructionsMarkdownStore]);
+    const saveInstructionsDraft = React.useCallback(async () => {
+        const draft = instructionsDraftRef.current;
+        if (!draft || !draftScope) return null;
+        const capturedStack = instructionsStackRef.current ?? [];
+        const created = await sessionInstructionsActions.create(draftScope.serverId, draft, undefined, draftScope.accountId);
+        if (created.createdRef) {
+            const metadata = writeSessionContextIntentV1ToMetadata({ work: { promptStack: capturedStack } },
+                buildSessionInstructionsContextIntentV1(created.createdRef));
+            const promptStack = SessionPromptStackV1Schema.parse(metadata.work.promptStack);
+            const current = readNewSessionDraftFromRepository({ scope: draftScope, draftId });
+            if (!current) return created;
+            const liveDraft = current.instructionsDraft;
+            // Clear only the authored body this Save submitted. A later edit
+            // remains in its ordinary draft, alongside the reusable created ref.
+            const instructionsDraft = liveDraft?.title === draft.title && liveDraft.markdown === draft.markdown
+                ? null : liveDraft ?? null;
+            writeNewSessionInstructionsToRepository({ scope: draftScope, draftId, instructionsDraft, promptStack });
+        }
+        return created;
+    }, [draftScope, draftId]);
     const initialSeededPlacementCandidates = React.useMemo(() => (
         persistedDraft?.placementCandidates
             ?? tempSessionData?.pluginNewSessionSeed?.placementCandidates
@@ -703,10 +787,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const externalSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', { scopeKind: 'spawn', serverId: targetServerId });
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
-    const rawProfiles = useSetting('profiles');
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
-    const launchProfiles = useAiLaunchProfiles(rawProfiles);
-    const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
+    const launchProfiles = useAiLaunchProfiles();
+    const profiles = useAiLaunchProfilesForLegacyUi();
     const lastUsedProfile = useAuthoringMemoryField('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
@@ -718,9 +801,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const [lastEngineSelectionsByScope, setLastEngineSelectionsByScope] = useCurrentRememberedEngineSelectionsByScopeV1Mutable();
 
     const hydratedTempAuthoringDraft = React.useMemo(() => {
-        return tempSessionData
-            ? buildNewSessionAuthoringDraftFromTempData(tempSessionData)
-            : null;
+        if (!tempSessionData) return null;
+        // A continuation-only handoff has no configuration to hydrate. Its
+        // adapter defaults must not replace the durable draft's selections.
+        if (Object.keys(tempSessionData).every(key => key === 'sourceContext' || key === 'sourceContextServerId')) return null;
+        return buildNewSessionAuthoringDraftFromTempData(tempSessionData);
     }, [tempSessionData]);
     const hydratedPersistedAuthoringDraft = React.useMemo(() => {
         return persistedDraft
@@ -798,11 +883,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     // (prefetch effect moved below, after machines/recent/favorites are defined)
 
-    const providerSettingsForProfileIntent = React.useMemo(() => (
-        readProviderSettingsFromAccountSettingsV1({
-            providerSettingsV1: settings.providerSettingsV1,
-        }).settings
-    ), [settings.providerSettingsV1]);
+    const providerSettingsForProfileIntent = useProviderSettings(accountSettingsScope);
     const profileEnabledById = React.useMemo(
         () => readProfileEnabledById(settings.profileEnabledById),
         [settings.profileEnabledById],
@@ -828,6 +909,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const activeMachines = useLaunchSelectionMachines();
     const sessions = useNewSessionPlacementSessions();
     const machineListByServerId = useMachineListByServerId();
+    const machineListStatusByServerId = useMachineListStatusByServerId();
     // One resolved Home-group set feeds every destination family. When an explicit settings target
     // is rejected the Machine side used to widen to the resolved allowed Homes while Pools stayed
     // projected from the empty set, so one recovery path silently dropped every Pool row.
@@ -846,7 +928,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         activeServerId: activeServerSource.activeServerId,
         activeMachines,
         machineListByServerId,
-    }), [activeMachines, activeServerSource.activeServerId, machineListByServerId, targetServerId]);
+        machineListStatusByServerId,
+    }), [activeMachines, activeServerSource.activeServerId, machineListByServerId, machineListStatusByServerId, targetServerId]);
     const hasExplicitSeededProfileSelection = React.useMemo(() => {
         if (!useProfiles) {
             return false;
@@ -957,6 +1040,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         : null;
     const {
         executionTarget,
+        managedMachineSelection,
+        managedMachineArchiveChoiceAvailability,
+        setManagedMachineTarget,
+        adoptManagedMachineTarget,
+        setManagedMachineArchiveEffect,
+        cancelManagedMachineTarget,
         selectedMachineId,
         agentCatalogMachineId,
         setSelectedMachineId,
@@ -972,9 +1061,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getRequestedPath,
         getBestPathForMachine,
     } = useNewSessionMachinePathState({
+        isBot: Boolean((hydratedTempAuthoringDraft?.initialSessionFacts ?? hydratedPersistedAuthoringDraft?.initialSessionFacts)?.bot),
         serverId: targetServerId,
+        persistedManagedMachineSelection: persistedTargetMatches ? persistedDraft?.managedMachineSelection : null,
+        requestedManagedMachineSelection: tempSessionData?.managedMachineSelection,
         persistedExecutionTarget: hydratedTempAuthoringDraft?.executionTarget ?? hydratedPersistedAuthoringDraft?.executionTarget ?? undefined,
-        executionTargetRequestKey: hydratedTempAuthoringDraft?.executionTarget !== undefined
+        executionTargetRequestKey: hydratedTempAuthoringDraft?.executionTarget !== undefined || tempSessionData?.managedMachineSelection
             ? (typeof dataId === 'string' ? dataId : null)
             : null,
         routeSelectionOrigin: routeSelectionOrigin?.success ? routeSelectionOrigin.data : undefined,
@@ -990,6 +1082,25 @@ export function useNewSessionScreenModel(input?: Readonly<{
         fixedDirectoryIntent: input?.fixedDirectoryIntent,
         cacheScopeKey: capabilityServerId,
     });
+    const [managedMachineAcquisition, setManagedMachineAcquisition] = React.useState<ManagedMachineAcquisitionDraft | null>(
+        () => !tempSessionData?.managedMachineSelection && persistedTargetMatches ? persistedDraft?.managedMachineAcquisition ?? null : null,
+    );
+    const managedDraftTouchedRef = React.useRef(Boolean(tempSessionData?.managedMachineSelection));
+    React.useEffect(() => {
+        if (!tempSessionData?.managedMachineSelection) return;
+        managedDraftTouchedRef.current = true;
+        setManagedMachineAcquisition(null);
+    }, [dataId, tempSessionData?.managedMachineSelection]);
+    React.useEffect(() => {
+        const recovered = persistedDraft?.managedMachineAcquisition;
+        if (!managedDraftTouchedRef.current && persistedTargetMatches && recovered && managedMachineSelection
+            && stableJsonStringify(recovered.selection) === stableJsonStringify(managedMachineSelection.selection)) {
+            setManagedMachineAcquisition(recovered);
+        }
+    }, [persistedDraft?.managedMachineAcquisition, persistedTargetMatches, managedMachineSelection]);
+    React.useEffect(() => {
+        if (managedMachineSelection === null) setManagedMachineAcquisition(null);
+    }, [managedMachineSelection]);
     const selectionOrigin = executionTarget?.kind === 'machine' ? executionTarget.selectionOrigin : undefined;
     // The Agent catalog is a machine's open plugin projection. For a machine
     // target that is the selected machine; for a Temporary computer, which has
@@ -1245,8 +1356,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         if (!canonicalAgentTarget) return Object.freeze([]) as readonly string[];
         const keys = new Set<string>();
         const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(canonicalAgentTarget.identity);
-        if (bundledAgentId) {
-            for (const key of getAgentCore(bundledAgentId).providerOwnedEnvironmentKeys ?? []) keys.add(key);
+        const core = bundledAgentId ? getAgentCore(bundledAgentId) : null;
+        if (core) {
+            for (const key of core.providerOwnedEnvironmentKeys ?? []) keys.add(key);
         }
         for (const projected of Object.values(currentProjectionInputs?.pluginProjectionV2?.agentsById ?? {})) {
             if (
@@ -1675,7 +1787,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
         connectedServicesAuthChip,
         connectedServicesBindingsPayload,
         connectedServicesModelProbeCacheIdentity,
+        connectedAccountDefaultsStatus,
+        requireConnectedAccountDefaultsReady,
         agentNewSessionOptions,
+        selectedCredentialMachineAgent,
+        connectedServicesRecoveryAction,
     } = useNewSessionConnectedServicesAgentOptions({
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
@@ -1689,6 +1805,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         teamNameById: teamCredentialCatalog.teamNameById,
         setBackendNewSessionOptionStateByTargetKey,
         agentOptionState,
+        machineAgent: selectedBackendEntry ? machineAgentsById[selectedBackendEntry.agentId] ?? null : null,
         settings,
         router,
         applyTeamCredentialPolicy: applyConnectedServiceTeamCredentialPolicy,
@@ -1749,6 +1866,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         connectedServicesBindingsPayload,
         connectedServicesModelProbeCacheIdentity,
         machineProbesEnabled: hostDemanded,
+        connectedAccountDefaultsReady: connectedAccountDefaultsStatus === 'ready',
     });
 
     const selectCreationModel = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref) => {
@@ -2071,7 +2189,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         agentType: selectedUiAgentType,
     });
     const nativeCatalogAgentLaunchParams = React.useMemo(() => {
-        if (!nativeCatalogAgentId || effectiveAgentPluginSettingsReadiness?.ready === false) return null;
+        if (!nativeCatalogAgentId || effectiveAgentPluginSettingsReadiness?.ready === false || connectedAccountDefaultsStatus !== 'ready') return null;
         const newSessionOptions = { ...(agentNewSessionOptions ?? {}), targetServerId };
         const extras = buildSpawnSessionExtrasFromUiState({
             agentId: nativeCatalogAgentId, settings, pluginSettings: effectiveAgentPluginSettings,
@@ -2092,7 +2210,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             }) ?? {},
             ...(connectedServicesBindingsPayload ? { connectedServices: connectedServicesBindingsPayload } : {}),
         };
-    }, [agentNewSessionOptions, backendTarget, connectedServicesBindingsPayload, effectiveAgentPluginSettings,
+    }, [agentNewSessionOptions, backendTarget, connectedAccountDefaultsStatus, connectedServicesBindingsPayload, effectiveAgentPluginSettings,
         effectiveAgentPluginSettingsReadiness?.ready, nativeCatalogAgentId, resumeSessionId, selectedMachineId,
         selectedProfileId, selectedRuntimeCarrierAgentId, sessionConfigOptionOverrides, settings, targetServerId, useProfiles]);
     const nativeCatalogProfile = useProfiles ? selectedProfile : null;
@@ -2296,6 +2414,19 @@ export function useNewSessionScreenModel(input?: Readonly<{
         });
         router.setParams({ machineId: undefined, machinePoolId: undefined, spawnServerId: targetServerId });
     }, [router, setTemporaryComputerTarget, targetServerId]);
+    const selectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft, serverId = targetServerId) => {
+        // A stable Home identity is never a local server-profile routing id.
+        if (!serverId || getServerProfileById(serverId)?.serverIdentityId !== draft.selection.homeId) return;
+        managedDraftTouchedRef.current = true;
+        setManagedMachineAcquisition(null);
+        setManagedMachineTarget(draft, serverId);
+        router.setParams({ machineId: undefined, machinePoolId: undefined, spawnServerId: serverId });
+    }, [router, setManagedMachineTarget, targetServerId]);
+    const updateManagedMachineArchiveEffect = React.useCallback((effect: ManagedMachineSelectionDraft['archiveEffect']) => {
+        managedDraftTouchedRef.current = true;
+        // This local continuation choice must not discard or replace paid acquisition identity.
+        setManagedMachineArchiveEffect(effect);
+    }, [setManagedMachineArchiveEffect]);
     // Recovery beside a failed or empty Pool row calls straight into the existing owners: the
     // canonical Pool projection refresh and the existing Machine Pool settings route.
     const onRefreshMachinePools = React.useCallback((serverId: string) => {
@@ -2451,7 +2582,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
     } = useNewSessionScreenAuthoringState({
+        getSessionName: sessionNameStore.getPrompt,
+        getInstructionsDraft,
+        getInstructionsPromptStack,
+        initialSessionFacts: hydratedTempAuthoringDraft?.initialSessionFacts ?? hydratedPersistedAuthoringDraft?.initialSessionFacts,
+        memoryEnabled: hydratedTempAuthoringDraft?.memoryEnabled ?? hydratedPersistedAuthoringDraft?.memoryEnabled,
         zenTaskSource: persistedDraft?.zenTaskSource,
+        authoringOrigin: persistedDraft?.authoringOrigin,
         automationDraft,
         automationFeatureEnabled,
         initialTriggers,
@@ -2459,6 +2596,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedMachineId,
         targetServerId,
         executionTarget,
+        managedMachineSelection,
+        managedMachineAcquisition,
         temporaryComputerActivationRef: temporaryComputerTargetScope !== null
             ? targetScopedDraft?.temporaryComputerActivationRef
             : hydratedTempAuthoringDraft?.temporaryComputerActivationRef !== undefined
@@ -2608,6 +2747,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         onRefreshMachinePools,
         onOpenMachinePoolSettings,
         executionTarget,
+        selectedManagedMachine: managedMachineSelection,
+        onSelectManagedMachine: selectManagedMachine,
         temporaryComputerAvailability,
         temporaryComputerLaunchBlock,
         selectTemporaryComputer,
@@ -2668,9 +2809,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resetLaunchRequestId: onLaunchUserAttemptIdChange,
     };
     const launchIntentSignature = React.useMemo(() => JSON.stringify({
-        draft: effectiveCurrentAuthoringDraft,
+        draft: managedMachineSelection ? { ...effectiveCurrentAuthoringDraft, executionTarget: null } : effectiveCurrentAuthoringDraft,
         composerDocumentRevision: newSessionComposerDocument.revision,
-        machineId: selectedMachineId,
+        machineId: managedMachineSelection ? null : selectedMachineId,
+        managedMachineSelection: managedMachineCreationIntent(managedMachineSelection),
         sourceContext: sourceContextState.sourceContext,
         selectedSecretReferences: selectedSecretIdByProfileIdByEnvVarName,
         targetServerId: targetServerId ?? null,
@@ -2678,6 +2820,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         effectiveCurrentAuthoringDraft,
         newSessionComposerDocument.revision,
         selectedMachineId,
+        managedMachineSelection,
         sourceContextState.sourceContext,
         selectedSecretIdByProfileIdByEnvVarName,
         targetServerId,
@@ -2896,6 +3039,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
                     scope: temporaryComputerTargetScope,
                 });
                 context.assertCurrent();
+                const resolveReviewedSavedSecret = (ref: string) => resolveScopedSavedSecretReference(
+                    temporaryComputerTargetScope, exactAccountSettings?.secrets ?? [], ref,
+                );
                 let reviewedAuthoring = effectiveCurrentAuthoringDraft;
                 const reviewedProfileId = reviewedAuthoring.profileId?.trim() ?? '';
                 if (reviewedProfileId) {
@@ -2913,6 +3059,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                         profile: currentProfile,
                         selectedAgentProviderOwnedEnvironmentKeys,
                         secrets: launchSecrets,
+                        resolveSavedSecretReference: resolveReviewedSavedSecret,
                         defaultBindings: currentSecretBindings[reviewedProfileId] ?? null,
                         selectedSecretIds: selectedSecretIdByProfileIdByEnvVarName[reviewedProfileId] ?? {},
                         sessionOnlyValues: sessionOnlySecretValueByProfileIdByEnvVarName[reviewedProfileId] ?? {},
@@ -2931,16 +3078,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
                     };
                 }
                 context.assertCurrent();
-                const materializedMcpSecrets = [
-                    ...(exactAccountSettings?.secrets ?? []),
-                    ...getMaterializedSavedSecrets(temporaryComputerTargetScope),
-                ];
-                const mcpMaterial = prepareRunnerMcpMaterial({
-                    settingsLike: exactAccountSettings?.mcpServersSettingsV1,
-                    selection: reviewedAuthoring.mcpSelection,
-                    secrets: materializedMcpSecrets,
-                    decryptSecretValue: readReviewedSecret,
-                });
+                const mcpMaterial = await prepareRunnerMcpMaterial({ context,
+                    selection: reviewedAuthoring.mcpSelection, signal });
                 context.assertCurrent();
                 // The reviewed Agent's exact distribution is resolved here, from
                 // the same machine catalog the Agent was chosen in, so the sealed
@@ -3417,18 +3556,81 @@ export function useNewSessionScreenModel(input?: Readonly<{
         pendingLaunchAttempt,
     });
 
+    const onManagedMachineAcquisitionChange = React.useCallback((next: ManagedMachineAcquisitionDraft | null) => {
+        managedDraftTouchedRef.current = true;
+        setManagedMachineAcquisition(next);
+        // Persist the request identity before the Action may accept a paid resource.
+        persistDraftIfEnabled({ ...buildCurrentPersistedDraft(), managedMachineAcquisition: next });
+    }, [buildCurrentPersistedDraft, persistDraftIfEnabled]);
+    const managedEnrollmentWaiterRef = React.useRef<Readonly<{
+        machineId: string;
+        resolve: () => void;
+        reject: (error: Error) => void;
+        dispose: () => void;
+    }> | null>(null);
+    const onManagedMachineEnrolled = React.useCallback((machineId: string, signal: AbortSignal) => {
+        if (signal.aborted) return Promise.reject(new Error('managed_creation_retired'));
+        adoptManagedMachineTarget(machineId);
+        return new Promise<void>((resolve, reject) => {
+            const onAbort = () => {
+                const waiter = managedEnrollmentWaiterRef.current;
+                if (waiter?.machineId !== machineId) return;
+                managedEnrollmentWaiterRef.current = null;
+                waiter.dispose();
+                reject(new Error('managed_creation_retired'));
+            };
+            signal.addEventListener('abort', onAbort, { once: true });
+            managedEnrollmentWaiterRef.current = {
+                machineId, resolve, reject,
+                dispose: () => signal.removeEventListener('abort', onAbort),
+            };
+        });
+    }, [adoptManagedMachineTarget]);
+    React.useEffect(() => {
+        const waiter = managedEnrollmentWaiterRef.current;
+        if (!waiter || selectedMachine?.id !== waiter.machineId || !projectionCurrent
+            || effectiveAgentPluginSettingsReadiness?.ready === false) return;
+        managedEnrollmentWaiterRef.current = null;
+        waiter.dispose();
+        waiter.resolve();
+    }, [selectedMachine, projectionCurrent, effectiveAgentPluginSettingsReadiness]);
+    React.useEffect(() => () => {
+        const waiter = managedEnrollmentWaiterRef.current;
+        managedEnrollmentWaiterRef.current = null;
+        waiter?.dispose();
+        waiter?.reject(new Error('managed_creation_retired'));
+    }, []);
+
+    const retireManagedMachineCreationDraft = React.useCallback(() => {
+        managedDraftTouchedRef.current = true;
+        cancelManagedMachineTarget();
+        setManagedMachineAcquisition(null);
+    }, [cancelManagedMachineTarget]);
+
     const {
         handleCreateSession,
         providerLaunchError,
         retryProviderLaunch,
+        managedMachineCreationProgress,
+        retryManagedMachineInstallation,
+        retryManagedMachineSetup,
+        continueWithoutManagedMachineSetup,
+        deleteManagedMachineAfterFailedSetup,
+        cancelManagedMachineCreation: abortManagedMachineCreation,
     } = useNewSessionCreateSessionAction({
         zenTaskSource: persistedDraft?.zenTaskSource,
+        authoringOrigin: persistedDraft?.authoringOrigin,
         targetAccountScope: temporaryComputerTargetScope,
         flushComposerInput: newSessionComposerDocument.flushComposerInput,
         draftId,
         router,
         selectedMachineId,
         selectedPath: rememberedPath,
+        managedMachineSelection,
+        managedMachineAcquisition,
+        onManagedMachineAcquisitionChange,
+        onManagedMachineEnrolled,
+        onManagedMachineDeleteRequested: retireManagedMachineCreationDraft,
         directoryKind,
         getRequestedPath,
         selectedMachine,
@@ -3443,6 +3645,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedProfileId,
         profileMap,
         recentMachinePaths,
+        requireConnectedAccountDefaultsReady,
         agentType: selectedUiAgentType,
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
@@ -3456,10 +3659,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         preflightModels,
         preflightModelsTargetKey,
         promptStore,
+        getSessionName: sessionNameStore.getPrompt,
         setSessionPrompt,
         resumeSessionId,
         agentNewSessionOptions,
         currentAuthoringDraft: effectiveCurrentAuthoringDraft,
+        getInstructionsDraft,
+        getInstructionsPromptStack,
         mcpSelection,
         windowsRemoteSessionLaunchModeOverride,
         machineEnvPresence,
@@ -3485,6 +3691,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         sourceContext: sourceContextState.sourceContext,
         temporaryComputerLaunch: launchOnTemporaryComputer,
     });
+    const cancelManagedMachineCreation = React.useCallback(() => {
+        // Retire synchronously before React commits the replacement target.
+        abortManagedMachineCreation();
+        // The ordinary draft retires its continuation; the Account row remains resource authority.
+        retireManagedMachineCreationDraft();
+    }, [abortManagedMachineCreation, retireManagedMachineCreationDraft]);
 
     // Send needs both contracts: a published artifact for the chosen platform
     // (eligibility) and an exact, current, compatible Team credential provider
@@ -3497,9 +3709,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
             && temporaryComputerLaunchBlock === null);
     const canCreate = canCreateFromAuthoring
         && acpCatalogReady
+        && connectedAccountDefaultsStatus === 'ready'
         && temporaryComputerTargetReady
         && (effectiveCurrentAuthoringDraft.executionTarget?.kind === 'temporary_computer'
-            || (selectedBackendEntry !== null && isBackendEntrySelectable(selectedBackendEntry)))
+            || (selectedBackendEntry !== null && isBackendEntrySelectable(selectedBackendEntry)
+                && (selectedBackendEntry.kind === 'configuredBackend' || isMachineAgentReady(selectedCredentialMachineAgent))))
         && canCreateSessionWithInitialAccess(currentAuthoringDraft.access, collaborationAvailability)
         && targetServerId !== null
         && selectedAgentSettingsReady
@@ -3589,8 +3803,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const folderChipState = React.useMemo(() => resolveNewSessionFolderChipState({
         directoryKind,
         selectedPath,
+        machineHomeDir: selectedMachineHomeDir,
         machineUnavailableReason,
-    }), [directoryKind, machineUnavailableReason, selectedPath]);
+    }), [directoryKind, machineUnavailableReason, selectedMachineHomeDir, selectedPath]);
     const removeFolder = offersNoFolder ? selectNoFolder : undefined;
 
     // Auto-persist watches the composer text out of render: a keystroke re-arms the debounce
@@ -3623,8 +3838,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
 
     const launchStatusBadges = React.useMemo(
-        () => buildNewSessionLaunchStatusBadges({ isCreating, translate: t }),
-        [isCreating],
+        () => buildNewSessionLaunchStatusBadges({ isCreating, translate: t,
+            requesterDisclosure: targetAccountScopeResolution.kind === 'bound' && selectedMachine?.access
+                && selectedMachine.access.custodian.accountId !== targetAccountScopeResolution.scope.accountId
+                ? { owner: selectedMachine.access.custodian.displayName || t('shareSheet.person'),
+                    machine: getMachineDisplayName(selectedMachine) ?? selectedMachine.id, signIn: 'full' }
+                : undefined }),
+        [isCreating, selectedMachine, targetAccountScopeResolution],
     );
     const composerStatusBadges = React.useMemo(
         () => [...launchStatusBadges, ...(input?.statusBadges ?? [])],
@@ -3633,10 +3853,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     // Why the chosen agent can't start on the chosen machine, with its fix (lab agent-setup ST):
     // the one inventory owner decides; Set up / Sign in opens the machine's Agents section.
-    const selectedMachineAgent = selectedBackendEntry ? machineAgentsById[selectedBackendEntry.agentId] ?? null : null;
+    const selectedMachineAgent = selectedCredentialMachineAgent;
     const agentStartBlocker = selectedMachineAgent && selectedMachineId ? (
         <AgentSessionStartBlocker
             agent={selectedMachineAgent}
+            connectedServicesRecoveryAction={connectedServicesRecoveryAction}
             machineName={getMachineDisplayName(selectedMachine) ?? selectedMachineId}
             onSetUp={targetServerId === null ? undefined : () => router.push(machineCollectionHref({ machineId: selectedMachineId, serverId: targetServerId }) as never)}
         />
@@ -3799,6 +4020,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             connectionStatus,
             statusBadges: composerStatusBadges,
             composerTopContent,
+            composerBottomContent: input?.composerBottomContent,
             statusTrailingActions: input?.statusTrailingActions,
             machinePopover,
             pathPopover,
@@ -3853,6 +4075,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             sessionPromptInputMaxHeight,
             statusBadges: composerStatusBadges,
             composerTopContent,
+            composerBottomContent: input?.composerBottomContent,
             statusTrailingActions: input?.statusTrailingActions,
         },
         agent: {
@@ -3896,8 +4119,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         },
         machineAndResume: {
             connectionStatus,
-            machineDisplayName: selectedMachine?.metadata?.displayName,
-            machineHost: selectedMachine?.metadata?.host,
+            selectedMachine,
             executionTarget,
             destination: {
                 selectionOrigin,
@@ -3931,10 +4153,22 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }), [wizardFooterProps, simplePanelProps.machineName]);
 
     return buildNewSessionScreenVariantModel({
+        instructionsCreation: { titleStore: instructionsTitleStore, markdownStore: instructionsMarkdownStore,
+            getDraft: getInstructionsDraft, onDraftChange: onInstructionsDraftChange,
+            selectReference: selectInstructionsReference, saveDraft: saveInstructionsDraft },
+        botCreation: effectiveCurrentAuthoringDraft.initialSessionFacts?.bot
+            ? { nameStore: sessionNameStore, onSessionNameChange }
+            : undefined,
         useEnhancedSessionWizard,
         popoverBoundaryRef,
         launchOverlay: accessDraftState.screen?.content ?? null,
         temporaryComputerLaunch,
+        managedMachineDraft: { selection: managedMachineSelection, acquisition: managedMachineAcquisition,
+            select: selectManagedMachine, progress: managedMachineCreationProgress, retryInstallation: retryManagedMachineInstallation,
+            retrySetup: retryManagedMachineSetup, continueWithoutSetup: continueWithoutManagedMachineSetup,
+            deleteMachine: deleteManagedMachineAfterFailedSetup,
+            cancel: cancelManagedMachineCreation, updateArchiveEffect: updateManagedMachineArchiveEffect,
+            archiveChoiceAvailability: managedMachineArchiveChoiceAvailability },
         launchOnRequestClose: accessDraftState.screen?.onRequestClose,
         overlayPresentation: accessDraftState.screen ? 'screen' : 'card',
         overlayFocusReturnRef: accessDraftState.screen?.focusReturnRef,

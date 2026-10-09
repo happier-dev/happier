@@ -32,6 +32,94 @@ describe("managed acquisition durable authority", () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('resolves the admitted environment after preset edits and keeps retry and skip on the same enrolled resource', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const controller = { machineId: 'setup-controller', installationId: 'setup-controller-install' };
+        const guestId = 'setup-guest';
+        await db.machine.createMany({ data: [controller.machineId, guestId].map(id => ({ id, accountId: account.id, metadata: '{}',
+            installationId: id === guestId ? 'guest-install' : controller.installationId })) });
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const environment = { setupScript: 'echo admitted' };
+        await db.managedMachinePreset.create({ data: { id: 'setup-preset', homeId, custodianAccountId: account.id, name: 'Preset',
+            launch, controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            environment: { setupScript: 'echo changed' }, revision: 2 } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: 'setup-create', admittedInput: {}, presetId: 'setup-preset', presetRevision: 1,
+            launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, allocation: 'bound', enrolledMachineId: guestId,
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'same-native' } },
+            environmentSetup: { environment, state: 'pending' } } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        let signer = guestId;
+        // The installed signed Action authentication is the only substituted boundary.
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: signer,
+                externalActionEffectActionId: 'machines.environment.apply', externalActionExecutionRequestId: 'apply',
+                externalActionExecutionCustodianAccountId: account.id,
+            }), { headers: request.headers, params: request.params, query: request.query });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const target = { homeId, machineId: guestId, presetId: 'setup-preset', presetRevision: 1 };
+        const resolved = await app.inject({ method: 'POST', url: '/v1/machines/environment/resolve', payload: target });
+        expect(resolved.statusCode, resolved.body).toBe(200);
+        expect(resolved.json()).toEqual({ environment, managedId: row.id });
+        const report = (state: 'running' | 'failed' | 'succeeded', operationId = 'setup-first') => app.inject({ method: 'POST',
+            url: '/v1/machines/environment/report', payload: { ...target, managedId: row.id, state, operation: { operationId },
+                ...(state === 'failed' ? { errorCode: 'setup_failed' } : {}) } });
+        expect((await report('running')).statusCode).toBe(200);
+        expect((await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/setup.skip', payload: {
+            homeId, managedId: row.id, expectedIntentRevision: 0 } })).statusCode).toBe(409);
+        expect((await report('failed')).statusCode).toBe(200);
+        expect((await report('running', 'setup-retry')).statusCode).toBe(200);
+        expect((await report('succeeded', 'setup-first')).statusCode).toBe(409);
+        expect((await report('failed', 'setup-retry')).statusCode).toBe(200);
+        signer = 'another-machine';
+        expect((await report('succeeded', 'setup-retry')).statusCode).toBe(403);
+        const skipped = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/setup.skip', payload: {
+            homeId, managedId: row.id, expectedIntentRevision: 0 } });
+        expect(skipped.statusCode, skipped.body).toBe(200);
+        expect(skipped.json()).toMatchObject({ id: row.id, enrolledMachineId: guestId,
+            resource: { value: { id: 'same-native' } }, environmentSetup: { environment, state: 'skipped' } });
+        signer = guestId;
+        expect((await report('succeeded', 'setup-retry')).statusCode).toBe(409);
+        expect((await report('running', 'setup-after-skip')).statusCode).toBe(409);
+        expect((await app.inject({ method: 'POST', url: '/v1/machines/environment/resolve', payload: target })).statusCode).toBe(409);
+        await db.managedMachine.update({ where: { id: row.id }, data: { desired: 'delete', intentRevision: 1,
+            environmentSetup: { environment, state: 'running', operation: { operationId: 'setup-delete-race' } } } });
+        expect((await report('succeeded', 'setup-delete-race')).statusCode).toBe(409);
+        expect(await db.managedMachine.count({ where: { admittedActionRequestId: 'setup-create' } })).toBe(1);
+    });
+
+    it('includes immutable setup secret references in the retained resource dependency census', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const resourceId = 'immutable-setup-secret';
+        const secretOwner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.savedSecretResource.create({ data: { id: resourceId, ownerAccountId: secretOwner.id,
+            displayName: 'Setup token', kind: 'token', encryptionMode: 'plain',
+            storedContent: JSON.stringify({ t: 'plain', v: { v: 1, name: 'Setup token', kind: 'token', value: 'private' } }) } });
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id, name: 'Preset',
+            launch, controllerMachineId: 'immutable-controller', controllerInstallationId: 'immutable-install' } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: 'immutable-controller', controllerInstallationId: 'immutable-install',
+            admittedActionRequestId: 'immutable-setup-census', admittedInput: {}, launch, presetId: preset.id, presetRevision: 0,
+            allocation: 'may-exist', archivedAt: new Date(), retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            environmentSetup: { state: 'pending', environment: { secretRefs: { v: 1,
+                bindings: { TOKEN: { ref: `happier:shared-secret:v1:${resourceId}`, revision: 1 } } } } } } });
+        expect((await inTx(tx => readManagedResourceDependenciesInTx(tx, { kind: 'saved-secret', resourceId })))
+            .map(dependency => dependency.managedId)).toEqual([row.id]);
+        expect((await inTx(tx => readManagedResourceDependenciesInTx(tx, { kind: 'account', accountId: secretOwner.id })))
+            .map(dependency => dependency.managedId)).toEqual([row.id]);
+        expect(await inTx(tx => readManagedResourceDependenciesInTx(tx, { kind: 'saved-secret', resourceId: 'unrelated-secret' }))).toEqual([]);
+        await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'confirmed-absent' } });
+        expect(await inTx(tx => readManagedResourceDependenciesInTx(tx, { kind: 'saved-secret', resourceId }))).toEqual([]);
+    });
+
     it("qualifies retained wake against the selected native provisioner at admission", () => {
         expect(qualifyManagedAcquisitionPolicy({ retention: { kind: "unused", afterMs: 17, effect: "stop" }, wakeOnAcceptedMessage: true }, { billing: { location: "cloud", stoppedBilling: "billed" }, retention: { supportedIntents: ["delete"] } })).toMatchObject({ retention: { kind: "unused", afterMs: 17, effect: "delete" }, wakeOnAcceptedMessage: false });
     });

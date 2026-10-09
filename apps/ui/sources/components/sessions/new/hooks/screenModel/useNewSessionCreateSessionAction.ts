@@ -17,6 +17,12 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
     handleCreateSession: UseCreateNewSessionResult['handleCreateSession'];
     providerLaunchError: UseCreateNewSessionResult['providerLaunchError'];
     retryProviderLaunch: UseCreateNewSessionResult['retryProviderLaunch'];
+    managedMachineCreationProgress: UseCreateNewSessionResult['managedMachineCreationProgress'];
+    retryManagedMachineInstallation: UseCreateNewSessionResult['retryManagedMachineInstallation'];
+    retryManagedMachineSetup: UseCreateNewSessionResult['retryManagedMachineSetup'];
+    continueWithoutManagedMachineSetup: UseCreateNewSessionResult['continueWithoutManagedMachineSetup'];
+    deleteManagedMachineAfterFailedSetup: UseCreateNewSessionResult['deleteManagedMachineAfterFailedSetup'];
+    cancelManagedMachineCreation: UseCreateNewSessionResult['cancelManagedMachineCreation'];
 }> {
     const {
         currentAuthoringDraft,

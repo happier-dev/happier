@@ -1,6 +1,8 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
+import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
-import { isActionOperationTerminal, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
+import { isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
 import {
     actionOperationAddressKey,
     actionOperationMachineAddressKey,
@@ -9,6 +11,9 @@ import {
     normalizeActionOperationServerId,
     type ActionOperationAddress,
     type ActionOperationSessionAddress,
+    type ActionOperationProjectWorkspaceQuery,
+    type ActionOperationProjectScriptQuery,
+    type ActionOperationManagedMachineQuery,
     type QualifiedActionOperation,
 } from './qualifiedActionOperation';
 
@@ -48,6 +53,9 @@ export type ActionOperationSelectors = Readonly<{
     ): ActionOperationSnapshotV1 | null;
     selectActive(state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[];
     selectForSession(state: ActionOperationStoreSnapshot, address: ActionOperationSessionAddress): readonly ActionOperationProjection[];
+    selectForProjectScript(state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery): ActionOperationProjection | null;
+    selectForProjectSetup(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
+    selectForManagedMachine(state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery): ActionOperationProjection | null;
     selectInbox(state: ActionOperationStoreSnapshot): readonly InboxActionOperationEntry[];
     selectActivitySummary(state: ActionOperationStoreSnapshot): ActionOperationActivitySummary;
     selectInboxSummary(state: ActionOperationStoreSnapshot): InboxActionOperationSummary;
@@ -99,10 +107,10 @@ function readOperationObservation(
     operation: QualifiedActionOperation,
 ): ActionOperationObservation {
     if (state.unavailableOperationKeys.has(key)) return 'unavailable';
-    return state.machineObservationByKey.get(actionOperationMachineAddressKey({
+    return resolveActionOperationObservation(operation.snapshot, state.machineObservationByKey.get(actionOperationMachineAddressKey({
         serverId: operation.serverId,
         machineId: operation.snapshot.scope.machineId,
-    })) ?? 'unavailable';
+    })) ?? 'unavailable');
 }
 
 function readFollowUpAttention(
@@ -131,38 +139,32 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     const projectionCache = new Map<string, ActionOperationProjection>();
     const sessionCache = new Map<string, readonly ActionOperationProjection[]>();
 
+    const readProjection = (state: ActionOperationStoreSnapshot, key: string, operation: QualifiedActionOperation): ActionOperationProjection => {
+        const snapshot = operation.snapshot;
+        const isUnavailableProjection = state.unavailableOperationKeys.has(key);
+        const observation = readOperationObservation(state, key, operation);
+        const followUpAttention = readFollowUpAttention(state, operation);
+        const cached = projectionCache.get(key);
+        if (
+            cached?.snapshot === snapshot
+            && cached.serverId === operation.serverId
+            && cached.observation === observation
+            && cached.isUnavailableProjection === isUnavailableProjection
+            && cached.followUpAttention === followUpAttention
+        ) return cached;
+        const projection = Object.freeze({ serverId: operation.serverId, snapshot, observation, isUnavailableProjection, followUpAttention });
+        projectionCache.set(key, projection);
+        return projection;
+    };
+
     const selectAll = (state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[] => {
         if (state === previousState) return previousAll;
-        const retainedKeys = new Set<string>();
         const next = Array.from(state.operationsByKey.entries())
             .filter(([key, operation]) => shouldIncludeOperation(state, key, operation))
-            .map(([key, operation]) => {
-                retainedKeys.add(key);
-                const snapshot = operation.snapshot;
-                const isUnavailableProjection = state.unavailableOperationKeys.has(key);
-                const observation = readOperationObservation(state, key, operation);
-                const followUpAttention = readFollowUpAttention(state, operation);
-                const cached = projectionCache.get(key);
-                if (
-                    cached?.snapshot === snapshot
-                    && cached.serverId === operation.serverId
-                    && cached.observation === observation
-                    && cached.isUnavailableProjection === isUnavailableProjection
-                    && cached.followUpAttention === followUpAttention
-                ) return cached;
-                const projection = Object.freeze({
-                    serverId: operation.serverId,
-                    snapshot,
-                    observation,
-                    isUnavailableProjection,
-                    followUpAttention,
-                });
-                projectionCache.set(key, projection);
-                return projection;
-            })
+            .map(([key, operation]) => readProjection(state, key, operation))
             .sort(compareOperations);
         for (const key of projectionCache.keys()) {
-            if (!retainedKeys.has(key)) projectionCache.delete(key);
+            if (!state.operationsByKey.has(key)) projectionCache.delete(key);
         }
         const nextAll = next.length === 0
             ? EMPTY_OPERATIONS
@@ -180,7 +182,77 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         const serverId = normalizeActionOperationServerId(address.serverId);
         if (!serverId) return null;
         selectAll(state);
-        return projectionCache.get(actionOperationAddressKey({ ...address, serverId })) ?? null;
+        const key = actionOperationAddressKey({ ...address, serverId });
+        const operation = state.operationsByKey.get(key);
+        // Dismissal changes Activity visibility, not an explicit qualified record lookup.
+        return operation ? readProjection(state, key, operation) : null;
+    };
+
+    const selectProjectOperation = (
+        state: ActionOperationStoreSnapshot,
+        query: ActionOperationProjectWorkspaceQuery,
+        matches: (snapshot: ActionOperationSnapshotV1) => boolean,
+    ): ActionOperationProjection | null => {
+        const serverId = normalizeActionOperationServerId(query.workspace.serverId);
+        const rootPath = normalizeWorkspaceRootPathV1(query.workspace.rootPath);
+        if (!serverId || !query.accountId || !rootPath) return null;
+        selectAll(state);
+        let selected: ActionOperationProjection | null = null;
+        for (const [key, operation] of state.operationsByKey) {
+            const snapshot = operation.snapshot;
+            const attachment = snapshot.domainRef;
+            if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId || attachment?.kind !== 'projectCommand') continue;
+            const source = attachment.sourceWorkspace;
+            if (!source || source.serverId !== serverId || source.machineId !== query.workspace.machineId
+                || source.workspaceId !== query.workspace.workspaceId || normalizeWorkspaceRootPathV1(source.rootPath) !== rootPath
+                || !matches(snapshot)) continue;
+            // Activity dismissal affects Activity, not the checkout's last/current run.
+            const projection = readProjection(state, key, operation);
+            const order = selected ? compareOperations(projection, selected) : -1;
+            if (!selected || order < 0 || (order === 0 && key < actionOperationAddressKey({ serverId: selected.serverId, operationId: selected.snapshot.operationId }))) selected = projection;
+        }
+        return selected;
+    };
+
+    const selectForProjectScript = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery) => selectProjectOperation(state, query, snapshot => {
+        const attachment = snapshot.domainRef;
+        if (snapshot.actionId !== 'projects.script.run' || attachment?.kind !== 'projectCommand' || !attachment.script) return false;
+        return query.selection.kind === 'named'
+            ? attachment.script.name === query.selection.name
+            : attachment.script.name === undefined && attachment.script.source.kind !== 'command'
+                && isSameInputOptionValue(attachment.script.source, query.selection.source);
+    });
+
+    const selectForProjectSetup = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery) => selectProjectOperation(state, query, snapshot => (
+        snapshot.actionId === 'projects.prepare' && snapshot.domainRef?.kind === 'projectCommand'
+        && snapshot.domainRef.purpose === 'setup' && snapshot.domainRef.script === undefined
+    ));
+
+    const selectForManagedMachine = (state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery) => {
+        const serverId = normalizeActionOperationServerId(query.serverId);
+        if (!serverId || !query.accountId || !query.machineId || !query.managedId) return null;
+        selectAll(state);
+        let selected: ActionOperationProjection | null = null;
+        for (const [key, operation] of state.operationsByKey) {
+            const snapshot = operation.snapshot;
+            if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId) continue;
+            const attachment = snapshot.domainRef;
+            const isCreation = snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry';
+            const creation = snapshot.scope.machineId === query.machineId && attachment?.kind === 'managedMachine'
+                && attachment.id === query.managedId
+                && isCreation;
+            const setupScope = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === query.enrolledMachineId
+                || isCreation && snapshot.scope.machineId === query.machineId;
+            const setup = Boolean(query.homeId && query.enrolledMachineId) && setupScope && attachment?.kind === 'machineEnvironment'
+                && attachment.serverId === query.homeId && attachment.machineId === query.enrolledMachineId && attachment.managedId === query.managedId;
+            if (!creation && !setup) continue;
+            // An explicit resource detail retains its observed operation after Activity dismissal.
+            if (!selected || snapshot.createdAt > selected.snapshot.createdAt
+                || snapshot.createdAt === selected.snapshot.createdAt && snapshot.operationId < selected.snapshot.operationId) {
+                selected = readProjection(state, key, operation);
+            }
+        }
+        return selected;
     };
 
     const selectSnapshotByRequestId = (
@@ -211,10 +283,11 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
 
     const selectForSession = (state: ActionOperationStoreSnapshot, address: ActionOperationSessionAddress) => {
         const normalizedServerId = normalizeActionOperationServerId(address.serverId);
-        if (!normalizedServerId) return EMPTY_OPERATIONS;
-        const cacheKey = actionOperationSessionAddressKey({ serverId: normalizedServerId, sessionId: address.sessionId });
+        if (!normalizedServerId || address.accountId === null || address.accountId === '') return EMPTY_OPERATIONS;
+        const cacheKey = actionOperationSessionAddressKey({ ...address, serverId: normalizedServerId });
         const operations = selectAll(state).filter((operation) => (
             operation.serverId === normalizedServerId && operation.snapshot.scope.sessionId === address.sessionId
+            && (address.accountId === undefined || operation.snapshot.scope.accountId === address.accountId)
         ));
         const cached = sessionCache.get(cacheKey) ?? EMPTY_OPERATIONS;
         const stable = operations.length === 0
@@ -317,6 +390,9 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectSnapshotByRequestId,
         selectActive,
         selectForSession,
+        selectForProjectScript,
+        selectForProjectSetup,
+        selectForManagedMachine,
         selectInbox,
         selectActivitySummary,
         selectInboxSummary,

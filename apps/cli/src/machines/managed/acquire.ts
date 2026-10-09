@@ -44,6 +44,9 @@ export type ManagedMachineExecutionOptions = Readonly<{
     runPolicyAction?: (machine: ManagedMachineV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
     runAgentStart?: (input: Readonly<{ machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<void>;
+    runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
+    /** Content-free installed Account socket; every wake re-reads the signed row. */
+    subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
 }>;
 export class ManagedMachineControllerError extends Error {
     constructor(readonly code: string) {
@@ -213,7 +216,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             return ManagedControllerMachineOutputV1Schema.parse(await request(path, body, headers.headers, null)).machine;
     }
     return {
-        post, row, correlation, isCurrent, assertConnection,
+        post, row, correlation, readCurrent, isCurrent, assertConnection,
         async submit(machine: ManagedMachineV1) { return await submitIdentity(machine, 'acquire'); },
         async submitIntent(machine: ManagedMachineV1) { return await submitIdentity(machine, 'rebuild'); },
         /** Capture the admitted paid handle immediately before its safe native reconciliation. */
@@ -486,8 +489,57 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 options.context?.operationAcceptance?.accept(accepted);
                 // The live Action owns settlement; no detached purchase/installer.
                 await reconcileOnce({ input, options, client, machine: admission.machine, action });
+                let enrolled = admission.machine.environmentSetup || agentStart
+                    ? await client.row('current', client.correlation(admission.machine)) : admission.machine;
+                client.assertConnection(enrolled);
+                if (enrolled.environmentSetup && !['succeeded', 'skipped'].includes(enrolled.environmentSetup.state)) {
+                    if (!enrolled.enrolledMachineId || !options.runEnvironmentSetup) throw new ManagedMachineControllerError('admission_unavailable');
+                    if (!await client.isCurrent(enrolled)) throw new ManagedMachineControllerError('intent_changed');
+                    const joined = enrolled;
+                    try { enrolled = await options.runEnvironmentSetup({ machine: joined, isCurrent: () => client.isCurrent(joined) }); }
+                    catch (error) {
+                        if (!agentStart || options.signal?.aborted) throw error;
+                        const current = await client.readCurrent(joined);
+                        if (!current) throw new ManagedMachineControllerError('intent_changed');
+                        enrolled = current;
+                    }
+                    client.assertConnection(enrolled);
+                    if (!enrolled.environmentSetup || !['succeeded', 'skipped'].includes(enrolled.environmentSetup.state)) {
+                        if (!agentStart || !options.subscribeEnvironmentSetupChanges) throw new ManagedMachineControllerError('machine_environment_setup_failed');
+                        options.context?.operationProgress?.update({ phase: 'environmentSetup', label: 'Waiting for environment setup recovery' });
+                        let dirty = true;
+                        let failed = false;
+                        let wake: (() => void) | undefined;
+                        const invalidate = () => { dirty = true; wake?.(); };
+                        const abort = () => wake?.();
+                        options.signal?.addEventListener('abort', abort);
+                        let subscription: Awaited<ReturnType<NonNullable<ManagedMachineExecutionOptions['subscribeEnvironmentSetupChanges']>>> | undefined;
+                        try {
+                            subscription = await options.subscribeEnvironmentSetupChanges({ onChange: invalidate,
+                                onError() { failed = true; invalidate(); } });
+                            for (;;) {
+                                if (options.signal?.aborted) throw new ManagedMachineControllerError('cancelled');
+                                if (failed) throw new ManagedMachineControllerError('machine_environment_observation_failed');
+                                dirty = false;
+                                const current = await client.readCurrent(joined);
+                                if (!current) throw new ManagedMachineControllerError('intent_changed');
+                                enrolled = current;
+                                if (current.environmentSetup && ['succeeded', 'skipped'].includes(current.environmentSetup.state)) break;
+                                if (dirty) continue;
+                                await new Promise<void>(resolve => {
+                                    wake = resolve;
+                                    if (dirty || failed || options.signal?.aborted) resolve();
+                                });
+                                wake = undefined;
+                            }
+                        } finally {
+                            options.signal?.removeEventListener('abort', abort);
+                            await subscription?.dispose();
+                        }
+                    }
+                }
                 if (agentStart && options.runAgentStart) {
-                    const enrolled = await client.row('current', client.correlation(admission.machine));
+                    enrolled = await client.row('current', client.correlation(admission.machine));
                     client.assertConnection(enrolled);
                     if (!enrolled.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
                     if (!await client.isCurrent(enrolled)) throw new ManagedMachineControllerError('intent_changed');

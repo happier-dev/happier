@@ -15,6 +15,8 @@ import { openMcpServerCatalogContentV1, sealMcpServerCatalogContentV1 } from '@h
 import { openAcpCatalogContentV1, sealAcpCatalogContentV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { openProviderConnectionsContentV1, sealProviderConnectionsContentV1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { openConnectedAccountCatalogContentV1, sealConnectedAccountCatalogContentV1, type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { openRemoteHostCatalogContentV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { openNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import type { ProfileCatalogRecordV1, ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -52,6 +54,8 @@ import { createCliMcpServerStore, createCliMcpServerStoreForOperation } from '@/
 import { createCliAcpCatalogStore } from '@/agent/acp/catalog/acpCatalogStore';
 import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation } from '@/providers/settings/catalogStore';
 import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
+import { createCliRemoteHostStore, createCliRemoteHostStoreForOperation } from '@/settings/remoteHosts/remoteHostStore';
+import { createCliNotificationChannelStore } from '@/settings/notifications/notificationChannelStore';
 import { deriveSettingsSecretsReadKeysForCredentials } from './settingsSecretsKey';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -513,13 +517,17 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
 type SavedSecretDomainReferenceCatalogsV1 = Pick<SavedSecretReferenceCatalogsV1,
   'mcp' | 'acp' | 'providerConnections' | 'connectedConfigurations' | 'connectedPurposes'>;
 type SavedSecretDomainReferenceCensusV1 = Record<keyof SavedSecretDomainReferenceCatalogsV1, number | 'absent'>;
+type SavedSecretSourceReferenceCatalogsV1 = SavedSecretDomainReferenceCatalogsV1 & Pick<SavedSecretReferenceCatalogsV1,
+  'remoteHostRecords' | 'notificationChannels'>;
 
 /** Capture raw rows only: absence retains the source adapter; deletion suppresses it. */
 export async function captureSavedSecretReferenceCatalogsForOperation(input: Readonly<{
   credentials: StoredCredentials;
   operationContext?: SavedSecretOperationContextV1;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ catalogs: SavedSecretDomainReferenceCatalogsV1; census: SavedSecretDomainReferenceCensusV1 }>> {
+}>): Promise<Readonly<{ catalogs: SavedSecretSourceReferenceCatalogsV1; census: SavedSecretDomainReferenceCensusV1;
+  remoteHosts: NonNullable<SavedSecretReferenceCensusV1['remoteHosts']>;
+  notificationChannels: NonNullable<SavedSecretReferenceCensusV1['notificationChannels']> }>> {
   const context = input.operationContext;
   if (context && (context.credentials.token !== input.credentials.token || !await context.isCurrent())) {
     throw new Error('saved_secret_account_lifetime_changed');
@@ -529,15 +537,19 @@ export async function captureSavedSecretReferenceCatalogsForOperation(input: Rea
   const acp = createCliAcpCatalogStore(input);
   const providers = context ? createCliProviderConnectionsStoreForOperation({ operationContext: context, signal: input.signal }) : createCliProviderConnectionsStore(input);
   const connected = createCliConnectedAccountCatalogStore(input);
+  const remoteHosts = context ? createCliRemoteHostStoreForOperation({ operationContext: context, signal: input.signal }) : createCliRemoteHostStore(input);
+  const notifications = createCliNotificationChannelStore(input);
   const storage = await mcp.readStorageContext();
-  const otherStorage = await Promise.all([acp.readStorageContext(), providers.readStorageContext(), connected.readStorageContext()]);
+  const otherStorage = await Promise.all([acp.readStorageContext(), providers.readStorageContext(), connected.readStorageContext(),
+    remoteHosts.readStorageContext(), notifications.readStorageContext()]);
   if (otherStorage.some(value => value.mode !== storage.mode || !isDeepStrictEqual(value.material, storage.material))) {
     throw new Error('saved_secret_account_mode_or_identity_changed');
   }
-  const [mcpRow, acpRow, providerRow, configurationRow, purposeRow] = await Promise.all([
+  const [mcpRow, acpRow, providerRow, configurationRow, purposeRow, remoteHostRow, notificationRow] = await Promise.all([
     mcp.readRow(), acp.readRow(), providers.readRow(), connected.readRow('configurations'), connected.readRow('purposes'),
+    remoteHosts.readRow(), notifications.readRow(),
   ]);
-  const catalogs: { -readonly [Key in keyof SavedSecretDomainReferenceCatalogsV1]: SavedSecretDomainReferenceCatalogsV1[Key] } = {};
+  const catalogs: { -readonly [Key in keyof SavedSecretSourceReferenceCatalogsV1]: SavedSecretSourceReferenceCatalogsV1[Key] } = {};
   const census: SavedSecretDomainReferenceCensusV1 = { mcp: 'absent', acp: 'absent', providerConnections: 'absent',
     connectedConfigurations: 'absent', connectedPurposes: 'absent' };
   if (mcpRow.status === 'deleted') { census.mcp = mcpRow.revision; catalogs.mcp = null; }
@@ -571,15 +583,31 @@ export async function captureSavedSecretReferenceCatalogsForOperation(input: Rea
       else catalogs.connectedPurposes = opened.record.value;
     } else if (row.status !== 'absent') throw new Error('saved_secret_reference_catalog_unavailable');
   }
-  if (listSavedSecretReferenceCatalogRefsV1({ ...catalogs, profileRecords: [] })
-    .some(reference => parseSavedSecretRefV1(reference.secretId).kind !== 'shared_resource')) {
+  let remoteHostRevision: NonNullable<SavedSecretReferenceCensusV1['remoteHosts']>['revision'] = 'absent';
+  if (remoteHostRow.status === 'present') {
+    const opened = openRemoteHostCatalogContentV1({ ...storage, content: remoteHostRow.content });
+    if (opened.status !== 'ready') throw new Error('saved_secret_reference_catalog_unavailable');
+    remoteHostRevision = remoteHostRow.revision; catalogs.remoteHostRecords = opened.hosts;
+  } else if (remoteHostRow.status !== 'absent') throw new Error('saved_secret_reference_catalog_unavailable');
+  let notificationRevision: NonNullable<SavedSecretReferenceCensusV1['notificationChannels']>['revision'] = 'absent';
+  if (notificationRow.status === 'deleted') { notificationRevision = notificationRow.revision; catalogs.notificationChannels = null; }
+  else if (notificationRow.status === 'present') {
+    const opened = openNotificationChannelCatalogContentV1({ ...storage, content: notificationRow.content });
+    if (opened.status !== 'opened') throw new Error('saved_secret_reference_catalog_unavailable');
+    notificationRevision = notificationRow.revision; catalogs.notificationChannels = opened.record;
+  } else if (notificationRow.status !== 'absent') throw new Error('saved_secret_reference_catalog_unavailable');
+  const references = listSavedSecretReferenceCatalogRefsV1({ ...catalogs, profileRecords: [] });
+  if (references.some(reference => parseSavedSecretRefV1(reference.secretId).kind !== 'shared_resource')) {
     throw new Error('saved_secret_reference_catalog_unavailable');
   }
   const admitted = await mcp.readStorageContext();
-  mcp.assertCurrent(); acp.assertCurrent(); providers.assertCurrent(); connected.assertCurrent();
+  mcp.assertCurrent(); acp.assertCurrent(); providers.assertCurrent(); connected.assertCurrent(); remoteHosts.assertCurrent();
+  await notifications.assertCurrent();
   if (admitted.mode !== storage.mode || !isDeepStrictEqual(admitted.material, storage.material)
     || context && !await context.isCurrent()) throw new Error('saved_secret_account_mode_or_identity_changed');
-  return { catalogs, census };
+  return { catalogs, census,
+    remoteHosts: { revision: remoteHostRevision, resourceRefs: [...new Set(references.filter(reference => reference.owner === 'remoteHost').map(reference => reference.secretId))] },
+    notificationChannels: { revision: notificationRevision, resourceRefs: [...new Set(references.filter(reference => reference.owner === 'notificationChannel').map(reference => reference.secretId))] } };
 }
 
 export type SavedSecretPromotionOperationResultV1 =
@@ -754,7 +782,7 @@ type SavedSecretPromotionPreparationV1 = Readonly<{
   rawSettings: Readonly<Record<string, unknown>>;
   expectedSettingsVersion: number;
   referenceCensus: SavedSecretReferenceCensusV1;
-  referenceCatalogs?: SavedSecretDomainReferenceCatalogsV1;
+  referenceCatalogs?: SavedSecretSourceReferenceCatalogsV1;
   profileCatalog: Extract<ProfileCatalogSnapshotV1, { status: 'ready' }>;
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
   savedSecretRevisions?: SharedSavedSecretPromoteInputV1['profileMutations'][number]['savedSecretRevisions'];
@@ -818,7 +846,7 @@ function prepareSavedSecretPromotion(input: SavedSecretPromotionPreparationV1, r
   settings: Readonly<Record<string, unknown>>;
   value: string;
   profileRows?: readonly ProfileCatalogRecordV1[];
-}> & SavedSecretDomainReferenceCatalogsV1): SharedSavedSecretPromoteInputV1 {
+}> & SavedSecretSourceReferenceCatalogsV1): SharedSavedSecretPromoteInputV1 {
   if (readAccountIdFromToken(input.credentials.token) !== input.accountId
     || input.referenceCensus.accountMode !== input.accountMode) {
     throw new Error('saved_secret_account_mode_or_identity_changed');
@@ -997,6 +1025,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
         referenceCatalogs: domainCapture.catalogs,
         referenceCensus: { accountMode: source.mode, profileTransferRevision: catalog.controlRevision,
           catalogs: domainCapture.census,
+          remoteHosts: domainCapture.remoteHosts, notificationChannels: domainCapture.notificationChannels,
           profiles: { referenceGuardRevision: catalog.referenceGuardRevision,
             rows: [...catalog.records.map(row => ({ id: row.record.id, revision: row.revision })), ...(catalog.tombstones ?? [])] },
           ...(artifactCensus.length ? { artifacts: artifactCensus } : {}) },

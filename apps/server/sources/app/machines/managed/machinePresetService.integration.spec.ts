@@ -70,6 +70,60 @@ describe("Machine preset relational owner", () => {
 
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('captures the exact admitted setup revision and retains it when the preset changes or is archived', async () => {
+        const accountId = 'preset-setup-snapshot-owner';
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const environment = { setupScript: 'echo original' };
+        const definition = { id: 'preset-setup-snapshot', homeId, owner: { kind: 'account', accountId }, name: 'Setup', recipe, controller, environment };
+        expect((await requestPreset(accountId, 'create', definition)).json()).toMatchObject({ kind: 'saved' });
+        const request = { custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'setup-snapshot-admission',
+            input: { requestId: 'setup-snapshot-create', continuationPresent: false, input: { selection: { kind: 'preset' as const,
+                homeId, id: definition.id, revision: 0 }, controller, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } } };
+        const admitted = await admitManagedAcquire(request);
+        expect(admitted.machine.environmentSetup).toEqual({ environment, state: 'pending' });
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0,
+            patch: { environment: { setupScript: 'echo new' } } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+        expect((await requestPreset(accountId, 'archive', { homeId, id: definition.id, expectedRevision: 1 })).json()).toMatchObject({ kind: 'saved' });
+        const replay = await admitManagedAcquire(request);
+        expect(replay).toMatchObject({ replayed: true, machine: { id: admitted.machine.id,
+            preset: { id: definition.id, revision: 0 }, environmentSetup: { environment, state: 'pending' } } });
+        expect(await db.managedMachine.count({ where: { admittedActionRequestId: request.input.requestId } })).toBe(1);
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } })).environmentSetup)
+            .toEqual({ environment, state: 'pending' });
+        await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: 'changed-setup-root' }))
+            .rejects.toMatchObject({ code: 'request_conflict' });
+    });
+
+    it('revisions setup with the preset, drops stored additions and resets it without allocating', async () => {
+        const accountId = 'preset-environment-owner';
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(accountId, homeId);
+        const environment = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo ready',
+            secretRefs: { v: 1, bindings: { API_TOKEN: { ref: 'setup-token' } } } };
+        const definition = { id: 'preset-environment', homeId, owner: { kind: 'account', accountId }, name: 'Tools', recipe, controller, environment };
+        const before = await db.managedMachine.count();
+        const created = await requestPreset(accountId, 'create', definition);
+        expect(created.statusCode).toBe(200);
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { revision: 0, environment } });
+        expect((await requestPreset(accountId, 'create', definition)).json()).toEqual(created.json());
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { environment: { ...environment, future: true,
+            toolchain: { ...environment.toolchain, future: true }, secretRefs: { ...environment.secretRefs,
+                bindings: { API_TOKEN: { ref: 'setup-token', future: true } } } } } });
+        expect((await requestPreset(accountId, 'get', { homeId, id: definition.id })).json().preset.environment).toEqual(environment);
+        const changed = { ...environment, setupScript: 'echo changed' };
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { environment: changed } })).json())
+            .toMatchObject({ kind: 'saved', preset: { revision: 1, environment: changed } });
+        expect((await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 0, patch: { environment: null } })).json())
+            .toEqual({ kind: 'conflict', currentRevision: 1 });
+        const cleared = (await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: 1, patch: { environment: null } })).json();
+        expect(cleared).toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+        expect(cleared.preset).not.toHaveProperty('environment');
+        expect(await db.managedMachine.count()).toBe(before);
+    });
+
     it('saves and admits direct Crabbox without a coordinator but refuses an unbound coordinator recipe', async () => {
         const accountId = 'preset-crabbox-direct-owner';
         const homeId = await getOrCreateServerIdentityId();

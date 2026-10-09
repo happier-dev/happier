@@ -63,6 +63,24 @@ locked/inconsistent/migration-required result before content disclosure or mutat
 while preserving the stored value; it must not become absence, defaults, or a
 fallback to the other branch.
 
+### Usage accounting (0.3 development)
+
+Usage numbers, models, Agents and times remain server-queryable for both plain
+and E2EE Accounts, like Happier-session usage. This is deliberately not an E2EE
+numeric payload. Native source consent discloses this before capture. Prompts,
+replies, file paths and file contents are not accounting fields. Source-root,
+native-session and project identifiers use scoped opaque keys; an opaque key is
+not a path label. Any private project label uses its Account-mode content
+envelope and is resolved on the client.
+
+The Machine collector seals normalized unacknowledged accounting together with
+source cursors and consent using the incumbent device-local secret storage and
+protected atomic writes, including for a keyless plain Account. This device
+cipher is not an Account key and is never uploaded. Only acknowledged numeric
+events retire from pending custody. An older server that cannot admit a native
+subject is unsupported; a legacy Session report is not an acknowledgement.
+See [actions.md](actions.md#native-usage-sources-development) for source controls.
+
 ### Private Profile rows (0.3 development)
 
 The development Profile row contract uses the reserved Account-row owner, not
@@ -143,6 +161,90 @@ root shapes remain pending; no replacement inference consumer is introduced.
 The retained alias reader is needed until this source and its retained history
 have been transferred, not as a second credential writer.
 
+### Notification endpoint catalog (0.3 development)
+
+The endpoint-catalog cutover is in progress. Its small Account row preserves channel
+identities, endpoint guards and SavedSecret Resource references; a webhook's signing
+bytes do not belong in that row. Plain rows open without Account E2EE material, while
+encrypted rows use the `account_notification_channels` cipher domain and reject mode
+mismatches. Push-token custody, global attention/privacy preferences and remote-alert
+policy remain with their existing owners.
+
+Initial signing-resource creation and channel initialization share the incumbent
+SavedSecret transaction. The captured source Settings version and complete prior row
+reference inventory fence admission; destination-only initialization leaves Settings
+unchanged. Existing-row edits may pair a finite preference change through the ordinary
+Settings writer. That does not make row presence evidence of completed source cleanup.
+
+Stored readers keep valid independent neighbors diagnosable, but an incomplete catalog
+cannot authorize delivery or a complete credential census. Unknown actual SecretString
+markers or reference carriers must not disappear through a tolerant projection. A
+carrier outside an identifiable channel makes the catalog unavailable rather than
+inventing a channel diagnostic.
+
+Retained signing-source cleanup requires characterized source material and the exact
+owned, usable Resource value. Historical snapshots re-admit that proof against each
+snapshot's opened signing bytes; a current-source proof cannot certify rotated historical
+material. Plain material is also compared at the server where openable. Opaque E2EE
+material remains a keyholding-client responsibility. Unknown, unreadable or mismatched
+material stays cleanup-pending. These are development contracts, not a claim that the
+UI cutover, source/history erasure or composed live validation is complete.
+
+### Preset Machine environment references (0.3 development)
+
+Revisioned Machine presets and admitted managed-creation setup snapshots retain
+SavedSecret references, not resolved credential values. The existing resource
+mutation owner includes archived presets and retained allocations in its
+deletion/dependency census. Promotion rewrites only the owning Account's
+references, using the resulting shared resource's actual revision; it preserves
+the admitted setup content and stage facts.
+
+Canonical clients carry the genuine persisted personal-source identity in
+`personalSecretPromotions`. Newly staged credentials are not persisted personal
+sources and do not supply that mapping. Removing an unmapped Plain source that
+would strand a known environment reference is refused before mutation. The
+server cannot derive an omitted mapping from opaque E2EE Settings; opening
+credential material remains with its existing Account-mode and grant owner.
+Resolved overlays reach only the setup process, not native tool installation.
+See [the Machine environment owner](./cli-architecture.md#preset-machine-environments-03-development)
+for execution and recovery.
+
+### Private Remote host catalog (0.3 development)
+
+`remoteHosts/remoteHostRecordV1.ts` owns the singleton reserved Account row
+`@happier/account/remote-hosts/v1/catalog`. Plain content is keyless
+`{t:'plain',v:{v:1,hosts}}`; E2EE content uses `account_remote_host_catalog`
+(cipher domain byte 45). Host records contain SSH addresses and SavedSecret
+references, not passwords or private-key material. Identity-file and SSH-config
+paths remain device-local overrides.
+
+The normal captured Account loader performs an in-place cutover of retained
+development `remoteHostsV1` data, preserving host identities exactly. There is no
+released 0.2 source or transfer-control row for this domain. A present row or
+versioned deletion is authoritative and never falls back to the retired Settings
+root. Malformed host entries, duplicate identities, unrecognized reference
+carriers and unrecognized marked private material in a host leave the inventory
+incomplete; usable neighbors are display-only, not mutation, runtime or cleanup
+authority. Credential-bearing extras at the catalog or envelope boundary refuse
+the whole inventory instead of disappearing through a tolerant projection.
+
+Initialization captures the source Settings version. Later host writes use the
+catalog revision without unrelated Settings or Profile guards. New SSH
+credential material belongs to the canonical
+SavedSecret transaction owner together with its host-reference mutation, not an
+independent resource POST. Source cleanup uses the admitted destination revision;
+that revision alone cannot authorize discarding historical SSH credentials.
+Each historical slot needs its own characterized material and exact-value proof
+against a usable, owned SavedSecret Resource at its captured revision. Unknown,
+unopenable or different material stays cleanup-pending rather than authorizing
+another source import. SSH consumers resolve references only within their
+originating Account and host revision, borrow material through task acceptance,
+and retain the native host-key trust flow.
+
+These are development-source ownership contracts. The shared SavedSecret batch
+integration and composed loaded-runtime catalog journey are still being
+integrated; this section does not claim released availability or certification.
+
 ### Private Agent, Provider and Connected Account catalogs (0.3 development)
 
 The development contracts define singleton private catalogs through the
@@ -176,6 +278,25 @@ carriers until the domain owner can establish a complete inventory; safe partial
 display does not authorize runtime, destructive reference changes, source/history
 cleanup or Account-mode conversion. A retained deletion keeps its revision and
 must not be reseeded from an older Settings root.
+
+Provider conversion participates through `providerConnections` in the existing
+Account migration request and receipt. Migration admission checks the original
+Plain body or decrypted E2EE body, not the tolerant display projection. Complete
+stored bodies and envelopes retain their harmless additive JSON metadata
+losslessly; ordinary newly authored catalog writes remain strict. Unknown
+reference carriers, mixed envelopes and incomplete known records refuse
+conversion rather than gaining authority or losing retained state. Complete
+conversion preserves all catalog fields, including SavedSecret references,
+grants, connection identities and revisions, and catalog tombstones. The live
+Account row revision advances
+once; a captured row deletion keeps its revision. The client checks the exact
+returned row before adopting the target mode.
+
+The mode-switch caller demands the captured Account's Provider catalog before
+reading its fresh Settings baseline. Conversion builders preserve the exact
+retained `providerSettingsV1` source, or its absence, until canonical catalog
+initialization and source cleanup retire it. This bounded source preservation is
+not a live Settings fallback or another transfer-control owner.
 
 Connected presentation identifies an exact qualified account or group; it never
 rewrites credentials or a group's definition name. Acknowledgements retain exact
@@ -1507,6 +1628,43 @@ sequenceDiagram
   `encryptionMode`, stores it as `SessionMessage.content`, and emits the same
   canonical envelope in `new-message` updates.
 
+#### Private accepted-delivery and human-completion facts (0.3 development)
+
+The existing user Message's `deliveryResolution` can retain
+`{v:1,kind:'provider_accepted',content}`. Its content is an explicit Session-mode
+envelope: `{t:'encrypted',c}` for E2EE or `{t:'plain',v}` for plain Sessions. The
+opened value is `{v:1,acceptedAtMs,delivery:{kind,turnId}}`, with the actual witnessed
+`newTurn`, `followUp`, or `steer` outcome, not the requested delivery intent.
+`acceptedAtMs` comes from the host-observed acceptance event, never settlement
+time or a historical inference.
+
+The current publisher sends this optional envelope through the existing Pending
+acceptance operation. Its canonical transaction commits or updates the same user
+Message and removes Pending; it does not create an informational transcript row.
+The writer rejects an envelope that disagrees with persisted Session mode before
+mutation. The CLI uses the existing Session crypto owner and retains the first
+envelope through retry/reconnect; plain Sessions require no fabricated E2EE key.
+Existing mode-aware message readers expose only validated opened facts. Missing,
+malformed, wrong-mode, or unopened detail remains unknown. Historical
+`manual_handled` remains readable and is the only delivery resolution that denotes
+terminal no-turn handling for transcript-publication policy; provider acceptance
+does not replace terminal turn evidence.
+
+Permission and scoped Action confirmation completions retain their existing
+private AgentState request/completion pairs. An authenticated request-scoped human
+answer can additionally retain `answeringClientCategory` (`ios`, `android`, `web`,
+or `desktop`) alongside its Account actor and exact turn identity. The category is
+caller-reported context, not authorization, device identity, or presence; desktop
+is reported only by an actual desktop host. Latency joins use the exact request
+and turn identity plus witnessed request/completion timestamps. Older missing
+identity/category stays unknown.
+
+These are private Session detail for opened-client projections, not prompt text,
+plaintext Usage accounting metadata, or server-queryable human-loop analytics.
+An opened snapshot or retained message page is partial evidence, not proof of
+complete Session history. The existing accounting disclosure contract above is
+unchanged.
+
 ### 0.2 legacy-secret Account recovery
 
 Some 0.2 E2EE Accounts have a signing public-key anchor but no signed Account
@@ -2011,6 +2169,13 @@ the same Artifact access Action owner and workflow, role and Launch Profile kind
 adapters. The UI's captured Account context supplies the grant HTTP transport;
 its Artifact sync opener runs recipient preparation on encrypted grant-aware
 opens and after grant list/set/remove. Plain documents do no recipient-key work.
+The 0.3 development startup selected-detail batch returns exact authorized
+content and the recipient census under one read-only capture. Its opener shares
+the exact-read key-preparation owner: a changed caller envelope still fails
+before detail publication, and any prepared keys still use the canonical fenced
+commit. Header-only inventory reads and unopened document bodies retain their
+existing lazy behavior; Plain batch results require no recipient census or
+client encryption material.
 The development Account-transition builder reads the recipient census through
 its captured Home/Account request and wraps the replacement Artifact key even
 for recipients whose old envelopes were current. The signed migration item

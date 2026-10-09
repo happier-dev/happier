@@ -6,6 +6,7 @@ import {
     type ManagedAdmissionInputV1,
     type ManagedMachineV1,
     type ValidatedLaunchSnapshotV1,
+    type MachineEnvironmentV1,
 } from "@happier-dev/protocol";
 import { inTx } from "@/storage/inTx";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
@@ -18,6 +19,7 @@ import {
     createManagedMachineDeclaredSchema,
     readManagedLaunchSnapshot,
     readManagedAcquisitionIdentity,
+    readManagedAdmissionState,
 } from "./managedRows";
 import { resolveMachinePresetForAcquireInTx, validateManagedRecipeInTx } from "./machinePresetService";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
@@ -49,11 +51,14 @@ export async function admitManagedAcquire(params: Readonly<{
         const existing = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId: review.homeId, admittedActionRequestId: request.requestId } } });
         if (existing) {
             if (existing.custodianAccountId !== params.custodianAccountId || !sameManagedInput(readManagedAcquisitionIdentity(existing.admittedInput), admittedInputIdentity)) throw new ManagedMachineError("request_conflict");
+            const setupAdmission = readManagedAdmissionState(existing.admittedInput).environmentSetup;
+            if (setupAdmission && setupAdmission.requestEnvelopeDigest !== params.requestEnvelopeDigest) throw new ManagedMachineError("request_conflict");
             const declaration = await resolveManagedDeclarationInTx(tx, { homeId: existing.homeId, custodianAccountId: existing.custodianAccountId, controller: review.controller, provider: readManagedLaunchSnapshot(existing.launch).provider });
             return { machine: projectManagedMachine(existing, declaration), replayed: true };
         }
         let launch: ValidatedLaunchSnapshotV1;
         let preset: { id: string; revision: number } | undefined;
+        let environment: MachineEnvironmentV1 | undefined;
         let declaration: ManagedDeclaration;
         if (request.input.selection.kind === "one-off") {
             launch = request.input.selection.launch;
@@ -65,6 +70,7 @@ export async function admitManagedAcquire(params: Readonly<{
             if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
             launch = selected.preset.recipe;
             preset = { id: selected.preset.id, revision: selected.preset.revision };
+            environment = selected.preset.environment;
             declaration = selected.declaration;
         }
         const policy = qualifyManagedAcquisitionPolicy(review, declaration);
@@ -85,15 +91,18 @@ export async function admitManagedAcquire(params: Readonly<{
             allocation: "unsubmitted", creationState: "active", desired: "start", desiredWhen: "now", intentRevision: 0,
             retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage,
             ...(reviewedFacts ? { reviewedFacts } : {}),
+            ...(environment ? { environmentSetup: { environment, state: "pending" } } : {}),
         };
         const canonical = ManagedMachineV1Schema.parse(createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema).parse(candidate));
         const row = await tx.managedMachine.create({ data: {
             homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
             controllerMachineId: canonical.controller.machineId, controllerInstallationId: canonical.controller.installationId,
-            admittedActionRequestId: request.requestId, admittedInput: admittedInputIdentity,
+            admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
+                ...(environment ? { environmentSetup: { requestEnvelopeDigest: params.requestEnvelopeDigest } } : {}) },
             ...(preset ? { presetId: preset.id, presetRevision: preset.revision } : {}),
             launch: canonical.launch, retention: canonical.retention, wakeOnAcceptedMessage: canonical.wakeOnAcceptedMessage,
             ...(canonical.reviewedFacts ? { reviewedFacts: canonical.reviewedFacts } : {}),
+            ...(canonical.environmentSetup ? { environmentSetup: canonical.environmentSetup } : {}),
         } });
         await invalidateManagedMachineInTx(tx, row);
         return { machine: projectManagedMachine(row, declaration), replayed: false };

@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios';
+import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, PendingResetStartReleaseResponseV1Schema, type PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { MachineUpdateMetadataResponseSchema, MachineUpdateStateResponseSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -200,6 +201,7 @@ import {
 } from './machine/machineStoredContent';
 import {
     registerMachineConnectedAccountRpcHandlers,
+    type ConnectedServicePoolSelectionRead,
 } from './machine/rpcHandlers.connectedAccounts';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyManagedActivityTargetCurrent,
     readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
@@ -623,7 +625,7 @@ export class ApiMachineClient {
         return { kind: incomplete ? 'incomplete' as const : 'settled' as const };
     }
     private connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
-    private connectedServicePoolSelectionRead: import('./machine/rpcHandlers.connectedAccounts').ConnectedServicePoolSelectionRead | null = null;
+    private connectedServicePoolSelectionRead: ConnectedServicePoolSelectionRead | null = null;
     private connectedAccountPurposeBindingRuntime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
         'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
@@ -1643,7 +1645,7 @@ export class ApiMachineClient {
         this.connectedAccountDaemonRuntime = runtime;
     }
 
-    registerConnectedServicePoolSelectionRead(read: import('./machine/rpcHandlers.connectedAccounts').ConnectedServicePoolSelectionRead): void {
+    registerConnectedServicePoolSelectionRead(read: ConnectedServicePoolSelectionRead): void {
         this.connectedServicePoolSelectionRead = read;
     }
 
@@ -2528,6 +2530,15 @@ export class ApiMachineClient {
             socket,
             capabilities,
         );
+    }
+
+    async releasePendingResetStart(request: Readonly<{ sessionId: string; localId: string; reset: PendingResetStartBindingV1 }>): Promise<void> {
+        if (!this.socket) throw new Error('Machine socket is not connected');
+        const payload = PendingResetStartReleaseRequestV1Schema.parse({ v: 1, ...request });
+        const response = PendingResetStartReleaseResponseV1Schema.parse(await emitSocketWithAck({
+            socket: this.socket, event: SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, payload,
+        }));
+        if (!response.ok) throw Object.assign(new Error(response.reason), { code: response.reason });
     }
 
     async enqueueSessionPendingByMachine(

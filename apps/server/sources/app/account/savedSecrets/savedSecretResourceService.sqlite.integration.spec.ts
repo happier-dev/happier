@@ -1,4 +1,6 @@
 import {
+    ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    encodePlainArtifactStoredContent,
     formatSharedSavedSecretRefV1,
     promotePersonalSavedSecretReference,
     sealEncryptedDataKeyEnvelopeV1,
@@ -26,6 +28,17 @@ import {
     updateSavedSecretResourceInTx,
 } from "./savedSecretResourceService";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
+import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } from '@/app/kv/accountScopedKv';
+import { resolveEffectiveProfileSecretBindingsV1, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import * as resourceService from './savedSecretResourceService';
+import { createArtifactTx, updateArtifactTx } from '@/app/artifacts/artifactWriteService';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { mutateProfileTransferInTx, readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferRows';
+import { mutateProfileRowsInTx } from '@/app/account/profiles/profileRows';
+import { prepareAcpCatalogTransferV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
+import { KIRO_ACP_STDERR_RULES } from '@happier-dev/plugins-kiro/agent/acp/transport';
+import { mutateRemoteHostCatalogRowInTx } from '@/app/account/remoteHosts/remoteHostRows';
 
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
@@ -87,7 +100,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             initAuth: false,
             initEncrypt: true,
         });
-    }, 120_000);
+    }, 300_000);
 
     afterAll(async () => {
         await harness.close();
@@ -106,7 +119,14 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.savedSecretTeamGrant.deleteMany(),
             () => db.savedSecretAccountGrant.deleteMany(),
             () => db.savedSecretResource.deleteMany(),
+            () => db.managedMachine.deleteMany(),
+            () => db.managedMachinePreset.deleteMany(),
+            () => db.machine.deleteMany(),
             () => db.accountSettingsSnapshot.deleteMany(),
+            () => db.userKVStore.deleteMany(),
+            () => db.artifactAccountGrant.deleteMany(),
+            () => db.artifactRevision.deleteMany(),
+            () => db.artifact.deleteMany(),
             () => db.teamGroupMembership.deleteMany(),
             () => db.teamGroup.deleteMany(),
             () => db.teamMembership.deleteMany(),
@@ -116,6 +136,735 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.userRelationship.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it('commits two new credentials and their connected catalog despite unrelated Settings drift and refuses a stale catalog', async () => {
+        const key = '@happier/account/connected-configurations/v1/catalog';
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4,
+            settings: JSON.stringify({ t: 'plain', v: { preferredLanguage: 'de' } }) }, select: { id: true } });
+        await db.userKVStore.create({ data: { accountId: owner.id, key, version: 0,
+            value: Buffer.from(JSON.stringify({ t: 'plain', v: { key: 'configurations', value: { v: 1, entries: [] } } })) } });
+        const create = (resourceId: string) => ({ resourceId, displayName: 'Credential', kind: 'token' as const,
+            encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Credential', kind: 'token' as const, value: 'private' } } });
+        const first = create('connected-atomic-first');
+        const second = create('connected-atomic-second');
+        const catalog = { v: 1 as const, entries: [{ service: { pluginId: 'happier.fixture', localId: 'service' },
+            modeId: 'api', revision: 'v1', values: { unchanged: 'config' }, secretRefs: {
+                first: formatSharedSavedSecretRefV1(first.resourceId), second: formatSharedSavedSecretRefV1(second.resourceId),
+            } }] };
+        const input = { ...first, accountId: owner.id, nextSettings: null, profileMutations: [],
+            additionalSavedSecretResources: [second],
+            referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const,
+                catalogs: { connectedConfigurations: 0 } },
+            catalogMutations: { connectedConfigurations: { expectedRevision: 0,
+                content: { t: 'plain' as const, v: { key: 'configurations' as const, value: catalog } },
+                referencedSavedSecretIds: [formatSharedSavedSecretRefV1(first.resourceId), formatSharedSavedSecretRefV1(second.resourceId)],
+                savedSecretRevisions: [{ resourceId: first.resourceId, expectedRevision: 1 }, { resourceId: second.resourceId, expectedRevision: 1 }] } } };
+        await db.account.update({ where: { id: owner.id }, data: { settingsVersion: 5,
+            settings: JSON.stringify({ t: 'plain', v: { preferredLanguage: 'fr' } }) } });
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 7, value: null },
+            { accountId: owner.id, key: '@happier/account/mcp/v1/catalog', version: 3,
+                value: Buffer.from(JSON.stringify({ t: 'plain', v: { v: 1, servers: [], bindings: [] } })) },
+        ] });
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, input));
+        expect(result).toMatchObject({ ok: true, value: { resourceId: first.resourceId, settingsVersion: 5 } });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        const row = await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } } });
+        expect(row?.version).toBe(1);
+        expect(row?.value && JSON.parse(Buffer.from(row.value).toString('utf8'))).toEqual({ t: 'plain', v: { key: 'configurations', value: catalog } });
+        const account = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(account.settingsVersion).toBe(5);
+        expect(openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: account.settings })).toEqual({ t: 'plain', v: { preferredLanguage: 'fr' } });
+        expect(await db.accountSettingsSnapshot.count()).toBe(0);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id,
+            key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } }, select: { version: true } })).toEqual({ version: 7 });
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(result);
+        const stale = { ...input, ...create('connected-stale-resource'), additionalSavedSecretResources: [],
+            catalogMutations: { connectedConfigurations: { ...input.catalogMutations.connectedConfigurations,
+                content: { t: 'plain' as const, v: { key: 'configurations' as const, value: { v: 1 as const, entries: [] } } },
+                referencedSavedSecretIds: [], savedSecretRevisions: [] } } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, stale))).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } }, select: { version: true } })).toEqual({ version: 1 });
+        const unbound = { ...stale, ...create('connected-unbound-resource'),
+            referenceCensus: { ...input.referenceCensus, catalogs: { connectedConfigurations: 1 } },
+            catalogMutations: { connectedConfigurations: { ...stale.catalogMutations.connectedConfigurations, expectedRevision: 1 } } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, unbound))).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } }, select: { version: true } })).toEqual({ version: 1 });
+    });
+
+    it('promotes a genuine ACP source credential, activates its original catalog and cleans Settings in one transaction', async () => {
+        // Observed predecessor 37a6541578749067b49d4579be8c752c9591b8c8;
+        // transferAcpCatalogV2.test.ts pins the complete predecessor producer vector.
+        const raw = { preferredLanguage: 'de', secrets: [{ id: 'old-token', name: 'Token', kind: 'token',
+            encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'retained-source-ciphertext' } },
+            createdAt: 1, updatedAt: 2 }], acpCatalogSettingsV1: { v: 2, backends: [{
+            id: 'configured-kiro', name: 'configured-kiro', title: 'Configured Kiro', description: 'Custom launch',
+            command: 'custom-kiro-cli', args: ['acp'],
+            env: { REGION: { t: 'literal', v: 'eu' }, TOKEN: { t: 'savedSecret', secretId: 'old-token' } },
+            auth: { support: 'login_terminal', machineLoginKey: 'my-login', docsUrl: 'https://example.test/auth',
+                loginCommand: { command: 'custom-kiro-cli', args: ['login'] }, envVars: ['TOKEN'],
+                statusCommand: ['whoami', '--format', 'json'], parser: 'kiroWhoamiJson' },
+            transportProfile: 'kiro', defaultMode: 'default', defaultModel: 'model-pro',
+            capabilities: { supportsLoadSession: true, supportsModes: 'yes', supportsModels: 'yes', supportsConfigOptions: 'no', promptImageSupport: 'yes' },
+            createdAt: 1, updatedAt: 2,
+        }, { id: 'generic', name: 'generic', title: 'Generic', command: 'generic-cli', transportProfile: 'generic', createdAt: 3, updatedAt: 4 }] } };
+        const intermediate = { preferredLanguage: raw.preferredLanguage, secrets: raw.secrets };
+        const key = '@happier/account/acp/v1/catalog';
+        const prepare = async () => {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 7,
+                settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+            const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id,
+                source: { kind: 'personal-saved-secret', secretId: 'old-token' } });
+            const ref = formatSharedSavedSecretRefV1(resourceId);
+            const prepared = prepareAcpCatalogTransferV2({ rawSettings: raw, sourceSettingsVersion: 7,
+                savedSecretRefs: new Map([['old-token', ref]]), kiroStderrRules: KIRO_ACP_STDERR_RULES });
+            expect(prepared.status).toBe('ready');
+            if (prepared.status !== 'ready') throw new Error('The pinned predecessor source must prepare completely');
+            const input = { accountId: owner.id, resourceId, displayName: 'Token', kind: 'token' as const,
+                encryptionMode: 'plain' as const, storedContent: { t: 'plain' as const,
+                    v: { v: 1 as const, name: 'Token', kind: 'token' as const, value: 'source-private' } },
+                expectedSettingsVersion: 7, nextSettings: { t: 'plain' as const, v: { preferredLanguage: 'de', secrets: [] } },
+                profileMutations: [], referenceCensus: { accountMode: 'plain' as const,
+                    profileTransferRevision: 'absent' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] }, artifacts: [],
+                    catalogs: { mcp: 'absent' as const, acp: 'absent' as const, providerConnections: 'absent' as const,
+                        connectedConfigurations: 'absent' as const, connectedPurposes: 'absent' as const } },
+                catalogMutations: { acp: { expectedRevision: 'absent' as const, source: 'predecessor' as const,
+                    sourceSettingsVersion: 7, content: { t: 'plain' as const, v: prepared.record },
+                    settingsCleanup: { expectedSettingsVersion: 7, nextSettings: { t: 'plain' as const, v: intermediate } },
+                    referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] } } };
+            return { owner, input, record: prepared.record };
+        };
+        const first = await prepare();
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, first.input)))
+            .toEqual({ ok: true, value: { resourceId: first.input.resourceId, settingsVersion: 8 } });
+        const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: first.owner.id, key } } });
+        expect(row.version).toBe(0);
+        expect(row.value && JSON.parse(Buffer.from(row.value).toString('utf8'))).toEqual({ t: 'plain', v: first.record });
+        const account = await db.account.findUniqueOrThrow({ where: { id: first.owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(account.settingsVersion).toBe(8);
+        expect(openPlainAccountSettingsDbValue({ accountId: first.owner.id, dbValue: account.settings })).toEqual(first.input.nextSettings);
+        expect(await db.savedSecretResource.count()).toBe(1);
+        expect(await db.accountSettingsSnapshot.findMany({ select: { version: true }, orderBy: { version: 'asc' } })).toEqual([{ version: 7 }, { version: 8 }]);
+
+        const retainedSource = await prepare();
+        const invalidCleanup = { ...retainedSource.input, nextSettings: { t: 'plain' as const,
+            v: { ...raw, secrets: [] } } };
+        const cleanupRefusal = await inTx(tx => promoteSavedSecretResourceInTx(tx, invalidCleanup)).catch(error => {
+            if (error instanceof SavedSecretResourceTransactionAbort) return { ok: false, error: error.error };
+            throw error;
+        });
+        expect(cleanupRefusal).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.count()).toBe(1);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: retainedSource.owner.id, key } } })).toBeNull();
+        const retainedAccount = await db.account.findUniqueOrThrow({ where: { id: retainedSource.owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(retainedAccount.settingsVersion).toBe(7);
+        expect(openPlainAccountSettingsDbValue({ accountId: retainedSource.owner.id, dbValue: retainedAccount.settings })).toEqual({ t: 'plain', v: raw });
+        expect(await db.accountSettingsSnapshot.count()).toBe(2);
+
+        const disagreement = await prepare();
+        const modified = { ...disagreement.input, catalogMutations: { acp: { ...disagreement.input.catalogMutations.acp,
+            content: { t: 'plain' as const, v: { ...disagreement.record, definitions: disagreement.record.definitions.map((definition, index) =>
+                index === 0 ? { ...definition, command: 'user-edited-before-source-activation' } : definition) } } } } };
+        const rejected = await inTx(tx => promoteSavedSecretResourceInTx(tx, modified)).catch(error => {
+            if (error instanceof SavedSecretResourceTransactionAbort) return { ok: false, error: error.error };
+            throw error;
+        });
+        expect(rejected).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.count()).toBe(1);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: disagreement.owner.id, key } } })).toBeNull();
+        const unchanged = await db.account.findUniqueOrThrow({ where: { id: disagreement.owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(unchanged.settingsVersion).toBe(7);
+        expect(openPlainAccountSettingsDbValue({ accountId: disagreement.owner.id, dbValue: unchanged.settings })).toEqual({ t: 'plain', v: raw });
+        expect(await db.accountSettingsSnapshot.count()).toBe(2);
+        const stale = await prepare();
+        await db.account.update({ where: { id: stale.owner.id }, data: { settingsVersion: 8 } });
+        const staleResult = await inTx(tx => promoteSavedSecretResourceInTx(tx, stale.input)).catch(error => {
+            if (error instanceof SavedSecretResourceTransactionAbort) return { ok: false, error: error.error };
+            throw error;
+        });
+        expect(staleResult).toEqual({ ok: false, error: 'settings_conflict' });
+        expect(await db.savedSecretResource.count()).toBe(1);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: stale.owner.id, key } } })).toBeNull();
+        const staleAccount = await db.account.findUniqueOrThrow({ where: { id: stale.owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(staleAccount.settingsVersion).toBe(8);
+        expect(openPlainAccountSettingsDbValue({ accountId: stale.owner.id, dbValue: staleAccount.settings })).toEqual({ t: 'plain', v: raw });
+        expect(await db.accountSettingsSnapshot.count()).toBe(2);
+    });
+
+    it('commits a new SSH credential and its host catalog without rewriting Settings, and verifies a lost-response retry', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4,
+            settings: JSON.stringify({ t: 'plain', v: { themePreference: 'dark' } }) }, select: { id: true } });
+        await db.userKVStore.create({ data: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 7, value: null } });
+        const catalog = { v: 1 as const, hosts: [{ id: 'host-atomic', name: 'Build host',
+            ssh: { target: 'builder@example.test', authMode: 'password' as const,
+                passwordSecretRef: formatSharedSavedSecretRefV1('ssh-atomic-secret') },
+            createdAt: 1, updatedAt: 1, lastUsedAt: null }] };
+        const input = { accountId: owner.id, resourceId: 'ssh-atomic-secret', displayName: 'SSH password',
+            kind: 'password' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'SSH password', kind: 'password' as const, value: 'private' } },
+            nextSettings: null, profileMutations: [],
+            referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: {},
+                remoteHosts: { revision: 'absent' as const, resourceRefs: [] } },
+            remoteHostMutation: { expectedRevision: 'absent' as const, sourceSettingsVersion: 4,
+                content: { t: 'plain' as const, v: catalog },
+                referencedSavedSecretRevisions: [{ resourceId: 'ssh-atomic-secret', revision: 1 }] } };
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, input));
+        expect(result).toEqual({ ok: true, value: { resourceId: input.resourceId, settingsVersion: 4, remoteHostRevision: 0 } });
+        const row = await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id,
+            key: '@happier/account/remote-hosts/v1/catalog' } } });
+        expect(row?.version).toBe(0);
+        expect(row?.value && JSON.parse(Buffer.from(row.value).toString('utf8'))).toEqual({ t: 'plain', v: catalog });
+        expect(await db.account.findUnique({ where: { id: owner.id }, select: { settingsVersion: true } })).toEqual({ settingsVersion: 4 });
+        expect(await db.accountSettingsSnapshot.count()).toBe(0);
+        await db.account.update({ where: { id: owner.id }, data: { settingsVersion: 5 } });
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual({ ok: true,
+            value: { resourceId: input.resourceId, settingsVersion: 5, remoteHostRevision: 0 } });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id,
+            key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } }, select: { version: true } })).toEqual({ version: 7 });
+        expect(await db.savedSecretResource.count()).toBe(1);
+    });
+
+    it('commits a scoped SSH credential batch without a Settings or Profile census and refuses a stale host catalog', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4 }, select: { id: true } });
+        const key = '@happier/account/remote-hosts/v1/catalog';
+        expect(await inTx(tx => mutateRemoteHostCatalogRowInTx(tx, { accountId: owner.id,
+            expectedRevision: 'absent', sourceSettingsVersion: 4, content: { t: 'plain', v: { v: 1, hosts: [] } },
+            referencedSavedSecretRevisions: [] }))).toMatchObject({ status: 'updated', revision: 0 });
+        const create = (resourceId: string) => ({ resourceId, displayName: 'SSH credential', kind: 'password' as const,
+            encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'SSH credential', kind: 'password' as const, value: 'private' } } });
+        const first = create('ssh-scoped-password');
+        const second = create('ssh-scoped-key');
+        const catalog = { v: 1 as const, hosts: [{ id: 'host-scoped', name: 'Build host',
+            ssh: { target: 'builder@example.test', authMode: 'password' as const,
+                passwordSecretRef: formatSharedSavedSecretRefV1(first.resourceId),
+                identityPrivateKeySecretRef: formatSharedSavedSecretRefV1(second.resourceId) },
+            createdAt: 1, updatedAt: 1, lastUsedAt: null }] };
+        const input = { ...first, accountId: owner.id, nextSettings: null, profileMutations: [],
+            additionalSavedSecretResources: [second],
+            referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: {},
+                remoteHosts: { revision: 0, resourceRefs: [] } },
+            remoteHostMutation: { expectedRevision: 0, content: { t: 'plain' as const, v: catalog },
+                referencedSavedSecretRevisions: [{ resourceId: first.resourceId, revision: 1 }, { resourceId: second.resourceId, revision: 1 }] } };
+        await db.account.update({ where: { id: owner.id }, data: { settingsVersion: 5 } });
+        await db.userKVStore.create({ data: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 7, value: null } });
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, input));
+        expect(result).toEqual({ ok: true, value: { resourceId: first.resourceId, settingsVersion: 5, remoteHostRevision: 1 } });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        expect(await db.accountSettingsSnapshot.count()).toBe(0);
+        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settingsVersion: true } })).toEqual({ settingsVersion: 5 });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } }, select: { version: true } })).toEqual({ version: 7 });
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual(result);
+        const stale = { ...input, ...create('ssh-scoped-stale'), additionalSavedSecretResources: [],
+            remoteHostMutation: { ...input.remoteHostMutation, content: { t: 'plain' as const, v: { v: 1 as const, hosts: [] } },
+                referencedSavedSecretRevisions: [] } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, stale))).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } }, select: { version: true } })).toEqual({ version: 1 });
+    });
+
+    it('refuses personal source rewrites in a scoped catalog credential batch before any resource or Machine write', async () => {
+        const raw = { preferredLanguage: 'de', secrets: [{ id: 'personal-source', name: 'Credential', kind: 'token',
+            encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'source-ciphertext' } }, createdAt: 1, updatedAt: 2 }] };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4,
+            settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+        const controller = await db.machine.create({ data: { id: 'scoped-controller', accountId: owner.id, metadata: 'captured-metadata' } });
+        const environment = { secretRefs: { v: 1, bindings: { TOKEN: { ref: 'personal-source', revision: 1 } } } };
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const preset = await db.managedMachinePreset.create({ data: { homeId: 'scoped-home', name: 'Scoped preset',
+            custodianAccountId: owner.id, controllerMachineId: controller.id, controllerInstallationId: 'scoped-install', launch, environment } });
+        const machine = await db.managedMachine.create({ data: { homeId: 'scoped-home', custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: 'scoped-install', admittedActionRequestId: 'scoped-request',
+            admittedInput: {}, launch, retention: {}, wakeOnAcceptedMessage: false, environmentSetup: { environment } } });
+        const key = '@happier/account/connected-configurations/v1/catalog';
+        await db.userKVStore.create({ data: { accountId: owner.id, key, version: 0,
+            value: Buffer.from(JSON.stringify({ t: 'plain', v: { key: 'configurations', value: { v: 1, entries: [] } } })) } });
+        const resourceId = 'scoped-personal-destination';
+        const ref = formatSharedSavedSecretRefV1(resourceId);
+        const input = { accountId: owner.id, resourceId, displayName: 'Credential', kind: 'token' as const,
+            encryptionMode: 'plain' as const, storedContent: { t: 'plain' as const,
+                v: { v: 1 as const, name: 'Credential', kind: 'token' as const, value: 'private' } },
+            nextSettings: null, profileMutations: [], personalSecretPromotions: [{ personalSecretId: 'personal-source', resourceId }],
+            referenceCensus: { scope: 'catalogs' as const, accountMode: 'plain' as const, catalogs: { connectedConfigurations: 0 } },
+            catalogMutations: { connectedConfigurations: { expectedRevision: 0,
+                content: { t: 'plain' as const, v: { key: 'configurations' as const, value: { v: 1 as const, entries: [{
+                    service: { pluginId: 'happier.fixture', localId: 'service' }, modeId: 'api', revision: 'v1', values: {}, secretRefs: { TOKEN: ref },
+                }] } } }, referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] } } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.count()).toBe(0);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key } }, select: { version: true } })).toEqual({ version: 0 });
+        const account = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settingsVersion: true, settings: true } });
+        expect(account.settingsVersion).toBe(4);
+        expect(openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: account.settings })).toEqual({ t: 'plain', v: raw });
+        expect(await db.machine.findUniqueOrThrow({ where: { id: controller.id } })).toEqual(controller);
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toEqual(preset);
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: machine.id } })).toEqual(machine);
+        expect(await db.accountSettingsSnapshot.count()).toBe(0);
+    });
+
+    it('rolls back every SSH resource when a host catalog conflicts or one referenced resource is invalid', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4 }, select: { id: true } });
+        const catalog = { v: 1 as const, hosts: [{ id: 'host-multi', name: 'Build host',
+            ssh: { target: 'builder@example.test', authMode: 'password' as const,
+                passwordSecretRef: formatSharedSavedSecretRefV1('ssh-multi-password'),
+                identityPrivateKeySecretRef: formatSharedSavedSecretRefV1('ssh-multi-key') },
+            createdAt: 1, updatedAt: 1, lastUsedAt: null }] };
+        const input = { accountId: owner.id, resourceId: 'ssh-multi-password', displayName: 'SSH password',
+            kind: 'password' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'SSH password', kind: 'password' as const, value: 'private-password' } },
+            expectedSettingsVersion: 4, nextSettings: null, profileMutations: [],
+            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } },
+            additionalSavedSecretResources: [{ resourceId: 'ssh-multi-key', displayName: 'SSH private key',
+                kind: 'other' as const, encryptionMode: 'plain' as const,
+                storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'SSH private key', kind: 'other' as const, value: 'private-key' } } }],
+            remoteHostMutation: { expectedRevision: 'absent' as const, sourceSettingsVersion: 4,
+                content: { t: 'plain' as const, v: catalog }, referencedSavedSecretRevisions: [
+                    { resourceId: 'ssh-multi-password', revision: 1 }, { resourceId: 'ssh-multi-key', revision: 1 }] } };
+        const badResource = { ...input, additionalSavedSecretResources: [{ ...input.additionalSavedSecretResources[0],
+            storedContent: { ...input.additionalSavedSecretResources[0]!.storedContent,
+                v: { ...input.additionalSavedSecretResources[0]!.storedContent.v, name: 'Wrong metadata' } } }] };
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, badResource))).rejects.toMatchObject({ error: 'invalid_resource' });
+        expect(await db.savedSecretResource.count()).toBe(0);
+        expect(await db.userKVStore.count()).toBe(0);
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, input))).toMatchObject({ ok: true, value: { remoteHostRevision: 0 } });
+        const staleResourceId = 'ssh-stale-resource';
+        const stale = { ...input, resourceId: staleResourceId, remoteHostMutation: {
+            ...input.remoteHostMutation, content: { t: 'plain' as const, v: { ...catalog,
+                hosts: catalog.hosts.map(host => ({ ...host, ssh: { ...host.ssh,
+                    passwordSecretRef: formatSharedSavedSecretRefV1(staleResourceId) } })) } },
+            referencedSavedSecretRevisions: [{ resourceId: staleResourceId, revision: 1 },
+                { resourceId: 'ssh-multi-key', revision: 1 }] } };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, stale))).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.count()).toBe(2);
+        expect(await db.accountSettingsSnapshot.count()).toBe(0);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('retains a shared secret referenced by an archived machine preset for a %s Account', async (accountMode) => {
+        const owner = await db.account.create({ data: accountMode === 'e2ee' ? createE2eeAccountMaterial().account : { encryptionMode: accountMode } });
+        const resourceId = `preset-setup-${accountMode}`;
+        await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Setup token',
+            kind: 'token', encryptionMode: 'plain', storedContent: { t: 'plain',
+                v: { v: 1, name: 'Setup token', kind: 'token', value: 'private' } } }));
+        const preset = await db.managedMachinePreset.create({ data: { homeId: 'preset-home', name: 'Archived preset',
+            custodianAccountId: owner.id, controllerMachineId: 'preset-controller', controllerInstallationId: 'preset-install',
+            launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            archivedAt: new Date(), environment: { setupScript: 'echo setup', futureField: true,
+                secretRefs: { v: 1, bindings: { TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } } } });
+        const input = { accountId: owner.id, resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
+            referenceCensus: { accountMode, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } } };
+        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, input))).toEqual({ ok: false, error: 'resource_in_use' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).not.toBeNull();
+        await db.managedMachinePreset.delete({ where: { id: preset.id } });
+        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, input))).toEqual({ ok: true, value: { resourceId } });
+    });
+
+    it("refuses deletion when the reference census Settings version is stale", async () => {
+        const owner = await db.account.create({
+            data: { encryptionMode: "plain", settingsVersion: 4 },
+            select: { id: true },
+        });
+        await inTx((tx) => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id,
+            resourceId: "resource_stale_census",
+            displayName: "Token",
+            kind: "token",
+            encryptionMode: "plain",
+            storedContent: { t: "plain", v: { v: 1, name: "Token", kind: "token", value: "private" } },
+        }));
+        const result = await inTx((tx) => deleteSavedSecretResourceInTx(tx, {
+            accountId: owner.id,
+            resourceId: "resource_stale_census",
+            expectedRevision: 1,
+            expectedSettingsVersion: 3,
+            referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
+        }));
+        expect(result).toEqual({ ok: false, error: "settings_conflict" });
+        expect(await db.savedSecretResource.findUnique({ where: { id: "resource_stale_census" } })).not.toBeNull();
+    });
+
+    it('refuses a Profile-only census once an MCP destination catalog exists', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4 }, select: { id: true } });
+        const resourceId = 'resource_mcp_census';
+        await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Token',
+            kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } } }));
+        const catalog = { v: 1, servers: [{ id: 'server-a', name: 'server-a', transport: 'http',
+            remote: { url: 'https://example.test/mcp', headers: {} }, env: { TOKEN: { t: 'savedSecret', secretId: formatSharedSavedSecretRefV1(resourceId) } },
+            createdAt: 1, updatedAt: 1 }], bindings: [] };
+        await db.userKVStore.create({ data: { accountId: owner.id, key: '@happier/account/mcp/v1/catalog', version: 0,
+            value: Buffer.from(JSON.stringify({ t: 'plain', v: catalog })) } });
+        const result = await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, expectedRevision: 1,
+            expectedSettingsVersion: 4, referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } } }));
+        expect(result).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.count()).toBe(1);
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: '@happier/account/mcp/v1/catalog' } } }))
+            .toMatchObject({ version: 0 });
+        expect(await db.userKVStore.count({ where: { key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } })).toBe(0);
+    });
+
+    it('proves each historical SavedSecret source identity against its current owned destination revision', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const savedSecretId = 'legacy-secret-for-history';
+        const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id,
+            source: { kind: 'personal-saved-secret', secretId: savedSecretId } });
+        await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Token',
+            kind: 'token', encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } } }));
+        const proof = { savedSecretId, resourceId, expectedRevision: 1 };
+        await expect(inTx(tx => resourceService.validateSavedSecretHistoryTransferProofsInTx(tx, {
+            accountId: owner.id, transfers: [proof] }))).resolves.toEqual({ status: 'ready' });
+        await expect(inTx(tx => resourceService.validateSavedSecretHistoryTransferProofsInTx(tx, {
+            accountId: owner.id, transfers: [{ ...proof, expectedRevision: 2 }] }))).resolves.toEqual({ status: 'conflict' });
+        await expect(inTx(tx => resourceService.validateSavedSecretHistoryTransferProofsInTx(tx, {
+            accountId: owner.id, transfers: [{ ...proof, savedSecretId: 'untransferred-source' }] }))).resolves.toEqual({ status: 'invalid' });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        await expect(inTx(tx => resourceService.validateSavedSecretHistoryTransferProofsInTx(tx, {
+            accountId: other.id, transfers: [proof] }))).resolves.toEqual({ status: 'invalid' });
+    });
+
+    it.each(['body', 'header', 'access', 'unchanged'] as const)('admits only the captured explicitly selected foreign Artifact (%s)', async changed => {
+        const sourceSettings = JSON.stringify({ t: 'plain', v: { secrets: [{ id: 'source-secret', name: 'Token', kind: 'token',
+            encryptedValue: { _isSecretValue: true, value: 'private' }, createdAt: 1, updatedAt: 1 }] } });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: sourceSettings }, select: { id: true } });
+        const foreign = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const artifactId = `foreign-profile-${changed}`;
+        const body = { kind: 'launch-profile.v1', profile: { id: 'selected', name: 'Selected',
+            environmentVariables: [], envVarRequirements: [{ name: 'TOKEN', kind: 'secret' }],
+            createdAt: 1, updatedAt: 1 }, secretBindings: { TOKEN: 'source-secret' } };
+        const bytes = (value: unknown) => new Uint8Array(Buffer.from(encodePlainArtifactStoredContent(value), 'base64'));
+        expect(await inTx(tx => createArtifactTx(tx, { actorUserId: foreign.id, artifactId,
+            header: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected' }),
+            body: bytes({ body: JSON.stringify(body) }), dataEncryptionKey: new Uint8Array(Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')),
+        }))).toMatchObject({ ok: true });
+        await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+        const capturedStoredArtifact = await db.artifact.findUniqueOrThrow({ where: { id: artifactId } });
+        const content = { t: 'plain' as const, v: { v: 1 as const, id: 'selected',
+            definition: { kind: 'artifact' as const, artifactId }, enabled: true, promptStack: [], secretBindings: {} } };
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: buildProfilePhysicalKey('selected'), version: 0, value: new TextEncoder().encode(JSON.stringify(content)) },
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 0, value: null },
+        ] });
+        const referenceCensus = { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 0, rows: [{ id: 'selected', revision: 0 }] },
+            artifacts: [{ artifactId, headerVersion: 1, bodyVersion: 1 }] };
+        if (changed === 'body') {
+            expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: foreign.id, artifactId,
+                body: { expectedVersion: 1, bytes: bytes({ body: JSON.stringify({ ...body, secretBindings: { TOKEN: 'another-secret' } }) }) },
+            }))).toMatchObject({ ok: true });
+        } else if (changed === 'header') {
+            expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: foreign.id, artifactId,
+                header: { expectedVersion: 1, bytes: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected', title: 'Renamed header title' }) },
+            }))).toMatchObject({ ok: true });
+        } else if (changed === 'access') {
+            await db.artifactAccountGrant.deleteMany({ where: { artifactId, accountId: owner.id } });
+        }
+        const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id,
+            source: { kind: 'personal-saved-secret', secretId: 'source-secret' } });
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: 'Token', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: {} }, referenceCensus,
+            profileMutations: [{ id: 'selected', operation: 'update', expectedRevision: 0,
+                content: { ...content, v: { ...content.v, secretBindings: { TOKEN: formatSharedSavedSecretRefV1(resourceId) } } },
+                referencedSavedSecretIds: [formatSharedSavedSecretRefV1(resourceId)], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }],
+                artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }],
+        }));
+        if (changed === 'unchanged') {
+            expect(result).toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+            expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toMatchObject({ ownerAccountId: owner.id, revision: 1 });
+            const row = await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: buildProfilePhysicalKey('selected') } } });
+            expect(row?.version).toBe(1);
+            expect(JSON.parse(new TextDecoder().decode(row?.value ?? new Uint8Array()))).toMatchObject({
+                t: 'plain', v: { secretBindings: { TOKEN: formatSharedSavedSecretRefV1(resourceId) } },
+            });
+            const artifact = await db.artifact.findUnique({ where: { id: artifactId } });
+            expect(artifact).toMatchObject({ accountId: foreign.id, headerVersion: 1, bodyVersion: 1 });
+            expect(artifact?.body).toEqual(capturedStoredArtifact.body);
+            expect(artifact?.header).toEqual(capturedStoredArtifact.header);
+            expect(await db.artifactAccountGrant.findMany({ where: { artifactId, accountId: owner.id } })).toHaveLength(1);
+            return;
+        }
+        expect(result).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0, settings: sourceSettings });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: buildProfilePhysicalKey('selected') } } })).toMatchObject({ version: 0 });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } } })).toMatchObject({ version: 0 });
+    });
+
+    it.each([true, false])('counts an explicitly selected Artifact binding, not automatic catalog display (selected=%s)', async selected => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const foreign = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const resourceId = `artifact-binding-secret-${selected}`;
+        const reference = formatSharedSavedSecretRefV1(resourceId);
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: 'Token', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } },
+        }))).toMatchObject({ ok: true });
+        const artifactId = `catalog-profile-${selected}`;
+        const content = { kind: 'launch-profile.v1', profile: { id: 'selected', name: 'Selected',
+            environmentVariables: [], envVarRequirements: [{ name: 'TOKEN', kind: 'secret' }],
+            createdAt: 1, updatedAt: 1 }, secretBindings: { TOKEN: reference } };
+        const bytes = (value: unknown) => new Uint8Array(Buffer.from(encodePlainArtifactStoredContent(value), 'base64'));
+        expect(await inTx(tx => createArtifactTx(tx, { actorUserId: foreign.id, artifactId,
+            header: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected' }),
+            body: bytes({ body: JSON.stringify(content) }), dataEncryptionKey: new Uint8Array(Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')),
+        }))).toMatchObject({ ok: true });
+        await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+        if (selected) {
+            await db.userKVStore.createMany({ data: [
+                { accountId: owner.id, key: buildProfilePhysicalKey('selected'), version: 0, value: new TextEncoder().encode(JSON.stringify({
+                    t: 'plain', v: { v: 1, id: 'selected', definition: { kind: 'artifact', artifactId },
+                        enabled: true, promptStack: [], secretBindings: {} },
+                })) },
+                { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 0, value: null },
+            ] });
+        }
+        const result = await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            expectedRevision: 1, expectedSettingsVersion: 0, referenceCensus: { accountMode: 'plain',
+                profiles: { referenceGuardRevision: selected ? 0 : 'absent', rows: selected ? [{ id: 'selected', revision: 0 }] : [] },
+                artifacts: selected ? [{ artifactId, headerVersion: 1, bodyVersion: 1 }] : [],
+            },
+        }));
+        expect(result).toEqual(selected ? { ok: false, error: 'resource_in_use' } : { ok: true, value: { resourceId } });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toEqual(selected ? expect.objectContaining({ id: resourceId }) : null);
+        expect(await db.artifactAccountGrant.findMany({ where: { artifactId, accountId: owner.id } })).toHaveLength(1);
+        expect(await db.artifact.findUnique({ where: { id: artifactId } })).toMatchObject({ bodyVersion: 1 });
+        if (!selected) {
+            const record = { v: 1 as const, id: 'selected', definition: { kind: 'artifact' as const, artifactId },
+                enabled: true, promptStack: [], secretBindings: {} };
+            const before = await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } });
+            const attached = await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+                expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
+                    content: { t: 'plain', v: record }, referencedSavedSecretIds: [],
+                    artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }] }));
+            expect(attached).toMatchObject({ status: 'invalid-reference' });
+            expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
+            expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+                expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
+                    content: { t: 'plain', v: record }, referencedSavedSecretIds: [reference],
+                    savedSecretRevisions: [{ resourceId, expectedRevision: 1 }],
+                    artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }] })))
+                .toMatchObject({ status: 'invalid-reference' });
+            expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
+            await db.artifactAccountGrant.deleteMany({ where: { artifactId, accountId: owner.id } });
+            expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+                expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
+                    content: { t: 'plain', v: { ...record, secretBindings: { TOKEN: null } } }, referencedSavedSecretIds: [],
+                    artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }] })))
+                .toMatchObject({ status: 'invalid-reference' });
+            expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
+            await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+            let revision = { artifactId, headerVersion: 1, bodyVersion: 1 };
+            for (const changed of ['header', 'body'] as const) {
+                const captured = revision;
+                expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: foreign.id, artifactId,
+                    ...(changed === 'header'
+                        ? { header: { expectedVersion: 1, bytes: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected', title: 'Renamed header title' }) } }
+                        : { body: { expectedVersion: 1, bytes: bytes({ body: JSON.stringify({ ...content,
+                            profile: { ...content.profile, updatedAt: 2 } }) }) } }),
+                }))).toMatchObject({ ok: true });
+                revision = { ...revision, ...(changed === 'header' ? { headerVersion: 2 } : { bodyVersion: 2 }) };
+                expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+                    expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
+                        content: { t: 'plain', v: { ...record, secretBindings: { TOKEN: null } } }, referencedSavedSecretIds: [],
+                        artifactRevision: captured }] }))).toMatchObject({ status: 'invalid-reference' });
+                expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
+            }
+            // An explicit private none masks the unavailable shared default;
+            // only the Artifact, not its missing secret, is selected afterward.
+            expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+                expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
+                    content: { t: 'plain', v: { ...record, secretBindings: { TOKEN: null } } }, referencedSavedSecretIds: [],
+                    artifactRevision: revision }] })))
+                .toMatchObject({ status: 'updated', referenceGuardRevision: 1 });
+        }
+    });
+
+    it('promotes an inactive prepared row atomically while preserving unrelated personal staging bindings', async () => {
+        const profile = AIBackendProfileSchema.parse({ id: 'prepared-personal-profile', name: 'Prepared',
+            environmentVariables: [], envVarRequirements: [{ name: 'TOKEN', kind: 'secret' }, { name: 'OTHER', kind: 'secret' }],
+            createdAt: 1, updatedAt: 1 });
+        const secrets = ['source-secret', 'other-secret'].map(id => ({ id, name: id, kind: 'token' as const,
+            encryptedValue: { _isSecretValue: true as const, value: `${id}-private` }, createdAt: 1, updatedAt: 1 }));
+        const bindings = { TOKEN: 'source-secret', OTHER: 'other-secret' };
+        const raw = { profiles: [profile], secrets, secretBindingsByProfileId: { [profile.id]: bindings } };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+        const record = { v: 1 as const, id: profile.id, definition: { kind: 'legacy' as const, profile },
+            enabled: true, promptStack: [], secretBindings: bindings };
+        const inventory = [{ kind: 'account_row' as const, id: record.id, revision: 0 }];
+        const control = { v: 1 as const, phase: 'prepared' as const, sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory };
+        expect(await inTx(tx => mutateProfileTransferInTx(tx, { accountId: owner.id, mutation: {
+            operation: 'prepare', expectedRevision: 'absent', sourceSettingsVersion: 0, inventory, content: { t: 'plain', v: control },
+            imports: [{ id: record.id, operation: 'import', expectedRevision: 'absent', content: { t: 'plain', v: record },
+                referencedSavedSecretIds: Object.values(bindings) }],
+        } }))).toMatchObject({ status: 'updated', revision: 0 });
+        const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id, source: { kind: 'personal-saved-secret', secretId: 'source-secret' } });
+        const reference = formatSharedSavedSecretRefV1(resourceId);
+        const rewritten = promotePersonalSavedSecretReference(raw, { secretId: 'source-secret', expectedUpdatedAt: 1,
+            sharedSecretRef: reference }, { profileRecords: [record] });
+        const nextRecord = rewritten.profileRecords?.[0];
+        expect(nextRecord).toBeDefined();
+        if (!nextRecord) throw new Error('canonical promotion must return the rewritten prepared Profile');
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: 'source-secret', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'source-secret', kind: 'token', value: 'source-secret-private' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: rewritten.settings },
+            referenceCensus: { accountMode: 'plain', profileTransferRevision: 0,
+                profiles: { referenceGuardRevision: 0, rows: [{ id: record.id, revision: 0 }] } },
+            profileMutations: [{ id: record.id, operation: 'import', expectedRevision: 0, content: { t: 'plain', v: nextRecord },
+                referencedSavedSecretIds: Object.values(resolveEffectiveProfileSecretBindingsV1({}, nextRecord.secretBindings)),
+                savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] }],
+        }));
+        expect(result).toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+        const account = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
+        expect(openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: account.settings })).toEqual({ t: 'plain', v: {
+            ...raw, secrets: [secrets[1]], secretBindingsByProfileId: { [record.id]: { TOKEN: reference, OTHER: 'other-secret' } },
+        } });
+        const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: owner.id, key: buildProfilePhysicalKey(record.id) } } });
+        expect(row.version).toBe(1);
+        expect(JSON.parse(new TextDecoder().decode(row.value ?? new Uint8Array()))).toEqual({ t: 'plain', v: nextRecord });
+        expect(nextRecord.secretBindings).toEqual({ TOKEN: reference, OTHER: 'other-secret' });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } } })).toMatchObject({ version: 1 });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toMatchObject({ ownerAccountId: owner.id, revision: 1 });
+        // Resource attachment is not activation; S3 must reprepare the changed source inventory.
+        expect(await inTx(tx => readProfileTransferControlInTx(tx, { accountId: owner.id }))).toMatchObject({
+            status: 'present', revision: 0, envelope: { t: 'plain', v: control },
+        });
+    });
+
+    it('does not treat stale predecessor Profile residue as a reference after the real control activates', async () => {
+        const resourceId = 'active-profile-stale-source';
+        const ref = formatSharedSavedSecretRefV1(resourceId);
+        const profile = AIBackendProfileSchema.parse({ id: 'source-profile', name: 'Source', environmentVariables: [], createdAt: 1, updatedAt: 1 });
+        const raw = { profiles: [profile], secretBindingsByProfileId: { 'source-profile': { TOKEN: ref } } };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+        await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Token', kind: 'token',
+            encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } } }));
+        const record = { v: 1 as const, id: profile.id, definition: { kind: 'legacy' as const, profile },
+            enabled: true, promptStack: [], secretBindings: { TOKEN: ref } };
+        const inventory = [{ kind: 'account_row' as const, id: profile.id, revision: 0 },
+            { kind: 'saved_secret' as const, id: resourceId, revision: 1 }];
+        const control = { v: 1 as const, phase: 'prepared' as const, sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory };
+        expect(await inTx(tx => mutateProfileTransferInTx(tx, { accountId: owner.id, mutation: {
+            operation: 'prepare', expectedRevision: 'absent', sourceSettingsVersion: 0, inventory, content: { t: 'plain', v: control },
+            imports: [{ id: record.id, operation: 'import', expectedRevision: 'absent', content: { t: 'plain', v: record },
+                referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] }],
+        } }))).toMatchObject({ status: 'updated', revision: 0 });
+        expect(await inTx(tx => mutateProfileTransferInTx(tx, { accountId: owner.id, mutation: {
+            operation: 'activate', expectedRevision: 0, sourceSettingsVersion: 0, inventory,
+            content: { t: 'plain', v: { ...control, phase: 'active' } },
+        } }))).toMatchObject({ status: 'updated', revision: 1 });
+        expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id, expectedReferenceGuardRevision: 0,
+            mutations: [{ id: record.id, operation: 'update', expectedRevision: 0,
+                content: { t: 'plain', v: { ...record, secretBindings: {} } }, referencedSavedSecretIds: [] }],
+        }))).toMatchObject({ status: 'updated', referenceGuardRevision: 1 });
+        const result = await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            expectedRevision: 1, expectedSettingsVersion: 0, referenceCensus: { accountMode: 'plain', profileTransferRevision: 1,
+                profiles: { referenceGuardRevision: 1, rows: [{ id: record.id, revision: 1 }] } },
+        }));
+        expect(result).toEqual({ ok: true, value: { resourceId } });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0 });
+    });
+
+    it('refuses source promotion overtaken by Profile activation at the same Settings version', async () => {
+        const profile = AIBackendProfileSchema.parse({ id: 'source-control-profile', name: 'Source', environmentVariables: [], createdAt: 1, updatedAt: 1 });
+        const raw = { profiles: [profile], secretBindingsByProfileId: {} };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
+        const record = { v: 1 as const, id: profile.id, definition: { kind: 'legacy' as const, profile },
+            enabled: true, promptStack: [], secretBindings: {} };
+        const inventory = [{ kind: 'account_row' as const, id: profile.id, revision: 0 }];
+        const control = { v: 1 as const, phase: 'prepared' as const, sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory };
+        expect(await inTx(tx => mutateProfileTransferInTx(tx, { accountId: owner.id, mutation: {
+            operation: 'prepare', expectedRevision: 'absent', sourceSettingsVersion: 0, inventory, content: { t: 'plain', v: control },
+            imports: [{ id: record.id, operation: 'import', expectedRevision: 'absent', content: { t: 'plain', v: record }, referencedSavedSecretIds: [] }],
+        } }))).toMatchObject({ status: 'updated', revision: 0 });
+        const referenceCensus = { accountMode: 'plain' as const, profileTransferRevision: 0,
+            profiles: { referenceGuardRevision: 0, rows: [{ id: profile.id, revision: 0 }] } };
+        expect(await inTx(tx => mutateProfileTransferInTx(tx, { accountId: owner.id, mutation: {
+            operation: 'activate', expectedRevision: 0, sourceSettingsVersion: 0, inventory,
+            content: { t: 'plain', v: { ...control, phase: 'active' } },
+        } }))).toMatchObject({ status: 'updated', revision: 1 });
+        const resourceId = 'source-control-promotion';
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: 'Token', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: { ...raw, secretBindingsByProfileId: { [profile.id]: { TOKEN: formatSharedSavedSecretRefV1(resourceId) } } } },
+            referenceCensus, profileMutations: [],
+        }));
+        expect(result).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0 });
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } } })).toMatchObject({ version: 0 });
+    });
+
+    it('refuses an E2EE phantom Profile reference inserted after a complete census', async () => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: material.account, select: { id: true } });
+        await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'phantom-reference', displayName: 'Token', kind: 'token',
+            encryptionMode: 'e2ee', storedContent: sealTestResource('phantom-reference', 'Token'),
+            keyEnvelopes: [{ recipientAccountId: owner.id, encryptedDataKey: sealTestDataKey(material.contentPublicKey),
+                recipientContentPublicKeyFingerprint: material.fingerprint }],
+        }));
+        const captured = { accountMode: 'e2ee' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } };
+        const content = sealProfileRecordContentV1({ mode: 'e2ee', material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(4) },
+            record: { v: 1, id: 'inserted-profile', definition: { kind: 'artifact', artifactId: 'profile-artifact' },
+                enabled: true, promptStack: [], secretBindings: { TOKEN: formatSharedSavedSecretRefV1('phantom-reference') } } });
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: buildProfilePhysicalKey('inserted-profile'), version: 0, value: new TextEncoder().encode(JSON.stringify(content)) },
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 0, value: null },
+        ] });
+        const result = await inTx(tx => deleteSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'phantom-reference', expectedRevision: 1,
+            expectedSettingsVersion: 0, referenceCensus: captured,
+        }));
+        expect(result).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: 'phantom-reference' } })).not.toBeNull();
+        expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } } })).toMatchObject({ version: 0 });
+    });
+
+    it('requires an explicit opened non-Artifact declaration before writing an opaque Profile', async () => {
+        const material = createE2eeAccountMaterial();
+        const owner = await db.account.create({ data: material.account, select: { id: true } });
+        const id = 'opaque-inline-profile';
+        const record = { v: 1 as const, id, definition: { kind: 'inline' as const, profile: {
+            v: 2 as const, id, name: 'Opaque inline', extraEnvironmentVariables: [], defaultPermissionModeByTargetKey: {},
+            defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {}, createdAt: 1, updatedAt: 1,
+        } }, enabled: true, promptStack: [], secretBindings: {} };
+        const content = sealProfileRecordContentV1({ mode: 'e2ee', material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(4) }, record });
+        const mutation = { id, operation: 'create' as const, expectedRevision: 'absent' as const, content, referencedSavedSecretIds: [] };
+        expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id, mutations: [mutation] })))
+            .toMatchObject({ status: 'invalid-reference' });
+        expect(await db.userKVStore.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
+            mutations: [{ ...mutation, artifactRevision: null }] }))).toMatchObject({ status: 'updated', referenceGuardRevision: 0 });
+        const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: owner.id, key: buildProfilePhysicalKey(id) } } });
+        expect(JSON.parse(new TextDecoder().decode(row.value!))).toEqual(content);
+        expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).settingsVersion).toBe(0);
+    });
+
+    it('does not create a promoted resource when a newly inserted Profile invalidates its census', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const content = { t: 'plain' as const, v: { v: 1 as const, id: 'inserted-profile',
+            definition: { kind: 'artifact' as const, artifactId: 'profile-artifact' }, enabled: true,
+            promptStack: [], secretBindings: {} } };
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: buildProfilePhysicalKey('inserted-profile'), version: 0, value: new TextEncoder().encode(JSON.stringify(content)) },
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 0, value: null },
+        ] });
+        const result = await inTx(tx => promoteSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'phantom-promoted', displayName: 'Token', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'never-written' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: {} },
+            referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
+            profileMutations: [],
+        }));
+        expect(result).toEqual({ ok: false, error: 'references_conflict' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: 'phantom-promoted' } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0 });
     });
 
     it("rolls back the resource, grants, and invalidation when the Settings CAS conflicts", async () => {
@@ -150,6 +899,8 @@ describe("Saved Secret resource service (SQLite integration)", () => {
                 accountGrants: [recipient.id],
                 expectedSettingsVersion: 1,
                 nextSettings: { t: "plain", v: { secrets: [] } },
+                referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
+                profileMutations: [],
             }));
         } catch (error) {
             abort = error;
@@ -164,6 +915,60 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         await expect(db.accountChange.count({
             where: { entityId: "resource_atomic_conflict" },
         })).resolves.toBe(0);
+    });
+
+    it('atomically rewrites private Profile bindings and validates the complete lost-response receipt', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const resourceId = 'private-row-promotion';
+        const ref = formatSharedSavedSecretRefV1(resourceId);
+        const record = { v: 1 as const, id: 'private-profile', definition: { kind: 'legacy' as const,
+            profile: AIBackendProfileSchema.parse({ id: 'private-profile', name: 'Private', environmentVariables: [], createdAt: 1, updatedAt: 1 }) },
+            enabled: true, promptStack: [], secretBindings: { TOKEN: 'personal-token' } };
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: buildProfilePhysicalKey(record.id), version: 3, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: record })) },
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 6, value: null },
+        ] });
+        const input = { accountId: owner.id, resourceId, displayName: 'Token', kind: 'token' as const, encryptionMode: 'plain' as const,
+            storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Token', kind: 'token' as const, value: 'private' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain' as const, v: {} },
+            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 6, rows: [{ id: record.id, revision: 3 }] } },
+            profileMutations: [{ id: record.id, operation: 'update' as const, expectedRevision: 3,
+                content: { t: 'plain' as const, v: { ...record, secretBindings: { TOKEN: ref } } },
+                referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] }] };
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+        const committed = await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } });
+        expect(committed.find(row => row.key === buildProfilePhysicalKey(record.id))).toMatchObject({ version: 4 });
+        expect(committed.find(row => row.key === PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY)).toMatchObject({ version: 7 });
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+        expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(committed);
+        await expect(inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            expectedRevision: 1, expectedSettingsVersion: 1, referenceCensus: { accountMode: 'plain', profiles: {
+                referenceGuardRevision: 7, rows: [{ id: record.id, revision: 4 }] } } }))).resolves.toEqual({ ok: false, error: 'resource_in_use' });
+        expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(committed);
+    });
+
+    it('rolls back a newly created resource when a private binding resource revision is refused', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const resourceId = 'private-row-refusal';
+        const ref = formatSharedSavedSecretRefV1(resourceId);
+        const record = { v: 1 as const, id: 'private-profile', definition: { kind: 'legacy' as const,
+            profile: AIBackendProfileSchema.parse({ id: 'private-profile', name: 'Private', environmentVariables: [], createdAt: 1, updatedAt: 1 }) },
+            enabled: true, promptStack: [], secretBindings: { TOKEN: 'personal-token' } };
+        await db.userKVStore.createMany({ data: [
+            { accountId: owner.id, key: buildProfilePhysicalKey(record.id), version: 3, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: record })) },
+            { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 6, value: null },
+        ] });
+        const before = await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } });
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Token',
+            kind: 'token', encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } },
+            expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: {} },
+            referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 6, rows: [{ id: record.id, revision: 3 }] } },
+            profileMutations: [{ id: record.id, operation: 'update', expectedRevision: 3,
+                content: { t: 'plain', v: { ...record, secretBindings: { TOKEN: ref } } }, referencedSavedSecretIds: [ref],
+                savedSecretRevisions: [{ resourceId, expectedRevision: 2 }] }] }))).rejects.toMatchObject({ error: 'references_invalid' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 0 });
+        expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
     });
 
     it("returns the committed promotion on a lost-response retry without duplicating the mutable source", async () => {
@@ -202,6 +1007,24 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         await db.userRelationship.create({
             data: { fromUserId: owner.id, toUserId: recipient.id, status: "friend" },
         });
+        const controller = await db.machine.create({ data: { id: 'promotion-controller', accountId: owner.id, metadata: '{}',
+            installationId: 'promotion-install' } });
+        const otherController = await db.machine.create({ data: { id: 'promotion-other-controller', accountId: recipient.id, metadata: '{}',
+            installationId: 'promotion-other-install' } });
+        const team = await db.team.create({ data: { name: 'Setup team' } });
+        const environment = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo setup',
+            secretRefs: { v: 1, bindings: { TOKEN: { ref: personalSecretId }, UNRELATED: { ref: 'unrelated-personal' } } } };
+        const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const preset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Team preset', teamId: team.id,
+            launch, controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', environment, revision: 4 } });
+        const foreignPreset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Other account',
+            custodianAccountId: recipient.id, launch, controllerMachineId: otherController.id,
+            controllerInstallationId: 'promotion-other-install', environment } });
+        const managed = await db.managedMachine.create({ data: { homeId: 'promotion-home', custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', launch, presetId: preset.id, presetRevision: 4,
+            admittedActionRequestId: 'promotion-setup', admittedInput: {}, allocation: 'may-exist',
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            environmentSetup: { state: 'pending', environment } } });
         const input = {
             accountId: owner.id,
             resourceId,
@@ -214,17 +1037,32 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             },
             expectedSettingsVersion: 1,
             nextSettings: { t: "plain" as const, v: nextSettings },
+            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } },
+            profileMutations: [],
+            personalSecretPromotions: [{ personalSecretId, resourceId }],
         };
+        const unmapped = { ...input, personalSecretPromotions: undefined };
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, unmapped))).toEqual({ ok: false, error: 'references_invalid' });
+        expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 4, environment });
+        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 1 });
 
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
             ok: true,
             value: { resourceId, settingsVersion: 2 },
         });
+        const rewritten = { ...environment, secretRefs: { ...environment.secretRefs,
+            bindings: { ...environment.secretRefs.bindings, TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } };
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, environment: rewritten });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({
+            presetRevision: 4, environmentSetup: { state: 'pending', environment: rewritten } });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: foreignPreset.id } })).toMatchObject({ revision: 0, environment });
         // Simulate a client retry after the first committed response was lost.
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
             ok: true,
             value: { resourceId, settingsVersion: 2 },
         });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, environment: rewritten });
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, {
             ...input,
             accountGrants: [recipient.id],
