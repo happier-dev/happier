@@ -84,8 +84,11 @@ export function createDevcontainerProvider(input: Readonly<{
       || labels['happier.managed-machine'] !== managedMachineId) fail('resource_mismatch');
   }
   async function namespace(launch: DevcontainerLaunch, containerId: string, managedMachineId: string) {
-    // The CLI applies its remoteUser, remoteEnv and userEnvProbe. This is private
-    // bootstrap IO; regular child commands use the enrolled Machine transport.
+    // Even id/pwd applies the configured userEnvProbe and can evaluate shell
+    // startup. Keep that IO behind the same reviewed-effects owner as launch.
+    await assertDevcontainerEffectReview(nativeInput, launch, launch.reviewedEffectDigest);
+    // This is private bootstrap IO; regular child commands use the enrolled
+    // Machine transport.
     const observed = output(await run(input.devcontainer, ['exec', ...flags(launch), '--container-id', containerId,
       'sh', '-c', 'id -un; pwd -P'], undefined, false, managedMachineId, launch.workspaceFolder));
     const boundary = observed.indexOf('\n');
@@ -93,6 +96,10 @@ export function createDevcontainerProvider(input: Readonly<{
     // POSIX paths may contain CR/LF. Only id's first LF and pwd's final LF
     // delimit the two values; all intervening path bytes are significant.
     return { user: observed.slice(0, boundary), workspaceRoot: observed.slice(boundary + 1, -1) };
+  }
+  async function assertNamespaceCurrent(resource: DevcontainerResource) {
+    if (!isDeepStrictEqual(await namespace(resource, resource.containerId, resource.managedMachineId),
+      { user: resource.user, workspaceRoot: resource.workspaceRoot })) fail('resource_mismatch');
   }
   async function exact(raw: DevcontainerResource, running = false) {
     const resource = DevcontainerResourceSchema.parse(raw);
@@ -107,7 +114,7 @@ export function createDevcontainerProvider(input: Readonly<{
     if (typeof state.Running !== 'boolean' || typeof state.Paused !== 'boolean') fail('native_observation_unavailable');
     if (running) {
       if (!state.Running || state.Paused) fail('child_unavailable');
-      if (!isDeepStrictEqual(await namespace(resource, resource.containerId, resource.managedMachineId), { user: resource.user, workspaceRoot: resource.workspaceRoot })) fail('resource_mismatch');
+      await assertNamespaceCurrent(resource);
     }
     return { resource, running: state.Running && !state.Paused, paused: state.Paused };
   }
@@ -206,7 +213,8 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async inspect(raw: DevcontainerResource) {
       try {
-        const { running, paused } = await exact(raw);
+        const { resource, running, paused } = await exact(raw);
+        if (running) await assertNamespaceCurrent(resource);
         return { observedAt: input.observedAt, availability: 'present' as const, power: paused ? 'suspended' as const : running ? 'running' as const : 'stopped' as const,
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const } };
       } catch (error) { return { observedAt: input.observedAt, availability: code(error) === 'native_resource_absent' ? 'absent' as const : 'unavailable' as const,

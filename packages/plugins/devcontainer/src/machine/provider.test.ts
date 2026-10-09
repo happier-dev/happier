@@ -138,9 +138,15 @@ describe('Devcontainer native roles', () => {
   });
 
   it('recovers a uniquely observed replacement without replaying native creation or accepting the previous installation', async () => {
+    await writeFile(launch.configPath, JSON.stringify({ image: 'example:latest', userEnvProbe: 'none' }));
     const recovered = native({ id: 'b'.repeat(64) });
-    expect(await recovered.provider.reconcile(resource)).toMatchObject({ kind: 'bound', resource: {
-      value: { ...resource, containerId: 'b'.repeat(64) },
+    const reviewed = await readDevcontainerEffectReview(recovered.tools, { workspaceFolder: launch.workspaceFolder, configPath: launch.configPath });
+    expect(reviewed.launch.reviewedEffectDigest).not.toBe(resource.reviewedEffectDigest);
+    // The canonical host overlays the actually submitted rebuild review onto
+    // the old resource when reconciling an uncertain replacement.
+    const submitted = { ...resource, reviewedEffectDigest: reviewed.launch.reviewedEffectDigest };
+    expect(await recovered.provider.reconcile(submitted)).toMatchObject({ kind: 'bound', resource: {
+      value: { ...submitted, containerId: 'b'.repeat(64) },
       devcontainerObservation: { nativeResourceId: 'b'.repeat(64), user: resource.user, workspaceFolder: resource.workspaceRoot },
     } });
     expect(recovered.requests.some(request => ['up', 'rm', 'stop'].includes(request.args?.[0] ?? ''))).toBe(false);
@@ -213,6 +219,29 @@ describe('Devcontainer native roles', () => {
     expect(await provider.inspect(resource)).toMatchObject({ availability: 'unavailable', reason: 'resource_mismatch' });
   });
 
+  it('refuses retained child namespace drift during running inspection', async () => {
+    // An absolute symlink replacing the retained workspace changes guest pwd -P
+    // without changing the container identity, labels or Docker mount facts.
+    const { provider, requests } = native({ namespace: 'coder\n/etc/x\n' });
+    expect(await provider.inspect(resource)).toMatchObject({ availability: 'unavailable', reason: 'resource_mismatch' });
+    expect(requests.some(request => request.args?.some(arg => ['up', 'rm', 'down', '--volumes'].includes(arg)))).toBe(false);
+  });
+
+  it('refuses changed userEnvProbe before running inspection can evaluate shell startup', async () => {
+    await writeFile(launch.configPath, JSON.stringify({ image: 'example:latest', userEnvProbe: 'none' }));
+    const { provider, tools, requests } = native();
+    const reviewed = await readDevcontainerEffectReview(tools, { workspaceFolder: launch.workspaceFolder, configPath: launch.configPath });
+    const retained = { ...resource, reviewedEffectDigest: reviewed.launch.reviewedEffectDigest };
+    expect(await provider.inspect(retained)).toMatchObject({ availability: 'present', power: 'running' });
+    requests.length = 0;
+
+    // Native exec reads the current config before its command: a configured
+    // login-shell probe can evaluate startup scripts even for id/pwd discovery.
+    await writeFile(launch.configPath, JSON.stringify({ image: 'example:latest', userEnvProbe: 'loginInteractiveShell' }));
+    expect(await provider.inspect(retained)).toMatchObject({ availability: 'unavailable', reason: 'request_conflict' });
+    expect(requests.some(request => ['exec', 'up', 'rm', 'stop'].includes(request.args?.[0] ?? ''))).toBe(false);
+  });
+
   it('keeps a child-local workspace independent of host Sync', async () => {
     const { provider } = native({ mounts: [{ Type: 'volume', Name: 'child-root', Destination: '/work/custom' }] });
     expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
@@ -266,11 +295,14 @@ describe('Devcontainer native roles', () => {
     } } });
   });
 
-  it('reports native pause honestly and refuses bootstrap before executing in a paused child', async () => {
-    const { provider, requests } = native({ paused: true });
-    expect(await provider.inspect(resource)).toMatchObject({ availability: 'present', power: 'suspended' });
+  it.each([
+    { running: false, paused: false, power: 'stopped' },
+    { running: true, paused: true, power: 'suspended' },
+  ])('reports $power without executing in an unavailable child namespace', async ({ running, paused, power }) => {
+    const { provider, requests } = native({ running, paused, namespace: 'coder\n/etc/x\n' });
+    expect(await provider.inspect(resource)).toMatchObject({ availability: 'present', power });
     await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'child_unavailable' });
-    expect(requests.some(request => request.args?.[0] === 'exec')).toBe(false);
+    expect(requests.some(request => request.args?.some(arg => ['exec', 'up', 'rm', 'down', '--volumes'].includes(arg)))).toBe(false);
   });
 
   it.each(['/work/custom ', '/work/custom\nfolder', '/work/custom\r\n'])('retains significant path bytes in the actual child root %j', async workspaceRoot => {
