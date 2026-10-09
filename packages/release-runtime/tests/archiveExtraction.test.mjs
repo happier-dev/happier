@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import zlib from 'node:zlib';
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +58,75 @@ function createTarGzip(entries) {
   blocks.push(Buffer.alloc(1024));
   return gzipSync(Buffer.concat(blocks));
 }
+
+test('archive rejection drains pending filesystem work before staging cleanup', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-node-archive-drain-'));
+  const archive = join(root, 'payload.tar.gz');
+  const extracted = join(root, 'extracted');
+  const isStaging = (target) => String(target).startsWith(join(root, '.extracted.extract-'));
+  const originalStat = fs.stat;
+  const originalUtimes = fs.utimes;
+  const originalRm = fsPromises.rm;
+  const originalGunzip = zlib.createGunzip;
+  let releaseStat;
+  let decompressorClosed = false;
+  let directoryCompleted = false;
+  let cleanupBeforeCompletion = false;
+  const directoryDone = Promise.withResolvers();
+  // Hold node-tar's real cwd stat until pipeline teardown. Dispatching the
+  // actual stat then keeps filesystem work pending through the close microtask.
+  t.mock.method(fs, 'stat', (target, ...args) => {
+    if (!isStaging(target)) return originalStat(target, ...args);
+    releaseStat = () => originalStat(target, ...args);
+    if (decompressorClosed) releaseStat();
+  });
+  t.mock.method(zlib, 'createGunzip', (...args) => {
+    const gunzip = originalGunzip(...args);
+    gunzip.once('close', () => {
+      decompressorClosed = true;
+      releaseStat?.();
+    });
+    return gunzip;
+  });
+  syncBuiltinESMExports();
+  t.mock.method(fs, 'utimes', (target, atime, mtime, callback) => {
+    return originalUtimes(target, atime, mtime, (error) => {
+      callback(error);
+      if (isStaging(target)) {
+        directoryCompleted = true;
+        directoryDone.resolve();
+      }
+    });
+  });
+  t.mock.method(fsPromises, 'rm', async (target, options) => {
+    if (isStaging(target)) {
+      cleanupBeforeCompletion = !directoryCompleted;
+      // Let the real writer finish even on RED, so the fixture leaves no
+      // late writes or handles behind and the ordering assertion decides it.
+      await directoryDone.promise;
+    }
+    return originalRm(target, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    await mkdir(extracted);
+    await writeFile(archive, createTarGzip([
+      { name: 'payload/', type: '5' },
+      { name: 'payload/file', contents: 'too large' },
+    ]));
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.tar.gz', archivePath: archive, extractDir: extracted, limits: { maxExpandedBytes: 4 } }),
+      /expanded[ -]byte limit/iu,
+    );
+    assert.equal(cleanupBeforeCompletion, false, 'staging cleanup must follow pending filesystem completion');
+    assert.deepEqual(await readdir(extracted), []);
+    assert.equal((await readdir(root)).some((name) => name.startsWith('.extracted.extract-')), false);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await originalRm(root, { recursive: true, force: true });
+  }
+});
 
 function crc32(value) {
   let crc = 0xffffffff;
