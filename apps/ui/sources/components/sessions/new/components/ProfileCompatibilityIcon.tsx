@@ -46,10 +46,9 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
         if (Array.isArray(backendEntriesOverride)) {
             return backendEntriesOverride;
         }
-        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSnapshot: acpCatalog.catalog,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
         });
     }, [acpCatalog, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);

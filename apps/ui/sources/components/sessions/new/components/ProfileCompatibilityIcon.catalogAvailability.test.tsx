@@ -23,14 +23,13 @@ afterEach(() => {
 });
 
 describe('Profile compatibility catalog availability', () => {
-    it('renders safely before an Account catalog exists and updates from its scoped ready snapshot', async () => {
+    it('keeps built-in compatibility visible while the configured ACP catalog changes availability', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
         getStorage().setState({ settingsScope: null });
         const screen = await renderScreen(<ProfileCompatibilityIcon profile={{
             isBuiltIn: true, compatibility: { codex: true }, compatibilityByTargetKey: {},
         }} />);
-        expect(screen.findAllByType(AgentIcon)).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('•');
+        expect(screen.findAllByType(AgentIcon).map(node => node.props.agentId)).toEqual(['codex']);
 
         await act(async () => {
             applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
@@ -41,13 +40,12 @@ describe('Profile compatibility catalog availability', () => {
         await act(async () => {
             applyAcpCatalogSnapshot(scope, { status: 'loading' }, true);
         });
-        expect(screen.findAllByType(AgentIcon)).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('•');
+        expect(screen.findAllByType(AgentIcon).map(node => node.props.agentId)).toEqual(['codex']);
 
         await act(async () => {
             applyAcpCatalogSnapshot(scope, { status: 'unavailable', reason: 'unauthorized' }, true);
         });
-        expect(screen.findAllByType(AgentIcon)).toHaveLength(0);
+        expect(screen.findAllByType(AgentIcon).map(node => node.props.agentId)).toEqual(['codex']);
 
         await act(async () => {
             applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 2, record: { v: 1, definitions: [] } }, true);

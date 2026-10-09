@@ -1,5 +1,5 @@
 import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
@@ -15,12 +15,12 @@ import type {
     MergedBackendProjectionEntry,
     MergedProviderProjectionEntry,
 } from './mergedProjectionTypes';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { t } from '@/text';
 import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundCheckSafe';
 import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';
 import {
     resolveAgentCatalogProjection,
+    resolveConfiguredAcpAgentCatalogProjection,
     type ResolvedAgentCatalogEntry,
 } from './agentCatalogProjection';
 
@@ -82,14 +82,14 @@ function resolveTargetAgentCatalogEntry(
     agentId: string,
     params: Readonly<{
         enabledAgentIds?: readonly string[];
-        acpCatalogSettingsV1?: AcpCatalogSettingsV1;
+        acpCatalogSnapshot?: AcpCatalogSnapshotV1;
         backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     }> & MergedProjectionInputs,
 ): ResolvedAgentCatalogEntry {
     return resolveAgentCatalogProjection(agentId, {
         enabledAgentIds: params.enabledAgentIds ?? [],
         backendEnabledByTargetKey: params.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1,
+        acpCatalogSnapshot: params.acpCatalogSnapshot,
         mergedBackendProjectionById: params.mergedBackendProjectionById,
         mergedProviderProjectionById: params.mergedProviderProjectionById,
     });
@@ -175,15 +175,20 @@ function collectConfiguredProviderOwnedProviderIds(
 
 export function getResolvedBackendCatalogEntries(params: Readonly<{
     enabledAgentIds: readonly string[];
-    acpCatalogSettingsV1: AcpCatalogSettingsV1;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     collapseConfiguredBackendProviderSentinels?: boolean;
     discoveredBackendIds?: readonly string[];
 }> & MergedProjectionInputs): ResolvedBackendCatalogEntry[] {
     const entriesByTargetKey = new Map<string, ResolvedBackendCatalogEntry>();
-    const catalog = normalizeAcpCatalogSettingsV1(
-        params.acpCatalogSettingsV1 ?? { v: 2, backends: [] },
-    );
+    // The Account ACP row owns only user-configured backends. Bundled and
+    // installed Agents come from their own catalog projections and remain
+    // usable while that independent row is loading or unavailable.
+    const catalog = {
+        backends: params.acpCatalogSnapshot?.status === 'ready'
+            ? params.acpCatalogSnapshot.record.definitions
+            : [],
+    };
 
     for (const enabledAgentIdRaw of params.enabledAgentIds) {
         const resolvedEntry = createBuiltInTargetEntry(String(enabledAgentIdRaw ?? '').trim(), params);
@@ -248,6 +253,12 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
         const agentIdFromProjection = typeof backendProjection?.agentId === 'string' ? backendProjection.agentId.trim() : '';
         const agentId = agentIdFromProjection || backend.id;
         const providerProjection = agentId ? readMergedProviderProjection(agentId, params) : null;
+        const agentCatalogEntry = resolveConfiguredAcpAgentCatalogProjection(backend, {
+            enabledAgentIds: params.enabledAgentIds,
+            backendEnabledByTargetKey: params.backendEnabledByTargetKey,
+            mergedBackendProjectionById: params.mergedBackendProjectionById,
+            mergedProviderProjectionById: params.mergedProviderProjectionById,
+        });
         if (!isBackendTargetEnabled(
             params.backendEnabledByTargetKey,
             backendTargetKey,
@@ -255,7 +266,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             continue;
         }
         entriesByTargetKey.set(backendTargetKey, {
-            agentCatalogEntry: resolveTargetAgentCatalogEntry(agentId, params),
+            agentCatalogEntry,
             backendTarget: canonicalTarget,
             backendTargetKey,
             kind: 'configuredBackend',
@@ -266,8 +277,8 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             iconAgentId: resolveProjectionIconAgentId(agentId, backendProjection, providerProjection, null),
             capabilities: backendProjection?.capabilities ?? null,
             title: backendProjection?.title ?? providerProjection?.title ?? (backend.title || backend.name),
-            subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? backend.name,
-            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, providerProjection),
+            subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? null,
+            cliAuthBackgroundCheckSafe: agentCatalogEntry.cliAuthBackgroundCheckSafe,
         });
     }
 

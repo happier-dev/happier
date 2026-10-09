@@ -7,11 +7,18 @@ vi.mock('@/text', async () => {
     });
 });
 
-import { getResolvedBackendCatalogEntries, resolveCatalogAgentIdForBackendTarget } from './getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveCatalogAgentIdForBackendTarget } from './getResolvedBackendCatalogEntries';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import type { BundledAgentId } from '@/agents/catalog/catalog';
+import { AcpBackendDefinitionV1Schema, type AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
-type BackendCatalogParams = Parameters<typeof getResolvedBackendCatalogEntries>[0];
+type BackendCatalogParams = Parameters<typeof readBackendCatalog>[0] & { acpCatalogSettingsV1?: AcpCatalogSettingsV1 };
+// Existing definition vectors are fixture inputs, not Account Settings authority.
+function getResolvedBackendCatalogEntries({ acpCatalogSettingsV1, ...params }: BackendCatalogParams) {
+    return readBackendCatalog({ ...params, ...(params.acpCatalogSnapshot || !acpCatalogSettingsV1 ? {} : {
+        acpCatalogSnapshot: { status: 'ready' as const, revision: 1, record: { v: 1 as const, definitions: acpCatalogSettingsV1.backends } },
+    }) });
+}
 
 function bundledAgentTarget(agentId: BundledAgentId) {
     return {
@@ -26,6 +33,26 @@ function bundledAgentTargetKey(agentId: BundledAgentId): string {
 }
 
 describe('getResolvedBackendCatalogEntries', () => {
+    it('keeps bundled Agents available while ACP rows load or are unavailable, and adds configured rows only when ready', () => {
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review', command: 'review',
+            args: [], env: {}, capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' }, createdAt: 1, updatedAt: 1 });
+        const readyEntries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude'],
+            acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [definition] } } });
+        expect(readyEntries).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'builtInAgent', builtInAgentId: 'claude' }),
+            expect.objectContaining({ kind: 'configuredBackend', backendId: 'row-review', title: 'Row review' }),
+        ]));
+        for (const acpCatalogSnapshot of [
+            undefined,
+            { status: 'loading' as const },
+            { status: 'unavailable' as const, reason: 'source-transfer-required' },
+        ]) {
+            expect(getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude'], acpCatalogSnapshot })).toEqual([
+                expect.objectContaining({ kind: 'builtInAgent', builtInAgentId: 'claude' }),
+            ]);
+        }
+    });
     it('does not fabricate a customAcp provider id for non-built-in backend targets', () => {
         expect(resolveCatalogAgentIdForBackendTarget({ kind: 'backend', backendId: 'claude' })).toBe('claude');
         expect(resolveCatalogAgentIdForBackendTarget({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' })).toBeNull();
