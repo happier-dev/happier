@@ -42,6 +42,95 @@ function connectedSelectionsWithCredentialRevision(credentialRevision: string): 
 }
 
 describe('ConnectedServiceRuntimeRegistry', () => {
+  it('keeps an admitted cold requester run out of the custodian view when its tracked attribution is unavailable', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const alice = registry.scopeToRequester(() => true, { serverId: 'home-a', accountId: 'alice' });
+    const bob = registry.scopeToRequester(target => target.sessionId === 'cold-bob', { serverId: 'home-a', accountId: 'bob' });
+    // The actual admitted producer supplies this retained, nonsecret ownership fact;
+    // absence of a tracked marker must not turn it into custodian Account authority.
+    const registration = { runKey: 'bob-run', pid: 202, sessionId: 'cold-bob', agentId: 'codex', materializationKey: 'bob-run',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections,
+      requesterWorkAttributionV1: { serverId: 'home-a', accountId: 'bob', machineId: 'machine', installationId: 'installation' } };
+    registry.registerRunTarget(registration);
+    expect(bob.getRunTargetByRunKey('bob-run')?.sessionId).toBe('cold-bob');
+    expect(alice.getRunTargetByRunKey('bob-run')).toBeNull();
+    expect(alice.listRefreshTargets()).toEqual([]);
+    expect(alice.listQuotaTargets()).toEqual([]);
+    expect(bob.listRefreshTargets().map(target => target.materializationKey)).toEqual(['bob-run']);
+    registry.registerRunTarget({ ...registration, runKey: 'other-home-run', materializationKey: 'other-home-run',
+      requesterWorkAttributionV1: { ...registration.requesterWorkAttributionV1, serverId: 'home-b' } });
+    expect(bob.getRunTargetByRunKey('other-home-run')).toBeNull();
+    expect(registry.listTargets()).toHaveLength(2);
+  });
+  it('scopes refresh, quota, registration fanout and exact reads by trusted requester Home and Account over the same backing targets', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const attribution = new Map([
+      ['alice', { serverId: 'home-a', accountId: 'alice' }],
+      ['bob', { serverId: 'home-a', accountId: 'bob' }],
+      ['bob-other-home', { serverId: 'home-b', accountId: 'bob' }],
+    ]);
+    const view = registry.scopeToRequester((target) => {
+      const owner = target.sessionId ? attribution.get(target.sessionId) : null;
+      return owner?.serverId === 'home-a' && owner.accountId === 'bob';
+    });
+    const delivered: string[] = [];
+    const unsubscribe = view.subscribeTargetRegistrations((target) => { delivered.push(target.materializationKey ?? ''); });
+    const bindings = { agentId: 'codex' as const, connectedServicesBindingsRaw: connectedBindings,
+      connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget({ ...bindings, pid: 101, sessionId: 'alice', materializationKey: 'alice-material' });
+    view.registerTarget({ ...bindings, pid: 202, sessionId: 'bob', materializationKey: 'bob-material' });
+    registry.registerTarget({ ...bindings, pid: 303, sessionId: 'bob-other-home', materializationKey: 'other-home-material' });
+    registry.registerTarget({ ...bindings, pid: 404, sessionId: 'unknown', materializationKey: 'unattributed-material' });
+    view.registerRunTarget({ ...bindings, pid: 202, runKey: 'bob-run', sessionId: 'bob', materializationKey: 'bob-run-material' });
+    registry.registerRunTarget({ ...bindings, pid: 101, runKey: 'alice-run', sessionId: 'alice', materializationKey: 'alice-run-material' });
+    unsubscribe();
+    expect(view.listTargets().map((target) => target.materializationKey)).toEqual(['bob-material', 'bob-run-material']);
+    expect(view.listRefreshTargets().map((target) => target.materializationKey)).toEqual(['bob-material', 'bob-run-material']);
+    expect(view.listQuotaTargets().map((target) => target.materializationKey)).toEqual(['bob-material', 'bob-run-material']);
+    expect(delivered).toEqual(['bob-material', 'bob-run-material']);
+    expect(view.getByPid(101)).toBeNull();
+    expect(view.getBySessionId('bob-other-home')).toBeNull();
+    expect(view.getRunTargetByRunKey('alice-run')).toBeNull();
+    expect(view.isSessionTarget(registry.getByPid(101)!)).toBe(false);
+    expect(view.isRunTarget(registry.getRunTargetByRunKey('alice-run')!)).toBe(false);
+    expect(registry.listTargets()).toHaveLength(6);
+    expect(view.getByPid(202)).toBe(registry.getByPid(202));
+    view.transferPid(202, 222);
+    expect(registry.getBySessionId('bob')?.pid).toBe(222);
+    expect(registry.getRunTargetByRunKey('bob-run')).toBeNull();
+    expect(view.getByPid(222)).toBe(registry.getByPid(222));
+    attribution.delete('bob');
+    expect(view.listRefreshTargets()).toEqual([]);
+    expect(registry.getByPid(222)).not.toBeNull();
+  });
+
+  it('prevents scoped mutation from replacing or removing another requester targets and runner children', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const view = registry.scopeToRequester((target) => target.sessionId === 'bob');
+    const connected = { connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget({ ...connected, pid: 101, sessionId: 'alice' });
+    registry.registerRunTarget({ ...connected, pid: 101, sessionId: 'alice', runKey: 'alice-run' });
+    view.registerTarget({ pid: 202, sessionId: 'bob' });
+    expect(view.updateTarget({ pid: 101, sessionDirectory: '/foreign' })).toBeNull();
+    expect(view.unregisterPid(101)).toBeNull();
+    expect(view.unregisterRunKey('alice-run')).toBeNull();
+    expect(view.transferPid(101, 111)).toBeNull();
+    expect(view.transferPid(202, 101)).toBeNull();
+    const credentialUpdate = { serviceId: 'acme.accounts/session-auth' as const,
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' as const,
+      credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' as const };
+    expect(view.adoptExactCredentialRevisionForTarget({ ...credentialUpdate, target: registry.getByPid(101)! })).toBeNull();
+    expect(view.adoptExactCredentialRevisionForRun({ ...credentialUpdate, runKey: 'alice-run',
+      target: registry.getRunTargetByRunKey('alice-run')! })).toBeNull();
+    expect(() => view.registerTarget({ pid: 101, sessionId: 'bob' })).toThrow('connected_service_runtime_requester_scope_mismatch');
+    expect(() => view.registerRunTarget({ pid: 202, sessionId: 'bob', runKey: 'alice-run' })).toThrow('connected_service_runtime_requester_scope_mismatch');
+    expect(() => view.updateTarget({ pid: 202, sessionId: 'alice' })).toThrow('connected_service_runtime_requester_scope_mismatch');
+    expect(registry.getByPid(101)?.sessionId).toBe('alice');
+    expect(registry.getRunTargetByRunKey('alice-run')?.sessionId).toBe('alice');
+    expect(registry.getByPid(202)?.sessionId).toBe('bob');
+    expect(registry.getByPid(101)?.activeBindings[0]?.credentialRevision).toBe('csr_aaaaaaaaaaaaaaaaaaaaaa');
+  });
+
   it('resolves execution-run targets by exact run key even when they share a runner pid', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     registry.registerTarget({ pid: 101, sessionId: 'parent-session' });

@@ -7,9 +7,15 @@ import type { ConnectedServiceRuntimeAuthTargetInput } from './types';
 export async function createConnectedServiceRuntimeAuthNativeHome(input: Readonly<{
   agentId: CatalogAgentId;
   root: string;
+  isCurrent?: () => Promise<boolean>;
 }>): Promise<NonNullable<ConnectedServiceRuntimeAuthTargetInput['nativeHome']> | null> {
+  const assertCurrent = async () => {
+    if (input.isCurrent && !await input.isCurrent()) throw new Error('requester_session_not_current');
+  };
+  await assertCurrent();
   const descriptor = await getConnectedServiceStateSharingDescriptor(input.agentId)
     .catch(() => null);
+  await assertCurrent();
   const declaredSecretEntries = Object.freeze([
     ...(descriptor?.authIsolation.secretEntries ?? []),
   ]);
@@ -19,13 +25,20 @@ export async function createConnectedServiceRuntimeAuthNativeHome(input: Readonl
   });
   if (!readService) return null;
   return Object.freeze({
-    readFiles: readService.readFiles,
+    async readFiles(fileIds) {
+      await assertCurrent();
+      const files = await readService.readFiles(fileIds);
+      await assertCurrent();
+      return files;
+    },
     async replaceFiles(files) {
+      await assertCurrent();
       await materializeConnectedServiceNativeHomeCredentials({
         targetRoot: input.root,
         declaredSecretEntries,
         files,
       });
+      await assertCurrent();
     },
   });
 }

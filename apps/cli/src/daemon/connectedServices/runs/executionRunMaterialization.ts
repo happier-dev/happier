@@ -31,6 +31,7 @@ import { refreshConnectedServiceRuntimeAuthForTarget, resolveCurrentRefreshSelec
 import { runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection } from '../runtimeAuthRefreshAuthorization';
 import type { ConnectedServiceRuntimeTarget } from '../runtimeRegistry/target';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/requesterSessionCredentials';
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
@@ -71,7 +72,7 @@ import {
  * auth.
  */
 
-type ResolveAuthForSpawnInput = Pick<
+type ResolveAuthForSpawnInput = Readonly<{ parentSessionId: string }> & Pick<
     Parameters<typeof resolveConnectedServiceAuthForSpawn>[0],
     | 'agentId'
     | 'connectedServicesBindingsRaw'
@@ -104,10 +105,29 @@ export type ExecutionRunTargetRegistration = Readonly<{
     materializationKey: string;
     connectedServicesBindingsRaw: unknown;
     connectedServiceSelectionsEnv: Readonly<Record<string, string>>;
-    sessionId?: string | null;
+    sessionId: string;
     sessionDirectory?: string | null;
     exactPurposeBindingSubjectId?: string;
 }>;
+
+/** The existing host registration callback; registration is captured runner custody, never wire input. */
+export async function registerExecutionRunConnectedServicesTarget(input: Readonly<{
+    registry: ConnectedServiceRuntimeRegistry;
+    registration: ExecutionRunTargetRegistration;
+    resolveSessionAccountContext: (sessionId: string) => Promise<RequesterSessionRuntimeContext | null>;
+    assertSessionAccountCurrent: (sessionId: string, context: RequesterSessionRuntimeContext | null) => Promise<void>;
+}>): Promise<void> {
+    const registration = input.registration;
+    const context = await input.resolveSessionAccountContext(registration.sessionId);
+    await input.assertSessionAccountCurrent(registration.sessionId, context);
+    if (context && !await context.bootstrap.isCurrent()) throw new Error('requester_session_not_current');
+    input.registry.registerRunTarget({ runKey: registration.runKey, pid: registration.runnerPid, agentId: registration.agentId,
+        materializationKey: registration.materializationKey, connectedServicesBindingsRaw: registration.connectedServicesBindingsRaw,
+        connectedServiceSelectionsEnv: registration.connectedServiceSelectionsEnv,
+        exactPurposeBindingSubjectId: registration.exactPurposeBindingSubjectId, sessionId: registration.sessionId,
+        sessionDirectory: registration.sessionDirectory,
+        ...(context ? { requesterWorkAttributionV1: context.bootstrap.attribution } : {}) });
+}
 
 export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     getRunRuntimeTarget?: (runKey: string) => ConnectedServiceRuntimeTarget | null;
@@ -115,22 +135,25 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
     resolveRunCredentialRevisionTarget?: ConnectedServiceRuntimeRegistry['resolveExactRunCredentialRevisionTarget'];
     resolveDaemonAuthBridge?: ResolveDaemonAuthBridge;
     recoverRejectedStart?: (input: Readonly<{
+        parentSessionId: string;
         selection: Extract<ConnectedServiceChildSelection, { kind: 'group' }>;
         modelId: string;
         isCurrent(): boolean;
     }>) => ReturnType<ConnectedServiceAuthGroupSwitchCoordinator<QualifiedConnectedAccountServiceRef>['switchAfterClassifiedFailure']>;
     resolveAuthForSpawn: ResolveAuthForSpawn;
-    registerRunTargets: (registration: ExecutionRunTargetRegistration) => void;
+    registerRunTargets: (registration: ExecutionRunTargetRegistration) => void | Promise<void>;
     unregisterRunTargets: (runKey: string) => void;
     resolveRunMaterializedRoot: (input: Readonly<{
         runKey: string;
         agentId: CatalogAgentId;
-    }>) => string | null;
+        parentSessionId: string;
+    }>) => string | null | Promise<string | null>;
     createAdoptedRootCleanup: (input: Readonly<{
         runKey: string;
         agentId: CatalogAgentId;
         materializedRoot: string;
-    }>) => (() => void | Promise<void>) | null;
+        parentSessionId: string;
+    }>) => (() => void | Promise<void>) | null | Promise<(() => void | Promise<void>) | null>;
     captureRunnerIdentity: (input: Readonly<{
         runnerPid: number;
         expectedParentSessionId?: string;
@@ -155,10 +178,10 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
         isCurrent(): boolean;
         release(): Promise<void>;
     }>>;
-    purposeBindingOwner: Pick<
-        ConnectedAccountPurposeBindingOwner,
-        'activatePurposeBindings'
-    >;
+    purposeBindingOwner: Readonly<{
+        activatePurposeBindings(input: Parameters<ConnectedAccountPurposeBindingOwner['activatePurposeBindings']>[0],
+            context: Readonly<{ parentSessionId: string }>): ConnectedAccountPurposeBindingLease | Promise<ConnectedAccountPurposeBindingLease>;
+    }>;
     requestAuthRegistry: Pick<
         ConnectedAccountRequestAuthSubjectRegistry,
         'activate' | 'retire'
@@ -186,6 +209,8 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
         runId: string;
         runnerPid: number;
         sessionId: string | null;
+        /** Existing retained marker cleanup fact, never fresh launch authority. */
+        materializedRoot?: string | null;
         receipt: unknown;
     }>) => Promise<boolean>;
     releaseForRunnerExit: (input: Readonly<{
@@ -481,7 +506,7 @@ export function createExecutionRunConnectedServicesBridge(
             };
             if (purposeSnapshot?.purposes.length) {
                 purposeBindingLease =
-                    deps.purposeBindingOwner.activatePurposeBindings({
+                    await deps.purposeBindingOwner.activatePurposeBindings({
                         subject: {
                             kind: 'execution_run',
                             runId: input.runKey,
@@ -494,7 +519,7 @@ export function createExecutionRunConnectedServicesBridge(
                         ...(purposeSnapshot.directMaterialOrigins
                             ? { directMaterialOrigins: purposeSnapshot.directMaterialOrigins }
                             : {}),
-                    });
+                    }, { parentSessionId: input.runner.parentSessionId });
             }
             if (requestAuthPurposeBindings.length > 0) {
                 const legacyConnectedServiceCatalogAgent =
@@ -527,6 +552,7 @@ export function createExecutionRunConnectedServicesBridge(
                         subject: scopeConnectedAccountPurposeBindingLease({
                             lease: purposeBindingLease,
                             subjectId: purposeBindingLease.subjectId,
+                            parentSessionId: input.runner.parentSessionId,
                             uses: purposeSnapshot.requestAuthUses,
                             ...(legacyConnectedServiceCatalogAgent
                                 ? {
@@ -660,10 +686,11 @@ export function createExecutionRunConnectedServicesBridge(
             if (registration.materializedRoot) {
                 cleanupOnExit = matchesCurrentRunner && current
                     ? current.cleanupOnExit
-                    : deps.createAdoptedRootCleanup({
+                    : await deps.createAdoptedRootCleanup({
                         runKey: registration.runKey,
                         agentId: registrationAgentId,
                         materializedRoot: registration.materializedRoot,
+                        parentSessionId: runner.parentSessionId,
                     });
                 if (!cleanupOnExit) {
                     logger.debug(
@@ -788,7 +815,7 @@ export function createExecutionRunConnectedServicesBridge(
                     cleanupOnExit,
                 });
                 entry.targetsMayBeRegistered = true;
-                deps.registerRunTargets({
+                await deps.registerRunTargets({
                     runKey: registration.runKey,
                     runnerPid: input.runnerPid,
                     agentId: registrationAgentId,
@@ -801,6 +828,7 @@ export function createExecutionRunConnectedServicesBridge(
                     sessionId: runner.parentSessionId,
                     sessionDirectory: registration.sessionDirectory,
                 });
+                if (!entry.isCurrent()) throw new Error('execution_run_runner_retired');
                 return true;
             } catch (error) {
                 if (entry) {
@@ -900,6 +928,7 @@ export function createExecutionRunConnectedServicesBridge(
                 let resolved: Awaited<ReturnType<ResolveAuthForSpawn>>;
                 try {
                     resolved = await deps.resolveAuthForSpawn({
+                        parentSessionId: runner.parentSessionId,
                         agentId,
                         connectedServicesBindingsRaw: input.connectedServices,
                         materializationKey: runKey,
@@ -930,7 +959,7 @@ export function createExecutionRunConnectedServicesBridge(
                                 ...(snapshot.directMaterialOrigins
                                     ? { directMaterialOrigins: snapshot.directMaterialOrigins }
                                     : {}),
-                            }),
+                            }, { parentSessionId: runner.parentSessionId }),
                     });
                 } catch (error) {
                     await cleanupUnadmittedMaterialization({
@@ -1000,11 +1029,11 @@ export function createExecutionRunConnectedServicesBridge(
                 try {
                     const env: Record<string, string> = { ...resolved.env };
                     const materializedRoot = resolved.targetMaterializedRoot
-                        ? deps.resolveRunMaterializedRoot({ runKey, agentId })
+                        ? await deps.resolveRunMaterializedRoot({ runKey, agentId, parentSessionId: runner.parentSessionId })
                         : null;
                     const cleanupOnExit = resolved.cleanupOnExit
                         ?? (materializedRoot
-                            ? deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot })
+                            ? await deps.createAdoptedRootCleanup({ runKey, agentId, materializedRoot, parentSessionId: runner.parentSessionId })
                             : null);
                     cleanupOnFailure ??= cleanupOnExit;
                     const connectedServicesBindings = resolved.connectedServicesBindings ?? input.connectedServices;
@@ -1043,7 +1072,7 @@ export function createExecutionRunConnectedServicesBridge(
                         materializedRoot,
                     };
                     entry.targetsMayBeRegistered = true;
-                    deps.registerRunTargets({
+                    await deps.registerRunTargets({
                         runKey,
                         runnerPid: input.runnerPid,
                         agentId,
@@ -1055,6 +1084,7 @@ export function createExecutionRunConnectedServicesBridge(
                         sessionId: runner.parentSessionId,
                         sessionDirectory: input.cwd,
                     });
+                    if (!entry.isCurrent()) throw new Error('execution_run_runner_retired');
 
                     return {
                         ok: true,
@@ -1170,7 +1200,8 @@ export function createExecutionRunConnectedServicesBridge(
             if (!deps.recoverRejectedStart) return blocked('Rejected-start pool recovery is unavailable');
             let result: Awaited<ReturnType<NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRejectedStart']>>>;
             try {
-                result = await deps.recoverRejectedStart({ selection, modelId: input.modelId, isCurrent });
+                if (!runner) return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
+                result = await deps.recoverRejectedStart({ parentSessionId: runner.parentSessionId, selection, modelId: input.modelId, isCurrent });
             } catch {
                 return isCurrent() ? blocked('Rejected-start pool recovery is unavailable')
                     : { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
@@ -1204,15 +1235,18 @@ export function createExecutionRunConnectedServicesBridge(
                     clearTerminalReceipt: false,
                 });
             }
-            const materializedRoot = deps.resolveRunMaterializedRoot({
+            if (!input.sessionId) return false;
+            const materializedRoot = input.materializedRoot ?? await deps.resolveRunMaterializedRoot({
                 runKey: parsed.data.runKey,
                 agentId: parsed.data.agentId,
+                parentSessionId: input.sessionId,
             });
-            if (!materializedRoot) return true;
-            const cleanup = deps.createAdoptedRootCleanup({
+            if (!materializedRoot) return false;
+            const cleanup = await deps.createAdoptedRootCleanup({
                 runKey: parsed.data.runKey,
                 agentId: parsed.data.agentId,
                 materializedRoot,
+                parentSessionId: input.sessionId,
             });
             if (!cleanup) return false;
             const runner = input.sessionId

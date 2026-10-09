@@ -2,6 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { ApiClient } from '@/api/api';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
+import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import {
   acquireQualifiedConnectedAccountRefreshLeaseV4,
   listQualifiedConnectedAccountsV4,
@@ -77,7 +80,7 @@ import {
   type DaemonServerWorkScheduler,
 } from '../serverWork';
 import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
-import type { BuiltInLegacyConnectedAccountOperation, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, type BuiltInLegacyConnectedAccountOperation, type ConnectedServiceExecutionAuthorityV1, type ConnectedServiceId, type QualifiedConnectedAccountProfileV4, type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type {
   AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
@@ -138,6 +141,7 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   filesystemAccessPolicy: FilesystemAccessPolicy;
   publicReleaseChannel: NonNullable<DaemonState['publicReleaseChannel']>;
   isDaemonQuiescing?: () => boolean;
+  admissionDrain?: DaemonAdmissionDrain;
   connectedServicesRestartRequestedPids: Set<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
   qualifiedConnectedAccountEstablishedRuntimeOwner?: Pick<
@@ -227,6 +231,7 @@ export type StartDaemonRuntimeBootstrapResult = Readonly<{
   fileState: DaemonLocallyPersistedState;
   initialDaemonState: DaemonState;
   directPeerServerLifecycle: DirectTransferServerLifecycle | null;
+  transferLiveWorkProducer: LiveWorkProducerV1;
   directTransferPromptAssetAdapterRegistry: ReturnType<typeof createPromptAssetAdapterRegistry>;
   directTransferPromptRegistryRegistry: PromptRegistryRegistry;
   transferRuntimeStatePublisher: ReturnType<typeof createDaemonTransferRuntimeStatePublisher>;
@@ -268,6 +273,7 @@ export async function startDaemonRuntimeBootstrap(
 
   const directPeerServerLifecycle = directPeerServerEnabled
     ? createDirectTransferServerLifecycle({
+        admissionDrain: params.admissionDrain,
         attachmentUpload: {
           resolveSessionWorkingDirectory: createResolveHostedSessionWorkingDirectory({
             pidToTrackedSession: params.pidToTrackedSession,
@@ -300,6 +306,12 @@ export async function startDaemonRuntimeBootstrap(
         },
       })
     : null;
+  // The bootstrap owns this explicit enablement decision. An unavailable
+  // enabled lifecycle must not be confused with this configured absence.
+  const transferLiveWorkProducer: LiveWorkProducerV1 = directPeerServerLifecycle ? directPeerServerLifecycle.activity : {
+    read: () => ({ items: [], coverage: 'complete' }),
+    subscribe: () => () => {},
+  };
 
   let stopDirectPeerServer: () => Promise<void> = async () => {};
   let stopTailscaleTransferServeLifecycle: () => Promise<void> = async () => {};
@@ -310,6 +322,7 @@ export async function startDaemonRuntimeBootstrap(
   }
 
   const runningRuntime = resolveRunningCliRuntimeIdentity();
+  const accountId = readAccountIdFromToken(params.credentials.token);
   const fileState: DaemonLocallyPersistedState = {
     pid: process.pid,
     httpPort: params.controlPort,
@@ -322,6 +335,7 @@ export async function startDaemonRuntimeBootstrap(
     startupSource: params.startupSource,
     serviceLabel: params.serviceLabel,
     machineId: params.machineId,
+    ...(accountId ? { accountId } : {}),
     daemonLogPath: params.daemonLogPath,
     controlToken: params.controlToken,
   };
@@ -382,6 +396,55 @@ export async function startDaemonRuntimeBootstrap(
     };
   }
 
+  const {
+    connectedServiceRefreshCoordinator, connectedServiceRefreshLoopHandle,
+    connectedServiceQuotasCoordinator, connectedServiceQuotasLoopHandle,
+    daemonServerWorkScheduler, setDaemonServerWorkOnline,
+  } = await startDaemonConnectedServiceRuntime(params);
+  return {
+    fileState,
+    initialDaemonState,
+    directPeerServerLifecycle,
+    transferLiveWorkProducer,
+    directTransferPromptAssetAdapterRegistry,
+    directTransferPromptRegistryRegistry,
+    transferRuntimeStatePublisher,
+    connectedServiceRefreshCoordinator,
+    connectedServiceRefreshLoopHandle,
+    connectedServiceQuotasCoordinator,
+    connectedServiceQuotasLoopHandle,
+    daemonServerWorkScheduler,
+    setDaemonServerWorkOnline,
+    stopDirectPeerServer,
+    stopTailscaleTransferServeLifecycle,
+  };
+}
+
+/** One Account-bound coordinator composition for daemon and requester Session custody. */
+export async function startDaemonConnectedServiceRuntime(
+  params: Pick<StartDaemonRuntimeBootstrapParams,
+    'activeServerDir' | 'api' | 'credentials' | 'machineId' | 'machineIdProvider' | 'runtimeId'
+    | 'happyHomeDir' | 'logger' | 'processEnv' | 'pidToTrackedSession'
+    | 'connectedServiceAuthGroupPreTurnSwitchCoordinator' | 'connectedServicePredictiveSwitchGuard'
+    | 'connectedServiceQuotaFetcherDescriptors' | 'connectedServiceRuntimeQuotaSnapshots'
+    | 'connectedServiceRuntimeRegistry' | 'consumeCommittedAuthGroupGeneration'
+    | 'daemonSessionMutationCustody' | 'providerAccountUsageStore'
+    | 'listQualifiedConnectedAccountGroupQuotaTargets' | 'listScheduledQualifiedConnectedAccounts'
+    | 'onQualifiedConnectedAccountCredentialUpdated' | 'qualifiedConnectedAccountEstablishedRuntimeOwner'
+    | 'resolveConnectedServiceQualifiedPurposeBindingSnapshot' | 'resolveQualifiedConnectedAccountPeerClass'
+    | 'resolveQualifiedConnectedAccountPeerOperationTransport'> & Readonly<{
+    accountSettingsSnapshot?: () => import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null;
+    connectedServicesMaterializationBaseDir?: string;
+    isAccountRuntimeCurrent?: () => Promise<boolean>;
+    runAccountOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
+    allowNativeAccountState?: boolean;
+    connectedAccountsOwner?: ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['connectedAccountsOwner'];
+  }>,
+): Promise<Pick<StartDaemonRuntimeBootstrapResult,
+  'connectedServiceRefreshCoordinator' | 'connectedServiceRefreshLoopHandle'
+  | 'connectedServiceQuotasCoordinator' | 'connectedServiceQuotasLoopHandle'
+  | 'daemonServerWorkScheduler' | 'setDaemonServerWorkOnline'>> {
+  const readAccountSettingsSnapshot = params.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
   const connectedServicesRefreshEnabled =
     parseBooleanEnv(
       params.processEnv.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED,
@@ -414,6 +477,9 @@ export async function startDaemonRuntimeBootstrap(
         trackedSessions: params.pidToTrackedSession,
       });
       for (const sessionId of sessionIds) {
+        if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) {
+          throw new Error('connected_account_runtime_not_current');
+        }
         const result = await params.connectedServiceAuthGroupPreTurnSwitchCoordinator.applyCredentialUpdate({
           sessionId,
           serviceId: event.binding.serviceId,
@@ -433,13 +499,17 @@ export async function startDaemonRuntimeBootstrap(
       machineIdProvider: params.machineIdProvider,
       ownerIdProvider: () => `${params.machineId}:${params.runtimeId}`,
       activeServerDir: params.activeServerDir,
-      baseDir: resolveConnectedServicesMaterializationBaseDir(params.happyHomeDir),
+      baseDir: params.connectedServicesMaterializationBaseDir ?? resolveConnectedServicesMaterializationBaseDir(params.happyHomeDir),
       refreshWindowMs,
       refreshLeaseMs,
       now: () => Date.now(),
-      accountSettingsProvider: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
+      accountSettingsProvider: () => readAccountSettingsSnapshot()?.settings ?? null,
       processEnv: params.processEnv,
       runtimeRegistry: connectedServiceRuntimeRegistry,
+      isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
+      runAccountOperation: params.runAccountOperation,
+      allowNativeAccountState: params.allowNativeAccountState,
+      connectedAccountsOwner: params.connectedAccountsOwner,
       ...(params.resolveConnectedServiceQualifiedPurposeBindingSnapshot
         ? {
             resolveQualifiedPurposeBindingSnapshot:
@@ -479,18 +549,25 @@ export async function startDaemonRuntimeBootstrap(
                       params.listScheduledQualifiedConnectedAccounts,
                   }
                 : {}),
-              ...(params.onQualifiedConnectedAccountCredentialUpdated
-                ? {
-                    onCredentialUpdated:
-                      params.onQualifiedConnectedAccountCredentialUpdated,
-                  }
-                : {}),
+              onCredentialUpdated: async (account: QualifiedConnectedAccountRef) => {
+                await params.onQualifiedConnectedAccountCredentialUpdated?.(account);
+                const serviceId = buildQualifiedPluginContributionKey(account.service);
+                const affectedTargets = connectedServiceRuntimeRegistry.listRefreshTargets().filter((target) =>
+                  target.bindings.some((binding) => binding.serviceId === serviceId && binding.profileId === account.accountId));
+                if (affectedTargets.length === 0) return;
+                await onAuthUpdated({
+                  binding: { serviceId, profileId: account.accountId },
+                  affectedTargets,
+                  trigger: 'refresh_triggered_restart',
+                  executionAuthority: 'runtime_recovery',
+                });
+              },
             },
           }
         : {}),
       onAuthUpdated,
       onCredentialHealthNotification: async ({ diagnostic, healthStatus, affectedTargets }) => {
-        const settingsSnapshot = getActiveAccountSettingsSnapshot();
+        const settingsSnapshot = readAccountSettingsSnapshot();
         const notificationTargets = affectedTargets.length > 0
           ? affectedTargets.map((target) => ({
             sessionId: target.sessionId,
@@ -530,7 +607,11 @@ export async function startDaemonRuntimeBootstrap(
     connectedServiceRefreshLoopHandle = startConnectedServiceRefreshLoop({
       enabled: true,
       tickMs: refreshTickMs,
-      coordinator: connectedServiceRefreshCoordinator,
+      coordinator: { tickOnce: async () => {
+        if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) return;
+        const operation = () => connectedServiceRefreshCoordinator!.tickOnce();
+        await (params.runAccountOperation ? params.runAccountOperation(operation) : operation());
+      } },
       runImmediately: true,
       onTickError: (error) => {
         params.logger.debug('[DAEMON RUN] Connected services refresh tick failed (non-fatal)', error);
@@ -608,10 +689,12 @@ export async function startDaemonRuntimeBootstrap(
       enabled: true,
       quotaFetchers,
       awaitReadiness: async () => {
-        const settingsReady = await warmActiveAccountSettingsSnapshotBestEffort({
-          credentials: params.credentials,
-          logger: params.logger,
-        });
+        const settingsReady = params.accountSettingsSnapshot
+          ? readAccountSettingsSnapshot() !== null
+          : await warmActiveAccountSettingsSnapshotBestEffort({
+              credentials: params.credentials,
+              logger: params.logger,
+            });
         if (!settingsReady) {
           throw new Error('Connected-service account settings are unavailable during quota startup');
         }
@@ -723,7 +806,7 @@ export async function startDaemonRuntimeBootstrap(
       quotaPersistenceMaxConsecutiveFailures,
       groupSwitchCheckMinIntervalMs,
       onAutomaticQuotaResetConsumed: async (event) => {
-        const settingsSnapshot = getActiveAccountSettingsSnapshot();
+        const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceAutomaticQuotaResetNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
@@ -731,7 +814,7 @@ export async function startDaemonRuntimeBootstrap(
         });
       },
       onQuotaLifecycleTransition: async (transition) => {
-        const settingsSnapshot = getActiveAccountSettingsSnapshot();
+        const settingsSnapshot = readAccountSettingsSnapshot();
         await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
@@ -746,6 +829,16 @@ export async function startDaemonRuntimeBootstrap(
         await commitConnectedServiceQuotaLifecycleSessionEvents({
           mutationCustody: params.daemonSessionMutationCustody,
           transition,
+        });
+      },
+      onAccountUsageSnapshotAccepted: async (transition) => {
+        const settingsSnapshot = readAccountSettingsSnapshot();
+        await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
+          settings: settingsSnapshot?.settings ?? null,
+          settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
+          expoPushSender: params.api.push(), transition,
+        }).catch((error) => {
+          params.logger.debug('[DAEMON RUN] Connected-service usage notification failed (non-fatal)', error);
         });
       },
       // K2 (cmpn4hhdi fix): the proactive quota pre-turn switch coordinator is built by
@@ -809,7 +902,11 @@ export async function startDaemonRuntimeBootstrap(
       startLoop: (coordinator) => startConnectedServiceQuotasLoop({
         enabled: true,
         tickMs: quotasTickMs,
-        coordinator,
+        coordinator: { tickOnce: async () => {
+          if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent()) return;
+          const operation = () => coordinator.tickOnce();
+          await (params.runAccountOperation ? params.runAccountOperation(operation) : operation());
+        } },
         onTickError: (error) => {
           params.logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', error);
         },
@@ -824,20 +921,7 @@ export async function startDaemonRuntimeBootstrap(
     }
   }
 
-  return {
-    fileState,
-    initialDaemonState,
-    directPeerServerLifecycle,
-    directTransferPromptAssetAdapterRegistry,
-    directTransferPromptRegistryRegistry,
-    transferRuntimeStatePublisher,
-    connectedServiceRefreshCoordinator,
-    connectedServiceRefreshLoopHandle,
-    connectedServiceQuotasCoordinator,
-    connectedServiceQuotasLoopHandle,
-    daemonServerWorkScheduler,
-    setDaemonServerWorkOnline,
-    stopDirectPeerServer,
-    stopTailscaleTransferServeLifecycle,
-  };
+  return { connectedServiceRefreshCoordinator, connectedServiceRefreshLoopHandle,
+    connectedServiceQuotasCoordinator, connectedServiceQuotasLoopHandle,
+    daemonServerWorkScheduler, setDaemonServerWorkOnline };
 }

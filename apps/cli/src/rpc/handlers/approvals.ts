@@ -9,8 +9,12 @@ import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { APPROVAL_RPC_SCOPES } from './actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { PrivateSecretContinuationV1Schema } from '@happier-dev/protocol/approvals/privateSecretContinuationV1';
+import { SecretFillSettlementV1Schema } from '@happier-dev/protocol/computer/v1';
+import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol';
 
 type ApprovalRpcActionExecutor = RpcActionExecutor & Readonly<{
+  continueConfidentialApprovalRequest?: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   replayApprovedApprovalRequest?: (args: Readonly<{
     artifactId: string;
     signal?: AbortSignal;
@@ -78,7 +82,8 @@ export function registerApprovalRpcHandlers(params: Readonly<{
       if (!artifactId) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
-      const executor = params.actionExecutor ?? await resolveProductionActionExecutor();
+      const executor = context?.callerInputAuthorization?.requesterAccountExecutor
+        ?? params.actionExecutor ?? await resolveProductionActionExecutor();
       if (!executor.replayApprovedApprovalRequest) {
         return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
       }
@@ -89,4 +94,37 @@ export function registerApprovalRpcHandlers(params: Readonly<{
       });
     },
   );
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, async (input, context) => {
+    if (context?.callerAuthority !== 'present_user') return { status: 'refused', code: 'approval_required' };
+    const parsed = PrivateSecretContinuationV1Schema.safeParse(input);
+    if (!parsed.success) return { status: 'refused', code: 'approval_changed' };
+    try {
+      const executor = params.actionExecutor ?? await resolveProductionActionExecutor();
+      if (!executor.continueConfidentialApprovalRequest) return { status: 'refused', code: 'target_unavailable' };
+      const result = await executor.continueConfidentialApprovalRequest(parsed.data, {
+        authority: context.callerAuthority, surface: 'rpc', serverId: parsed.data.request.serverId,
+        signal: context.signal,
+        ...(context.machineAdmission ? {
+          runtimeAccountId: context.machineAdmission.actorAccountId,
+          defaultSessionMachineId: context.machineAdmission.machineId,
+        } : {}),
+        ...(context.verifyMachineAdmissionCurrent
+          ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent }
+          : {}),
+      });
+      if (result.ok) {
+        const settlement = SecretFillSettlementV1Schema.safeParse(result.result);
+        return settlement.success ? settlement.data : { status: 'unknown', code: 'delivery_unknown' };
+      }
+      if (result.errorCode === 'approval_execution_outcome_unknown') return { status: 'unknown', code: 'delivery_unknown' };
+      const refusal = SecretFillSettlementV1Schema.safeParse({ status: 'refused', code: result.errorCode });
+      if (refusal.success) return refusal.data;
+      return { status: 'refused', code: result.errorCode === 'present_user_required' ? 'approval_required' : 'approval_changed' };
+    } catch {
+      return { status: 'unknown', code: 'delivery_unknown' };
+    } finally {
+      // Own no reusable private operand after this single admission attempt.
+      if (parsed.data.choice.kind === 'once') parsed.data.choice.value = '';
+    }
+  });
 }

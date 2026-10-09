@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 import {
   deriveSessionCreationTagV1,
   SessionCreationCorrespondenceV1Schema,
@@ -42,7 +43,9 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
     });
   });
 
-  it('reconstructs exact launch profile and Saved Secret references from immutable correspondence', () => {
+  it.each(['codex', 'claude', 'acp:review-bot'] as const)('reconstructs current %s runtime while retaining immutable creation profile and Saved Secret provenance', async (currentAgentId) => {
+    const catalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
+    readAgentCatalogSnapshot.mockImplementation(catalog.readAgentCatalogSnapshot);
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
       creationKey: 'creation-resume',
@@ -80,23 +83,36 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
       },
     });
 
+    const metadata = projectCurrentAgentSessionView({
+      machineId: 'machine-1', path: '/home/coder/project', flavor: 'codex',
+      sessionCreationCorrespondenceV1: { ...correspondence, futureField: 'ignored' },
+    }, {
+      agentId: currentAgentId, agentScopedCurrentState: 'clear',
+      configuredBackend: currentAgentId === 'acp:review-bot'
+        ? { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 2 } : null,
+    });
     const result = buildInactiveSessionResumeSpawnOptions({
       sessionId: 'session-1',
       rawSession: { machineId: 'machine-1', path: '/home/coder/project' },
-      metadata: {
-        machineId: 'machine-1',
-        path: '/home/coder/project',
-        flavor: 'codex',
-        sessionCreationCorrespondenceV1: { ...correspondence, futureField: 'ignored' },
-      },
+      metadata,
     });
-
     expect(result).toMatchObject({
       sessionCreationTag,
       sessionCreationCorrespondence: correspondence,
       profileId: 'profile-shared',
       secretReferenceOverlay: correspondence.recipe.secretReferenceOverlay,
     });
+    if (currentAgentId === 'acp:review-bot') {
+      expect(result?.backendTarget).toEqual({
+        kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured',
+      });
+    } else if (currentAgentId === 'claude') {
+      expect(result?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });
+    } else {
+      expect(result?.agentTarget).toEqual(correspondence.recipe.agentTarget);
+    }
+    expect(metadata.sessionCreationCorrespondenceV1).toEqual({ ...correspondence, futureField: 'ignored' });
+
   });
 
   it('rebases the persisted agent workspace onto the selected daemon machine workspace', () => {
@@ -227,13 +243,13 @@ describe('buildInactiveSessionResumeSpawnOptions', () => {
       expect(result?.backendTarget?.backendId).toBe('custom-kiro');
     });
 
-    it('refuses a Session whose declared identity contradicts its explicit backend target', () => {
+    it.each(['codex', 'acp:other-backend'])('refuses a Session whose declared %s identity contradicts its explicit backend target', (flavor) => {
       const result = buildInactiveSessionResumeSpawnOptions({
         ...baseParams,
         metadata: {
           machineId: 'machine-1',
           path: '/home/coder/project',
-          flavor: 'codex',
+          flavor,
           acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: 'my-acp', title: 'My ACP' },
         },
       });

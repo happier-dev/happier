@@ -11,6 +11,7 @@ import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
 import { activatePendingInactiveSession } from './activatePendingInactiveSession';
+type ResumeOptions = Parameters<Parameters<typeof activatePendingInactiveSession>[0]['spawnSession']>[0];
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: vi.fn(),
@@ -70,6 +71,41 @@ function createSession(active: boolean) {
 }
 
 describe('activatePendingInactiveSession', () => {
+  it('retains requester pending custody without reporting failure or spawning after Machine admission is lost', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const spawnSession = vi.fn(async (_options: ResumeOptions) => ({ type: 'success' as const, sessionId: 'session-1' }));
+    const params = {
+      credentials: tokenOnlyCredentials, machineId: 'machine-1', sessionId: 'session-1',
+      requestId: 'pending-after-ui-death', pendingVersion: 9, spawnSession,
+      requester: { serverHttpBaseUrl: 'https://bob-home.test',
+        attribution: { serverId: 'bob-home', accountId: 'bob', machineId: 'machine-1', installationId: 'installation' },
+        isCurrent: async () => false },
+    };
+    expect(await activatePendingInactiveSession(params)).toEqual({ status: 'not-needed', reason: 'authorization-stale' });
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
+  });
+
+  it('preserves exact requester/Home custody on inactive resume and rechecks admission before spawn', async () => {
+    let current = true;
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const spawnSession = vi.fn(async (_options: ResumeOptions) => ({ type: 'success' as const, sessionId: 'session-1' }));
+    const requester = { serverHttpBaseUrl: 'https://bob-home.test',
+      attribution: { serverId: 'bob-home', accountId: 'bob', machineId: 'machine-1', installationId: 'installation' },
+      isCurrent: async () => current };
+    const params = { credentials: tokenOnlyCredentials, machineId: 'machine-1', sessionId: 'session-1',
+      requestId: 'pending-after-ui-death', pendingVersion: 9, spawnSession, requester };
+    expect(await activatePendingInactiveSession(params)).toEqual({ status: 'activated' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ existingSessionId: 'session-1',
+      requesterWorkAttributionV1: requester.attribution,
+      verifyRequesterMachineAdmissionCurrent: expect.any(Function) }));
+    const options = spawnSession.mock.calls[0]?.[0];
+    current = false;
+    expect(await options?.verifyRequesterMachineAdmissionCurrent()).toBe(false);
+  });
+
   it('leaves the queued prompt in custody when the managed session directory is missing', async () => {
     const session = createSession(false);
     session.metadata = JSON.stringify({
@@ -87,8 +123,11 @@ describe('activatePendingInactiveSession', () => {
     await expect(activatePendingInactiveSession({
       credentials: tokenOnlyCredentials, machineId: 'machine-1', sessionId: 'session-1',
       requestId: 'pending-after-ui-death', pendingVersion: 9, spawnSession,
-    })).resolves.toEqual({ status: 'not-needed', reason: 'session-directory-missing' });
-    expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
+    })).resolves.toEqual({ status: 'rejected', reason: 'session-directory-missing' });
+    expect(reportPendingSessionActivationFailure).toHaveBeenCalledWith({
+      token: 'token-only', sessionId: 'session-1', requestId: 'pending-after-ui-death',
+      requestedAt: 10, failureCode: 'runtime_start_failed',
+    });
   });
 
   beforeEach(() => {
@@ -355,7 +394,10 @@ describe('activatePendingInactiveSession', () => {
     })).resolves.toEqual({ status: 'rejected', reason: 'takeover-required' });
 
     expect(spawnSession).not.toHaveBeenCalled();
-    expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
+    expect(reportPendingSessionActivationFailure).toHaveBeenCalledWith({
+      token: 'token-only', sessionId: 'session-1', requestId: 'pending-after-ui-death',
+      requestedAt: 10, failureCode: 'runtime_start_failed',
+    });
   });
 
   it('rejects a Pending activation owned by a different exact machine', async () => {

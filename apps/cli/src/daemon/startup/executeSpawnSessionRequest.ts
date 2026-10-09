@@ -36,7 +36,7 @@ import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quo
 import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
-import { isDefiniteReplaySeededPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
+import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
@@ -86,15 +86,23 @@ import {
     scopeConnectedAccountSessionPurposeBindingLease,
 } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { AcpCatalogUnavailableError } from '@/agent/acp/catalog/configured/resolveBackend';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolveSpawnLaunchProfileDefaults } from '../spawn/resolveSpawnLaunchProfileDefaults';
-import { loadAccountLaunchProfileArtifacts, readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { readProfileSettingsFromAccountSnapshot,
+    readAccountLaunchProfiles, ProfileCatalogUnavailableError } from '@/settings/profiles/readProfilesFromAccountSettings';
 import {
     LaunchSecretReferenceOverlayError,
     readLaunchSecretReferenceOverlayProviderErrorCodeV1,
     resolveLaunchProfileSavedSecretEnvironment,
 } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { isRequesterLaunchAdmissionCurrent } from '../lifecycle/requesterWorkAttribution';
+import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
@@ -103,6 +111,7 @@ type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedService
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     options: SpawnSessionOptions;
+    requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     retainedTerminalRecovery?: 'adopt';
     persistedTakeoverAdmissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>;
     credentials: SpawnCredentials;
@@ -127,6 +136,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
     resolveCanonicalTrackedSessionId: (pid: number) => string;
     onChildExited: (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => void | Promise<void>;
+    onTrackedSessionRegistered?: () => void;
     spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
     sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
     processEnv?: NodeJS.ProcessEnv;
@@ -161,6 +171,29 @@ export async function executeSpawnSessionRequest(
     params: ExecuteSpawnSessionRequestParams,
 ): Promise<SpawnSessionResult> {
     let options = params.options;
+    const requesterRuntime = options.requesterSessionBootstrap ? params.requesterSessionRuntimeContext : undefined;
+    if (options.requesterSessionBootstrap) {
+        if (!requesterRuntime || requesterRuntime.bootstrap !== options.requesterSessionBootstrap
+            || !await requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent()) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Account runtime unavailable' };
+        }
+        params = { ...params, credentials: requesterRuntime.bootstrap.credentials, api: requesterRuntime.api,
+            connectedServicesMaterializationBaseDir: requesterRuntime.connectedServicesMaterializationBaseDir,
+            connectedServiceRefreshCoordinator: requesterRuntime.connectedServiceRefreshCoordinator,
+            connectedServiceQuotasCoordinator: requesterRuntime.connectedServiceQuotasCoordinator,
+            connectedServiceRuntimeRegistry: requesterRuntime.connectedServiceRuntimeRegistry,
+            providerAccountUsageStore: requesterRuntime.providerAccountUsageStore,
+            authGroupSwitchCoordinator: requesterRuntime.authGroupSwitchCoordinator,
+            predictiveSwitchGuard: requesterRuntime.predictiveSwitchGuard,
+            resolveManagedPurposeBindingIntent: requesterRuntime.resolveManagedPurposeBindingIntent,
+            activateSessionPurposeBindings: requesterRuntime.activateSessionPurposeBindings,
+            activatePurposeBindings: requesterRuntime.activatePurposeBindings };
+    }
+    if (!await isRequesterLaunchAdmissionCurrent(options)) {
+        return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+            errorMessage: 'Requester Machine admission unavailable' };
+    }
     let takeoverAdmission: ReturnType<PersistedTakeoverAdmissionWaiter['getRegistration']> = null;
     try {
         takeoverAdmission = options.persistedTakeoverAdmission
@@ -175,17 +208,55 @@ export async function executeSpawnSessionRequest(
         }
         // A profile id is stable Account intent. Refresh before resolving it so
         // the daemon, rather than an Action/UI caller, owns the profile overlay.
-        await refreshAccountSettingsForSpawn(params);
+        if (requesterRuntime) {
+            if (!await requesterRuntime.refreshAccountSettings(options.accountSettingsVersionHint)) return {
+                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Account settings unavailable' };
+        } else await refreshAccountSettingsForSpawn(params);
 
-        const activeAccountSettingsSnapshot = getActiveAccountSettingsSnapshot();
-        const launchProfileArtifacts = options.profileId
-            ? await loadAccountLaunchProfileArtifacts(activeAccountSettingsSnapshot?.settings, params.credentials)
-            : undefined;
+        let activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
+        let profilesSnapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>> | undefined;
+        if (options.profileId) {
+            try {
+                profilesSnapshot = requesterRuntime ? await requesterRuntime.readAccountLaunchProfiles()
+                    : await readAccountLaunchProfiles(activeAccountSettingsSnapshot?.settings, params.credentials);
+            } catch (error) {
+                if (!(error instanceof ProfileCatalogUnavailableError)) throw error;
+                return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: error.message };
+            }
+            activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
+        }
+        const profileSettings = readProfileSettingsFromAccountSnapshot(activeAccountSettingsSnapshot);
+        const launchProfileArtifacts = profilesSnapshot?.artifactsById;
+        const acpOperationContext = requesterRuntime?.bootstrap.savedSecretOperationContext;
+        const acpScopeKey = (acpOperationContext ? acpOperationContext.readSnapshot() : activeAccountSettingsSnapshot)?.scopeKey;
+        const acpLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+        const readAcpCatalogSnapshot = async (): Promise<AcpCatalogSnapshotV1> => {
+            const readSnapshot = () => acpOperationContext ? acpOperationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+            const assertCurrent = async () => {
+                const credentialScope = acpOperationContext
+                    ? runWithServerHttpBaseUrl(acpOperationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(params.credentials))
+                    : resolveAccountSettingsScopeKey(params.credentials);
+                if (!acpScopeKey || credentialScope !== acpScopeKey
+                    || acpOperationContext && !await acpOperationContext.isCurrent()
+                    || readSnapshot()?.scopeKey !== acpScopeKey
+                    || !acpOperationContext && getActiveAccountSettingsSnapshotLifetimeToken() !== acpLifetimeToken) {
+                    throw new AcpCatalogUnavailableError('scope-retired');
+                }
+            };
+            await assertCurrent();
+            if (readSnapshot()?.acpCatalog?.status !== 'ready') await refreshActiveAcpCatalog({
+                credentials: params.credentials, operationContext: acpOperationContext,
+            });
+            await assertCurrent();
+            return readSnapshot()?.acpCatalog ?? { status: 'unavailable', reason: 'catalog-unobserved' };
+        };
         let prepared = await prepareExecuteSpawnSessionRequest({
             request: {
                 ...params,
                 options,
                 accountSettings: activeAccountSettingsSnapshot?.settings ?? {},
+                readAcpCatalogSnapshot,
             },
             validateEnvVarRecordStrict,
         });
@@ -196,8 +267,10 @@ export async function executeSpawnSessionRequest(
         const profileResolution = resolveSpawnLaunchProfileDefaults({
             options,
             effectiveBackendTarget: prepared.effectiveBackendTargetV2,
-            rawSettings: activeAccountSettingsSnapshot?.settings,
+            rawSettings: profileSettings,
+            profileCatalog: activeAccountSettingsSnapshot?.profileCatalog,
             artifactsById: launchProfileArtifacts,
+            profilesSnapshot,
         });
         if (!profileResolution.ok) return profileResolution.result;
         if (profileResolution.options !== options) {
@@ -277,10 +350,8 @@ export async function executeSpawnSessionRequest(
         );
         let profileLaunchEnvironment = environmentVariablesValidation.env;
         if (options.profileId) {
-            const matchingProfiles = readProfilesFromAccountSettings(
-                activeAccountSettingsSnapshot?.settings,
-                launchProfileArtifacts,
-            ).visibleProfiles.filter((profile) => profile.id === options.profileId);
+            if (!profilesSnapshot) throw new ProfileCatalogUnavailableError('unavailable');
+            const matchingProfiles = profilesSnapshot.visibleProfiles.filter((profile) => profile.id === options.profileId);
             if (matchingProfiles.length === 1 && activeAccountSettingsSnapshot) {
                 try {
                     const savedSecretEnvironment =
@@ -294,6 +365,8 @@ export async function executeSpawnSessionRequest(
                             savedSecretResources:
                                 activeAccountSettingsSnapshot
                                     .savedSecretResources,
+                            ...(requesterRuntime ? { isCurrent: () => requesterRuntime.bootstrap.savedSecretOperationContext.readSnapshot()
+                                === activeAccountSettingsSnapshot } : {}),
                             foregroundSatisfiedSecretRequirementNames: [],
                             ...(options.secretReferenceOverlay
                                 ? {
@@ -413,6 +486,11 @@ export async function executeSpawnSessionRequest(
             // runtime, so every refusal this owner can already establish is
             // established first.
             const daemonProviderLaunch = await prepareDaemonProviderLaunch({
+                ...(requesterRuntime ? { accountSettingsSnapshot: requesterRuntime.readAccountSettingsSnapshot(),
+                    readAccountSettingsSnapshot: () => requesterRuntime.bootstrap.savedSecretOperationContext.readSnapshot(),
+                    providerRuntimeHomeDir: requesterRuntime.activeServerDir,
+                    savedSecretOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext,
+                } : {}),
                 options,
                 effectiveBackendTarget: effectiveBackendTargetV2,
                 catalogAgentId,
@@ -601,11 +679,16 @@ export async function executeSpawnSessionRequest(
             let launchSessionAttachPayload = sessionAttachPayload;
             let launchOptions: SpawnSessionOptions = optionsWithProviderIsolation;
             let committedLaunchSession: CommittedDaemonLaunchSession | null = null;
+            if (!await isRequesterLaunchAdmissionCurrent(options)) return await refuseSpawn({
+                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Machine admission unavailable',
+            });
             if (
                 !normalizedExistingSessionId
                 && daemonLaunchRequiresCommittedSession(optionsWithProviderIsolation)
             ) {
                 const committed = await commitDaemonLaunchSession({
+                    ...(requesterRuntime ? { accountSettings: requesterRuntime.readAccountSettingsSnapshot().settings } : {}),
                     api: params.api,
                     credentials: params.credentials,
                     options: optionsWithProviderIsolation,
@@ -635,7 +718,26 @@ export async function executeSpawnSessionRequest(
                 }
             }
 
+            if (requesterRuntime) {
+                const tag = launchOptions.sessionCreationTag;
+                const custody = normalizedExistingSessionId
+                    && requesterRuntime.bootstrap.getBoundSessionId() === normalizedExistingSessionId
+                    ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId)
+                    : launchExistingSessionId && tag
+                      ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag) : null;
+                if (!custody) return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                    errorMessage: 'Requester Session custody unavailable' });
+                launchOptions = { ...launchOptions, requesterSessionCredentialFile: custody.path };
+                launchResourceScope.register({ onFailure: custody.cleanup, onExit: () => requesterRuntime.dispose() });
+            }
+
             const connectedServices = await prepareDaemonConnectedServices({
+                ...(requesterRuntime ? { accountSettingsSnapshot: requesterRuntime.readAccountSettingsSnapshot(),
+                    activeServerDir: requesterRuntime.activeServerDir,
+                    connectedAccountsOwner: requesterRuntime.connectedAccountsOwner,
+                    qualifiedConnectedAccountApi: requesterRuntime.qualifiedConnectedAccountApi,
+                    isAccountRuntimeCurrent: requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent,
+                } : {}),
                 options: launchOptions,
                 normalizedExistingSessionId: launchExistingSessionId,
                 requestedSessionId,
@@ -818,6 +920,7 @@ export async function executeSpawnSessionRequest(
                             scopeConnectedAccountSessionPurposeBindingLease({
                                 lease: activatedLease,
                                 subjectId: activatedLease.subjectId,
+                                parentSessionId: canonicalSessionId,
                                 uses:
                                     agentPurposeBindingSnapshot.requestAuthUses,
                                 ...(catalogAgentId
@@ -956,6 +1059,8 @@ export async function executeSpawnSessionRequest(
                 : await createSessionInitialAccessFile(configuration.happyHomeDir, effectiveOptionsForSpawn.initialAccess);
             if (initialAccessFile) launchResourceScope.register(initialAccessFile.cleanup);
             const spawnLifecycle = await prepareDaemonSpawnLifecycle({
+                ...(requesterRuntime ? { requesterSessionRuntimeContext: requesterRuntime } : {}),
+                onTrackedSessionRegistered: params.onTrackedSessionRegistered,
                 runnerAgentSessionBootstrap,
                 normalizedExistingSessionId: launchExistingSessionId,
                 spawnNonce: effectiveOptionsForSpawn.spawnNonce,
@@ -1015,6 +1120,14 @@ export async function executeSpawnSessionRequest(
                 }
                 : undefined;
 
+            if (!await isRequesterLaunchAdmissionCurrent(options)) return await refuseSpawn({
+                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Machine admission unavailable',
+            });
+            if (options.beforeSessionRunnerLaunch && !await options.beforeSessionRunnerLaunch()) return await refuseSpawn({
+                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Session handoff launch custody unavailable',
+            });
             childLaunchSubmitted = true;
             let spawnResult = await routeSpawnModeAndWaitForWebhook({
                 initialAccessFilePath: initialAccessFile?.path,
@@ -1076,7 +1189,7 @@ export async function executeSpawnSessionRequest(
                 }
             }
             if (spawnResult.type === 'error' && !retainResourcesForUntrackedHostedChild) {
-                if (isDefiniteReplaySeededPreAdmissionRejection(spawnResult.errorCode)) await rollbackManagedAllocation();
+                if (isDefiniteSpawnPreAdmissionRejection(spawnResult.errorCode)) await rollbackManagedAllocation();
                 const incompleteRetirement =
                     await retireLaunchResources();
                 if (incompleteRetirement) {

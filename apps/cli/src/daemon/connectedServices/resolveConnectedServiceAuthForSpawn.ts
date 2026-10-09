@@ -1133,6 +1133,9 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   exactPurposeBindingSubjectId?: string;
   accountSettings: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv: NodeJS.ProcessEnv;
+  allowNativeAccountState?: boolean;
+  connectedAccountsOwner?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['connectedAccountsOwner'];
+  isAccountRuntimeCurrent?: () => Promise<boolean>;
   vendorResumeId: string | null;
   resumeReachabilityRequired: boolean;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -1157,6 +1160,9 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
       : {}),
     accountSettings: params.accountSettings,
     processEnv: params.processEnv,
+    allowNativeAccountState: params.allowNativeAccountState,
+    connectedAccountsOwner: params.connectedAccountsOwner,
+    isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
   });
 
   if (!materialized) return null;
@@ -1208,6 +1214,9 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   predictiveSwitchGuard?: ConnectedServicePredictiveSwitchGuard | null;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
+  allowNativeAccountState?: boolean;
+  connectedAccountsOwner?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['connectedAccountsOwner'];
+  isAccountRuntimeCurrent?: () => Promise<boolean>;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
   /**
    * The vendor `--resume` reference the spawned process will resume from. Required for the §2
@@ -1235,7 +1244,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   ) => Readonly<{
     subjectId: string;
     dispose(): void | Promise<void>;
-  }>;
+  }> | Promise<Readonly<{ subjectId: string; dispose(): void | Promise<void> }>>;
 }>): Promise<Readonly<{
   env: Record<string, string>;
   cleanupOnFailure: (() => void | Promise<void>) | null;
@@ -1361,7 +1370,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     });
 
     const materializationPurposeLease = qualifiedPurposeBindingSnapshot
-      ? params.activateQualifiedPurposeBindings?.(
+      ? await params.activateQualifiedPurposeBindings?.(
           qualifiedPurposeBindingSnapshot,
         ) ?? null
       : null;
@@ -1397,6 +1406,9 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
           : {}),
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
+        allowNativeAccountState: params.allowNativeAccountState,
+        connectedAccountsOwner: params.connectedAccountsOwner,
+        isAccountRuntimeCurrent: params.isAccountRuntimeCurrent,
         vendorResumeId: params.vendorResumeId ?? null,
         resumeReachabilityRequired: params.resumeReachabilityRequired ?? false,
         ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),

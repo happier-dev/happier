@@ -12,6 +12,8 @@ import type {
 } from '@/daemon/spawn/persistedTakeoverAdmission';
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
+import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
@@ -94,6 +96,18 @@ export function deserializeNativeForkSourceV1(value: string): NativeForkSource {
  * depends on the high-level handler graph merely to describe a spawn request or response.
  */
 export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
+  /** Invocation-only verified credential/policy owner; excluded from durable spawn state. */
+  requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
+  /** Existing invocation runtime passed by recovery; adopted by the ordinary tracked Session only. */
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
+  /** Host-only private custody reference; never a transported Action or respawn credential. */
+  requesterSessionCredentialFile?: string;
+  /** Host-only facts from verified requester admission; never accepted from raw spawn input. */
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+  /** Launch-time Home access recheck. Never persisted or retained as runtime authority. */
+  verifyRequesterMachineAdmissionCurrent?: () => Promise<boolean>;
+  /** Host-owned handoff acceptance immediately before physical launch; never persisted. */
+  beforeSessionRunnerLaunch?: () => Promise<boolean>;
   machineId?: string;
   directory: string;
   /** Daemon-owned directory routing fact; filesystem authority comes from the allocation record. */
@@ -129,6 +143,10 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   placementOrigin?: MachinePoolSelectionOriginV1;
   /** Mutable presentation state committed inside the fresh Session create transaction. */
   initialTitle?: string;
+  /** Ordinary Session birth facts; never reapplied on attach or resume. */
+  identity?: import('@happier-dev/protocol/sessions/identity/sessionBotV1').SessionIdentityAdditions;
+  memoryEnabled?: boolean;
+  promptStack?: import('@happier-dev/protocol/sessions/context/sessionContextV1').SessionPromptStackV1;
   initialAccess?: SessionInitialAccessDraftV1;
   /** Canonical host-sealed trigger intents committed with fresh Session birth. */
   initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];

@@ -59,7 +59,7 @@ import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { startDaemonRuntimeBootstrap } from './startup/startDaemonRuntimeBootstrap';
 import { createRequesterSessionRuntimeContext } from './sessionEncryption/createRequesterSessionRuntimeContext';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext, ResolveRequesterSessionRuntimeContext } from './sessionEncryption/requesterSessionCredentials';
-import { resolveRequesterSessionBootstrap, resolveRequesterSessionBootstrapFromCustody, verifyRequesterSessionMachineAdmissionCurrent, listRequesterSessionCredentialBindings } from './sessionEncryption/requesterSessionCredentials';
+import { resolveRequesterSessionBootstrap, resolveRequesterSessionBootstrapFromCustody, bindRequesterSessionRuntimeMachineAdmissionCurrentness, listRequesterSessionCredentialBindings } from './sessionEncryption/requesterSessionCredentials';
 import { notifyActiveAccountConnectedServicesProjection } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
@@ -206,7 +206,8 @@ import {
 import { createHttpTeamCredentialDirectMaterialClient } from './connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -1136,6 +1137,11 @@ export async function startDaemon(
         secrets: createActiveAccountSettingsConnectedAccountSecrets({
           expectedScopeKey: resolveAccountSettingsScopeKey(credentials),
         }),
+        onAccountSettled: async (settled) => {
+          const coordinator = connectedServiceQuotasCoordinator;
+          if (!coordinator) throw new Error('Qualified quota source initializer is unavailable');
+          await coordinator.initializeQualifiedAccountQuotaSource(settled);
+        },
         // Attempt durability is Account-mode aware, so a plaintext Account keeps the
         // same OAuth/device restart recovery as an E2EE one. Key presence never
         // decides installation.
@@ -1494,6 +1500,8 @@ export async function startDaemon(
             });
           },
           async resolveProviderSource(source, signal) {
+            const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: resolveAccountSettingsScopeKey(credentials), signal });
+            if (catalog.status !== 'ready') return null;
             const accountSnapshot = getActiveAccountSettingsSnapshot();
             if (!accountSnapshot) return null;
             const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
@@ -1509,9 +1517,7 @@ export async function startDaemon(
               const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
                 connectionId: source.connectionId,
                 machineId,
-                providerSettings: readProviderSettingsFromAccountSettingsV1(
-                  accountSnapshot.settings,
-                ).settings,
+                providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
                 registry,
                 lifetime: createProviderOperationLifetime({
                   signal,
@@ -1556,9 +1562,7 @@ export async function startDaemon(
                     const currentDnsEvidence = await collectProviderConnectionDnsEvidence({
                       connectionId: source.connectionId,
                       machineId,
-                      providerSettings: readProviderSettingsFromAccountSettingsV1(
-                        currentSnapshot.settings,
-                      ).settings,
+                      providerSettings: readProviderSettingsForCli(currentSnapshot).settings,
                       registry: currentRegistry,
                       lifetime: createProviderOperationLifetime({
                         signal,
@@ -1873,6 +1877,7 @@ export async function startDaemon(
       onBrowserDiagnosticsRoutesReady: machineRpcRouteAttachments.attachBrowserDiagnosticsRoutes,
       onBrowserRecordingRoutesReady: machineRpcRouteAttachments.attachBrowserRecordingRoutes,
       onSimulatorPreviewRoutesReady: machineRpcRouteAttachments.attachSimulatorPreviewRoutes,
+      onConnectedServicePoolSelectionReadReady: machineRpcRouteAttachments.attachConnectedServicePoolSelectionRead,
       resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.refresh(),
       liveStreamCaptureRegistry,
       simulatorInputLeaseManager,
@@ -2109,10 +2114,9 @@ export async function startDaemon(
     createRequesterRuntime = async bootstrap => {
       if (bootstrap.serverHttpBaseUrl !== requesterRuntimeServerHttpBaseUrl
         || !requesterMachineAdmissionBoundary(bootstrap.attribution).isHomeCurrent()) return null;
-      bootstrap.bindRuntimeMachineAdmissionCurrentness(() => verifyRequesterSessionMachineAdmissionCurrent({
-        credentials: bootstrap.credentials, attribution: bootstrap.attribution,
-        serverHttpBaseUrl: bootstrap.serverHttpBaseUrl, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
-      }));
+      bindRequesterSessionRuntimeMachineAdmissionCurrentness({
+        bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
+      });
       return await createRequesterSessionRuntimeContext({ bootstrap,
         activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
         resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(serverFeaturesSnapshotStore.getSnapshot()),
@@ -2329,9 +2333,7 @@ export async function startDaemon(
                       return await collectProviderConnectionDnsEvidence({
                         connectionId: source.connectionId,
                         machineId: registeredMachineId,
-                        providerSettings: readProviderSettingsFromAccountSettingsV1(
-                          snapshot.settings,
-                        ).settings,
+                        providerSettings: readProviderSettingsForCli(snapshot).settings,
                         registry,
                         lifetime: createProviderOperationLifetime({
                           signal,

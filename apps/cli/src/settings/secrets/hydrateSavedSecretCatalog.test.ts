@@ -8,6 +8,8 @@ import {
   formatSavedSecretCatalogReferenceV1,
   sealEncryptedDataKeyEnvelopeV1,
   sealSavedSecretResourceStoredContentV1,
+  openEncryptedDataKeyEnvelopeV1,
+  openSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,12 +22,18 @@ import {
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createSavedSecretMaterializerFromSnapshotV1 } from './savedSecretCatalog';
 import {
+  createInvocationSavedSecretOperationContextV1,
   hydrateSavedSecretCatalog,
   refreshSavedSecretCatalogForOperation,
 } from './hydrateSavedSecretCatalog';
+import * as savedSecretOperationOwner from './hydrateSavedSecretCatalog';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { decodeBase64 } from '@/api/encryption';
+import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 
 vi.mock('axios', () => ({
-  default: { get: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn() },
 }));
 
 const persistenceMocks = vi.hoisted(() => ({
@@ -62,6 +70,7 @@ describe('Saved Secret catalog hydration', () => {
   beforeEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
     vi.mocked(axios.get).mockReset();
+    vi.mocked(axios.post).mockReset();
     persistenceMocks.readStoredCredentials.mockReset();
     persistenceMocks.readStoredCredentials.mockResolvedValue(null);
     featureMocks.fetchServerFeaturesSnapshot.mockClear();
@@ -69,6 +78,254 @@ describe('Saved Secret catalog hydration', () => {
 
   afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
+  });
+
+  it('publishes invocation Connected-account catalogs across preference refresh without changing Settings and retires late writes', async () => {
+    const token = 'connected-invocation-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    const snapshot = { source: 'network' as const, settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey };
+    let current = true;
+    const context = createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null }, snapshot,
+      serverHttpBaseUrl: 'https://connected-home.example', isCurrent: async () => current });
+    const catalog = { status: 'ready' as const, revision: 7,
+      record: { key: 'configurations' as const, value: { v: 1 as const, entries: [] } } };
+    expect(await context.commitConnectedAccountCatalog({ key: 'configurations', catalog })).toBe(true);
+    expect(context.readSnapshot()).toMatchObject({ settingsVersion: 4, connectedConfigurationCatalog: catalog });
+    expect(await context.replaceAccountSettings({ ...snapshot, settingsVersion: 5 })).toBe(true);
+    expect(context.readSnapshot()).toMatchObject({ settingsVersion: 5, connectedConfigurationCatalog: catalog });
+    current = false;
+    expect(await context.commitConnectedAccountCatalog({ key: 'configurations', catalog: { ...catalog, revision: 8 } })).toBe(false);
+    expect(context.readSnapshot()).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { mode: 'plain' as const, hasKey: false },
+    { mode: 'e2ee' as const, hasKey: true },
+    { mode: 'e2ee' as const, hasKey: false },
+  ])('refreshes requester $mode material with hasKey=$hasKey without custodian credentials', async ({ mode, hasKey }) => {
+    const aliceToken = 'alice-token';
+    const bobToken = 'bob-token';
+    const alice = { source: 'network' as const, settings: AccountSettingsSchema.parse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(aliceToken) };
+    setActiveAccountSettingsSnapshot(alice);
+    const activeAlice = getActiveAccountSettingsSnapshot();
+    persistenceMocks.readStoredCredentials.mockResolvedValue({ token: aliceToken, encryption: null });
+    const machineKey = new Uint8Array(32).fill(7);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const resourceDataKey = new Uint8Array(32).fill(11);
+    const resourceId = 'requester-resource';
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(bobToken);
+    const context = createInvocationSavedSecretOperationContextV1({
+      credentials: { token: bobToken, encryption: hasKey ? { type: 'dataKey', machineKey, publicKey } : null },
+      snapshot: { ...alice, settings: AccountSettingsSchema.parse({}), scopeKey }, serverHttpBaseUrl: 'https://bob-home.example', isCurrent: async () => true,
+    });
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [{
+      resourceId, encryptionMode: mode,
+      entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Bob token', kind: 'token',
+        ownerAccountId: 'bob', revision: 3, materialStatus: 'ready',
+        capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      storedContent: mode === 'plain'
+        ? sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+          content: { v: 1, name: 'Bob token', kind: 'token', value: 'bob-private-material' } })
+        : sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
+          randomBytes: (length) => new Uint8Array(length).fill(12),
+          content: { v: 1, name: 'Bob token', kind: 'token', value: 'bob-private-material' } }),
+      recipientEnvelope: mode === 'plain' ? null : {
+        encryptedDataKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceDataKey, recipientPublicKey: publicKey,
+          randomBytes: (length) => new Uint8Array(length).fill(13) })).toString('base64'),
+        recipientContentPublicKeyFingerprint: 'bob-content-fingerprint',
+      },
+    }] } });
+    const refresh = refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+      references: [{ ref, revision: 3 }], operationContext: context });
+    if (mode === 'e2ee' && !hasKey) {
+      await expect(refresh).rejects.toMatchObject({ reason: 'reference_unavailable', reference: ref });
+    } else {
+      const refreshed = await refresh;
+      expect(createSavedSecretMaterializerFromSnapshotV1(refreshed).resolve(ref)).toMatchObject({ status: 'ready', value: 'bob-private-material' });
+      expect(context.readSnapshot()).toBe(refreshed);
+      expect(await savedSecretOperationOwner.captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
+        references: [ref, ref], operationContext: context })).toEqual({
+        referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 3 }],
+      });
+    }
+    expect(getActiveAccountSettingsSnapshot()).toBe(activeAlice);
+    expect(persistenceMocks.readStoredCredentials).not.toHaveBeenCalled();
+    expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('https://bob-home.example/v1/account/saved-secrets/resources/materials');
+    expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: `Bearer ${bobToken}` });
+  });
+
+  it('keeps personal requester material local and withdraws captured readers after Settings replacement or retirement', async () => {
+    const token = 'bob-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    let current = true;
+    const snapshot = { source: 'network' as const, settings: AccountSettingsSchema.parse({ secrets: [{
+      id: 'bob-secret', name: 'Bob', kind: 'token', createdAt: 1, updatedAt: 1,
+      encryptedValue: { _isSecretValue: true, value: 'bob-personal' },
+    }] }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey };
+    const context = createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null }, snapshot,
+      serverHttpBaseUrl: 'https://bob-home.example', isCurrent: async () => current });
+    const admitted = await refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+      references: [{ ref: 'bob-secret' }], operationContext: context });
+    const materializer = createSavedSecretMaterializerFromSnapshotV1(admitted, { isCurrent: () => context.readSnapshot() === admitted });
+    expect(materializer.resolve('bob-secret')).toMatchObject({ status: 'ready', value: 'bob-personal' });
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(persistenceMocks.readStoredCredentials).not.toHaveBeenCalled();
+    expect(await context.replaceAccountSettings({ ...snapshot, scopeKey: 'another-account', settingsVersion: 2 })).toBe(false);
+    expect(await context.replaceAccountSettings({ ...snapshot, settingsVersion: 2 })).toBe(true);
+    expect(materializer.resolve('bob-secret')).toEqual({ status: 'temporarily_unavailable' });
+    current = false;
+    expect(await context.isCurrent()).toBe(false);
+    expect(context.readSnapshot()).toBeNull();
+    current = true;
+    expect(await context.replaceAccountSettings({ ...snapshot, settingsVersion: 3 })).toBe(false);
+  });
+
+  it('retires requester material when admission changes during a catalog response', async () => {
+    const token = 'bob-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    let current = true;
+    const context = createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
+      snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey },
+      serverHttpBaseUrl: 'https://bob-home.example', isCurrent: async () => current });
+    vi.mocked(axios.get).mockImplementation(async () => { current = false; return { status: 200, data: { resources: [] } }; });
+    await expect(refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey, refreshCatalog: true,
+      operationContext: context })).rejects.toThrow('saved_secret_account_lifetime_changed');
+    expect(context.readSnapshot()).toBeNull();
+    expect(persistenceMocks.readStoredCredentials).not.toHaveBeenCalled();
+  });
+
+  it('prepares classified source material with the canonical Settings and resource envelopes in both Account modes', () => {
+    const prepare = 'prepareProfileEnvironmentVariableSavedSecretPromotionForOperation' in savedSecretOperationOwner
+      ? savedSecretOperationOwner.prepareProfileEnvironmentVariableSavedSecretPromotionForOperation : undefined;
+    expect(typeof prepare).toBe('function');
+    if (typeof prepare !== 'function') throw new Error('missing_saved_secret_classified_preparation');
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
+    const rawSettings = { profiles: [{ id: 'p', name: 'Imported', environmentVariables: [
+      { name: 'API_KEY', value: 'private-fixture', isSecret: true },
+    ], createdAt: 1, updatedAt: 1 }], opaque: { retained: true } };
+    const base = { accountId: 'account-a', rawSettings, expectedSettingsVersion: 4,
+      source: { kind: 'profile-environment-variable' as const, profileId: 'p', envName: 'API_KEY' },
+      displayName: 'Imported credential', kind: 'apiKey' as const, profileRows: [],
+      profileCatalog: { status: 'ready' as const, source: 'legacy' as const, records: [], tombstones: [], diagnostics: [],
+        referenceGuardRevision: 'absent' as const, authority: 'inactive' as const, control: null, controlRevision: 'absent' as const },
+      randomBytes: (length: number) => new Uint8Array(length).fill(7) };
+    const plain = prepare({ ...base, credentials: { token, encryption: null }, accountMode: 'plain',
+      referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } } });
+    expect(plain.encryptionMode).toBe('plain');
+    expect(plain.nextSettings).toMatchObject({ t: 'plain', v: { opaque: rawSettings.opaque,
+      secretBindingsByProfileId: { p: { API_KEY: formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: plain.resourceId }) } } } });
+    expect(plain.storedContent).toMatchObject({ t: 'plain', v: { value: 'private-fixture' } });
+    expect(plain.keyEnvelopes).toEqual([]);
+    const secret = new Uint8Array(32).fill(4);
+    const encrypted = prepare({ ...base, credentials: { token, encryption: { type: 'legacy', secret } }, accountMode: 'e2ee',
+      referenceCensus: { accountMode: 'e2ee', profiles: { referenceGuardRevision: 'absent', rows: [] } } });
+    expect(encrypted.resourceId).toBe(plain.resourceId);
+    expect(encrypted.nextSettings?.t).toBe('encrypted');
+    const envelope = encrypted.keyEnvelopes?.[0];
+    expect(envelope?.recipientAccountId).toBe('account-a');
+    if (!envelope) throw new Error('missing_owner_envelope');
+    const resourceDataKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(envelope.encryptedDataKey),
+      recipientSecretKeyOrSeed: deriveAccountMachineKeyFromRecoverySecret(secret) });
+    if (!resourceDataKey) throw new Error('unreadable_owner_envelope');
+    expect(openSavedSecretResourceStoredContentV1({ resourceId: encrypted.resourceId, mode: 'e2ee',
+      storedContent: encrypted.storedContent, resourceDataKey })?.value).toBe('private-fixture');
+    expect(() => prepare({ ...base, credentials: { token, encryption: null }, accountMode: 'e2ee',
+      referenceCensus: { accountMode: 'e2ee', profiles: { referenceGuardRevision: 'absent', rows: [] } } })).toThrow();
+    expect(() => prepare({ ...base, credentials: { token, encryption: null }, accountMode: 'plain', accountId: 'other-account',
+      referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } } })).toThrow();
+  });
+
+  it('seals an exact staged classified carrier in the same prepared composite with its captured row revision', () => {
+    const prepare = savedSecretOperationOwner.prepareProfileEnvironmentVariableSavedSecretPromotionForOperation;
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
+    const profile = { id: 'p', name: 'Imported', environmentVariables: [
+      { name: 'API_KEY', value: 'private-fixture', isSecret: true },
+    ], createdAt: 1, updatedAt: 1 };
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: 'p', definition: { kind: 'legacy', profile },
+      enabled: false, promptStack: [], secretBindings: { OTHER: 'unrelated-personal' } });
+    const captured = { status: 'ready' as const, source: 'legacy' as const, records: [{ record, revision: 6 }],
+      tombstones: [], diagnostics: [], referenceGuardRevision: 3, authority: 'inactive' as const, control: null,
+      controlRevision: 'absent' as const };
+    const sourceInput = { credentials: { token, encryption: null }, accountId: 'account-a', accountMode: 'plain' as const,
+      rawSettings: { profiles: [profile] }, expectedSettingsVersion: 4,
+      source: { kind: 'profile-environment-variable' as const, profileId: 'p', envName: 'API_KEY' },
+      displayName: 'Imported credential', kind: 'apiKey' as const, profileRows: captured.records, profileCatalog: captured,
+      referenceCensus: { accountMode: 'plain' as const, profileTransferRevision: 'absent' as const,
+        profiles: { referenceGuardRevision: 3, rows: [{ id: 'p', revision: 6 }] } } };
+    const result = prepare(sourceInput);
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: result.resourceId });
+    expect(result.profileMutations).toMatchObject([{ id: 'p', operation: 'import', expectedRevision: 6,
+      content: { t: 'plain', v: { enabled: false, secretBindings: { OTHER: 'unrelated-personal', API_KEY: ref } } },
+      referencedSavedSecretIds: ['unrelated-personal', ref], savedSecretRevisions: [{ resourceId: result.resourceId, expectedRevision: 1 }], artifactRevision: null }]);
+    expect(record.secretBindings).toEqual({ OTHER: 'unrelated-personal' });
+    const destinationInput = { ...sourceInput, profileCatalog: { ...captured, source: 'destination' as const } };
+    expect(() => prepare(destinationInput)).toThrow();
+  });
+
+  it('commits one fully prepared source CAS and row census, preserving outcome uncertainty without replay', async () => {
+    const promote = 'promoteSavedSecretResourceForOperation' in savedSecretOperationOwner
+      ? savedSecretOperationOwner.promoteSavedSecretResourceForOperation : undefined;
+    expect(typeof promote).toBe('function');
+    if (typeof promote !== 'function') throw new Error('missing_saved_secret_composite_transport');
+    const token = 'account-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 4,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
+    persistenceMocks.readStoredCredentials.mockResolvedValue({ token, encryption: null });
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
+    const input = SharedSavedSecretPromoteInputV1Schema.parse({ resourceId: 'imported', displayName: 'Imported', kind: 'token',
+      encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Imported', kind: 'token', value: 'private-fixture' } },
+      expectedSettingsVersion: 4, nextSettings: { t: 'plain', v: { opaque: { kept: true } } },
+      referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 3, rows: [{ id: 'p', revision: 2 }] } },
+      accountGrants: [], teamGrants: [], groupGrants: [], profileMutations: [] });
+    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { resourceId: 'imported', settingsVersion: 5 } });
+    await expect(promote({ expectedScopeKey: scopeKey, input })).resolves.toEqual({ status: 'applied', resourceId: 'imported', settingsVersion: 5 });
+    expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toEqual(input);
+    vi.mocked(axios.post).mockRejectedValueOnce(new Error('response-lost'));
+    await expect(promote({ expectedScopeKey: scopeKey, input })).resolves.toMatchObject({ status: 'outcome_unknown' });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    vi.mocked(axios.post).mockResolvedValueOnce({ status: 404, data: { error: 'not_found' } });
+    await expect(promote({ expectedScopeKey: scopeKey, input })).resolves.toEqual({ status: 'unavailable' });
+    expect(axios.post).toHaveBeenCalledTimes(3);
+    resetActiveAccountSettingsSnapshotForTests();
+    await expect(promote({ expectedScopeKey: scopeKey, input })).resolves.toEqual({ status: 'unavailable' });
+    expect(axios.post).toHaveBeenCalledTimes(3);
+  });
+
+  it('dispatches the composite through its admitted invocation Home without reading or replacing the ambient Account', async () => {
+    const token = 'invocation-token';
+    const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 8,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken('ambient-token') });
+    const ambient = getActiveAccountSettingsSnapshot();
+    let current = true;
+    const context = createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
+      snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 4,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey }, serverHttpBaseUrl: 'https://invocation-home.example',
+      isCurrent: async () => current });
+    const input = SharedSavedSecretPromoteInputV1Schema.parse({ resourceId: 'isolated-import', displayName: 'Imported', kind: 'token',
+      encryptionMode: 'plain', storedContent: { t: 'plain', v: { v: 1, name: 'Imported', kind: 'token', value: 'private-fixture' } },
+      expectedSettingsVersion: 4, nextSettings: { t: 'plain', v: {} },
+      referenceCensus: { accountMode: 'plain', profileTransferRevision: 'absent',
+        profiles: { referenceGuardRevision: 3, rows: [] } }, profileMutations: [] });
+    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
+    vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { resourceId: input.resourceId, settingsVersion: 5 } });
+    const operation = { expectedScopeKey: scopeKey, input, operationContext: context };
+    await expect(savedSecretOperationOwner.promoteSavedSecretResourceForOperation(operation))
+      .resolves.toEqual({ status: 'applied', resourceId: input.resourceId, settingsVersion: 5 });
+    expect(vi.mocked(axios.post).mock.calls[0]?.[0]).toBe('https://invocation-home.example/v1/account/saved-secrets/resources/promote');
+    expect(vi.mocked(axios.post).mock.calls[0]?.[2]?.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+    expect(persistenceMocks.readStoredCredentials).not.toHaveBeenCalled();
+    expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
+    current = false;
+    await expect(savedSecretOperationOwner.promoteSavedSecretResourceForOperation(operation)).resolves.toEqual({ status: 'unavailable' });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
   });
 
   it('hydrates under the Teams master feature even when credential resources are disabled', async () => {
@@ -704,7 +961,7 @@ describe('Saved Secret catalog hydration', () => {
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
       references: [{ ref, revision: 3 }],
     })).rejects.toMatchObject({
-      reason: 'reference_missing',
+      reason: 'reference_corrupt',
       reference: ref,
     });
   });
@@ -759,7 +1016,7 @@ describe('Saved Secret catalog hydration', () => {
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
       references: [{ ref, revision: 5 }],
     })).rejects.toMatchObject({
-      reason: 'reference_missing',
+      reason: 'reference_corrupt',
       reference: ref,
     });
   });

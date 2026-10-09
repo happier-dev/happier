@@ -27,11 +27,18 @@ export function createSessionAccountActionExecutor(params: Readonly<{
 }>): ActionExecutor {
   return {
     execute: async (actionId, input, context) => {
+      // These reads describe the bound host's admitted catalog, not Account data.
+      // Keep its live Session policy (including memory choice) at the existing
+      // executor rather than replacing it with the daemon's Account catalog.
+      if (actionId === 'action.spec.search' || actionId === 'action.spec.get') {
+        return await params.base.execute(actionId, input, context);
+      }
       // Contributed ids remain with the existing plugin catalog/execution owner.
       const builtIn = ActionIdSchema.safeParse(actionId);
       const executionPlacement = builtIn.success ? resolveActionExecutionPlacementForInput(getActionSpec(builtIn.data), input) : null;
       if (!builtIn.success || (executionPlacement !== 'account'
         && executionPlacement !== 'client'
+        && builtIn.data !== 'session.spawn_new'
         && !(Object.hasOwn(RoleActionInputSchemasV1, builtIn.data) && builtIn.data.startsWith('session.')))) {
         return await params.base.execute(actionId, input, context);
       }

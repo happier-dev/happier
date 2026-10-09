@@ -7,23 +7,23 @@ import type {
 import type {
   PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema, QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { readAccountSettingsConnectedAccountPurposeBindings } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeTeamResourceSelectionV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
 
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
+import { refreshActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import {
-  readActivePluginAccountSettings,
-  updateActivePluginAccountSettings,
-} from '@/plugins/runtime/context/accountSettingsStorage';
-import type {
-  AccountSettingsMutationResult,
-} from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import {
+  getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken,
+  readConnectedAccountCatalogFromSnapshot,
   subscribeActiveAccountSettingsSnapshotChanges,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type {
@@ -103,6 +103,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
   /** Producer-owned materializer boundary for the exact resolved current account. */
   materializeAccount(input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    expectedConfigurationRevision?: string | null;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
     request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
@@ -149,6 +150,10 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     account: QualifiedConnectedAccountRef,
     signal: AbortSignal,
   ) => Promise<ConnectedServiceCredentialRevisionV1 | null>;
+  resolveCredentialConfigurationRevision?: (
+    account: QualifiedConnectedAccountRef,
+    signal: AbortSignal,
+  ) => Promise<string | null>;
   /** Account/group/credential/materializer invalidations not represented by the binding store. */
   subscribeInvalidations?: (listener: () => void) => Disposable;
 }>;
@@ -176,6 +181,7 @@ export type ConnectedAccountPurposeBindingSubject =
       pluginId: string;
       providerLocalId: string;
       isCurrent(): boolean;
+      credentialConfigurations?: readonly Readonly<{ account: QualifiedConnectedAccountRef; revision: string | null }>[];
     }>
   | Readonly<{
       kind: 'agent_catalog_observation';
@@ -274,7 +280,7 @@ export function composeConnectedAccountSessionPurposeBindingSnapshot(
       snapshotPurposeKeys.add(key);
       purposes.push(Object.freeze(purpose));
     }
-    const parsedBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+    const parsedBindings = ConnectedPurposeCatalogV1Schema.parse({
       v: 1,
       bindings: snapshot.bindings,
     }).bindings;
@@ -315,6 +321,8 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
   lease: ConnectedAccountPurposeBindingLease;
   subjectId: string;
   uses: readonly QualifiedConnectedAccountRequestAuthUseV1[];
+  /** Exact Session captured by the host issuer, not an encoded diagnostic id. */
+  parentSessionId?: string;
   registerRedaction: ConnectedAccountRequestAuthSubject['registerRedaction'];
   /**
    * Host-issued certificate for the catalog-Agent-only legacy service-keyed adapter.
@@ -357,6 +365,7 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
   const isCurrent = (): boolean => input.lease.isCurrent();
   return Object.freeze({
     subjectId,
+    ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
     ...(input.legacyServiceKeyedCompatibility === true
       ? { legacyServiceKeyedCompatibility: true as const }
       : {}),
@@ -397,6 +406,7 @@ export const scopeConnectedAccountSessionPurposeBindingLease =
  */
 export type ConnectedAccountPurposeBindingOwner =
   StablePluginConnectedAccountsOwner & Readonly<{
+    readCredentialConfigurationRevision(account: QualifiedConnectedAccountRef, signal: AbortSignal): Promise<string | null>;
     /**
      * Canonical immutable launch snapshot for either a primary Agent session or one exact
      * execution-run owner. The run subject remains current only while its captured runner,
@@ -561,55 +571,6 @@ function bindingOutOfScope(): PluginError {
   });
 }
 
-function accountSettingsMutationFailure(
-  result: Exclude<AccountSettingsMutationResult, Readonly<{
-    status: 'applied' | 'satisfied' | 'unchanged';
-  }>>,
-): PluginError {
-  switch (result.status) {
-    case 'conflict':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_conflict',
-        message: 'Connected Account bindings changed before the Settings mutation could settle',
-        retryable: true,
-        details: { currentVersion: String(result.currentVersion) },
-      });
-    case 'outcomeUnknown':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_outcome_unknown',
-        message: 'Connected Account binding write outcome is unknown',
-        details: { lastKnownVersion: String(result.lastKnownVersion) },
-      });
-    case 'cancelled':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_cancelled',
-        message: 'Connected Account binding mutation was cancelled before submission',
-      });
-    case 'locked':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_locked',
-        message: 'Connected Account binding settings are locked',
-        details: { reason: result.reason },
-      });
-    case 'invalid':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_invalid',
-        message: 'Connected Account binding settings mutation is invalid',
-        details: { reason: result.reason },
-      });
-    case 'unavailable':
-      return new PluginError({
-        code: 'plugin_connected_account_settings_unavailable',
-        message: 'Connected Account binding settings are unavailable',
-        retryable: result.retryable,
-        // Same disclosure as the `locked`/`invalid` siblings above: a caller that
-        // has to explain the refusal gets the boundary's own code, not just a
-        // status-free sentence.
-        ...(result.reason ? { details: { reason: result.reason } } : {}),
-      });
-  }
-}
-
 /**
  * Recognizes the one refusal that startup reconciliation degrades on rather than
  * escalating. Every other CAS outcome stays terminal for its caller.
@@ -634,7 +595,7 @@ function replacePurposeBinding(
   purpose: QualifiedConnectedAccountPurposeV1,
   target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
 ): QualifiedConnectedAccountPurposeBindingsV1 {
-  const collection = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(collectionLike);
+  const collection = ConnectedPurposeCatalogV1Schema.parse(collectionLike);
   const key = qualifiedPurposeKey(purpose);
   // Agent Team resource defaults share this document. They are kept, except
   // that an explicit personal choice for the same purpose replaces its Team
@@ -642,7 +603,7 @@ function replacePurposeBinding(
   const teamResourceSelections = (collection.teamResourceSelections ?? []).filter((entry) => (
     !target || qualifiedPurposeKey(entry.purpose) !== key
   ));
-  return QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+  return ConnectedPurposeCatalogV1Schema.parse({
     v: 1,
     bindings: [
       ...collection.bindings.filter((binding) => qualifiedPurposeKey(binding.purpose) !== key),
@@ -657,7 +618,7 @@ function readPurposeTeamResourceSelection(
   purpose: QualifiedConnectedAccountPurposeV1,
 ): QualifiedConnectedAccountPurposeTeamResourceSelectionV1 | null {
   const key = qualifiedPurposeKey(purpose);
-  return QualifiedConnectedAccountPurposeBindingsV1Schema.parse(collectionLike)
+  return ConnectedPurposeCatalogV1Schema.parse(collectionLike)
     .teamResourceSelections
     ?.find((entry) => qualifiedPurposeKey(entry.purpose) === key) ?? null;
 }
@@ -667,7 +628,7 @@ function readPurposeBinding(
   purpose: QualifiedConnectedAccountPurposeV1,
 ): QualifiedConnectedAccountPurposeBindingTargetV1 | null {
   const key = qualifiedPurposeKey(purpose);
-  return QualifiedConnectedAccountPurposeBindingsV1Schema.parse(collectionLike)
+  return ConnectedPurposeCatalogV1Schema.parse(collectionLike)
     .bindings
     .find((binding) => qualifiedPurposeKey(binding.purpose) === key)
     ?.target ?? null;
@@ -758,10 +719,19 @@ export function createConnectedAccountPurposeBindingOwner(
     coveredPurposeKeys: ReadonlySet<string>;
     bindingByPurposeKey: ReadonlyMap<string, QualifiedConnectedAccountPurposeBindingV1>;
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+    credentialConfigurations?: readonly Readonly<{ account: QualifiedConnectedAccountRef; revision: string | null }>[];
     directMaterialOriginByPurposeKey: ReadonlyMap<string, ActiveConnectedAccountTeamDirectMaterialOrigin>;
   }>;
   const purposeBindingsBySubjectKey = new Map<string, PurposeBindingState>();
   const purposeBindingsBySubjectId = new Map<string, PurposeBindingState>();
+  const retainedConfigurationBasis = (subjectId: string | undefined, account: QualifiedConnectedAccountRef) => {
+    const retained = subjectId ? purposeBindingsBySubjectId.get(subjectId)?.credentialConfigurations : undefined;
+    if (!retained) return {};
+    const basis = retained.find(configuration => sameQualifiedConnectedAccountRef(configuration.account, account));
+    if (!basis || retained.some(configuration => sameQualifiedConnectedAccountRef(configuration.account, account)
+        && configuration.revision !== basis.revision)) throw bindingOutOfScope();
+    return { expectedConfigurationRevision: basis.revision };
+  };
   const sessionInvalidationListenersBySessionId = new Map<string, Set<() => void>>();
   const sessionSubjectKey = (sessionId: string): string =>
     JSON.stringify(['session', sessionId]);
@@ -1002,7 +972,7 @@ export function createConnectedAccountPurposeBindingOwner(
       }
       coveredPurposeKeys.add(key);
     }
-    const parsedBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+    const parsedBindings = ConnectedPurposeCatalogV1Schema.parse({
       v: 1,
       bindings: input.bindings,
     }).bindings.map(immutableBinding);
@@ -1063,6 +1033,11 @@ export function createConnectedAccountPurposeBindingOwner(
       coveredPurposeKeys,
       bindingByPurposeKey,
       bindings: Object.freeze(parsedBindings),
+      ...(subject.kind === 'managed_provider_operation' && subject.credentialConfigurations
+        ? { credentialConfigurations: Object.freeze(subject.credentialConfigurations.map(configuration => Object.freeze({
+            account: Object.freeze({ service: Object.freeze({ ...configuration.account.service }), accountId: configuration.account.accountId }),
+            revision: configuration.revision,
+          }))) } : {}),
       directMaterialOriginByPurposeKey,
     });
     purposeBindingsBySubjectKey.set(normalized.subjectKey, state);
@@ -1387,6 +1362,7 @@ export function createConnectedAccountPurposeBindingOwner(
         })()
       : await dependencies.materializeAccount({
           account: resolved.resolved.account,
+          ...retainedConfigurationBasis(input.exactPurposeBindingSubjectId, resolved.resolved.account),
           ...(credentialRevisionBasis ? { credentialRevisionBasis } : {}),
           request: input.request,
           signal: input.signal,
@@ -1467,6 +1443,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
     const materialization = await dependencies.materializeAccount({
       account: input.account,
+      ...retainedConfigurationBasis(input.exactPurposeBindingSubjectId, input.account),
       request: input.request,
       signal: input.signal,
     });
@@ -1695,6 +1672,13 @@ export function createConnectedAccountPurposeBindingOwner(
 
   return Object.freeze({
     activatePurposeBindings,
+    async readCredentialConfigurationRevision(account, signal) {
+      signal.throwIfAborted();
+      if (!dependencies.resolveCredentialConfigurationRevision) throw bindingOutOfScope();
+      const revision = await dependencies.resolveCredentialConfigurationRevision(account, signal);
+      signal.throwIfAborted();
+      return revision;
+    },
     activateSessionPurposeBindings(input) {
       return activatePurposeBindings({
         subject: {
@@ -1762,8 +1746,8 @@ export function createConnectedAccountPurposeBindingOwner(
       try {
         input.signal.throwIfAborted();
         await dependencies.store.update((currentLike) => {
-            const current = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(currentLike);
-            return QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+            const current = ConnectedPurposeCatalogV1Schema.parse(currentLike);
+            return ConnectedPurposeCatalogV1Schema.parse({
               ...current,
               bindings: current.bindings.filter((binding) => {
                 const authorizedPurposeKeys =
@@ -1894,47 +1878,99 @@ export function createConnectedAccountPurposeBindingOwner(
   });
 }
 
-export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(): ConnectedAccountPurposeBindingStore {
+export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(input: Readonly<{
+  credentials?: StoredCredentials; operationContext?: SavedSecretOperationContextV1;
+  subscribe?: ConnectedAccountPurposeBindingStore['subscribe'];
+}> = {}): ConnectedAccountPurposeBindingStore {
+  const readSnapshot = () => input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+  const unavailable = (reason: string) => new PluginError({ code: 'plugin_connected_account_settings_unavailable',
+    message: 'Connected Account purpose catalog is unavailable', details: { reason } });
+  const captureOperation = () => {
+    const snapshot = readSnapshot();
+    const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+    const assertCurrent = () => {
+      if (!snapshot?.scopeKey || readSnapshot()?.scopeKey !== snapshot.scopeKey
+        || !input.operationContext && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetime) {
+        throw unavailable('scope-retired');
+      }
+    };
+    const verifyCurrent = async () => {
+      assertCurrent();
+      if (input.operationContext && !await input.operationContext.isCurrent()) throw unavailable('scope-retired');
+      assertCurrent();
+    };
+    assertCurrent();
+    return { assertCurrent, verifyCurrent };
+  };
+  const credentialsForOperation = async (operation: ReturnType<typeof captureOperation>) => {
+    const credentials = input.operationContext?.credentials ?? input.credentials ?? await readStoredCredentials();
+    await operation.verifyCurrent();
+    if (!credentials) throw unavailable('credentials-unavailable');
+    return credentials;
+  };
+  const readCatalog = async (operation: ReturnType<typeof captureOperation>, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    await operation.verifyCurrent();
+    let catalog = readConnectedAccountCatalogFromSnapshot(readSnapshot(), 'purposes');
+    if (catalog.status === 'loading') catalog = await refreshActiveConnectedAccountCatalog({
+      credentials: await credentialsForOperation(operation), key: 'purposes', signal, operationContext: input.operationContext });
+    await operation.verifyCurrent();
+    if (catalog.status !== 'ready') throw unavailable(catalog.status === 'unavailable' ? catalog.reason : 'loading');
+    if (catalog.record.key !== 'purposes') throw unavailable('invalid-stored-content');
+    signal?.throwIfAborted();
+    return { ...catalog, record: catalog.record };
+  };
   return Object.freeze({
     async read(signal) {
-      signal?.throwIfAborted();
-      const bindings = readAccountSettingsConnectedAccountPurposeBindings(
-        readActivePluginAccountSettings() ?? {},
-      );
-      signal?.throwIfAborted();
-      return bindings;
+      const operation = captureOperation();
+      const catalog = await readCatalog(operation, signal);
+      operation.assertCurrent();
+      return catalog.record.value;
     },
     async update(mutate, signal) {
-      signal?.throwIfAborted();
-      // Validate the observed root before entering the retrying Settings CAS.
-      // A malformed present root is retained evidence, never an empty binding
-      // collection that an unrelated selection or reconciliation may overwrite.
-      const current = readActivePluginAccountSettings() ?? {};
-      readAccountSettingsConnectedAccountPurposeBindings(current);
-      const result = await updateActivePluginAccountSettings((settings) => {
-        const next = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-          mutate(readAccountSettingsConnectedAccountPurposeBindings(settings)),
-        );
-        return Object.freeze({
-          ...settings,
-          connectedAccountPurposeBindingsV1: next,
-        });
-      }, { signal });
-      if (
-        result.status !== 'applied'
-        && result.status !== 'satisfied'
-        && result.status !== 'unchanged'
-      ) {
-        throw accountSettingsMutationFailure(result);
+      const operation = captureOperation();
+      const current = await readCatalog(operation, signal);
+      await operation.verifyCurrent();
+      operation.assertCurrent();
+      const value = ConnectedPurposeCatalogV1Schema.parse(mutate(current.record.value));
+      const credentials = await credentialsForOperation(operation);
+      operation.assertCurrent();
+      const transport = createCliConnectedAccountCatalogStore({ credentials, signal, operationContext: input.operationContext });
+      const result = await transport.writeRecord({ record: { key: 'purposes', value }, expectedRevision: current.revision }).catch((error: unknown) => {
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+        if (code === 'outcome_unknown') throw new PluginError({ code: 'plugin_connected_account_settings_outcome_unknown',
+          message: 'Connected Account purpose mutation outcome is unknown' });
+        if (code === 'scope-retired') throw unavailable('scope-retired');
+        throw error;
+      });
+      if (result.status === 'conflict' || result.status === 'settings-conflict') throw new PluginError({
+        code: 'plugin_connected_account_settings_conflict', message: 'Connected Account purpose catalog changed', retryable: true,
+        details: { currentVersion: String(result.revision) } });
+      if (result.status !== 'updated') throw unavailable(result.status);
+      const acknowledgedUnavailable = (reason: string) => new PluginError({
+        code: 'plugin_connected_account_settings_unavailable',
+        message: 'Bindings unavailable after the acknowledged Connected Account mutation',
+        details: { reason, mutationStatus: 'updated', revision: result.revision },
+      });
+      const verifyAcknowledgedReadback = async () => {
+        try { await operation.verifyCurrent(); } catch {
+          throw acknowledgedUnavailable('scope-retired');
+        }
+      };
+      await verifyAcknowledgedReadback();
+      const observed = await refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', signal,
+        operationContext: input.operationContext }, true);
+      await verifyAcknowledgedReadback();
+      if (observed.status !== 'ready' || observed.record.key !== 'purposes' || observed.revision < result.revision) {
+        throw acknowledgedUnavailable('authority-not-confirmed');
       }
-      return QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
-        result.settings.connectedAccountPurposeBindingsV1,
-      );
+      return observed.record.value;
     },
     subscribe(listener) {
       // Bindings, service configuration and the Saved Secrets they reference
       // live in the Account snapshot. The Connected Services projection reaches
       // purpose watches through the runtime's own invalidation instead.
+      if (input.subscribe) return input.subscribe(listener);
       const unsubscribe = subscribeActiveAccountSettingsSnapshotChanges(() => listener());
       return Object.freeze({ dispose: unsubscribe });
     },

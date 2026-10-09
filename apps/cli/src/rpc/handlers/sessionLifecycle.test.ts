@@ -1,9 +1,14 @@
 import { readFile } from 'node:fs/promises';
 
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createForkSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createForkSessionLifecycleActionHandler';
+import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
@@ -81,6 +86,106 @@ const SESSION_LIFECYCLE_RPC_CASES = [
 ] as const;
 
 describe('session lifecycle RPC handlers', () => {
+    it('admits only the prepared native handoff identity and persists resume custody before physical launch', async () => {
+        await withTempDir('handoff-native-resume-custody-', async activeServerDir => {
+            const sessionId = `c${'a'.repeat(24)}`;
+            const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+            const status = { handoffId: 'exact-handoff', jobId: 'prepare_exact-handoff', status: 'ready_for_cutover' as const,
+                phase: 'staging_target' as const, recoveryActions: [] };
+            await prepareJobStore.write({ jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status,
+                prepareTargetResult: { handoffId: status.handoffId, status, remoteSessionId: 'native-original',
+                    directSource: { kind: 'claudeConfig', configDir: null, projectId: null }, resume: { directory: '/target',
+                        agent: 'claude', resume: 'native-original', transcriptStorage: 'persisted', approvedNewDirectoryCreation: true } } });
+            const authorization = { v: 1 as const, token: 'verified-native-child', binding: {
+                accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 7 }, serverIdentityId: 'srv_home',
+                machineId: 'target', custodianAccountId: 'alice', installationId: 'target-installation',
+                actionId: 'session.spawn_new', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
+                target: { kind: 'machine' as const, machineId: 'target' },
+                handoffAdmission: { sessionId, sourceMachineId: 'source', targetMachineId: 'target',
+                    sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+                handoffContinuation: { handoffId: status.handoffId, rootRequestId: 'original-request', rootRequestEnvelopeDigest: 'b'.repeat(43) },
+            } };
+            const launches: string[] = [];
+            const { handlers, rpcHandlerManager } = createRpcHarness();
+            registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager, handoffTargetResume: { prepareJobStore },
+                spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({ spawnSession: async options => {
+                    const before = Reflect.get(options, 'beforeSessionRunnerLaunch');
+                    if (typeof before === 'function' && !await before()) return { type: 'error',
+                        errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Resume custody unavailable' };
+                    if (options.resume === 'native-original') {
+                        expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
+                            resume: { status: 'attempted', attemptId: 'admitted-spawn-nonce' } });
+                    }
+                    launches.push(options.resume ?? 'missing-native');
+                    return { type: 'success', sessionId };
+                } }) });
+            const input = { type: 'resume-session' as const, sessionId, directory: '/target', spawnNonce: 'admitted-spawn-nonce',
+                backendTarget: { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const },
+                resume: 'native-original', transcriptStorage: 'persisted' };
+            const context = { signal: new AbortController().signal, callerInputAuthorization: authorization };
+            await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({ ...input, resume: 'swapped-native' }, context))
+                .resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+            expect(launches).toEqual([]);
+            await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.(input, context)).resolves.toMatchObject({ type: 'success' });
+            expect(launches).toEqual(['native-original']);
+            expect(await prepareJobStore.findByHandoffId(status.handoffId)).toMatchObject({ schemaVersion: 2,
+                recordKind: 'prepared_target', sessionId, resume: { status: 'attempted', attemptId: input.spawnNonce } });
+        });
+    });
+    it('rejects a handoff child that names another Session before raw resume effects', async () => {
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        registerPrivateSpawnSessionRpcHandlers({ rpcHandlerManager,
+            spawnLifecycleHandler: createSpawnNewSessionLifecycleActionHandler({
+                // Physical runner launch is the system boundary; the lifecycle owner stays real.
+                spawnSession: async () => ({ type: 'success', sessionId: `c${'b'.repeat(24)}` }),
+            }) });
+        const authorization = { v: 1 as const, token: 'verified-child', binding: {
+            accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 7 }, serverIdentityId: 'srv_home',
+            machineId: 'target', custodianAccountId: 'alice', installationId: 'target-installation',
+            actionId: 'session.spawn_new', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
+            target: { kind: 'machine' as const, machineId: 'target' },
+            handoffAdmission: { sessionId: `c${'a'.repeat(24)}`, sourceMachineId: 'source', targetMachineId: 'target',
+                sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+            handoffContinuation: { handoffId: 'exact-handoff', rootRequestId: 'original-request',
+                rootRequestEnvelopeDigest: 'b'.repeat(43) },
+        } };
+        await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({ type: 'resume-session',
+            sessionId: `c${'b'.repeat(24)}`, directory: '/target',
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, resume: 'native-session' },
+            { signal: new AbortController().signal, callerInputAuthorization: authorization }))
+            .resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    });
+    it('retains the validated source Session origin through both lifecycle adapters without trusting author input', async () => {
+        const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+            requestId: 'request-1', sourceTurnId: 'turn-1', callerPermissionMode: 'read-only',
+            caller: { kind: 'session', sessionId: 'source', starterDepth: 1, turnDepth: 2 },
+            causalPermissionAuthority: null, workspaceWrites: 'deny' });
+        const authorization = { v: 1 as const, token: 'verified-home-root', binding: {
+            accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 7 }, serverIdentityId: 'srv_home',
+            machineId: 'machine-1', custodianAccountId: 'alice', installationId: 'source-installation',
+            actionId: 'session.handoff', requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43),
+            target: { kind: 'machine' as const, machineId: 'machine-1' }, sessionActionOrigin: origin,
+            sessionActionSource: { machineId: 'machine-1', installationId: 'source-installation' },
+        } };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        registerSessionLifecycleRpcHandlers({ rpcHandlerManager,
+            actionExecutor: createSessionLifecycleRpcActionExecutor({ 'session.handoff': async (_input, context) => ({
+                ok: false,
+                errorCode: context?.sessionActionOrigin?.caller.sessionId === 'source'
+                    && context.sessionActionOrigin.callerPermissionMode === 'read-only'
+                    && context.sessionActionOrigin.workspaceWrites === 'deny'
+                    && context.callerInputAuthorization === authorization
+                    ? 'origin_preserved' : 'origin_unavailable',
+            }) }), actionIds: ['session.handoff'] });
+        const input = { sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2',
+            preferredTransportStrategies: ['server_routed_stream'] };
+        await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START)?.(input,
+            { signal: new AbortController().signal, sessionActionOrigin: origin,
+                callerInputAuthorization: authorization })).resolves.toMatchObject({ ok: false, errorCode: 'origin_preserved' });
+        await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START)?.({ ...input,
+            sessionActionOrigin: origin }, { signal: new AbortController().signal })).resolves.not.toMatchObject({ errorCode: 'origin_preserved' });
+    });
+
     it('refuses an invalid fork sequence with an explicit context lacking cancellation without OS effects', async () => {
         // The real handler and bridge validate admission; only OS process effects are boundaries.
         const spawnSession = vi.fn(async () => { throw new Error('Invalid forks must not spawn'); });
@@ -308,10 +413,11 @@ describe('session lifecycle RPC handlers', () => {
       directory: '/tmp/project',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     }), undefined);
-    // awaitSpawnedSessionId hands the resolver its remaining budget
-    // (awaitSpawnedSessionId.ts:26 DEFAULT_TIMEOUT_MS, overridable through
-    // HAPPIER_SPAWN_SESSION_ID_RESOLVE_TIMEOUT_MS).
-    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-1', 90_000);
+    // Settlement consumes the canonical startup owner's budget and cancellation.
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-1', resolveSessionStartupTimeoutMs(), expect.objectContaining({
+      signal: expect.any(AbortSignal),
+      readRemainingTimeoutMs: expect.any(Function),
+    }));
   });
 
   it('preserves raw resume success on both private spawn transports without nonce settlement', async () => {

@@ -11,6 +11,8 @@ import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecut
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machines/managed/managedIntentV1.js';
 import type { AccessibleMachineAccessV1 } from '../../machines/machineAccessV1.js';
+import { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
+export { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 
 /** Same serialized fields as the credential custodian's access.key owner, on a private carrier only. */
 export const SessionRequesterBootstrapCredentialsV1Schema = lazyZodSchema(() => z.object({
@@ -52,13 +54,6 @@ export const SessionRequesterBootstrapV1Schema = lazyZodSchema(() => z.union([
   }).strict(),
 ]));
 export type SessionRequesterBootstrapV1 = Readonly<z.infer<typeof SessionRequesterBootstrapV1Schema>>;
-
-/** C41 signs the complete existing Machine RPC envelope, including this private payload. */
-export const SessionRequesterInstallationSealedBootstrapV1Schema = lazyZodSchema(() => z.object({
-  kind: z.literal('installation_sealed_v1'),
-  installationId: z.string().trim().min(1),
-  ciphertext: z.string().regex(/^[A-Za-z0-9_-]+$/u),
-}).strict());
 
 /** Private invocation scope, independent of Session birth or custody. Every boundary is closed. */
 export type ExternalActionRequesterAccountContextPurposeV1 = Readonly<

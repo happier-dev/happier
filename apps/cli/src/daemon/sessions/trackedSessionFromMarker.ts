@@ -49,6 +49,8 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
   return {
     startedBy: marker.startedBy ?? params.startedByFallback,
     happySessionId: marker.happySessionId,
+    ...(marker.requesterWorkAttributionV1
+      ? { requesterWorkAttributionV1: marker.requesterWorkAttributionV1 } : {}),
     ...(marker.activeTurnId
       ? { reattachedInterruptedTurnId: marker.activeTurnId }
       : {}),
@@ -59,7 +61,10 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
         }
       : {}),
     happySessionMetadataFromLocalWebhook: marker.metadata,
-    ...(params.spawnOptions ? { spawnOptions: params.spawnOptions } : {}),
+    ...(params.spawnOptions ? { spawnOptions: {
+      ...params.spawnOptions,
+      ...(marker.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: marker.requesterWorkAttributionV1 } : {}),
+    } } : {}),
     ...(params.vendorResumeId ? { vendorResumeId: params.vendorResumeId } : {}),
     ...(marker.agentRuntimeDaemonServiceAuthorityFilePath
       ? {

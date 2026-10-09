@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import fastify from 'fastify';
 import { Buffer } from 'node:buffer';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -78,6 +79,45 @@ const exactSessionId = 'c123456789012345678901234';
 function syntheticAccountToken(accountId: string): string {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: accountId })}.signature`;
+}
+
+async function withPublishedAccountDaemon(run: (fixture: Readonly<{
+  credentials: Readonly<{ token: string; encryption: null; credentialProvenance: 'stored_session' }>;
+  serverId: string;
+  serverApiUrl: string;
+  daemonTarget: Readonly<{ pid: number; httpPort: number; controlToken: string; machineId: string; accountId: string }>;
+  withdrawPublication(): Promise<void>;
+}>) => Promise<void>): Promise<void> {
+  if (!patActionEndpoint) throw new Error('Expected the existing Home HTTP fixture');
+  const taskDir = await mkdtemp(join(tmpdir(), 'happier-captured-account-daemon-'));
+  const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const serverId = 'cloud';
+  const daemonTarget = { pid: process.pid, httpPort: Number(new URL(patActionEndpoint).port),
+    controlToken: 'captured-account-control', machineId: 'machine-local', accountId: 'account-1' };
+  const statePath = join(taskDir, 'servers', serverId, 'daemon.state.json');
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const credentials = { token: `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: daemonTarget.accountId,
+    session: 'captured-account-session', tokenEpoch: 7,
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })}.signature`,
+    encryption: null, credentialProvenance: 'stored_session' } as const;
+  try {
+    await mkdir(join(taskDir, 'servers', serverId), { recursive: true });
+    // OS publication is the mocked boundary; the actual reader consumes the
+    // captured Account/Machine pair rather than a synthesized reader result.
+    await writeFile(statePath, JSON.stringify({ ...daemonTarget, startedAt: Date.now(), startedWithCliVersion: 'test' }), 'utf8');
+    process.env.HAPPIER_HOME_DIR = taskDir;
+    reloadConfiguration();
+    const actual = await vi.importActual<typeof import('@/daemon/multiDaemon')>('@/daemon/multiDaemon');
+    resolveLiveDaemonControlTargetForServer.mockImplementation(actual.resolveLiveDaemonControlTargetForServer);
+    expect(await actual.resolveLiveDaemonControlTargetForServer(serverId)).toEqual(daemonTarget);
+    await run({ credentials, serverId, serverApiUrl: patActionEndpoint, daemonTarget,
+      withdrawPublication: async () => { await rm(statePath); } });
+  } finally {
+    if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+    else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    reloadConfiguration();
+    await rm(taskDir, { recursive: true, force: true });
+  }
 }
 type MockActionResponse = Readonly<{
   statusCode: number;
@@ -188,6 +228,23 @@ function apiFailure(actionId: string, errorCode: string, details?: unknown): Moc
 }
 
 describe('createCliActionExecutorFromCredentials API Token transport', () => {
+  it('refuses a qualified copy with unavailable exact Home credentials before remote effects', async () => {
+    installPatActionTransportMock(() => { throw new Error('Missing Home copy reached the Action transport'); });
+    const executor = createCliActionExecutorFromCredentials({ credentials: { token: SYNTHETIC_API_TOKEN, encryption: null } });
+    await expect(executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
+      source: { serverId: 'missing-source-home', machineId: 'source', rootPath: '/source', path: 'file.dat' },
+      destination: { serverId: 'missing-destination-home', machineId: 'destination', rootPath: '/destination', path: 'copy.dat' },
+      overwrite: false, recursive: false }, { surface: 'mcp' })).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+  });
+  it('refuses generic MCP byte transfers before the PAT transport can prepare one', async () => {
+    installPatActionTransportMock(() => { throw new Error('A generic MCP caller opened a prepared transfer'); });
+    const executor = createCliActionExecutorFromCredentials({ credentials: { token: SYNTHETIC_API_TOKEN, encryption: null } });
+    const input = { rootPath: '/repo', path: 'file.dat', source: { sourceId: 'unowned-source', sizeBytes: 4 }, overwrite: false };
+    const result = await executor.execute('daemon.filesystem.upload', input, { surface: 'mcp' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'filesystem_transfer_custody_required' });
+    const prepared = await executor.prepare('daemon.filesystem.upload', input, { surface: 'mcp' });
+    expect(prepared).toMatchObject({ kind: 'settled', result });
+  });
   it('uses the daemon-owned Machine admission transport for credential-backed Actions without per-caller wiring', async () => {
     const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted' as const, localId: 'input-1' }));
     const release = installDaemonMachineAdmissionTransport({
@@ -195,7 +252,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       transport: machineAdmissionTransport,
     });
     try {
-      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       createCliActionExecutorFromCredentials({
         credentials: { token: syntheticAccountToken('account-1'), encryption: null },
       });
@@ -286,7 +342,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       return { status: 200, data: { tokens: [] } };
     });
     onTestFinished(() => request.mockRestore());
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
 
     createCliActionExecutorFromCredentials({
       credentials: {
@@ -311,7 +366,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('binds approval-origin currentness to the exact executor credentials', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     createCliActionExecutorFromCredentials({
       credentials: {
         token: syntheticAccountToken('account-1'),
@@ -344,34 +398,27 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     })).resolves.toBe(false);
   });
 
-  it('routes only attested stored-session root clients through signed daemon control', async () => {
+  it('routes only ordinary attested stored-session CLI root clients through their captured Account daemon', async () => {
     daemonPost.mockResolvedValue({
       ok: true,
       result: { machines: [] },
     });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
-    const executor = createCliActionExecutorFromCredentials({
-      credentials: {
-        token: 'signed-daemon-account-token',
-        encryption: null,
-        credentialProvenance: 'stored_session',
-      },
-      machineId: 'machine-local',
-      externalActionClient: true,
+    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl,
+        machineId: daemonTarget.machineId, externalActionClient: true });
+      await expect(executor.execute('machines.list', { limit: 10 },
+        { surface: 'cli', authority: 'present_user', actionRequestId: 'request-signed' }))
+        .resolves.toEqual({ ok: true, result: { machines: [] } });
+      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
+        actionId: 'machines.list', input: { limit: 10 }, target: { kind: 'machine', machineId: 'machine-local' },
+        actionRequestId: 'request-signed',
+      }, expect.objectContaining({ target: daemonTarget, mutation: false }));
+      daemonPost.mockClear();
+      await expect(executor.execute('machines.list', { limit: 10 },
+        { surface: 'api', authority: 'account_automation', actionRequestId: 'request-api' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'local_executor_used' });
+      expect(daemonPost).not.toHaveBeenCalled();
     });
-
-    await expect(executor.execute(
-      'machines.list',
-      { limit: 10 },
-      { surface: 'api', authority: 'account_automation', actionRequestId: 'request-signed' },
-    )).resolves.toEqual({ ok: true, result: { machines: [] } });
-
-    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
-      actionId: 'machines.list',
-      input: { limit: 10 },
-      target: { kind: 'machine', machineId: 'machine-local' },
-      actionRequestId: 'request-signed',
-    }, expect.objectContaining({ mutation: false }));
   });
 
   it('keeps present-user Actions on signed daemon control while PAT transport refuses them', async () => {
@@ -379,25 +426,14 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       ok: true,
       result: { installed: true },
     });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
-    const signedRoot = createCliActionExecutorFromCredentials({
-      credentials: {
-        token: 'signed-daemon-account-token',
-        encryption: null,
-        credentialProvenance: 'stored_session',
-      },
-      externalActionClient: true,
+    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
+      const signedRoot = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl, externalActionClient: true });
+      await expect(signedRoot.execute('plugins.install', { source: '/workspace/plugin' },
+        { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { installed: true } });
+      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
+        actionId: 'plugins.install', input: { source: '/workspace/plugin' },
+      }, expect.objectContaining({ target: daemonTarget, mutation: true }));
     });
-
-    await expect(signedRoot.execute(
-      'plugins.install',
-      { source: '/workspace/plugin' },
-      { surface: 'cli', authority: 'present_user' },
-    )).resolves.toEqual({ ok: true, result: { installed: true } });
-    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
-      actionId: 'plugins.install',
-      input: { source: '/workspace/plugin' },
-    }, expect.objectContaining({ mutation: true }));
 
     const pat = createCliActionExecutorFromCredentials({
       credentials: {
@@ -415,47 +451,35 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('pins a fixed-Home stored-session root client to that Home daemon and fails closed when it is unavailable', async () => {
-    const daemonTarget = { pid: 42, httpPort: 4949, controlToken: 'control-home-b' };
-    resolveLiveDaemonControlTargetForServer.mockResolvedValueOnce(daemonTarget);
     daemonPost.mockResolvedValueOnce({
       ok: true,
       result: { actionSpecs: [] },
     });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
-    const credentials = {
-      token: 'signed-daemon-account-token',
-      encryption: null,
-      credentialProvenance: 'stored_session' as const,
-    };
-    const executor = createCliActionExecutorFromCredentials({
-      credentials,
-      externalActionClient: true,
-      serverId: 'home-b',
-      serverApiUrl: 'https://home-b.example.test',
-    });
+    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget, withdrawPublication }) => {
+      const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true, serverId, serverApiUrl });
+      await expect(executor.execute(
+        'action.spec.search',
+        { limit: 10 },
+        { surface: 'cli' },
+      )).resolves.toEqual({ ok: true, result: { actionSpecs: [] } });
+      expect(resolveLiveDaemonControlTargetForServer).toHaveBeenCalledWith(serverId);
+      expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
+        actionId: 'action.spec.search',
+        input: { limit: 10 },
+      }, expect.objectContaining({ target: daemonTarget, mutation: false }));
 
-    await expect(executor.execute(
-      'action.spec.search',
-      { limit: 10 },
-      { surface: 'cli' },
-    )).resolves.toEqual({ ok: true, result: { actionSpecs: [] } });
-    expect(resolveLiveDaemonControlTargetForServer).toHaveBeenCalledWith('home-b');
-    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
-      actionId: 'action.spec.search',
-      input: { limit: 10 },
-    }, expect.objectContaining({ target: daemonTarget, mutation: false }));
-
-    resolveLiveDaemonControlTargetForServer.mockResolvedValueOnce(null);
-    await expect(executor.execute(
-      'action.spec.get',
-      { actionId: 'session.status.get' },
-      { surface: 'cli' },
-    )).resolves.toEqual({
-      ok: false,
-      errorCode: 'daemon_unavailable',
-      error: 'daemon_unavailable',
+      await withdrawPublication();
+      await expect(executor.execute(
+        'action.spec.get',
+        { actionId: 'session.status.get' },
+        { surface: 'cli' },
+      )).resolves.toEqual({
+        ok: false,
+        errorCode: 'daemon_unavailable',
+        error: 'daemon_unavailable',
+      });
+      expect(daemonPost).toHaveBeenCalledTimes(1);
     });
-    expect(daemonPost).toHaveBeenCalledTimes(1);
   });
 
   it('keeps an API Token on public HTTP even when a caller supplies a non-CLI surface', async () => {
@@ -463,7 +487,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       actionSpecs: [],
     }));
     installPatActionTransportMock(fetch);
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -493,7 +516,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -551,7 +573,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -591,7 +612,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -625,7 +645,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -711,7 +730,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       reloadConfiguration();
       vi.unstubAllGlobals();
 
-      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
           token: SYNTHETIC_API_TOKEN,
@@ -763,7 +781,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       }));
       installPatActionTransportMock(fetch);
 
-      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
           token: SYNTHETIC_API_TOKEN,
@@ -803,7 +820,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         { machineId: 'machine-b', machineLabel: 'machine-b' },
       ],
     });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -839,7 +855,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -914,7 +929,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1001,7 +1015,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const fetch = vi.fn<FetchLike>(() => apiSuccess(actionId, { results: [] }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1049,7 +1062,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1108,7 +1120,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     reloadConfiguration();
     try {
       vi.unstubAllGlobals();
-      const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
           token: SYNTHETIC_API_TOKEN,
@@ -1159,7 +1170,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1191,7 +1201,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1226,7 +1235,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1265,7 +1273,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1295,7 +1302,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const fetch = vi.fn<FetchLike>();
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1331,7 +1337,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         }));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1370,7 +1375,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const fetch = vi.fn<FetchLike>(() => apiSuccess('session.spawn_new', spawnResult));
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,
@@ -1418,7 +1422,6 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
     installPatActionTransportMock(fetch);
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: SYNTHETIC_API_TOKEN,

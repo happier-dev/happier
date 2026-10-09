@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
+import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import {
   FeaturesResponseSchema,
@@ -16,17 +17,36 @@ import { configuration } from '@/configuration';
 
 type CreateCliActionExecutorOptions = Parameters<typeof CreateCliActionExecutor>[0];
 
-const execute = vi.fn();
-const prepare = vi.fn();
-const createCliActionExecutor = vi.fn((_options: CreateCliActionExecutorOptions) => ({ execute, prepare }));
-const ensureCliActionPolicySettings = vi.fn();
-const importHistoricalSessionTranscript = vi.fn();
-const createAccountServerActionDeps = vi.fn(() => ({}));
-const replaceSessionVoiceInclusions = vi.fn();
-const createSessionFollowActionDeps = vi.fn(() => ({ replaceSessionVoiceInclusions }));
-const createSessionTrackedTargetCompatibilityDep = vi.fn(() => ({}));
-const createSessionFollowSourceKeyPreparationAfterSet = vi.fn(() => vi.fn());
-const readSettings = vi.fn(async () => ({ machineId: 'machine-active-home' }));
+const {
+  execute,
+  prepare,
+  createCliActionExecutor,
+  ensureCliActionPolicySettings,
+  importHistoricalSessionTranscript,
+  createAccountServerActionDeps,
+  replaceSessionVoiceInclusions,
+  createSessionFollowActionDeps,
+  createSessionTrackedTargetCompatibilityDep,
+  createSessionFollowSourceKeyPreparationAfterSet,
+  readSettings,
+} = vi.hoisted(() => {
+  const execute = vi.fn();
+  const prepare = vi.fn();
+  const replaceSessionVoiceInclusions = vi.fn();
+  return {
+    execute,
+    prepare,
+    createCliActionExecutor: vi.fn((_options: CreateCliActionExecutorOptions) => ({ execute, prepare })),
+    ensureCliActionPolicySettings: vi.fn(),
+    importHistoricalSessionTranscript: vi.fn(),
+    createAccountServerActionDeps: vi.fn(() => ({})),
+    replaceSessionVoiceInclusions,
+    createSessionFollowActionDeps: vi.fn(() => ({ replaceSessionVoiceInclusions })),
+    createSessionTrackedTargetCompatibilityDep: vi.fn(() => ({})),
+    createSessionFollowSourceKeyPreparationAfterSet: vi.fn(() => vi.fn()),
+    readSettings: vi.fn(async () => ({ machineId: 'machine-active-home' })),
+  };
+});
 
 function axiosResponse<T>(data: T): AxiosResponse<T> {
   return {
@@ -88,7 +108,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('requires and propagates one qualified Home identity with a fixed endpoint', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -136,7 +155,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('composes Follow source-key preparation through the shared authenticated runtime owner', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -159,7 +177,6 @@ describe('createCliActionExecutorFromCredentials', () => {
       return { ok: true, result: { childSessionId: 'legacy-terminal-child' } };
     });
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -181,7 +198,6 @@ describe('createCliActionExecutorFromCredentials', () => {
 
   it('binds authenticated Home and current Machine routing facts before local approval admission', async () => {
     execute.mockResolvedValueOnce({ ok: true, result: { sessions: [] } });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -217,7 +233,6 @@ describe('createCliActionExecutorFromCredentials', () => {
 
   it('never borrows the active Home Machine for a fixed-Home executor', async () => {
     execute.mockResolvedValueOnce({ ok: true, result: { sessions: [] } });
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
         token: 'token_home_b',
@@ -237,7 +252,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('resolves a collective-only Session through the credential Home feature fallback', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const sessionId = 'c123456789012345678901234';
     const credentials = {
       token: 'token_home_b',
@@ -308,7 +322,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('acquires a collective-only transcript store through the credential Home feature fallback', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const sessionId = 'c123456789012345678901234';
     const credentials = {
       token: 'token_home_b',
@@ -392,7 +405,6 @@ describe('createCliActionExecutorFromCredentials', () => {
       return { kind: 'ready', invocation };
     });
 
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -415,7 +427,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('passes the live registered prompt adapter reader to the canonical CLI action deps', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -433,7 +444,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('passes both resolved runtime caller currentness callbacks to canonical CLI Action deps', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -454,7 +464,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('forwards target-action approval replay only when daemon composition injects it', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -475,7 +484,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('preserves the daemon-owned contributed, external-session, and exact-spawn Action seams', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -507,7 +515,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('routes transcript.import through one historical batch request', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -534,7 +541,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('preserves an injected process-lifetime transcript lease registry for bound invocations', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -558,7 +564,6 @@ describe('createCliActionExecutorFromCredentials', () => {
   });
 
   it('uses one current credential snapshot per daemon plugin action and fails closed after logout', async () => {
-    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const initialCredentials = {
       token: 'token_initial',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },

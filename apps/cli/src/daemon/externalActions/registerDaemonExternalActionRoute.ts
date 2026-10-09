@@ -16,6 +16,8 @@ import {
   type ExternalActionExecutor,
   type ResolveExternalActionTarget,
   type ResolveExternalActionEncryption,
+  type VerifyExternalActionExecutionAuthorization,
+  type PrepareExternalActionRequesterAccountContext,
 } from './executeExternalAction';
 
 type ExternalActionRouteParams = Readonly<{
@@ -120,6 +122,7 @@ export function registerDaemonExternalActionRoute(
   input: Readonly<{
     currentMachineId: string;
     currentServerId: string;
+    currentServerHttpBaseUrl?: string;
     verifyPat: DaemonPatVerifier;
     executor: ExternalActionExecutor;
     /**
@@ -142,8 +145,11 @@ export function registerDaemonExternalActionRoute(
       | Readonly<{ ok: false; code: 'invalid_token' | 'auth_unavailable' | 'server_unavailable' }>
     >;
     externalActionMachineRequestPrivateKey?: string | Uint8Array;
+    resolveInstallationId?: () => string | null;
+    verifyExecutionAuthorization?: VerifyExternalActionExecutionAuthorization;
     resolveTarget: ResolveExternalActionTarget;
     resolveEncryption?: ResolveExternalActionEncryption;
+    prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     readEncryptionAccess?: AccountServerPatEncryptionAccessReader;
   }>,
 ): void {
@@ -232,13 +238,29 @@ export function registerDaemonExternalActionRoute(
       if (minted && !minted.ok && minted.code === 'invalid_token') {
         return sendExternalActionHttpError(reply, 'invalid_token');
       }
+      const installationId = input.resolveInstallationId?.();
+      const verifyExecutionAuthorization = input.verifyExecutionAuthorization;
       const result = await executeExternalAction({
         actionId: request.params.actionId,
         envelope: request.body,
         principal: admission.principal,
         currentMachineId: input.currentMachineId,
         currentServerId: input.currentServerId,
+        ...(input.currentServerHttpBaseUrl ? { currentServerHttpBaseUrl: input.currentServerHttpBaseUrl } : {}),
+        ...(installationId ? {
+          currentInstallationId: installationId,
+          isInstallationCurrent: () => input.resolveInstallationId?.() === installationId,
+        } : {}),
+        ...(verifyExecutionAuthorization ? {
+          verifyExecutionAuthorization: async (verification) => {
+            const installationId = verification.authorization.binding.installationId;
+            if (input.resolveInstallationId?.() !== installationId) return false;
+            const current = await verifyExecutionAuthorization(verification);
+            return current && input.resolveInstallationId?.() === installationId;
+          },
+        } : {}),
         resolveEncryption: input.resolveEncryption,
+        prepareRequesterAccountContext: input.prepareRequesterAccountContext,
         resolveTarget: input.resolveTarget,
         executor: input.executor,
         ...(minted?.ok ? { executionAuthorization: minted.authorization } : {}),

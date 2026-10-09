@@ -116,6 +116,23 @@ describe('sessionRegistry', () => {
     expect(markers2[0].happySessionId).toBe('sess-2');
   }, 60_000);
 
+  it('retains only admitted requester attribution through same-process marker rewrites and stored extras', async () => {
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+    const attribution = { serverId: 'home', accountId: 'alice', machineId: 'machine', installationId: 'installation' };
+    const ownership = { pid: 12349, happySessionId: 'requester-session', processStartTimeMs: 1234 };
+    await writeSessionMarker({ ...ownership, requesterWorkAttributionV1: attribution });
+    expect((await listSessionMarkers())[0]).toMatchObject({ requesterWorkAttributionV1: attribution });
+    const markerPath = join(happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12349.json');
+    const raw = JSON.parse(readFileSync(markerPath, 'utf8'));
+    raw.requesterWorkAttributionV1.futurePresentation = { note: 'safe future field' };
+    writeFileSync(markerPath, JSON.stringify(raw));
+    expect((await listSessionMarkers())[0]).toMatchObject({ requesterWorkAttributionV1: attribution });
+    await writeSessionMarker(ownership);
+    expect((await listSessionMarkers())[0]).toMatchObject({ requesterWorkAttributionV1: attribution });
+    await writeSessionMarker({ ...ownership, processStartTimeMs: 1235 });
+    expect((await listSessionMarkers())[0]).not.toHaveProperty('requesterWorkAttributionV1');
+  });
+
   it('persists only the stable runner daemon-service authority path', async () => {
     const {
       listSessionMarkers,

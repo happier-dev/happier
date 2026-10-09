@@ -31,6 +31,64 @@ const CLAUDE_SUBSCRIPTION_SERVICE_KEY = 'happier.agent.claude/claude-subscriptio
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('withholds a requester credential when admission is lost during its authenticated read', async () => {
+    let current = true;
+    const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+      [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'bob' },
+    } };
+    const record = buildConnectedServiceCredentialRecord({ now: 1_000, serviceId: 'openai-codex',
+      profileId: 'bob', kind: 'oauth', oauth: { accessToken: 'bob-access', refreshToken: 'bob-refresh', idToken: null, scope: null, tokenType: null, providerAccountId: null, providerEmail: null } });
+    const api = qualifiedApiForRecord(record);
+    vi.spyOn(axios, 'get').mockImplementation(async () => {
+      current = false;
+      return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'bob' },
+        authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision: CREDENTIAL_REVISION,
+        configurationRevision: null, content: { t: 'plain', v: { v: 1, values: {
+          accessToken: 'bob-access', refreshToken: 'bob-refresh',
+        } } }, metadata: { scopes: [] },
+      }) };
+    });
+    await expect(materializeSessionConnectedServiceRuntimeAuthSelection({
+      credentials: { token: 'bob-token', encryption: null }, api: api as unknown as ApiClient,
+      isCurrent: async () => current,
+      input: { mode: 'apply', tracked: { startedBy: 'daemon', happySessionId: 'bob-session', pid: 123 },
+        sessionId: 'bob-session', agentId: 'codex', serviceId: CODEX_SERVICE_KEY,
+        previous: null, next: { source: 'connected', selection: 'profile', serviceId: CODEX_SERVICE_KEY, profileId: 'bob', groupId: null },
+        previousBindings: bindings, normalizedBindings: bindings,
+      },
+    })).rejects.toThrow('requester_session_not_current');
+  });
+
+  it('prepares the exact qualified credential revision for restart without a legacy native record', async () => {
+    const serviceId = 'acme.plugin/novel-service';
+    const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+      [serviceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
+    } };
+    const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: 'qualified-session', pid: 123,
+      spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, connectedServices: bindings },
+    };
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      expect(new URL(String(url)).pathname).toBe('/v4/connect/qualified/credential');
+      return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref: { service: { pluginId: 'acme.plugin', localId: 'novel-service' }, accountId: 'work' },
+        authenticationModeId: 'personal-oauth', revisionSemantics: 'revisioned', credentialRevision: CREDENTIAL_REVISION,
+        configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { accessToken: 'selected', refreshToken: 'selected-refresh' } } }, metadata: { scopes: [] },
+      }) };
+    });
+    const result = await materializeSessionConnectedServiceRuntimeAuthSelection({
+      credentials: { token: 'token', encryption: null },
+      api: { getAccountEncryptionMode: async () => 'plain' } as unknown as ApiClient,
+      input: { mode: 'apply', tracked, sessionId: 'qualified-session', agentId: 'codex', serviceId,
+        previous: { source: 'connected', selection: 'profile', serviceId, profileId: 'work', groupId: null },
+        next: { source: 'connected', selection: 'profile', serviceId, profileId: 'work', groupId: null },
+        previousBindings: bindings, normalizedBindings: bindings,
+      },
+    });
+    expect(result).toMatchObject({ serviceId, profileId: 'work', credentialRevision: CREDENTIAL_REVISION });
+    expect(result).not.toHaveProperty('credential');
+  });
+
   it.each(['device', 'oauth', 'manual'])('preserves the exact native credential contract for %s mode', async (authenticationModeId) => {
     const credentialRevision = CREDENTIAL_REVISION;
     const bindings: ConnectedServiceBindingsV2 = {

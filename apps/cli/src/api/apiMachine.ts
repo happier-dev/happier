@@ -4,6 +4,9 @@
  */
 
 import axios from 'axios';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { MachineUpdateMetadataResponseSchema, MachineUpdateStateResponseSchema } from '@happier-dev/protocol/machines/metadataUpdate';
+import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema, TeamCredentialExternalProviderOperationRetireResponseV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { randomBytes } from 'node:crypto';
 import { MachineLiveStreamDecodedEnvelopeV1Schema, MachineLiveStreamRelayEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
@@ -11,8 +14,9 @@ import { hasMachineLiveStreamSensitiveContentV1, sealMachineLiveStreamEnvelopeV1
 import type { MachineLiveStreamPayloadErrorCodeV1, MachineLiveStreamWireEnvelopeV1 } from '@happier-dev/protocol';
 import { isDeepStrictEqual } from 'node:util';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
+import { readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
+import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
 import {
     readCurrentMessageActionReferenceRowV1,
     resolveMessageActionReferenceSnapshotV1,
@@ -21,22 +25,40 @@ import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphe
 import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { FeaturesResponse, IrohEndpointDescriptorV1, ActionOperationRevisionEphemeralV1, ConnectedServiceExecutionAuthorityV1, ExternalSessionSourceUnavailableOccurrenceV1 } from '@happier-dev/protocol';
-import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { fetchAccountProfile } from './accountProfile';
 import { fetchAccountEncryptionCurrentness } from './client/connectedServiceCredentialApi';
+import { readAccountEncryptionModeOnce } from './client/accountEncryptionMode';
+import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { classifyTransportErrorToProbeResult } from '@/api/connection/classifyTransportErrorToProbeResult';
 import { resolveMachineSessionInputAdmissionCapability } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { createCurrentMachineExecutionOriginContextResolver } from './machine/resolveCurrentMachineExecutionOriginContext';
+import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
+import { resolveCliHomeTarget } from '@/server/homeTarget';
+import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
+import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { PendingActivationRequestedEphemeralV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
 import { callSocketRpc, isSocketIoAckTimeoutError, type SocketRpcContent } from '@happier-dev/sync-client';
 import type { SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
+    WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1,
+    type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
+import { createWorkspaceSyncTargetContent } from './rpc/workspaceSyncTargetContent';
+import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
+    HandoffTargetReplacementPreflightResultV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema,
+    WorkspaceSyncTargetBootstrapReleaseResultV1Schema,
+    type WorkspaceSyncHandoffSourcePhaseRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { projectWorkspaceSyncPhysicalContextFromActionContext, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { WorkspaceSyncTargetPhaseDescriptor } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerAutomationReplyHandoffRpcHandler } from '@/rpc/handlers/automationReplyHandoff';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
@@ -46,6 +68,7 @@ import {
     type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import {
     createTrackedSessionHandoffCoordinator,
     createHostActionOperationRuntime,
@@ -63,6 +86,7 @@ import {
     registerDaemonBrowserControlHandler,
 } from '@/rpc/handlers/daemonBrowserControl';
 import { registerDaemonComputerHandler } from '@/rpc/handlers/daemonComputer';
+import { registerManagedFiniteWake } from '@/rpc/handlers/managedFiniteWake';
 import type { ComputerRoutes } from '@/daemon/computer/routes';
 import {
     registerDaemonBrowserContextHandler,
@@ -82,6 +106,13 @@ import {
 } from '@/rpc/handlers/daemonLiveStreamRelay';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
+import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
+import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
+import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
+import { createPreparedFilesystemTransferActionExecutor, projectPreparedFilesystemActionResult } from '@/machines/transfer/createPreparedFilesystemTransferActionExecutor';
+import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { registerWorkspaceAnchorHandlers } from '@/rpc/handlers/workspaceAnchors/registerWorkspaceAnchorHandlers';
 import { registerWorkspaceFaviconHandlers } from '@/rpc/handlers/workspaceFavicon/registerWorkspaceFaviconHandlers';
@@ -92,7 +123,7 @@ import {
     RpcHandlerManager,
     type RpcHandlerRegistrationReadiness,
 } from './rpc/RpcHandlerManager';
-import type { RpcHandlerActiveExecution, RpcHandlerInvoker, RpcLocalActionContext } from './rpc/types';
+import type { RpcHandlerActiveExecution, RpcHandlerContext, RpcHandlerInvoker, RpcLocalActionContext } from './rpc/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
@@ -102,6 +133,7 @@ import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machin
 import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
 import type { ExternalSessionTranscriptInvalidationV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionStatusDemandDaemonMessageV1, MachineLiveStreamRelayEnvelopeV1, MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, PeerTcpTunnelRelayEnvelope, ExactSessionTurnEndMutationV1, TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
+import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readAccountChangesCursor, writeAccountChangesCursor } from '@/persistence';
 import {
     publishPluginAccountCollectionWatchInvalidation,
@@ -116,9 +148,23 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { hydrateSavedSecretCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { changesRequireSavedSecretCatalogRefresh } from '@/settings/secrets/savedSecretCatalogChangeInvalidation';
+import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { refreshDemandedActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { refreshDemandedActivePromptLibraryCatalog } from '@/settings/prompts/hydratePromptLibraryCatalog';
+import { refreshDemandedActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
+import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { refreshDemandedActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { refreshDemandedActiveNotificationChannelCatalog } from '@/settings/notifications/hydrateNotificationChannelCatalog';
+import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { refreshDemandedActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { refreshDemandedActiveConnectedAccountCatalogs } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
+import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import {
     resolveServerHttpBaseUrl,
     resolveServerSocketIoTransports,
+    runWithServerHttpBaseUrl,
 } from './client/serverHttpBaseUrl';
 import { createAuthenticationHttpStatusError, isAuthenticationError, isAuthenticationStatus } from './client/httpStatusError';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
@@ -155,7 +201,18 @@ import {
 import {
     registerMachineConnectedAccountRpcHandlers,
 } from './machine/rpcHandlers.connectedAccounts';
-import { authorizeMachineRpcRequest } from './machine/machineRpcAuthorization';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyManagedActivityTargetCurrent,
+    readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
+    doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
+    readWorkspaceSyncTargetMethod } from './machine/machineRpcAuthorization';
+import type { MachineTerminalAccountReadRuntime } from './machine/rpcHandlers.terminal';
+import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
+import type { MachineWorkSummaryRpcOwner } from './machine/rpcHandlers.machineWorkSummary';
+import { createAccountServerActionDeps } from './accountServerActionDeps';
+import { createLiveWorkProducerGroup, type LiveWorkInventoryV1 } from '@/daemon/lifecycle/managedActivity';
+import { createExecutionBudgetRegistry } from '@/daemon/executionBudget/createExecutionBudgetRegistry';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { projectIncomingMachineRpcDebugPayload } from './machine/projectIncomingMachineRpcDebugPayload';
 import { projectMachineRpcTransportAcknowledgement } from './machine/projectMachineRpcTransportAcknowledgement';
 import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
@@ -210,12 +267,12 @@ export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page
 export function emitActionOperationSnapshotV1(params: Readonly<{
     socket: Pick<Socket<ServerToDaemonEvents, DaemonToServerEvents>, 'emit'> | null;
     machineId: string;
-    ciphertext: string;
+    content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content'];
 }>): void {
     params.socket?.emit(ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, {
         type: ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
         machineId: params.machineId,
-        content: { t: 'encrypted', c: params.ciphertext },
+        content: params.content,
     });
 }
 
@@ -251,11 +308,18 @@ export type AccountSettingsVersionHintNotification = Readonly<{
     source: AccountSettingsVersionHintSource;
 }>;
 
+export type AccountProjectRowsChangeNotification = Readonly<{
+    source: 'changes' | 'connect' | 'reconnect' | 'cursor-gone' | 'page-limit';
+    signal: AbortSignal;
+}>;
+
 export type PendingSessionActivationHintNotification = Readonly<{
     sessionId: string;
     requestId: string;
     pendingVersion: number;
     source: 'changes' | 'live';
+    target?: SessionInputMachineTargetV1;
+    requestedAt?: number;
 }>;
 
 export type SessionDeletedChangeNotification = Readonly<{
@@ -305,6 +369,20 @@ export type ConnectedServicesProjectionNotification = Readonly<{
 }>;
 
 export type ApiMachineClientLifecycleDependencies = Readonly<{
+    requesterSessionRuntime?: MachineRpcHandlerDeps['requesterSessionRuntime'];
+    requesterBootstrapBoundary?: MachineRpcHandlerDeps['requesterBootstrapBoundary'];
+    managedActivity?: Pick<ManagedActivityRpcOwner, 'activity' | 'admissionDrain'>;
+    /** Pure observation of the daemon's incumbent Project admission. */
+    readProjectFiniteLoad?: MachineWorkSummaryRpcOwner['readFiniteLoad'];
+    createProjectFiniteRuntime?: MachineRpcHandlerDeps['createProjectFiniteRuntime'];
+    /** Reference to the daemon's incumbent prepared-transfer lifecycle, never a second owner. */
+    directPeerServerLifecycle?: DirectTransferServerLifecycle;
+    /** The authenticated ApiClient owns published-key resolution and decoding. */
+    loadMachine?: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<Machine | null>;
+    /** Invalidate demanded consumers after opened metadata changes or its context retires. */
+    onMachineMetadataChanged?: () => void;
+    /** Authorized finite-operation inspection reevaluates the incumbent admission queue. */
+    onProjectOperationInspection?: Parameters<typeof createHostActionOperationRuntime>[0]['onInspection'];
     liveStreamCaptureRegistry?: import('@/daemon/peer/mediation/stream/captureRegistry').MachineLiveStreamCaptureRegistry;
     resolveHostedSessionWorkingDirectory?: (sessionId: string) => Promise<string | null>;
     isDaemonQuiescing?: () => boolean;
@@ -366,27 +444,42 @@ function isMachineReplacedSocketError(error: unknown): boolean {
 /** Serialize the consumed machine activity stream through one Account encryption boundary. */
 export function createActionOperationSnapshotPublisher(input: Readonly<{
     resolveAccountId(): Promise<string | null>;
-    readCredentials?: typeof readStoredCredentials;
-    publishCiphertext(ciphertext: string): void;
+    serverBaseUrl: string;
+    readCredentials: typeof readStoredCredentials;
+    publishContent(content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content']): void;
 }>) {
     let pending = Promise.resolve();
     return (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): Promise<void> => {
         pending = pending.then(async () => {
-            const credentials = await (input.readCredentials ?? readStoredCredentials)().catch(() => null);
-            if (!credentials?.encryption) return;
+            const credentials = await input.readCredentials().catch(() => null);
+            if (!credentials) return;
             const accountId = await input.resolveAccountId();
             if (!accountId || snapshot.scope.accountId !== accountId || readAccountIdFromToken(credentials.token) !== accountId) {
                 logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
                 return;
             }
+            const accountMode = await readAccountEncryptionModeOnce({ request: () => axios.get(
+                `${input.serverBaseUrl.replace(/\/+$/, '')}/v1/account/encryption`, {
+                    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` },
+                    timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: () => true,
+                },
+            ) });
+            if (accountMode.kind !== 'resolved') return;
+            const currentCredentials = await input.readCredentials().catch(() => null);
+            if (!isDeepStrictEqual(currentCredentials, credentials)) return;
+            if (accountMode.mode === 'plain') {
+                input.publishContent({ t: 'plain', v: projectActionOperationSnapshotForV1Reader(snapshot) });
+                return;
+            }
+            if (!credentials.encryption) return;
             const material = credentials.encryption.type === 'legacy'
                 ? { type: 'legacy' as const, secret: credentials.encryption.secret }
                 : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
-            input.publishCiphertext(sealAccountScopedBlobCiphertext({
-                kind: 'action_operation_snapshot', material, payload: snapshot,
+            input.publishContent({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+                kind: 'action_operation_snapshot', material, payload: projectActionOperationSnapshotForV1Reader(snapshot),
                 randomBytes: (length) => new Uint8Array(randomBytes(length)),
-            }));
-        }).catch((error) => logger.warn('Failed to publish Action operation snapshot', { error }));
+            }) });
+        }).catch((error) => logger.warn('Failed to publish Action operation snapshot', { error: serializeAxiosErrorForLog(error) }));
         return pending;
     };
 }
@@ -402,6 +495,7 @@ export class ApiMachineClient {
     private projectionSchedulingClosed = false;
     private updateListeners = new Set<(update: Update) => boolean | void>();
     private accountSettingsVersionHintListeners = new Set<(hint: AccountSettingsVersionHintNotification) => void | Promise<void>>();
+    private accountProjectRowsChangeListeners = new Set<(change: AccountProjectRowsChangeNotification) => void | Promise<void>>();
     private pendingSessionActivationHintListeners = new Set<(
         hint: PendingSessionActivationHintNotification,
     ) => void | Promise<void>>();
@@ -428,12 +522,108 @@ export class ApiMachineClient {
     private daemonTerminalSessionMutationOutboxes = new Map<string, DaemonSessionClientDurableMutationOutbox>();
     private readonly machineRpcWorkingDirectory: string;
     private readonly filesystemAccessPolicy: FilesystemAccessPolicy;
+    private externalActionIngressOwner: ExternalActionIngressOwner | null = null;
     private additionalAllowedReadDirs: string[] = [];
     private additionalAllowedWriteDirs: string[] = [];
     private readonly transientSessionMediaReadAllowance = createTransientSessionMediaReadAllowance();
     private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
     private readonly rpcLifecycleRegistrations: MachineRpcLifecycleRegistration[] = [];
+    private readonly executionBudgetRegistry = createExecutionBudgetRegistry();
+    private readonly machineRuntimeServerHttpBaseUrl: string;
+    private readonly machineRuntimeServerId = configuration.activeServerId;
+    private readonly machineRuntimeInstallationId = readInstallationIdentityIfExistsSync()?.installationId ?? null;
+    private managedActivityPublicationCleanup: (() => void) | null = null;
+    private readonly liveWorkProducer = createLiveWorkProducerGroup(() => {
+        const registration = this.rpcLifecycleRegistrations.at(-1);
+        return registration?.liveWorkProducers
+            ? [this.actionOperationRuntime.activity, ...registration.liveWorkProducers]
+            : null;
+    });
+
+    getLiveWorkProducer() { return this.liveWorkProducer; }
+
+    /** Host-private port to the installed terminal/output owner. */
+    getFiniteTerminalSessions() {
+        return this.projectionSchedulingClosed ? null : this.rpcLifecycleRegistrations.at(-1)?.getFiniteTerminalSessions() ?? null;
+    }
+
+    /** Host-private C42 input; requester display authority remains with C41 ingress. */
+    async readLiveWorkInventory(): Promise<LiveWorkInventoryV1> {
+        return await this.lifecycleDependencies.managedActivity?.activity.read()
+            ?? { coverage: 'unknown', items: [] };
+    }
+
+    /** Host effect port, backed by the currently installed finite PTY/operation owner. */
+    async resolveProjectFiniteRuntime(ingress: RpcHandlerContext) {
+        const registration = this.rpcLifecycleRegistrations.at(-1);
+        return await registration?.resolveProjectFiniteRuntime?.(ingress) ?? null;
+    }
+
+    /** Host-private Account provenance for observation/wakes, never effect admission. */
+    async resolveInstalledAccountObservationRuntime(signal: AbortSignal): Promise<MachineTerminalAccountReadRuntime | null> {
+        return this.resolveInstalledAccountRuntime(signal);
+    }
+
+    /** Host-private setup custody. The Action owner, not this port, admits effects. */
+    async resolveMachineEnvironmentRuntime(ingress: RpcHandlerContext): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+        return this.resolveInstalledMachineAccountRuntime(ingress);
+    }
+
+    /** Private Session reads never borrow an installed custodian's Account. */
+    async resolveOwnSessionRuntime(ingress: RpcHandlerContext): Promise<MachineTerminalAccountReadRuntime | null> {
+        if (ingress.machineAdmission?.actorAccountId !== ingress.machineAdmission?.custodianAccountId) return null;
+        return this.resolveInstalledMachineAccountRuntime(ingress);
+    }
+
+    private async resolveInstalledMachineAccountRuntime(ingress: RpcHandlerContext): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCustodyCurrent(): Promise<boolean> }>) | null> {
+        const admission = ingress.machineAdmission;
+        if (!admission || !ingress.verifyMachineAdmissionCurrent
+            || admission.machineId !== this.machine.id
+            || !this.machineRuntimeInstallationId
+            || admission.installationId !== this.machineRuntimeInstallationId) return null;
+        try {
+            if (ingress.signal.aborted || !await ingress.verifyMachineAdmissionCurrent()) return null;
+            const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, admission.custodianAccountId);
+            if (!runtime) return null;
+            const isCurrent = async () => await runtime.isCurrent() && await ingress.verifyMachineAdmissionCurrent!()
+                && await runtime.isCurrent();
+            if (!await isCurrent()) return null;
+            return { ...runtime, isCurrent };
+        } catch { return null; }
+    }
+
+    private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string): Promise<(MachineTerminalAccountReadRuntime & Readonly<{ isCurrent(): Promise<boolean>; isCustodyCurrent(): Promise<boolean> }>) | null> {
+        if (!this.machineRuntimeInstallationId) return null;
+        const ownerCurrent = () => !this.projectionSchedulingClosed
+            && configuration.activeServerId === this.machineRuntimeServerId
+            && readInstallationIdentityIfExistsSync()?.installationId === this.machineRuntimeInstallationId;
+        try {
+            if (signal.aborted || !ownerCurrent()) return null;
+            const accountId = await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl,
+                () => this.getAccountId(signal));
+            if (!ownerCurrent() || expectedAccountId !== undefined && accountId !== expectedAccountId) return null;
+            const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
+            if (!credentials || credentials.token !== this.token) return null;
+            const credentialsCurrent = async () => ownerCurrent() && sameStoredCredentials(credentials,
+                await readStoredCredentialsForServerId(this.machineRuntimeServerId).catch(() => null)) && ownerCurrent();
+            const isCurrent = async () => !signal.aborted && await credentialsCurrent() && !signal.aborted;
+            if (!await isCurrent()) return null;
+            return { serverId: this.machineRuntimeServerId, machineId: this.machine.id, accountId,
+                credentials, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, isCurrent, isCustodyCurrent: credentialsCurrent };
+        } catch { return null; }
+    }
+
+    /** Trusted host custody delegates to the actual registered PTY owners. */
+    async cleanupRequesterMachineTerminals(input: Parameters<MachineRpcLifecycleRegistration['cleanupRequesterMachineTerminals']>[0]) {
+        let incomplete = false;
+        for (const registration of this.rpcLifecycleRegistrations) {
+            const result = await registration.cleanupRequesterMachineTerminals(input);
+            if (result.kind !== 'settled') incomplete = true;
+        }
+        return { kind: incomplete ? 'incomplete' as const : 'settled' as const };
+    }
     private connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
+    private connectedServicePoolSelectionRead: import('./machine/rpcHandlers.connectedAccounts').ConnectedServicePoolSelectionRead | null = null;
     private connectedAccountPurposeBindingRuntime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
         'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
@@ -449,6 +639,7 @@ export class ApiMachineClient {
     private externalActionExecutionAuthorizationV1OutcomeRequired = false;
     private currentIrohMachineEndpoint: IrohEndpointDescriptorV1 | null = null;
     private localServicePreviewNativeAccessLive = false;
+    private projectFiniteExecutionLive = false;
     private pendingPersistedIrohEndpointWithdrawal = false;
     /** Reflects only an installed provider-broker application handler; the
      * composition root owns the fact, this client only publishes it. */
@@ -484,8 +675,24 @@ export class ApiMachineClient {
         serviceLabel?: string;
     }>;
     private readonly lifecycleDependencies: ApiMachineClientLifecycleDependencies;
-    private readonly machineContentCodec: MachineContentCodec;
+    private readonly prepareMachineRecipientEnvelopes: (machineIds: readonly string[], signal: AbortSignal) => Promise<void>;
+    private machineContentContext: Readonly<{ codec: MachineContentCodec; ready: boolean }>;
+    private get machineContentCodec(): MachineContentCodec { return this.machineContentContext.codec; }
+    private get machineContentReady(): boolean { return this.machineContentContext.ready; }
     private readonly actionOperationRuntime: HostActionOperationRuntime;
+
+    observeActionExecution(request: Parameters<HostActionOperationRuntime['observeExecution']>[0]) {
+        return this.actionOperationRuntime.observeExecution(request);
+    }
+
+    /** Installed content transport facts, independent of the invoking Account's mode. */
+    getMachineEncryptionMode(): 'plain' | 'e2ee' {
+        return this.machine.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+    }
+
+    cleanupRequesterMachineOperations(input: Parameters<HostActionOperationRuntime['cleanupRequesterMachineOperations']>[0]) {
+        return this.actionOperationRuntime.cleanupRequesterMachineOperations(input);
+    }
 
     private shouldSuppressMachinePublication(allowWhileQuiescing = false): boolean {
         return !allowWhileQuiescing
@@ -579,6 +786,7 @@ export class ApiMachineClient {
                 ...state,
                 status: 'running',
                 pid: process.pid,
+                contributionRegistryProjectionRevision: state?.contributionRegistryProjectionRevision ?? 0,
                 httpPort: this.machine.daemonState?.httpPort,
                 startedAt: Date.now(),
             }));
@@ -686,7 +894,32 @@ export class ApiMachineClient {
         this.machine.daemonState = this.discardUnverifiedIrohEndpoint(this.machine.daemonState);
         this.ownershipMetadata = ownershipMetadata ?? {};
         this.lifecycleDependencies = lifecycleDependencies ?? {};
-        this.machineContentCodec = createMachineContentCodec(this.machine);
+        const machineRuntimeServerId = configuration.activeServerId;
+        const machineRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
+        this.prepareMachineRecipientEnvelopes = async (machineIds, signal) => {
+            if (machineIds.length === 0) return;
+            const transportGeneration = this.activeTransportGeneration;
+            const credential = await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null);
+            const accountId = readAccountIdFromToken(this.token);
+            if (!credential || credential.token !== this.token || !accountId || signal.aborted || this.projectionSchedulingClosed) return;
+            const isCurrent = async () => !signal.aborted && !this.projectionSchedulingClosed
+                && this.isActiveTransportGeneration(transportGeneration)
+                && configuration.activeServerId === machineRuntimeServerId
+                && isDeepStrictEqual(await readStoredCredentialsForServerId(machineRuntimeServerId).catch(() => null), credential);
+            if (!await isCurrent()) return;
+            const [{ prepareMachineAccessKeyEnvelopes }, { runSessionDataKeyPreparationDetached }] = await Promise.all([
+                import('./machineAccessGrantEnvelopeHost'),
+                import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
+            ]);
+            for (const machineId of new Set(machineIds)) {
+                if (!await isCurrent()) return;
+                await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'machine-data-key-envelopes', machineId]),
+                    () => prepareMachineAccessKeyEnvelopes({ credentials: credential, serverId: machineRuntimeServerId,
+                        serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl, machineId, signal, isCredentialCurrent: isCurrent }));
+            }
+        };
+        this.machineRuntimeServerHttpBaseUrl = machineRuntimeServerHttpBaseUrl;
+        this.machineContentContext = { codec: createMachineContentCodec(this.machine), ready: true };
         this.sessionSyncPendingInputServerContractController =
             createSessionSyncPendingInputServerContractController({
                 serverUrl: resolveServerHttpBaseUrl(),
@@ -702,8 +935,36 @@ export class ApiMachineClient {
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
             scopePrefix: this.machine.id,
+            localMachineId: this.machine.id,
             ...rpcTransportConfig,
-            authorizeRequest: authorizeMachineRpcRequest,
+            prepareRequesterAccountContext: (input) => this.externalActionIngressOwner?.prepareRequesterAccountContext?.(input)
+                ?? Promise.resolve(null),
+            authorizeRequest: (request) => authorizeMachineRpcRequest(request, {
+                machineId: this.machine.id,
+                resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(machineRuntimeServerHttpBaseUrl, () => this.getAccountId(signal)),
+                resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
+                verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, callerInputAuthorization }) => {
+                    const installation = readInstallationIdentityIfExistsSync();
+                    if (!installation || !workspaceSyncSourceRouting && !workspaceSyncTargetRouting && !workspaceSyncSourceWriterTargetRouting
+                        && installation.installationId !== context.installationId) return false;
+                    return verifyMachineRpcAdmissionCurrent({ context, method,
+                        ...(custodySubjectAccountId !== undefined ? { custodySubjectAccountId } : {}),
+                        ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting,
+                            workspaceSyncSourceReceiver: { machineId: this.machine.id, installationId: installation.installationId },
+                            ...(callerInputAuthorization ? { callerInputAuthorization } : {}) } : {}),
+                        ...(workspaceSyncTargetRouting ? { workspaceSyncTargetRouting,
+                            workspaceSyncTargetReceiver: { machineId: this.machine.id, installationId: installation.installationId } } : {}),
+                        ...(workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting,
+                            ...(!workspaceSyncTargetRouting ? { workspaceSyncSourceWriterTargetReceiver: {
+                                machineId: this.machine.id, installationId: installation.installationId,
+                                accountId: readAccountIdFromToken(this.token) ?? '' } } : {}),
+                            ...(callerInputAuthorization ? { callerInputAuthorization } : {}) } : {}),
+                        privateKey: installation.privateKey, daemonToken: this.token,
+                        serverHttpBaseUrl: machineRuntimeServerHttpBaseUrl,
+                        ...(signal ? { signal } : {}),
+                    });
+                },
+            }),
             projectTransportAcknowledgement: projectMachineRpcTransportAcknowledgement,
             logger: (msg, data) => logger.debug(msg, data),
             onRegistrationError: (error) => {
@@ -731,13 +992,23 @@ export class ApiMachineClient {
                 });
             },
         });
+        const operationInstallation = readInstallationIdentityIfExistsSync();
         this.actionOperationRuntime = createHostActionOperationRuntime({
+            serverId: configuration.activeServerId,
             machineId: this.machine.id,
+            ...(operationInstallation ? { custodyBinding: {
+                serverId: machineRuntimeServerId, installationId: operationInstallation.installationId,
+            } } : {}),
             resolveAccountId: async () => await this.getAccountId(),
+            ...(this.lifecycleDependencies.onProjectOperationInspection
+                ? { onInspection: this.lifecycleDependencies.onProjectOperationInspection } : {}),
             publishSnapshot: createActionOperationSnapshotPublisher({
                 resolveAccountId: async () => await this.getAccountId(),
-                publishCiphertext: (ciphertext) => emitActionOperationSnapshotV1({
-                    socket: this.socket, machineId: this.machine.id, ciphertext,
+                serverBaseUrl: machineRuntimeServerHttpBaseUrl,
+                readCredentials: async () => this.projectionSchedulingClosed || configuration.activeServerId !== machineRuntimeServerId
+                    ? null : await readStoredCredentialsForServerId(machineRuntimeServerId),
+                publishContent: (content) => emitActionOperationSnapshotV1({
+                    socket: this.socket, machineId: this.machine.id, content,
                 }),
             }),
             supportsCoreCancellation: (actionId, input) => {
@@ -760,6 +1031,8 @@ export class ApiMachineClient {
             resolveCurrentMachineId: () => this.machine.id,
         });
         registerSessionHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            executionBudgetRegistry: this.executionBudgetRegistry,
+            admissionDrain: this.lifecycleDependencies.managedActivity?.admissionDrain,
             accessPolicy: this.filesystemAccessPolicy,
             ...(this.lifecycleDependencies.createCapabilitiesApiClient
                 ? {
@@ -860,6 +1133,30 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedReadFiles: () => this.transientSessionMediaReadAllowance.readAllowedReadFiles(),
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs,
+            mutationMachineId: this.machine.id,
+            resolveMutationActionExecutor: () => this.externalActionIngressOwner && !this.projectionSchedulingClosed ? {
+                execute: async (actionId, input, context) => {
+                    const owner = this.externalActionIngressOwner;
+                    if (!owner || this.projectionSchedulingClosed) return {
+                        ok: false, errorCode: 'filesystem_action_owner_unavailable',
+                        error: 'The current filesystem Action owner is unavailable',
+                    };
+                    if (context?.serverId && context.serverId !== owner.currentServerId) return {
+                        ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable',
+                    };
+                    const requesterAccountId = context?.runtimeAccountId?.trim()
+                        || context?.externalActionCredential?.accountId.trim();
+                    if (!requesterAccountId) return {
+                        ok: false, errorCode: 'filesystem_requester_unavailable',
+                        error: 'The verified filesystem requester is unavailable',
+                    };
+                    return await owner.executor.execute(actionId, input, {
+                        ...context, serverId: owner.currentServerId,
+                        externalActionTarget: { kind: 'machine', machineId: this.machine.id },
+                        runtimeAccountId: requesterAccountId,
+                    });
+                },
+            } : null,
             composerMediaStage: {
                 executionTarget: {
                     serverId: configuration.activeServerId,
@@ -892,6 +1189,7 @@ export class ApiMachineClient {
             rpcHandlerManager: this.rpcHandlerManager,
             machineId: this.machine.id,
             getRuntime: () => this.connectedAccountDaemonRuntime,
+            getPoolSelectionRead: () => this.connectedServicePoolSelectionRead,
         });
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
         // even when no session is currently active.
@@ -922,6 +1220,11 @@ export class ApiMachineClient {
     }>): MachineRpcLifecycleRegistration {
         const executionRunRuntimeAccountId = readAccountIdFromToken(this.token) ?? undefined;
         const executionRunServerId = configuration.activeServerId;
+        const workSummaryInstallation = readInstallationIdentityIfExistsSync();
+        const workSummaryAccess = createAccountServerActionDeps({ token: this.token,
+            serverId: executionRunServerId, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+            isCredentialCurrent: async () => (await readStoredCredentialsForServerId(executionRunServerId).catch(() => null))?.token === this.token,
+        });
         const executionRunApprovalDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => {
             const credentials = await readStoredCredentialsForServerId(executionRunServerId).catch(() => null);
             return credentials?.token === this.token ? credentials : null;
@@ -933,6 +1236,10 @@ export class ApiMachineClient {
         this.externalActionExecutionAuthorizationV1OutcomeRequired =
             deps?.externalActionIngressOwner?.externalActionMachineRequestPrivateKey !== undefined;
         this.agentCatalogObservation = deps?.agentCatalogObservation ?? null;
+        const resolveExternalActionOrigin = createCurrentMachineExecutionOriginContextResolver({
+            serverUrl: resolveServerHttpBaseUrl(),
+            resolveCurrentMachineId: () => this.machine.id,
+        });
         const machineRpcLifecycleRegistration = registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
             handlers: {
@@ -956,16 +1263,149 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                ...(deps?.deviceLocalSecretStorage && workSummaryInstallation && executionRunRuntimeAccountId ? {
+                    nativeUsage: {
+                        authority: { serverId: executionRunServerId, accountId: executionRunRuntimeAccountId, machineId: this.machine.id },
+                        installationId: workSummaryInstallation.installationId,
+                        activeServerDir: configuration.activeServerDir,
+                        serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                        token: this.token,
+                        storage: deps.deviceLocalSecretStorage,
+                        readCredentials: async () => this.projectionSchedulingClosed
+                            ? null : await readStoredCredentialsForServerId(executionRunServerId),
+                    },
+                } : {}),
+                ownSessionRuntime: (ingress) => this.resolveOwnSessionRuntime(ingress),
+                executionBudgetRegistry: this.executionBudgetRegistry,
+                ...(this.lifecycleDependencies.managedActivity && workSummaryInstallation && executionRunRuntimeAccountId ? {
+                    machineWorkSummary: {
+                        target: { serverId: executionRunServerId, machineId: this.machine.id, installationId: workSummaryInstallation.installationId },
+                        custodianAccountId: executionRunRuntimeAccountId,
+                        activity: this.lifecycleDependencies.managedActivity.activity,
+                        ...(this.lifecycleDependencies.readProjectFiniteLoad
+                            ? { readFiniteLoad: this.lifecycleDependencies.readProjectFiniteLoad } : {}),
+                        readAccess: async (signal) => await workSummaryAccess.machineAccessAction!({ actionId: 'machines.access.grants.list',
+                            input: { serverId: executionRunServerId, machineId: this.machine.id }, context: { surface: 'cli', serverId: executionRunServerId }, signal }),
+                    },
+                } : {}),
+                ...(this.lifecycleDependencies.managedActivity ? {
+                    managedActivity: {
+                        ...this.lifecycleDependencies.managedActivity,
+                        validateCurrentTarget: async (managedTarget, context, method) => {
+                            const installation = readInstallationIdentityIfExistsSync();
+                            if (!context.machineAdmission || !installation
+                                || installation.installationId !== context.machineAdmission.installationId) return false;
+                            return await verifyManagedActivityTargetCurrent({
+                                context: context.machineAdmission, managedTarget, method,
+                                privateKey: installation.privateKey, daemonToken: this.token,
+                                serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                                signal: context.signal,
+                            });
+                        },
+                        commitIdleEvidence: (managedTarget, idle, context) => {
+                            const installation = readInstallationIdentityIfExistsSync();
+                            if (!context.machineAdmission || !installation
+                                || context.signal.aborted
+                                || installation.installationId !== context.machineAdmission.installationId
+                                || context.machineAdmission.machineId !== this.machine.id
+                                || !this.lifecycleDependencies.managedActivity?.admissionDrain.isQuiescing()
+                                || this.lifecycleDependencies.managedActivity.admissionDrain.isFinalShutdown()) return null;
+                            const method = `${this.machine.id}:${MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD}`;
+                            const decision = { ...idle, confirmedAt: Date.now() };
+                            return { context: context.machineAdmission, method, managedTarget, decision,
+                                proof: signMachineInstallationProof({ privateKey: installation.privateKey, payload: {
+                                    version: 1, machineId: this.machine.id, installationId: installation.installationId,
+                                    accountId: context.machineAdmission.custodianAccountId,
+                                    rpcAdmission: { context: context.machineAdmission, method, managedTarget, managedIdleDecision: decision },
+                                } }),
+                            };
+                        },
+                    } satisfies ManagedActivityRpcOwner,
+                } : {}),
+                ...(this.lifecycleDependencies.createProjectFiniteRuntime ? {
+                    createProjectFiniteRuntime: this.lifecycleDependencies.createProjectFiniteRuntime,
+                    beforeProjectFiniteRetire: async () => {
+                        await this.setProjectFiniteExecutionLive(false).catch((error) => {
+                            logger.debug('[API MACHINE] Failed to acknowledge finite execution withdrawal', {
+                                error: serializeAxiosErrorForLog(error),
+                            });
+                        });
+                    },
+                } : {}),
                 actionsSettingsProvider,
                 currentMachineId: this.machine.id,
+                ...(this.lifecycleDependencies.requesterSessionRuntime ? { requesterSessionRuntime: this.lifecycleDependencies.requesterSessionRuntime } : {}),
+                requesterBootstrapBoundary: this.lifecycleDependencies.requesterBootstrapBoundary ?? {
+                    serverId: this.machineRuntimeServerId,
+                    serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                    happyHomeDir: configuration.happyHomeDir,
+                    getObservedServerIdentityId: async () => (await resolveExternalActionOrigin())?.serverIdentityId ?? null,
+                    readInstallation: async () => {
+                        const identity = readInstallationIdentityIfExistsSync();
+                        return identity && !this.projectionSchedulingClosed
+                            && identity.installationId === this.machineRuntimeInstallationId
+                            && configuration.activeServerId === this.machineRuntimeServerId
+                            ? { machineId: this.machine.id, identity } : null;
+                    },
+                },
+                currentServerId: configuration.activeServerId,
                 ...(executionRunRuntimeAccountId ? { executionRunRuntimeAccountId } : {}),
                 executionRunApprovalDeps,
+                ...(executionRunRuntimeAccountId ? {
+                    projectOpen: {
+                        ...deps?.projectOpen,
+                        serverId: executionRunServerId,
+                        serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+                        machineId: this.machine.id,
+                        accountId: executionRunRuntimeAccountId,
+                        setupPreparation: deps?.projectOpen?.setupPreparation ?? {
+                            nativeIo: projectNativeSystemIo,
+                            platform: { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },
+                            successHomeDir: configuration.happyHomeDir,
+                        },
+                        ...(this.lifecycleDependencies.workspaceSyncHandoffAdapter ? {
+                            workspaceSyncAdapter: this.lifecycleDependencies.workspaceSyncHandoffAdapter,
+                        } : {}),
+                        readCredentials: async () => {
+                            if (configuration.activeServerId !== executionRunServerId) return null;
+                            const credentials = await readStoredCredentialsForServerId(executionRunServerId).catch(() => null);
+                            return credentials?.token === this.token ? credentials : null;
+                        },
+                    },
+                } : {}),
                 ...(deps?.externalActionIngressOwner
                     ? {
                         externalAction: {
                             ...deps.externalActionIngressOwner,
+                            resolveEncryption: async (signal, authorization) => {
+                                if (authorization
+                                    && authorization.binding.accountId !== authorization.binding.custodianAccountId
+                                    && authorization.binding.target.kind === 'machine') {
+                                    const context = this.machineContentContext;
+                                    const machine = this.machine;
+                                    if (!context.ready || machine.encryptionMode === 'plain'
+                                        || machine.encryptionVariant !== 'dataKey') return null;
+                                    const origin = await resolveExternalActionOrigin(signal);
+                                    return origin && context === this.machineContentContext ? {
+                                        serverIdentityId: origin.serverIdentityId,
+                                        material: { type: 'dataKey', machineKey: machine.encryptionKey },
+                                    } : null;
+                                }
+                                return await deps.externalActionIngressOwner?.resolveEncryption?.(signal, authorization) ?? null;
+                            },
                             machineId: this.machine.id,
                             resolveAccountId: async (signal) => await this.getAccountId(signal),
+                            resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
+                            verifyExecutionAuthorization: async (input) => {
+                                const installation = readInstallationIdentityIfExistsSync();
+                                if (!installation || installation.installationId !== input.authorization.binding.installationId) return false;
+                                return await verifyExternalActionExecutionAuthorizationCurrent({
+                                    ...input,
+                                    privateKey: installation.privateKey,
+                                    installationId: installation.installationId,
+                                    serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+                                });
+                            },
                         },
                     }
                     : {}),
@@ -973,6 +1413,8 @@ export class ApiMachineClient {
                     attachOwner: this.actionOperationRuntime.attachOwner,
                     handlers: this.actionOperationRuntime.handlers,
                     observeExecution: this.actionOperationRuntime.observeExecution,
+                    waitForProjectTerminalAttachment: this.actionOperationRuntime.waitForProjectTerminalAttachment,
+                    retireProjectFiniteOperations: this.actionOperationRuntime.retireProjectFiniteOperations,
                 },
                 ...(this.lifecycleDependencies.workspaceSync
                     ? { workspaceSync: this.lifecycleDependencies.workspaceSync }
@@ -984,8 +1426,27 @@ export class ApiMachineClient {
                     ? {
                         sessionHandoffCoordinator: createTrackedSessionHandoffCoordinator({
                             expectedAccountServerId: configuration.activeServerId,
+                            resolveWorkspaceAccountServerId: async (signal, options) => await this.readWorkspaceSyncHomeIdentity({
+                                effectful: true, requireFreshHome: options?.requireFreshHome ?? true, ...(signal ? { signal } : {}),
+                            }),
                             readCredentials: async () => await readStoredCredentials().catch(() => null),
-                            callMachine: async (input) => input.machineId === this.machine.id
+                            handoffAuthorization: {
+                                sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir: configuration.activeServerDir }),
+                                serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                                readSourceInstallation: () => {
+                                    const installation = readInstallationIdentityIfExistsSync();
+                                    return !this.projectionSchedulingClosed && configuration.activeServerId === this.machineRuntimeServerId
+                                        && installation?.installationId === this.machineRuntimeInstallationId
+                                        ? { machineId: this.machine.id, installationId: installation.installationId,
+                                            privateKey: installation.privateKey } : null;
+                                },
+                            },
+                            callWorkspaceSourcePhase: async (descriptor, context) => {
+                                const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
+                                if (!credentials) throw Object.assign(new Error('Workspace source transport is unavailable'), { code: 'peer_unavailable' });
+                                return await this.callWorkspaceSyncHandoffSourcePhase({ ...descriptor, context, credentials });
+                            },
+                            callMachine: async (input) => input.machineId === this.machine.id && !input.externalAction
                                 ? await this.rpcHandlerManager.invokeLocal(
                                     input.method,
                                     input.request,
@@ -1036,7 +1497,88 @@ export class ApiMachineClient {
             },
         });
         this.rpcLifecycleRegistrations.push(machineRpcLifecycleRegistration);
+        this.liveWorkProducer.notifyChanged();
+        if (!this.managedActivityPublicationCleanup && this.lifecycleDependencies.managedActivity) {
+            this.managedActivityPublicationCleanup = this.lifecycleDependencies.managedActivity.activity.subscribe((decision) => {
+                void this.updateDaemonState((state) => ({ ...(state ?? { status: 'running' as const }), managedActivity: decision }))
+                    .catch((error) => logger.debug('[API MACHINE] Managed activity publication failed', { error: serializeAxiosErrorForLog(error) }));
+            });
+        }
+        void this.setProjectFiniteExecutionLive(machineRpcLifecycleRegistration.projectFiniteExecutionInstalled)
+            .catch((error) => logger.warn('[API MACHINE] Finite execution capability publication failed', error));
+        this.rpcHandlerManager.replaceOwnedHandlers('machine-project-definitions', () => {
+            if (deps?.externalActionIngressOwner) registerProjectDefinitionHandlers({
+                rpcHandlerManager: this.rpcHandlerManager,
+                machineId: this.machine.id,
+                actionExecutor: deps.externalActionIngressOwner.executor,
+            });
+        });
+        this.externalActionIngressOwner = deps?.externalActionIngressOwner ?? null;
         return machineRpcLifecycleRegistration;
+    }
+
+    /** Effect dependency consumed only after the daemon's full Action admission. */
+    createProjectDefinitionAction(serverId: string): ReturnType<typeof createProjectDefinitionAction> {
+        return createProjectDefinitionAction({
+            serverId, machineId: this.machine.id, workingDirectory: this.machineRpcWorkingDirectory,
+            accessPolicy: this.filesystemAccessPolicy,
+            acquirePluginRuntime: acquireAuthoritativePluginRuntimeRegistryLease,
+        });
+    }
+
+    /** Effect dependency reached only after the canonical Action admission. */
+    createFilesystemActionExecutor(serverId: string): NonNullable<ActionExecutorDeps['filesystemActionExecute']> {
+        const lifecycle = this.lifecycleDependencies.directPeerServerLifecycle;
+        const transfer = lifecycle ? createPreparedFilesystemTransferActionExecutor({ lifecycle,
+            admissionDrain: this.lifecycleDependencies.managedActivity?.admissionDrain,
+            workingDirectory: this.machineRpcWorkingDirectory, accessPolicy: this.filesystemAccessPolicy,
+            getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
+            getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
+        return async (request) => {
+            const admittedOwner = this.externalActionIngressOwner;
+            if (!admittedOwner || this.projectionSchedulingClosed) {
+                return { ok: false, errorCode: 'filesystem_action_owner_unavailable', error: 'The current filesystem Action owner is unavailable' };
+            }
+            const target = request.context.externalActionTarget;
+            if (request.context.serverId !== serverId || target?.kind !== 'machine' || target.machineId !== this.machine.id) {
+                return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable' };
+            }
+            const assertCurrentAuthority = async () => {
+                request.context.signal?.throwIfAborted();
+                const projection = request.context.externalActionExecutionAuthorization?.requesterAccountProjection;
+                if (projection && !await projection.isCurrent()) throw new Error('Filesystem requester admission is no longer current');
+                request.context.signal?.throwIfAborted();
+                if (this.externalActionIngressOwner !== admittedOwner || this.projectionSchedulingClosed) {
+                    throw Object.assign(new Error('The admitted filesystem Action owner is no longer current'), { code: 'filesystem_action_owner_unavailable' });
+                }
+                const currentTarget = request.context.externalActionTarget;
+                if (request.context.serverId !== serverId || currentTarget?.kind !== 'machine' || currentTarget.machineId !== this.machine.id) {
+                    throw new Error('Filesystem target is no longer current');
+                }
+            };
+            if (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
+                && 'kind' in request.input && request.input.kind === 'target_copy') {
+                return { ok: false, errorCode: 'filesystem_transfer_custody_required', error: 'Target copy requires a mounted caller byte driver' };
+            }
+            if (request.actionId === 'daemon.filesystem.upload' || request.actionId === 'daemon.filesystem.download'
+                || request.actionId === 'daemon.filesystem.transfer.cancel'
+                || (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
+                    && 'kind' in request.input && request.input.kind === 'prepared_transfer')) {
+                if (!transfer) return { ok: false, errorCode: 'machine_carrier_unavailable', error: 'Prepared filesystem transfer owner is unavailable' };
+                const result = await transfer({ ...request, assertCurrentAuthority });
+                return result.success ? result : projectPreparedFilesystemActionResult(result);
+            }
+            const result = await executeFilesystemMutationAction({ actionId: request.actionId, input: request.input,
+                workingDirectory: this.machineRpcWorkingDirectory, accessPolicy: this.filesystemAccessPolicy,
+                getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
+                getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs,
+                signal: request.context.signal, operationId: request.context.operationAcceptance?.operationId,
+                assertCurrentAuthority });
+            if (request.actionId === 'daemon.filesystem.copy' && !result.success && 'status' in result && result.status === 'unknown') {
+                return projectPreparedFilesystemActionResult(result);
+            }
+            return result;
+        };
     }
 
     getPeerMediationMachineRpcHandlerManager(): RpcHandlerInvoker {
@@ -1047,6 +1589,10 @@ export class ApiMachineClient {
                 options,
             ),
         };
+    }
+
+    registerMachineAccessLossReceiver(options: Omit<Parameters<typeof registerMachineAccessLossReceiver>[1], 'machineId'>): void {
+        registerMachineAccessLossReceiver(this.rpcHandlerManager, { ...options, machineId: this.machine.id });
     }
 
     /** Host-private exact-daemon Action transport; local context never reaches Socket.IO. */
@@ -1097,6 +1643,10 @@ export class ApiMachineClient {
         this.connectedAccountDaemonRuntime = runtime;
     }
 
+    registerConnectedServicePoolSelectionRead(read: import('./machine/rpcHandlers.connectedAccounts').ConnectedServicePoolSelectionRead): void {
+        this.connectedServicePoolSelectionRead = read;
+    }
+
     registerConnectedAccountPurposeBindingRuntime(runtime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
         'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
@@ -1106,6 +1656,10 @@ export class ApiMachineClient {
 
     registerComputerRoutes(resolveComputer: () => ComputerRoutes | null): void {
         registerDaemonComputerHandler(this.rpcHandlerManager, { resolveComputer });
+    }
+
+    registerManagedFiniteWake(input: Parameters<typeof registerManagedFiniteWake>[1]): void {
+        registerManagedFiniteWake(this.rpcHandlerManager, input);
     }
 
     registerBrowserControlRoutes(browserControl: BrowserDaemonControlRoutes): void {
@@ -1156,6 +1710,11 @@ export class ApiMachineClient {
         return () => {
             this.accountSettingsVersionHintListeners.delete(listener);
         };
+    }
+
+    onAccountProjectRowsChanged(listener: (change: AccountProjectRowsChangeNotification) => void | Promise<void>): () => void {
+        this.accountProjectRowsChangeListeners.add(listener);
+        return () => { this.accountProjectRowsChangeListeners.delete(listener); };
     }
 
     onPendingSessionActivationHint(
@@ -1358,6 +1917,16 @@ export class ApiMachineClient {
         }
     }
 
+    private async notifyAccountProjectRowsChanged(change: AccountProjectRowsChangeNotification): Promise<void> {
+        for (const listener of this.accountProjectRowsChangeListeners) {
+            change.signal.throwIfAborted();
+            // The opened rows must be published before this durable feed page
+            // is acknowledged. Refusal leaves the cursor for the retry owner.
+            await listener(change);
+        }
+        change.signal.throwIfAborted();
+    }
+
     onMachineTransferEnvelope(listener: (payload: MachineTransferReceiveEnvelope) => void): () => void {
         this.machineTransferListeners.add(listener);
         return () => {
@@ -1413,7 +1982,7 @@ export class ApiMachineClient {
      * `happier daemon status` and `happier doctor` can report it instead of a PID probe.
      */
     isMachineControlRegistrationReady(): boolean {
-        return this.socket !== null
+        return this.machineContentReady && this.socket !== null
             && this.machineControlRunningGeneration === this.activeTransportGeneration;
     }
 
@@ -1441,7 +2010,7 @@ export class ApiMachineClient {
         Readonly<{ ok: true } | { ok: false; code: MachineLiveStreamPayloadErrorCodeV1 }>
     > {
         const socket = this.socket;
-        if (!socket) return { ok: false, code: 'stream_transport_unavailable' };
+        if (!socket || !this.machineContentReady) return { ok: false, code: 'stream_transport_unavailable' };
         const parsed = MachineLiveStreamDecodedEnvelopeV1Schema.safeParse(payload);
         if (!parsed.success) return { ok: false, code: 'stream_payload_invalid' };
         if (!hasMachineLiveStreamSensitiveContentV1(parsed.data)) {
@@ -1460,7 +2029,7 @@ export class ApiMachineClient {
             this.failMachineLiveStreamPayload(parsed.data, sealed.code);
             return sealed;
         }
-        if (this.socket !== socket) return { ok: false, code: 'stream_transport_unavailable' };
+        if (this.socket !== socket || codec !== this.machineContentCodec || !this.machineContentReady) return { ok: false, code: 'stream_transport_unavailable' };
         socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, sealed.value);
         return { ok: true };
     }
@@ -1546,7 +2115,7 @@ export class ApiMachineClient {
         options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void }>,
     ): Promise<Readonly<{ ok: true; result: TResult }> | Readonly<{ ok: false; error?: string; errorCode?: string }>> {
         const socket = this.socket;
-        if (!socket) {
+        if (!socket || !this.machineContentReady) {
             return { ok: false, errorCode: 'machine_socket_unavailable' };
         }
         const timeoutMs = options?.timeoutMs === null ? null
@@ -1611,6 +2180,278 @@ export class ApiMachineClient {
             authorization: { kind: 'session.action', sessionId: request.sessionId, origin: request.origin },
             timeoutMs: null,
             ...(request.signal ? { signal: request.signal } : {}),
+        });
+    }
+
+    /** The installed child's existing socket attests its admitted workspace effect, never parent Account authority. */
+    async callWorkspaceSyncHandoffSourcePhase(input: Readonly<{
+        machineId: string;
+        credentials: import('@/persistence').StoredCredentials;
+        context: RpcActionExecutorContext;
+        request: WorkspaceSyncHandoffSourcePhaseRequestV1;
+        signal?: AbortSignal;
+    }>): Promise<unknown> {
+        const request = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse(input.request);
+        const workspaceSyncSourceRouting = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1,
+            phase: request.phase, operationId: request.input.operationId, accountServerId: request.input.accountServerId,
+            sourceMachineId: request.input.sourceMachineId, sourceRootPath: request.input.sourceRootPath,
+            ...(request.input.sourceSessionId ? { sourceSessionId: request.input.sourceSessionId } : {}),
+            sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(input.context) });
+        const effectful = request.phase === 'prepare' || request.phase === 'finalize';
+        return WorkspaceSyncHandoffSourcePhaseResultV1Schema.parse(await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+            method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, request,
+            originalMachineId: request.input.sourceMachineId, accountServerId: request.input.accountServerId,
+            requireCurrentAdmission: effectful, signedEffectActionId: 'session.handoff',
+            routing: { workspaceSyncSourceRouting },
+        }));
+    }
+
+    /** Only the installed chosen target can attest its own admitted namespace to the physical writer. */
+    async callWorkspaceSyncTargetPhase(input: WorkspaceSyncTargetPhaseDescriptor & Readonly<{
+        credentials: import('@/persistence').StoredCredentials;
+        context: RpcActionExecutorContext;
+    }>): Promise<unknown> {
+        if (input.context.workspaceSyncSourceWriterTargetRouting) {
+            const workspaceSyncSourceWriterTargetRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(
+                input.context.workspaceSyncSourceWriterTargetRouting);
+            if (input.routing.phase === 'release' && input.physicalEndpoint) {
+                const physicalEndpoint = MachineInstallationPublicIdentityV1Schema.parse(input.physicalEndpoint);
+                if (input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+                    || input.machineId !== physicalEndpoint.machineId
+                    || !isDeepStrictEqual(input.routing, workspaceSyncSourceWriterTargetRouting.target)
+                    || ('workspaceSyncTargetRouting' in input.context && input.context.workspaceSyncTargetRouting !== undefined)
+                    || input.context.callerInputAuthorization || input.context.externalActionExecutionAuthorization
+                    || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, { ...input.routing,
+                        targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
+                    throw Object.assign(new Error('Workspace target cleanup authority is unavailable'), { code: 'peer_unavailable' });
+                }
+                return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input, physicalEndpoint,
+                    originalMachineId: this.machine.id, accountServerId: input.routing.accountServerId,
+                    requireCurrentAdmission: false, routing: { workspaceSyncSourceWriterTargetRouting } });
+            }
+            const admittedContext = projectWorkspaceSyncPhysicalContextFromActionContext(input.context);
+            const workspaceSyncTargetRouting = WorkspaceSyncTargetRoutingV1Schema.parse({ ...input.routing,
+                targetContext: { ...workspaceSyncSourceWriterTargetRouting.source.sourceContext,
+                    machineAdmission: admittedContext.machineAdmission } });
+            if (input.method !== readWorkspaceSyncTargetMethod(input.routing.phase)
+                || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting)
+                || admittedContext.callerAuthority !== workspaceSyncTargetRouting.targetContext.callerAuthority
+                || !isDeepStrictEqual(admittedContext.sessionActionOrigin, workspaceSyncTargetRouting.targetContext.sessionActionOrigin)
+                || !isDeepStrictEqual(admittedContext.callerInputConstraints, workspaceSyncTargetRouting.targetContext.callerInputConstraints)
+                || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, workspaceSyncTargetRouting)) {
+                throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
+            }
+            return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+                originalMachineId: workspaceSyncTargetRouting.targetMachineId,
+                accountServerId: workspaceSyncTargetRouting.accountServerId, requireCurrentAdmission: input.routing.phase !== 'release',
+                signedEffectActionId: 'session.handoff',
+                routing: { workspaceSyncSourceWriterTargetRouting, workspaceSyncTargetRouting } });
+        }
+        if (input.context.workspaceSyncSourceRouting && input.context.callerInputAuthorization) {
+            const installation = readInstallationIdentityIfExistsSync();
+            if (!installation) throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
+            const workspaceSyncSourceWriterTargetRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+                source: input.context.workspaceSyncSourceRouting, target: input.routing,
+                sourceWriter: { machineId: this.machine.id, installationId: installation.installationId } });
+            if (input.method !== readWorkspaceSyncTargetMethod(input.routing.phase)
+                || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, { ...input.routing,
+                    targetContext: workspaceSyncSourceWriterTargetRouting.source.sourceContext })) {
+                throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
+            }
+            const result = await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+                originalMachineId: workspaceSyncSourceWriterTargetRouting.source.sourceMachineId,
+                accountServerId: input.routing.accountServerId, requireCurrentAdmission: input.routing.phase !== 'release',
+                signedEffectActionId: 'session.handoff', routing: { workspaceSyncSourceWriterTargetRouting } });
+            return input.routing.phase === 'preflight' ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
+                : input.routing.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result)
+                : WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+        }
+        const workspaceSyncTargetRouting = WorkspaceSyncTargetRoutingV1Schema.parse({ ...input.routing,
+            targetContext: projectWorkspaceSyncPhysicalContextFromActionContext(input.context) });
+        if (input.method !== readWorkspaceSyncTargetMethod(workspaceSyncTargetRouting.phase)
+            || !doesWorkspaceSyncTargetRequestMatchRouting(input.request, workspaceSyncTargetRouting)) {
+            throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
+        }
+        const result = await this.callWorkspaceSyncPhysicalMachineRpc({ ...input,
+            originalMachineId: workspaceSyncTargetRouting.targetMachineId, accountServerId: workspaceSyncTargetRouting.accountServerId,
+            requireCurrentAdmission: workspaceSyncTargetRouting.phase !== 'release',
+            ...(input.context.externalActionExecutionAuthorization
+                ? { signedEffectActionId: input.context.externalActionExecutionAuthorization.binding.actionId } : {}),
+            routing: { workspaceSyncTargetRouting },
+        });
+        switch (workspaceSyncTargetRouting.phase) {
+            case 'preflight': return HandoffTargetReplacementPreflightResultV1Schema.parse(result);
+            case 'prepare': return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);
+            case 'release': return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+        }
+    }
+
+    private async readWorkspaceSyncHomeIdentity(input: Readonly<{ effectful: true; requireFreshHome?: boolean; signal?: AbortSignal }>
+        | Readonly<{ effectful: false; originalHomeId: string; signal?: AbortSignal }>): Promise<string> {
+        const target = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: this.machineRuntimeServerId }).catch(error => {
+            if (!(error instanceof HomeTargetResolutionError) || error.code !== 'profile_missing') throw error;
+            return resolveCliHomeTarget({ kind: 'https_url', url: this.machineRuntimeServerHttpBaseUrl });
+        });
+        if (!input.effectful) {
+            // Release has no new feature/Session/native prerequisite. The actual installed socket and
+            // receiving Home proof authenticate cleanup against the parent's exact retained operation.
+            return target.homeServerIdentityId ?? input.originalHomeId;
+        }
+        if (input.requireFreshHome === false && target.homeServerIdentityId) return target.homeServerIdentityId;
+        const observed = await createCurrentMachineExecutionOriginContextResolver({
+            serverUrl: this.machineRuntimeServerHttpBaseUrl,
+            resolveCurrentMachineId: () => this.machine.id,
+        })(input.signal);
+        if (!observed) throw new Error('Current workspace Home identity is unavailable');
+        return assertResolvedHomeTargetIdentity(target, observed.serverIdentityId);
+    }
+
+    private async callWorkspaceSyncPhysicalMachineRpc(input: Readonly<{
+        machineId: string;
+        credentials: import('@/persistence').StoredCredentials;
+        context: RpcActionExecutorContext;
+        request: unknown;
+        method: string;
+        originalMachineId: string;
+        accountServerId: string;
+        requireCurrentAdmission: boolean;
+        signedEffectActionId?: string;
+        physicalEndpoint?: MachineInstallationPublicIdentityV1;
+        routing: Readonly<{ workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1 }>
+            | Readonly<{ workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1 }>
+            | Readonly<{ workspaceSyncSourceWriterTargetRouting: WorkspaceSyncSourceWriterTargetRoutingV1;
+                workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1 }>;
+        signal?: AbortSignal;
+    }>): Promise<unknown> {
+        const socket = this.socket;
+        const admission = input.context.machineAdmission;
+        const installation = readInstallationIdentityIfExistsSync();
+        const custodianAccountId = readAccountIdFromToken(this.token);
+        const forwardWork = input.requireCurrentAdmission;
+        const writerTarget = 'workspaceSyncSourceWriterTargetRouting' in input.routing ? input.routing.workspaceSyncSourceWriterTargetRouting : undefined;
+        const targetRouting = 'workspaceSyncTargetRouting' in input.routing ? input.routing.workspaceSyncTargetRouting : undefined;
+        const jointTarget = writerTarget && targetRouting;
+        const signedAuthorization = writerTarget ? input.context.callerInputAuthorization : input.context.externalActionExecutionAuthorization;
+        const originalSourceRouting = 'workspaceSyncSourceRouting' in input.routing ? input.routing.workspaceSyncSourceRouting : undefined;
+        const admittedSourceRoot = forwardWork && !writerTarget && originalSourceRouting !== undefined
+            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
+            && signedAuthorization !== undefined && input.context.callerInputAuthorization?.token === signedAuthorization.token
+            && isDeepStrictEqual(input.context.callerInputAuthorization?.binding, signedAuthorization.binding)
+            && doesWorkspaceSyncSourceRootMatchRouting(signedAuthorization, originalSourceRouting);
+        const retainedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
+            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE && input.physicalEndpoint !== undefined
+            && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
+        const signedBinding = signedAuthorization?.binding;
+        const unavailable = () => Object.assign(new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' });
+        if (!socket?.connected || !admission || !installation || !custodianAccountId
+            || forwardWork && input.context.callerInputAuthorization && !writerTarget && !admittedSourceRoot
+            || writerTarget && (retainedWriterRelease
+                ? writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
+                    || admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
+                    || admission.actorAccountId !== custodianAccountId || admission.role !== 'manage'
+                    || input.context.authority !== 'present_user' || input.originalMachineId !== this.machine.id
+                : !signedAuthorization || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(signedAuthorization, writerTarget,
+                    jointTarget ? admission : undefined)
+                || input.originalMachineId !== admission.machineId
+                || (jointTarget
+                    ? admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
+                        || this.machine.id !== writerTarget.target.targetMachineId
+                        || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(targetRouting, writerTarget)
+                        || !isDeepStrictEqual(targetRouting.targetContext.machineAdmission, admission)
+                    : writerTarget.sourceWriter.machineId !== this.machine.id || writerTarget.sourceWriter.installationId !== installation.installationId
+                        || !isDeepStrictEqual(writerTarget.source.sourceContext.machineAdmission, admission)))
+            || !writerTarget && (admission.machineId !== this.machine.id || input.originalMachineId !== this.machine.id
+                || admission.installationId !== installation.installationId)
+            || admission.custodianAccountId !== custodianAccountId
+            || readAccountIdFromToken(input.credentials.token) !== custodianAccountId
+            || configuration.activeServerId !== this.machineRuntimeServerId
+            || forwardWork && (!input.context.verifyMachineAdmissionCurrent || !await input.context.verifyMachineAdmissionCurrent())) {
+            throw unavailable();
+        }
+        try {
+            const homeId = await this.readWorkspaceSyncHomeIdentity(forwardWork
+                ? { effectful: true, ...(input.signal ? { signal: input.signal } : {}) }
+                : { effectful: false, originalHomeId: input.accountServerId, ...(input.signal ? { signal: input.signal } : {}) });
+            if (homeId !== input.accountServerId || configuration.activeServerId !== this.machineRuntimeServerId
+                || this.socket !== socket || !socket.connected
+                || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+        } catch { throw unavailable(); }
+        if (forwardWork && signedBinding && !writerTarget && (signedBinding.actionId !== input.signedEffectActionId
+            || signedBinding.machineId !== admission.machineId || signedBinding.installationId !== installation.installationId
+            || signedBinding.accountId !== admission.actorAccountId || signedBinding.custodianAccountId !== custodianAccountId
+            || !input.context.externalActionTarget || !externalActionTargetsEqualV1(signedBinding.target, input.context.externalActionTarget))) {
+            throw unavailable();
+        }
+        if (writerTarget) {
+            // Key discovery is an effectful first-hop purpose. Cleanup already
+            // holds its Home-witnessed recipient; the current installed source
+            // socket and the recipient's signed Home proof authenticate release.
+            const verified = retainedWriterRelease ? null : await readMachineRpcAdmissionCurrent({ context: admission,
+                method: `${input.machineId}:${input.method}`, workspaceSyncSourceWriterTargetRouting: writerTarget,
+                ...(signedAuthorization ? { callerInputAuthorization: signedAuthorization } : {}),
+                ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting,
+                    workspaceSyncTargetReceiver: { machineId: this.machine.id, installationId: installation.installationId,
+                        destinationMachineId: input.machineId } }
+                    : { workspaceSyncSourceWriterTargetReceiver: { machineId: this.machine.id, installationId: installation.installationId,
+                        accountId: custodianAccountId, destinationMachineId: input.machineId } }),
+                privateKey: installation.privateKey, daemonToken: this.token, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
+                ...(input.signal ? { signal: input.signal } : {}) });
+            const destination = retainedWriterRelease ? input.physicalEndpoint : verified?.destinationInstallation;
+            if (!retainedWriterRelease && !verified || !destination || destination.machineId !== input.machineId
+                || !retainedWriterRelease && input.machineId === writerTarget.target.targetMachineId
+                    && destination.installationId !== signedAuthorization?.binding.handoffAdmission?.targetInstallationId
+                || configuration.activeServerId !== this.machineRuntimeServerId || this.socket !== socket || !socket.connected
+                || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+            const content = createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: writerTarget });
+            const result = await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
+                params: input.request, content, workspaceSyncSourceWriterTargetRouting: writerTarget,
+                ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
+                ...(forwardWork && signedAuthorization ? { createExternalActionExecution: wire => {
+                    const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
+                        externalActionExecutionAuthorization: signedAuthorization, externalActionTarget: signedAuthorization.binding.target },
+                        effectActionId: 'session.handoff', installationId: installation.installationId,
+                        method: wire.method, requestId: wire.requestId, params: wire.params,
+                        workspaceSyncSourceWriterTargetRouting: writerTarget, privateKey: installation.privateKey });
+                    if (!execution) throw unavailable();
+                    return execution;
+                } } : {}), ...(input.signal ? { signal: input.signal } : {}) });
+            if (writerTarget.target.phase === 'release') return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
+            const parsed = writerTarget.target.phase === 'preflight'
+                ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
+                : WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);
+            // Only the installed chosen child's independently verified physical
+            // recipient is a cleanup destination. P1's first-hop witness names D,
+            // so it must retain the P2 result instead of replacing it with D.
+            if (!jointTarget) return parsed;
+            if (parsed.physicalEndpoint && !isDeepStrictEqual(parsed.physicalEndpoint, destination)) throw unavailable();
+            return { ...parsed, physicalEndpoint: destination };
+        }
+        const { ApiClient } = await import('./api');
+        const parent = await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl, async () =>
+            await (await ApiClient.create(input.credentials)).getMachine(input.machineId,
+                input.signal ? { signal: input.signal } : undefined));
+        if (!parent || this.socket !== socket || !socket.connected
+            || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+        const codec = createMachineContentCodec(parent);
+        const content: SocketRpcContent = codec.mode === 'plain' ? { mode: 'plain' } : {
+            mode: 'e2ee', cipher: {
+                encryptRaw: async value => codec.encodeRpc(value),
+                decryptRaw: async value => codec.decodeRpc(value),
+            },
+        };
+        return await callSocketRpc({ socket,
+            target: { kind: 'machine', id: input.machineId }, method: input.method,
+            params: input.request, content, ...input.routing, timeoutMs: null,
+            // Forward work exercises the original signed credential. Cleanup releases retained custody
+            // under the current installed child's socket and exact captured context, even after borrower revocation.
+            ...(forwardWork && signedAuthorization ? { createExternalActionExecution: (wire) => {
+                const execution = createExternalActionMachineRpcExecution({ context: input.context,
+                    effectActionId: input.signedEffectActionId ?? signedAuthorization.binding.actionId, installationId: installation.installationId,
+                    method: wire.method, requestId: wire.requestId, params: wire.params, privateKey: installation.privateKey });
+                if (!execution) throw unavailable();
+                return execution;
+            } } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
         });
     }
 
@@ -1874,6 +2715,9 @@ export class ApiMachineClient {
             ...(this.localServicePreviewNativeAccessLive
                 ? { localServicePreviewNativeAccess: { protocolVersions: [1] } }
                 : {}),
+            ...(this.projectFiniteExecutionLive
+                ? { projectFiniteExecution: { protocolVersions: [1] } }
+                : {}),
             ...(this.providerBrokerIngressAdvertised
                 ? { providerBrokerIngress: { protocolVersions: [1] } }
                 : {}),
@@ -2003,6 +2847,16 @@ export class ApiMachineClient {
         await this.refreshOperationProtocolCapabilitiesAdvertisement();
     }
 
+    /** The finite ingress lifetime supplies this fact; Home publication ACK proves support. */
+    async setProjectFiniteExecutionLive(live: boolean): Promise<void> {
+        this.projectFiniteExecutionLive = live;
+        await this.refreshOperationProtocolCapabilitiesAdvertisement();
+    }
+
+    isProjectFiniteExecutionLive(): boolean {
+        return this.projectFiniteExecutionLive;
+    }
+
     private async refreshOperationProtocolCapabilitiesAdvertisement(currentServerFeatures?: FeaturesResponse): Promise<void> {
         const socket = this.socket;
         if (!socket || socket.connected !== true) return;
@@ -2024,6 +2878,7 @@ export class ApiMachineClient {
         if (this.shouldSuppressMachinePublication()) {
             return 'suppressed';
         }
+        this.readOwnerEnvelopeForWrite();
         return await backoff(async () => {
             if (this.shouldSuppressMachinePublication()) {
                 return 'suppressed';
@@ -2031,32 +2886,57 @@ export class ApiMachineClient {
             if (!this.socket) {
                 throw new Error('Machine socket is not connected');
             }
-            const updated = handler(this.machine.metadata);
+            if (!this.machineContentReady) {
+                await this.refreshMachineFromServer();
+                if (!this.machineContentReady) throw new Error('Machine content key is unavailable');
+            }
+            const codec = this.machineContentCodec;
+            const expectedVersion = this.machine.metadataVersion;
+            const expectedDataEncryptionKey = this.readOwnerEnvelopeForWrite();
+            const currentMetadata = this.machine.metadata === null ? null : StoredMachinePublishedMetadataV1Schema.parse(this.machine.metadata);
+            const updated = parseMachinePublishedMetadataV1(handler(currentMetadata));
 
             // No-op: don't write if nothing changed.
             if (this.machine.metadata && JSON.stringify(updated) === JSON.stringify(this.machine.metadata)) {
                 return 'unchanged';
             }
 
-            const answer = await emitSocketWithAck<any>({
-                socket: this.socket as any,
+            const answer = MachineUpdateMetadataResponseSchema.parse(await emitSocketWithAck({
+                socket: this.socket,
                 event: 'machine-update-metadata',
                 payload: {
                     machineId: this.machine.id,
-                    metadata: this.machineContentCodec.encodeStored(updated),
-                    expectedVersion: this.machine.metadataVersion,
+                    metadata: codec.encodeStored(updated),
+                    expectedVersion,
+                    expectedDataEncryptionKey,
                 },
-            });
+            }));
 
+            if ((codec !== this.machineContentCodec || !this.machineContentReady)
+                && !('result' in answer && answer.result === 'key-mismatch')) {
+                throw Object.assign(new Error('Machine content key changed during publication'), { retryable: false });
+            }
+            if (!('result' in answer)) throw Object.assign(new Error('Machine content publication requires a client update'), { code: answer.error, retryable: false });
+            if (answer.result === 'key-mismatch') {
+                this.retireMachineContent();
+                await this.refreshMachineFromServer();
+                throw new Error('Machine content key mismatch');
+            }
             if (answer.result === 'success') {
-                this.machine.metadata = this.machineContentCodec.decodeStored(answer.metadata) as MachineMetadata;
-                this.machine.metadataVersion = answer.version;
+                if (answer.version >= this.machine.metadataVersion) {
+                    this.machine.metadata = projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(codec.decodeStored(answer.metadata)), this.machine.metadata?.devcontainerChild);
+                    this.machine.metadataVersion = answer.version;
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, metadataVersion: answer.version };
+                    this.notifyMachineMetadataChanged();
+                }
                 logger.debug('[API MACHINE] Metadata updated successfully');
                 return 'published';
             } else if (answer.result === 'version-mismatch') {
                 if (answer.version > this.machine.metadataVersion) {
                     this.machine.metadataVersion = answer.version;
-                    this.machine.metadata = this.machineContentCodec.decodeStored(answer.metadata) as MachineMetadata;
+                    this.machine.metadata = projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(codec.decodeStored(answer.metadata)), this.machine.metadata?.devcontainerChild);
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, metadataVersion: answer.version };
+                    this.notifyMachineMetadataChanged();
                 }
                 throw new Error('Metadata version mismatch'); // Triggers retry
             }
@@ -2075,6 +2955,7 @@ export class ApiMachineClient {
         if (this.shouldSuppressMachinePublication(options?.allowWhileQuiescing)) {
             return 'suppressed';
         }
+        this.readOwnerEnvelopeForWrite();
         return await backoff(async () => {
             if (this.shouldSuppressMachinePublication(options?.allowWhileQuiescing)) {
                 return 'suppressed';
@@ -2083,33 +2964,53 @@ export class ApiMachineClient {
                 throw new Error('Machine socket is not connected');
             }
             const previousIrohEndpoint = this.machine.daemonState?.peerMediation?.iroh?.endpoint ?? null;
-            const updated = handler(this.machine.daemonState);
+            if (!this.machineContentReady) {
+                await this.refreshMachineFromServer();
+                if (!this.machineContentReady) throw new Error('Machine content key is unavailable');
+            }
+            const codec = this.machineContentCodec;
+            const expectedVersion = this.machine.daemonStateVersion;
+            const expectedDataEncryptionKey = this.readOwnerEnvelopeForWrite();
+            const currentState = this.machine.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(this.machine.daemonState);
+            const updated = parseMachinePublishedDaemonStateV1(handler(currentState));
 
-            const answer = await emitSocketWithAck<any>({
-                socket: this.socket as any,
+            const answer = MachineUpdateStateResponseSchema.parse(await emitSocketWithAck({
+                socket: this.socket,
                 event: 'machine-update-state',
                 payload: {
                     machineId: this.machine.id,
-                    daemonState: this.machineContentCodec.encodeStored(updated),
-                    expectedVersion: this.machine.daemonStateVersion,
+                    daemonState: codec.encodeStored(updated),
+                    expectedVersion,
+                    expectedDataEncryptionKey,
                 },
-            });
+            }));
 
+            if ((codec !== this.machineContentCodec || !this.machineContentReady)
+                && !('result' in answer && answer.result === 'key-mismatch')) {
+                throw Object.assign(new Error('Machine content key changed during publication'), { retryable: false });
+            }
+            if (!('result' in answer)) throw Object.assign(new Error('Machine content publication requires a client update'), { code: answer.error, retryable: false });
+            if (answer.result === 'key-mismatch') {
+                this.retireMachineContent();
+                await this.refreshMachineFromServer();
+                throw new Error('Machine content key mismatch');
+            }
             if (answer.result === 'success') {
-                this.machine.daemonState = this.machineContentCodec.decodeStored(answer.daemonState) as DaemonState;
-                this.machine.daemonStateVersion = answer.version;
-                await this.synchronizeIrohMachineEndpointAuthority(
-                    this.machine.daemonState,
-                    previousIrohEndpoint !== null,
-                );
+                if (answer.version >= this.machine.daemonStateVersion) {
+                    this.machine.daemonState = answer.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(codec.decodeStored(answer.daemonState));
+                    this.machine.daemonStateVersion = answer.version;
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: answer.version };
+                    await this.synchronizeIrohMachineEndpointAuthority(this.machine.daemonState, previousIrohEndpoint !== null);
+                }
                 logger.debug('[API MACHINE] Daemon state updated successfully');
                 return 'published';
             } else if (answer.result === 'version-mismatch') {
                 if (answer.version > this.machine.daemonStateVersion) {
                     this.machine.daemonStateVersion = answer.version;
                     this.machine.daemonState = this.discardUnverifiedIrohEndpoint(
-                        this.machineContentCodec.decodeStored(answer.daemonState) as DaemonState,
+                        answer.daemonState === null ? null : StoredMachinePublishedDaemonStateV1Schema.parse(codec.decodeStored(answer.daemonState)),
                     );
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: answer.version };
                 }
                 throw new Error('Daemon state version mismatch'); // Triggers retry
             }
@@ -2257,6 +3158,11 @@ export class ApiMachineClient {
                     const socket = this.socket;
                     const transportGeneration =
                         this.activeTransportGeneration;
+                    if (isReconnect && this.lifecycleDependencies.loadMachine) {
+                        this.retireMachineContent();
+                        await this.refreshMachineFromServer();
+                        if (!this.machineContentReady || this.socket !== socket || this.activeTransportGeneration !== transportGeneration) return;
+                    }
                     const missingCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
                         (method) => !this.rpcHandlerManager.hasHandler(method),
                     );
@@ -2515,6 +3421,7 @@ export class ApiMachineClient {
         });
 
         socket.on(MACHINE_LIVE_STREAM_SOCKET_EVENT, async (raw: unknown) => {
+            if (!this.machineContentReady) return;
             const parsed = MachineLiveStreamRelayEnvelopeV1Schema.safeParse(raw);
             if (!parsed.success) {
                 logger.warn('[API MACHINE] Live-stream payload rejected', { code: 'stream_payload_invalid' });
@@ -2530,7 +3437,8 @@ export class ApiMachineClient {
                     } } : {}),
                 })
                 : { ok: true as const, value: MachineLiveStreamDecodedEnvelopeV1Schema.parse(parsed.data) };
-            if (!this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) return;
+            if (!this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket
+                || codec !== this.machineContentCodec || !this.machineContentReady) return;
             if (!opened.ok) {
                 this.failMachineLiveStreamPayload(parsed.data, opened.code);
                 return;
@@ -2565,6 +3473,15 @@ export class ApiMachineClient {
             },
         );
 
+        socket.on('ephemeral', (raw: unknown) => {
+            if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) return;
+            const hint = PendingActivationRequestedEphemeralV1Schema.safeParse(raw);
+            if (!hint.success || hint.data.target.machineId !== this.machine.id) return;
+            void this.notifyPendingSessionActivationHint({ sessionId: hint.data.target.sessionId,
+                target: hint.data.target, requestId: hint.data.requestId, requestedAt: hint.data.requestedAt,
+                pendingVersion: hint.data.pendingVersion, source: 'live' });
+        });
+
         socket.on('update', (data: Update) => {
             if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) {
                 return;
@@ -2572,16 +3489,48 @@ export class ApiMachineClient {
             if (data.body.t === 'update-machine' && (data.body as UpdateMachineBody).machineId === this.machine.id) {
                 const update = data.body as UpdateMachineBody;
 
-                if (update.metadata) {
-                    logger.debug('[API MACHINE] Received external metadata update');
-                    this.machine.metadata = this.machineContentCodec.decodeStored(update.metadata.value) as MachineMetadata;
-                    this.machine.metadataVersion = update.metadata.version;
+                const publication = asRecord(update);
+                const nextBasis = asRecord(publication?.keyBasis);
+                const hasKeyHint = nextBasis !== null || publication?.dataEncryptionKey !== undefined;
+                const hintedKey = nextBasis ? nextBasis.dataEncryptionKey : publication?.dataEncryptionKey;
+                const currentKey = this.machine.keyBasis ? this.machine.keyBasis.dataEncryptionKey : this.machine.dataEncryptionKey ?? null;
+                const isOlder = (update.metadata?.version ?? this.machine.metadataVersion) < this.machine.metadataVersion
+                    || (update.daemonState?.version ?? this.machine.daemonStateVersion) < this.machine.daemonStateVersion;
+                if (hasKeyHint && hintedKey !== currentKey) {
+                    if (!isOlder) {
+                        this.retireMachineContent();
+                        void this.refreshMachineFromServer();
+                    }
+                    return;
+                }
+                if (!this.machineContentReady) {
+                    void this.refreshMachineFromServer();
+                    return;
                 }
 
-                if (update.daemonState) {
+                if (update.metadata && update.metadata.version > this.machine.metadataVersion) {
+                    logger.debug('[API MACHINE] Received external metadata update');
+                    this.machine.metadata = projectMachinePublishedMetadataFromRowV1(StoredMachinePublishedMetadataV1Schema.parse(this.machineContentCodec.decodeStored(update.metadata.value)), update.devcontainerChild);
+                    this.machine.metadataVersion = update.metadata.version;
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, metadataVersion: update.metadata.version };
+                    this.notifyMachineMetadataChanged();
+                }
+
+                // A blob CAS acknowledgement can precede its same-version
+                // echo; the retained-row fact is independent of that version.
+                if (update.devcontainerChild !== undefined) {
+                    const metadata = projectMachinePublishedMetadataFromRowV1(this.machine.metadata, update.devcontainerChild);
+                    if (metadata !== this.machine.metadata) {
+                        this.machine.metadata = metadata;
+                        this.notifyMachineMetadataChanged();
+                    }
+                }
+
+                if (update.daemonState && update.daemonState.version > this.machine.daemonStateVersion) {
                     logger.debug('[API MACHINE] Received external daemon state update');
-                    this.machine.daemonState = this.machineContentCodec.decodeStored(update.daemonState.value) as DaemonState;
+                    this.machine.daemonState = StoredMachinePublishedDaemonStateV1Schema.parse(this.machineContentCodec.decodeStored(update.daemonState.value));
                     this.machine.daemonStateVersion = update.daemonState.version;
+                    if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: update.daemonState.version };
                 }
                 return;
             }
@@ -2645,8 +3594,25 @@ export class ApiMachineClient {
         }
     }
 
+    /** Final host retirement phase, before plugin/PTY/root disposal; not temporary drain. */
+    async retireProjectFiniteExecution(): Promise<void> {
+        // Each occurrence closes fresh ingress synchronously. The shared runner
+        // then performs one memoized Stop/wait pass while get/cancel and Home
+        // remain reachable; an unconfirmed process outcome keeps this pending.
+        await Promise.all(this.rpcLifecycleRegistrations.map(registration => registration.retireFiniteExecution()));
+        if (this.projectFiniteExecutionLive) {
+            await this.setProjectFiniteExecutionLive(false).catch((error) => {
+                logger.debug('[API MACHINE] Failed to acknowledge finite execution withdrawal', {
+                    error: serializeAxiosErrorForLog(error),
+                });
+            });
+        }
+    }
+
     async shutdown() {
         logger.debug('[API MACHINE] Shutting down');
+        await this.retireProjectFiniteExecution();
+        this.externalActionIngressOwner = null;
         // Socket reconnects retain this Account scope; process-terminal
         // shutdown is the canonical point that retires its Collection cursor
         // retention and active local observers.
@@ -2676,6 +3642,9 @@ export class ApiMachineClient {
     }
 
     private async disposeRpcLifecycleRegistrations(): Promise<void> {
+        this.managedActivityPublicationCleanup?.();
+        this.managedActivityPublicationCleanup = null;
+        this.liveWorkProducer.dispose();
         const registrations = this.rpcLifecycleRegistrations.splice(0);
         await Promise.all(registrations.map(async (registration) => {
             try {
@@ -2780,68 +3749,67 @@ export class ApiMachineClient {
         }
     }
 
-    private async refreshMachineFromServer(signal?: AbortSignal): Promise<void> {
+    private notifyMachineMetadataChanged(): void {
         try {
-            const serverUrl = resolveServerHttpBaseUrl();
-            const request = async () => {
-                const response = await axios.get(`${serverUrl}/v1/machines/${this.machine.id}`, {
-                    headers: {
-                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-                        Authorization: `Bearer ${this.token}`,
-                        'Content-Type': 'application/json',
-                    },
-                    timeout: 15_000,
-                    ...(signal ? { signal } : {}),
-                    validateStatus: () => true,
-                });
-                if (isAuthenticationStatus(response.status)) {
-                    throw createAuthenticationHttpStatusError(
-                        response.status,
-                        `Authentication failed while refreshing machine snapshot (${response.status})`,
-                    );
-                }
-                return response;
-            };
-            const response = this.connectionSupervisor
+            this.lifecycleDependencies.onMachineMetadataChanged?.();
+        } catch {
+            logger.warn('[API MACHINE] Machine metadata listener threw (ignored)');
+        }
+    }
+
+    private retireMachineContent(): void {
+        this.machineContentContext = { codec: this.machineContentCodec, ready: false };
+        this.rpcHandlerManager.retireEncryptionContext();
+        this.notifyMachineMetadataChanged();
+    }
+
+    private readOwnerEnvelopeForWrite(): string | null {
+        if (this.machine.keyBasis) return this.machine.keyBasis.dataEncryptionKey;
+        if (this.machine.access && this.machine.access.custodian.accountId !== readAccountIdFromToken(this.token)) {
+            throw new Error('Shared Machine owner key basis is unavailable');
+        }
+        return this.machine.dataEncryptionKey ?? null;
+    }
+
+    private async refreshMachineFromServer(signal?: AbortSignal): Promise<void> {
+        const loadMachine = this.lifecycleDependencies.loadMachine;
+        if (!loadMachine) return;
+        const previousContext = this.machineContentContext;
+        const transportGeneration = this.activeTransportGeneration;
+        try {
+            const request = () => loadMachine(signal ? { signal } : undefined);
+            const next = this.connectionSupervisor
                 ? await runSupervisedRequest({
                     supervisor: this.connectionSupervisor,
                     requireAuth: true,
                     requireOnline: false,
                     request,
-                    readStatusCode: (result) => result.status,
                 })
                 : await request();
-
-            if (response.status !== 200) {
+            signal?.throwIfAborted();
+            if (previousContext !== this.machineContentContext || transportGeneration !== this.activeTransportGeneration) return;
+            if (!next || next.id !== this.machine.id) {
+                this.retireMachineContent();
                 return;
             }
-
-            const raw = (response.data as any)?.machine;
-            if (!raw || typeof raw !== 'object') {
-                return;
-            }
-
-            const nextMetadata =
-                typeof raw.metadata === 'string'
-                    ? this.machineContentCodec.decodeStored(raw.metadata) as MachineMetadata
-                    : null;
-            const nextMetadataVersion = typeof raw.metadataVersion === 'number' ? raw.metadataVersion : this.machine.metadataVersion;
-
-            const nextDaemonState =
-                typeof raw.daemonState === 'string'
-                    ? this.machineContentCodec.decodeStored(raw.daemonState) as DaemonState
-                    : null;
-            const nextDaemonStateVersion = typeof raw.daemonStateVersion === 'number' ? raw.daemonStateVersion : this.machine.daemonStateVersion;
-
-            if (nextMetadataVersion > this.machine.metadataVersion) {
-                this.machine.metadata = nextMetadata;
-                this.machine.metadataVersion = nextMetadataVersion;
-            }
-            if (nextDaemonStateVersion > this.machine.daemonStateVersion) {
-                this.machine.daemonState = nextDaemonState;
-                this.machine.daemonStateVersion = nextDaemonStateVersion;
-            }
+            if (next.metadataVersion < this.machine.metadataVersion || next.daemonStateVersion < this.machine.daemonStateVersion) return;
+            const retainCodec = this.machineContentReady
+                && (this.machine.encryptionMode ?? 'e2ee') === (next.encryptionMode ?? 'e2ee')
+                && this.machine.encryptionVariant === next.encryptionVariant
+                && isDeepStrictEqual(this.machine.encryptionKey, next.encryptionKey)
+                && (this.machine.dataEncryptionKey ?? null) === (next.dataEncryptionKey ?? null)
+                && (this.machine.keyBasis ? this.machine.keyBasis.dataEncryptionKey : this.machine.dataEncryptionKey ?? null)
+                    === (next.keyBasis ? next.keyBasis.dataEncryptionKey : next.dataEncryptionKey ?? null);
+            // A fresh same-key snapshot must not retire admitted publication ACKs.
+            // Still replace the snapshot context so older refreshes cannot install it.
+            const codec = retainCodec ? this.machineContentCodec : createMachineContentCodec(next);
+            // Install decoded content, owner write basis, and RPC codec as one context.
+            this.machine = { ...next, daemonState: this.discardUnverifiedIrohEndpoint(next.daemonState) };
+            this.machineContentContext = { codec, ready: true };
+            this.rpcHandlerManager.adoptEncryptionContext(this.machine);
+            this.notifyMachineMetadataChanged();
         } catch (error) {
+            if (previousContext === this.machineContentContext && transportGeneration === this.activeTransportGeneration) this.retireMachineContent();
             logger.debug('[API MACHINE] Failed to refresh machine snapshot', {
                 error: serializeAxiosErrorForLog(error),
             });
@@ -2918,6 +3886,11 @@ export class ApiMachineClient {
             return ['true', '1', 'yes'].includes(raw.toLowerCase());
         })();
         if (!enabled) {
+            if (opts.reason !== 'live') {
+                await this.notifyAccountProjectRowsChanged({ source: opts.reason, signal });
+                await refreshDemandedActiveAcpCatalog({ token: this.token, signal });
+                await refreshDemandedActiveNotificationChannelCatalog({ token: this.token, signal });
+            }
             return;
         }
 
@@ -2940,7 +3913,16 @@ export class ApiMachineClient {
             signal.throwIfAborted();
             await this.refreshMachineFromServer(signal);
             signal.throwIfAborted();
+            await this.prepareMachineRecipientEnvelopes([this.machine.id], signal);
+            signal.throwIfAborted();
+            await this.notifyAccountProjectRowsChanged({ source: 'cursor-gone', signal });
             await this.notifyAccountSettingsVersionHint({ settingsVersion: null, source: 'cursor-gone' });
+            await refreshDemandedActiveProfileCatalog({ token: this.token, signal });
+            await refreshDemandedActivePromptLibraryCatalog({ token: this.token, signal });
+            await refreshDemandedActiveProviderConnectionsCatalog({ token: this.token, signal });
+            await refreshDemandedActiveMcpServerCatalog({ token: this.token, signal });
+            await refreshDemandedActiveAcpCatalog({ token: this.token, signal });
+            await refreshDemandedActiveConnectedAccountCatalogs({ token: this.token, signal });
             signal.throwIfAborted();
             publishPluginAccountSettingsWatchInvalidation({ kind: 'full' });
             publishPluginAccountCollectionWatchInvalidation({
@@ -2951,6 +3933,7 @@ export class ApiMachineClient {
             await this.reconcileConnectedServicesProjection({ source: 'cursor-gone', executionAuthority }, signal);
             signal.throwIfAborted();
             await this.synchronizeSavedSecretCatalog(signal);
+            await refreshDemandedActiveNotificationChannelCatalog({ token: this.token, signal });
             signal.throwIfAborted();
             await this.notifyManagedProviderRetainedCurrentnessInvalidation({
                 source: 'cursor-gone',
@@ -2981,7 +3964,14 @@ export class ApiMachineClient {
             if (opts.reason === 'reconnect' || opts.reason === 'live') {
                 await this.refreshMachineFromServer(signal);
             }
-            if (changesEndpointUnavailable) return;
+            if (changesEndpointUnavailable) {
+                await this.notifyAccountProjectRowsChanged({
+                    source: opts.reason === 'live' ? 'changes' : opts.reason,
+                    signal,
+                });
+                await refreshDemandedActiveAcpCatalog({ token: this.token, signal });
+                return;
+            }
 
             // A snapshot does not acknowledge a transient changes-feed failure.
             // Let the canonical retry owner retain and retry the current work.
@@ -3021,7 +4011,27 @@ export class ApiMachineClient {
                 && !Array.isArray(hint)
                 && (hint as { connectedServices?: unknown }).connectedServices === true;
         });
+        const hasProjectRowsChange = changes.some((change) => {
+            if (change.kind !== 'account') return false;
+            const hint = ProjectAccountRowChangeHintV1Schema.safeParse(change.hint);
+            return hint.success
+                && change.entityId === buildProjectAccountRowPhysicalKeyV1(hint.data.key);
+        });
         const hasSavedSecretCatalogChange = changesRequireSavedSecretCatalogRefresh(changes);
+        const hasNotificationChannelCatalogChange = changes.some(change => change.kind === 'account'
+            && change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1);
+        const hasProfileCatalogChange = changes.some((change) => change.kind === 'account'
+            && isProfileCatalogAccountChangeEntityIdV1(change.entityId));
+        const hasPromptLibraryChange = changes.some((change) => change.kind === 'account'
+            && parsePromptLibraryPhysicalKeyV1(change.entityId) !== null);
+        const hasProviderConnectionsChange = changes.some((change) => change.kind === 'account'
+            && change.entityId === PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1);
+        const hasAcpCatalogChange = changes.some((change) => change.kind === 'account'
+            && change.entityId === ACP_CATALOG_ACCOUNT_ROW_KEY_V1);
+        const hasMcpServerCatalogChange = changes.some((change) => change.kind === 'account'
+            && change.entityId === MCP_SERVER_CATALOG_ACCOUNT_KEY_V1);
+        const hasConnectedAccountCatalogChange = changes.some((change) => change.kind === 'account'
+            && parseConnectedAccountCatalogPhysicalKeyV1(change.entityId) !== null);
         const hasTeamChange = changes.some((change) => (
             change.kind === 'account'
             && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
@@ -3069,6 +4079,24 @@ export class ApiMachineClient {
             await this.refreshMachineFromServer(signal);
             signal.throwIfAborted();
         }
+        // The existing grant/Team Account-change producer wakes current Manage holders. The
+        // worklist reauthorizes these exact resources; a wake never grants key or access authority.
+        await this.prepareMachineRecipientEnvelopes([
+            ...(opts.reason !== 'live' ? [this.machine.id] : []),
+            ...changes.filter(change => change.kind === 'machine').map(change => change.entityId),
+        ], signal);
+        signal.throwIfAborted();
+        if (opts.reason !== 'live' || hasProjectRowsChange || changes.length >= CHANGES_PAGE_LIMIT) {
+            await this.notifyAccountProjectRowsChanged({
+                source: changes.length >= CHANGES_PAGE_LIMIT ? 'page-limit'
+                    : opts.reason === 'live' ? 'changes' : opts.reason,
+                signal,
+            });
+        }
+        if (opts.reason !== 'live' || hasProfileCatalogChange || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveProfileCatalog({ token: this.token, signal });
+            signal.throwIfAborted();
+        }
         if (highestAccountSettingsVersion !== null) {
             await this.notifyAccountSettingsVersionHint({
                 settingsVersion: highestAccountSettingsVersion,
@@ -3076,6 +4104,26 @@ export class ApiMachineClient {
             });
         } else if (changes.length >= CHANGES_PAGE_LIMIT) {
             await this.notifyAccountSettingsVersionHint({ settingsVersion: null, source: 'page-limit' });
+        }
+        if (opts.reason !== 'live' || hasPromptLibraryChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActivePromptLibraryCatalog({ token: this.token, signal });
+            signal.throwIfAborted();
+        }
+        if (opts.reason !== 'live' || hasProviderConnectionsChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveProviderConnectionsCatalog({ token: this.token, signal });
+            signal.throwIfAborted();
+        }
+        if (opts.reason !== 'live' || hasAcpCatalogChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveAcpCatalog({ token: this.token, signal });
+            signal.throwIfAborted();
+        }
+        if (opts.reason !== 'live' || hasMcpServerCatalogChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveMcpServerCatalog({ token: this.token, signal });
+            signal.throwIfAborted();
+        }
+        if (opts.reason !== 'live' || hasConnectedAccountCatalogChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveConnectedAccountCatalogs({ token: this.token, signal });
+            signal.throwIfAborted();
         }
         if (changes.length >= CHANGES_PAGE_LIMIT) {
             publishPluginAccountSettingsWatchInvalidation({ kind: 'full' });
@@ -3105,6 +4153,10 @@ export class ApiMachineClient {
         }
         if (opts.reason !== 'live' || hasSavedSecretCatalogChange || changes.length >= CHANGES_PAGE_LIMIT) {
             await this.synchronizeSavedSecretCatalog(signal);
+            signal.throwIfAborted();
+        }
+        if (opts.reason !== 'live' || hasNotificationChannelCatalogChange || highestAccountSettingsVersion !== null || changes.length >= CHANGES_PAGE_LIMIT) {
+            await refreshDemandedActiveNotificationChannelCatalog({ token: this.token, signal });
             signal.throwIfAborted();
         }
         for (const activationHint of pendingActivationHints) {

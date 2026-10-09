@@ -20,8 +20,59 @@ import {
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { SpawnDaemonSessionRequestSchema } from './spawnSessionOptionsContract';
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
+import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootstrapRpcRequestV1,
+    SessionRequesterHandoffBootstrapRpcRequestV1Schema, openSessionRequesterHandoffBootstrapRpcRequestV1,
+    type SessionRequesterHandoffBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
+import { admitRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { ResolveRequesterSessionRuntimeContext, RequesterSessionRuntimeContext, AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { readDefaultSessionIdFromRpcInput } from './registerActionSpecRpcHandlers';
+import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
 type RpcRegistrar = RpcHandlerRegistrar;
+type RequesterSessionRuntimeOwner = Readonly<{
+    serverId: string;
+    resolve: ResolveRequesterSessionRuntimeContext;
+    release(context: RequesterSessionRuntimeContext): Promise<void>;
+    stopForHandoff?(sessionId: string, expectedSpawnNonce: string): Promise<'stopped' | 'already_inactive' | 'failed'>;
+}>;
+
+async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerContext,
+    sessionId: string, owner: RequesterSessionRuntimeOwner | undefined,
+    handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>): Promise<unknown> {
+    const refused = () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+    if (!owner || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) return refused();
+    const admission = context.machineAdmission;
+    const runtime = await owner.resolve(sessionId, admission ? { serverId: owner.serverId,
+        accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId } : undefined);
+    if (!runtime) return refused();
+    try {
+        const bootstrap = runtime.bootstrap;
+        if (bootstrap.getBoundSessionId() !== sessionId || bootstrap.attribution.serverId !== owner.serverId
+            || !await isAdmittedRequesterSessionBootstrapCurrent({ ...context, requesterSessionBootstrap: bootstrap })) return refused();
+        return await handler(input, { ...context, requesterSessionBootstrap: bootstrap,
+            localActionContext: { ...context.localActionContext, requesterWorkAttributionV1: bootstrap.attribution } });
+    } finally { await owner.release(runtime); }
+}
+
+function isHandoffPhaseBound(input: unknown, context: RpcHandlerContext | undefined): boolean {
+    const binding = context?.callerInputAuthorization?.binding;
+    if (!binding?.handoffContinuation) return true;
+    const admission = binding.handoffAdmission;
+    if (!admission || !input || typeof input !== 'object'
+        || Reflect.get(input, 'handoffId') !== binding.handoffContinuation.handoffId) return false;
+    return [['sessionId', admission.sessionId], ['sourceMachineId', admission.sourceMachineId],
+        ['targetMachineId', admission.targetMachineId]].every(([key, expected]) =>
+        !Object.hasOwn(input, key!) || Reflect.get(input, key!) === expected);
+}
 
 type SessionLifecycleActionId =
     | 'session.stop'
@@ -63,6 +114,11 @@ export function createSessionLifecycleRpcActionExecutor(
                 result: await handler(input, context
                     ? {
                         signal: context.signal ?? new AbortController().signal,
+                        ...(context.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
+                        ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}),
+                        ...(context.requesterSessionBootstrap ? { requesterSessionBootstrap: context.requesterSessionBootstrap } : {}),
+                        ...(context.sessionActionOrigin ? { sessionActionOrigin: context.sessionActionOrigin } : {}),
+                        ...(context.callerInputAuthorization ? { callerInputAuthorization: context.callerInputAuthorization } : {}),
                         callerAuthority: context.authority ?? 'account_automation',
                         ...(context.operationProgress || context.operationOwnerUpdate
                             ? {
@@ -91,9 +147,83 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
     mapResponseForMethod?: RegisterActionSpecRpcHandlersParams['mapResponseForMethod'];
     mapRequestForMethod?: RegisterActionSpecRpcHandlersParams['mapRequestForMethod'];
+    requesterBootstrapBoundary?: Readonly<{
+        serverId: string;
+        serverHttpBaseUrl: string;
+        happyHomeDir: string;
+        getObservedServerIdentityId(): string | null | Promise<string | null>;
+        readInstallation?(): Promise<CurrentMachineInstallation | null>;
+        retainHandoffRequesterCustody?(request: SessionRequesterHandoffBootstrapRpcRequestV1['input'],
+            bootstrap: AdmittedRequesterSessionBootstrap): Promise<void>;
+    }>;
+    requesterSessionRuntime?: RequesterSessionRuntimeOwner;
 }>): void {
     registerActionSpecRpcHandlers({
-        rpcHandlerManager: params.rpcHandlerManager,
+        rpcHandlerManager: { registerHandler: (method, handler) => params.rpcHandlerManager.registerHandler(method, async (input, context) => {
+            if (input && typeof input === 'object' && Reflect.get(input, 'kind') === 'requester_session_handoff_bootstrap_v1') {
+                const parsed = SessionRequesterHandoffBootstrapRpcRequestV1Schema.safeParse(input);
+                const boundary = params.requesterBootstrapBoundary;
+                const refused = () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+                if (method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3 || !parsed.success
+                    || !boundary || !context?.machineAdmission || !context.verifyMachineAdmissionCurrent
+                    || parsed.data.input.targetMachineId !== context.machineAdmission.machineId
+                    || !await context.verifyMachineAdmissionCurrent()) return refused();
+                if (!isHandoffPhaseBound(parsed.data.input, context)) return refused();
+                let bootstrap = parsed.data.requesterBootstrap;
+                if ('kind' in bootstrap) {
+                    const installation = await boundary.readInstallation?.().catch(() => null);
+                    const opened = installation && installation.machineId === context.machineAdmission.machineId
+                        && installation.identity.installationId === context.machineAdmission.installationId
+                        ? openSessionRequesterHandoffBootstrapRpcRequestV1({ request: parsed.data,
+                            machineId: installation.machineId, installationId: installation.identity.installationId,
+                            installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
+                    if (!opened) return refused();
+                    bootstrap = opened.requesterBootstrap;
+                } else if (context.machineAdmission.encryptionMode === 'plain'
+                    && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) return refused();
+                const custody = await admitRequesterSessionBootstrap({ bootstrap, boundary, context,
+                    existingSessionId: parsed.data.input.sessionId }).catch(() => null);
+                if (!custody) return refused();
+                try {
+                    const authorization = context.callerInputAuthorization
+                        ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
+                            await boundary.getObservedServerIdentityId() ?? '', context.signal) : undefined;
+                    if (context.callerInputAuthorization && !authorization) { await custody.cleanupOnFailure(); return refused(); }
+                    const binding = await custody.admitted.bindExistingSession(parsed.data.input.sessionId);
+                    if (!binding) { await custody.cleanupOnFailure(); return refused(); }
+                    await boundary.retainHandoffRequesterCustody?.(parsed.data.input, custody.admitted);
+                    const result = await handler(parsed.data.input, { ...context, requesterSessionBootstrap: custody.admitted,
+                        ...(authorization ? { callerInputAuthorization: authorization } : {}) });
+                    if (!result || typeof result !== 'object' || Reflect.get(result, 'ok') !== true) await custody.cleanupOnFailure();
+                    else custody.admitted.savedSecretOperationContext.withdrawCatalog();
+                    return result;
+                } catch { await custody.cleanupOnFailure(); return refused(); }
+            }
+            const admission = context?.machineAdmission;
+            const phaseInput = input && typeof input === 'object' && Reflect.get(input, 'kind') === 'targeted_action_rpc'
+                ? Reflect.get(input, 'input') : input;
+            if (!isHandoffPhaseBound(phaseInput, context)) return { ok: false, errorCode: 'invalid_request' };
+            if (!admission || admission.actorAccountId === admission.custodianAccountId || context.requesterSessionBootstrap) {
+                return await handler(input, context);
+            }
+            let lifecycleInput = input;
+            if (input && typeof input === 'object' && Reflect.get(input, 'kind') === 'targeted_action_rpc') {
+                const parsed = TargetedActionRpcRequestV1Schema.safeParse(input);
+                if (!parsed.success || parsed.data.target.kind !== 'machine'
+                    || parsed.data.target.machineId !== admission.machineId) {
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+                lifecycleInput = parsed.data.input;
+            }
+            const replay = lifecycleInput && typeof lifecycleInput === 'object' ? Reflect.get(lifecycleInput, 'replay') : undefined;
+            const sessionId = readDefaultSessionIdFromRpcInput(lifecycleInput)
+                ?? (replay && typeof replay === 'object' && typeof Reflect.get(replay, 'previousSessionId') === 'string'
+                    ? String(Reflect.get(replay, 'previousSessionId')).trim() : undefined)
+                ?? (context.callerInputAuthorization?.binding.handoffContinuation
+                    ? context.callerInputAuthorization.binding.handoffAdmission?.sessionId : undefined);
+            if (!sessionId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            return await withRequesterSessionRuntime(input, context, sessionId, params.requesterSessionRuntime, handler);
+        }) },
         actionExecutor: params.actionExecutor,
         actionIds: params.actionIds,
         scopes: params.scopes ?? SESSION_LIFECYCLE_RPC_SCOPES,
@@ -105,8 +235,10 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
 
 async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
     sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+    requesterContext?: RpcHandlerContext;
 }> = {}): Promise<RpcActionExecutor> {
-    const credentials = await readStoredCredentials().catch(() => null);
+    const requester = params.requesterContext?.requesterSessionBootstrap;
+    const credentials = requester?.credentials ?? await readStoredCredentials().catch(() => null);
     if (!credentials) {
         return {
             execute: async () => ({
@@ -118,6 +250,22 @@ async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
     }
     return createCliActionExecutorFromCredentials({
         credentials,
+        ...(requester ? {
+            requesterSessionBootstrap: requester,
+            serverId: requester.attribution.serverId,
+            serverApiUrl: requester.serverHttpBaseUrl,
+            machineId: requester.attribution.machineId,
+            readCredentials: async () => await requester.isCurrent() ? requester.credentials : null,
+            actionsSettingsProvider: {
+                getActionsSettings: () => normalizeActionsSettingsV1(requester.savedSecretOperationContext.readSnapshot()?.settings.actionsSettingsV1),
+                getAccountSettings: () => requester.savedSecretOperationContext.readSnapshot()?.settings ?? null,
+                getAccountRoleOverrides: () => {
+                    const snapshot = requester.savedSecretOperationContext.readSnapshot();
+                    return snapshot ? readAccountRoleOverridesFromSnapshot(snapshot)
+                        : { status: 'unavailable', reason: 'source-unavailable' };
+                },
+            },
+        } : {}),
         ...(params.sessionSpawnDirectTargetTransport
             ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
             : {}),
@@ -133,13 +281,99 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
     actionExecutor?: RpcActionExecutor;
     /** Exact daemon receiver transport retained after server-scoped machine routing. */
     sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+    requesterBootstrapBoundary?: Readonly<{
+        serverId: string;
+        serverHttpBaseUrl: string;
+        happyHomeDir: string;
+        getObservedServerIdentityId(): string | null;
+        readInstallation?(): Promise<CurrentMachineInstallation | null>;
+        spawnLifecycleHandler: SessionLifecycleActionHandler;
+        resolveSpawnSessionByNonce?: SpawnSessionNonceResolver;
+    }>;
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
     registerActionSpecRpcHandlers({
-        rpcHandlerManager: params.rpcHandlerManager,
-        actionExecutor: params.actionExecutor,
-        resolveActionExecutor: async () => await resolveProductionSessionSpawnNewActionExecutor({
+        rpcHandlerManager: {
+            registerHandler: (method, handler) => params.rpcHandlerManager.registerHandler(method, async (input, context) => {
+                if (!input || typeof input !== 'object'
+                    || Reflect.get(input, 'kind') !== 'requester_session_bootstrap_v1') return await handler(input, context);
+                const parsed = SessionRequesterBootstrapRpcRequestV1Schema.safeParse(input);
+                const boundary = params.requesterBootstrapBoundary;
+                if (!parsed.success || !boundary || !context || !context.machineAdmission
+                    || parsed.data.input.executionTarget.machineId !== context.machineAdmission.machineId) {
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+                let requesterBootstrap = parsed.data.requesterBootstrap;
+                if ('kind' in requesterBootstrap) {
+                    if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
+                        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                    }
+                    const installation = await boundary.readInstallation?.().catch(() => null);
+                    const opened = installation && installation.machineId === context.machineAdmission.machineId
+                        && installation.identity.installationId === context.machineAdmission.installationId
+                        ? openSessionRequesterBootstrapRpcRequestV1({ request: parsed.data,
+                            machineId: installation.machineId, installationId: installation.identity.installationId,
+                            installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
+                    if (!opened) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                    requesterBootstrap = opened.requesterBootstrap;
+                } else if (context.machineAdmission.encryptionMode === 'plain'
+                    && (requesterBootstrap.credentials.secret || requesterBootstrap.credentials.encryption)) {
+                    // TLS protects token-only Plain sign-in. Account keys require installation confidentiality,
+                    // not an assumption that Machine content itself is encrypted.
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+                let custody: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>>;
+                try { custody = await admitRequesterSessionBootstrap({ bootstrap: requesterBootstrap, boundary, context }); }
+                catch { custody = null; }
+                if (!custody) return { ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
+                    error: context.signal.aborted ? 'cancelled' : 'target_unavailable' };
+                const projectedAuthorization = context.callerInputAuthorization
+                    ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
+                        boundary.getObservedServerIdentityId() ?? '', context.signal)
+                    : undefined;
+                if (context.callerInputAuthorization && !projectedAuthorization) {
+                    await custody.cleanupOnFailure();
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+                const requesterContext = Object.freeze({ ...context, requesterSessionBootstrap: custody.admitted,
+                    ...(projectedAuthorization ? { callerInputAuthorization: projectedAuthorization } : {}) });
+                try {
+                    const response = await handler(parsed.data.input, requesterContext);
+                    if (!response || typeof response !== 'object'
+                        || !['success', 'pending'].includes(String(Reflect.get(response, 'type')))) await custody.cleanupOnFailure();
+                    return response;
+                } catch {
+                    await custody.cleanupOnFailure();
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+            }),
+        },
+        resolveActionExecutor: async request => !request.ingress?.requesterSessionBootstrap && params.actionExecutor
+            ? params.actionExecutor
+            : await resolveProductionSessionSpawnNewActionExecutor({
+            ...(request.ingress ? { requesterContext: request.ingress } : {}),
+            ...(request.ingress?.requesterSessionBootstrap && params.requesterBootstrapBoundary ? {
+                sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({
+                    machineId: request.ingress.requesterSessionBootstrap.attribution.machineId,
+                    spawnLifecycleHandler: async (input, context) => {
+                        const requester = request.ingress!.requesterSessionBootstrap!;
+                        if (!input || typeof input !== 'object'
+                            || (requester.preparedSessionId !== undefined
+                                && Reflect.get(input, 'existingSessionId') !== requester.preparedSessionId)
+                            || typeof Reflect.get(input, 'sessionCreationTag') !== 'string'
+                            || !await requester.isCurrent()) {
+                            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                                errorMessage: 'Requester Session creation identity unavailable' };
+                        }
+                        return await params.requesterBootstrapBoundary!.spawnLifecycleHandler(input,
+                            { ...context, ...request.ingress, requesterSessionBootstrap: requester });
+                    },
+                    ...(params.requesterBootstrapBoundary.resolveSpawnSessionByNonce
+                        ? { resolveSpawnSessionByNonce: params.requesterBootstrapBoundary.resolveSpawnSessionByNonce } : {}),
+                }),
+            } : {}),
             ...(params.sessionSpawnDirectTargetTransport
+                && !request.ingress?.requesterSessionBootstrap
                 ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
                 : {}),
         }),
@@ -163,6 +397,8 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
      * create-or-rejoin fact with every resolved Session id.
      */
     requireSessionCreationOutcome?: boolean;
+    requesterSessionRuntime?: RequesterSessionRuntimeOwner;
+    handoffTargetResume?: Readonly<{ prepareJobStore: ReturnType<typeof createSessionHandoffPrepareTargetJobStore> }>;
 }>): void {
     const settlePrimaryFreshSpawn = async (response: unknown): Promise<unknown> => {
         if (!response || typeof response !== 'object' || (response as { type?: unknown }).type !== 'success') {
@@ -241,7 +477,92 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
                 errorMessage: 'Invalid session spawn request',
             };
         }
-        const response = await params.spawnLifecycleHandler(parsed.data, context);
+        const binding = context?.callerInputAuthorization?.binding;
+        if (binding?.handoffContinuation && (providerSafe || !binding.handoffAdmission
+            || binding.actionId !== 'session.spawn_new' || parsed.data.type !== 'resume-session'
+            || parsed.data.sessionId !== binding.handoffAdmission.sessionId
+            || binding.machineId !== binding.handoffAdmission.targetMachineId
+            || binding.installationId !== binding.handoffAdmission.targetInstallationId)) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid Session handoff resume' };
+        }
+        let launchAccepted = false;
+        let resumeContext = context;
+        if (binding?.handoffContinuation) {
+            const store = params.handoffTargetResume?.prepareJobStore;
+            const job = await store?.findByHandoffId(binding.handoffContinuation.handoffId);
+            const prepared = job?.prepareTargetResult;
+            const selectedTarget = parsed.data.agentTarget ?? parsed.data.backendTarget;
+            const preparedTarget = prepared?.resume.agentTarget ?? (prepared ? {
+                kind: 'backend' as const, backendId: prepared.resume.agent, sourceKind: 'built_in' as const,
+            } : undefined);
+            if (!store || !job || !prepared || !selectedTarget || !preparedTarget
+                || job.status.status !== 'ready_for_cutover' || !parsed.data.spawnNonce
+                || job.schemaVersion === 2 && (job.recordKind !== 'prepared_target'
+                    || job.sessionId !== parsed.data.sessionId || job.terminal.status !== 'open'
+                    || job.resume.status === 'preexisting_unowned'
+                    || (job.resume.status === 'attempted' || job.resume.status === 'confirmed')
+                        && job.resume.attemptId !== parsed.data.spawnNonce)
+                || job.prepareTargetRequest && (job.prepareTargetRequest.sessionId !== binding.handoffAdmission?.sessionId
+                    || job.prepareTargetRequest.targetMachineId !== binding.machineId)
+                || parsed.data.resume !== prepared.resume.resume || parsed.data.directory !== prepared.resume.directory
+                || parsed.data.transcriptStorage !== prepared.resume.transcriptStorage
+                || buildBackendTargetKeyV2(selectedTarget) !== buildBackendTargetKeyV2(preparedTarget)
+                || !sameStrictJsonValue(parsed.data.runtimeDescriptorV1 ?? null, prepared.runtimeDescriptorV1 ?? null)) {
+                return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                    errorMessage: 'Session handoff does not match the prepared native target' };
+            }
+            resumeContext = { ...context!, beforeSessionRunnerLaunch: async () => {
+                if (context?.signal.aborted) return false;
+                try {
+                    await store.upgradeReadyV1ToPreparedV2({ jobId: job.jobId, sessionId: parsed.data.sessionId! });
+                    const accepted = await store.transitionPredecessorV2(job.jobId, current => {
+                        if (current.recordKind !== 'prepared_target' || current.terminal.status !== 'open'
+                            || current.status.status !== 'ready_for_cutover' || current.sessionId !== parsed.data.sessionId
+                            || current.resume.status === 'preexisting_unowned'
+                            || (current.resume.status === 'attempted' || current.resume.status === 'confirmed')
+                                && current.resume.attemptId !== parsed.data.spawnNonce) return null;
+                        if (current.resume.status !== 'not_attempted') return null;
+                        const now = Date.now();
+                        return { ...current, transitionRevision: current.transitionRevision + 1, updatedAtMs: now,
+                            resume: { status: 'attempted', attemptId: parsed.data.spawnNonce!, acceptedAtMs: now },
+                            targetCleanup: { status: 'pending' } };
+                    });
+                    launchAccepted = accepted?.recordKind === 'prepared_target' && accepted.terminal.status === 'open'
+                        && (accepted.resume.status === 'attempted' || accepted.resume.status === 'confirmed')
+                        && accepted.resume.attemptId === parsed.data.spawnNonce;
+                    return launchAccepted;
+                } catch { return false; }
+            } };
+        }
+        const admission = context?.machineAdmission;
+        const foreignResume = admission && admission.actorAccountId !== admission.custodianAccountId
+            && !context.requesterSessionBootstrap;
+        if (foreignResume && (parsed.data.type !== 'resume-session' || !parsed.data.sessionId)) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Session credential unavailable' };
+        }
+        const response = foreignResume && resumeContext ? await withRequesterSessionRuntime(parsed.data, resumeContext,
+            parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler)
+            : await params.spawnLifecycleHandler(parsed.data, resumeContext);
+        if (binding?.handoffContinuation && !launchAccepted && response && typeof response === 'object'
+            && Reflect.get(response, 'type') === 'success') {
+            const store = params.handoffTargetResume!.prepareJobStore;
+            const job = await store.findByHandoffId(binding.handoffContinuation.handoffId);
+            if (job?.schemaVersion === 2 && job.recordKind === 'prepared_target'
+                && (job.resume.status === 'attempted' || job.resume.status === 'confirmed')
+                && job.resume.attemptId === parsed.data.spawnNonce && job.terminal.status === 'open') return response;
+            if (job) {
+                await store.upgradeReadyV1ToPreparedV2({ jobId: job.jobId, sessionId: parsed.data.sessionId! });
+                await store.transitionPredecessorV2(job.jobId, current => current.recordKind === 'prepared_target'
+                    && current.resume.status === 'not_attempted' && current.terminal.status === 'open'
+                    ? { ...current, transitionRevision: current.transitionRevision + 1, updatedAtMs: Date.now(),
+                        resume: { status: 'preexisting_unowned' }, targetCleanup: { status: 'not_owned', reason: 'preexisting_or_adopted' } }
+                    : null);
+            }
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Prepared Session handoff runner was not launched' };
+        }
         // Inactive resume deliberately reports a bare success envelope. It is
         // a different lifecycle operation, not an unresolvable fresh spawn.
         if (providerSafe || parsed.data.type === 'resume-session') {

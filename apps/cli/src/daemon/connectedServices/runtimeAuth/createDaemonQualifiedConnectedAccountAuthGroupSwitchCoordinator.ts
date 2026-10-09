@@ -12,6 +12,7 @@ import {
 import {
     ConnectedServiceAuthGroupSwitchCoordinator,
     InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
+    type ConnectedServiceAuthGroupAccountScope,
     type ConnectedServiceAuthGroupGenerationApplyInput,
     type ConnectedServiceAuthGroupGenerationApplyResult,
     type ConnectedServiceAuthGroupSwitchEvent,
@@ -120,6 +121,8 @@ function resolveQualifiedGroupGenerationConflict(
 export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
     params: Readonly<{
         token: string;
+        accountScope?: ConnectedServiceAuthGroupAccountScope;
+        isCurrent?: () => Promise<boolean>;
         quotaFreshnessMs: number;
         nowMs: () => number;
         accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState;
@@ -156,6 +159,9 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
 > {
     const api =
         params.api ?? defaultQualifiedConnectedAccountAuthGroupApi;
+    const assertCurrent = async () => {
+        if (params.isCurrent && !await params.isCurrent()) throw new Error('requester_session_not_current');
+    };
     const buildState = (input: Parameters<typeof buildQualifiedConnectedAccountAuthGroupSwitchState>[0]) => {
         const state = buildQualifiedConnectedAccountAuthGroupSwitchState(input);
         const usage = params.accountUsageStore ? buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
@@ -175,6 +181,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
             QualifiedConnectedAccountServiceRefSchema.parse(
                 input.serviceId,
             );
+        await assertCurrent();
         const group = await api.readGroup({
             token: params.token,
             group: { service, groupId: input.groupId },
@@ -185,11 +192,13 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
             );
         }
         assertExactGroup(group, service, input.groupId);
+        await assertCurrent();
         const listed = await api.listAccounts({
             token: params.token,
             service,
         });
         assertExactAccountList(service, listed);
+        await assertCurrent();
         const accountIds = new Set(
             listed.accounts.map((profile) => profile.ref.accountId),
         );
@@ -211,6 +220,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
     };
 
     return new ConnectedServiceAuthGroupSwitchCoordinator({
+        accountScope: params.accountScope,
         leases: params.leases
             ?? new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
                 QualifiedConnectedAccountServiceRef
@@ -236,6 +246,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     'qualified_connected_account_switch_basis_unavailable',
                 );
             }
+            await assertCurrent();
             const group = await api.setActiveAccount({
                 token: params.token,
                 mutation: {
@@ -259,11 +270,13 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 },
             });
             assertExactGroup(group, service, input.groupId);
+            await assertCurrent();
             const listed = await api.listAccounts({
                 token: params.token,
                 service,
             });
             assertExactAccountList(service, listed);
+            await assertCurrent();
             return buildState({
                 group,
                 profiles: listed.accounts,
@@ -304,6 +317,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 groupId: input.groupId,
                 expectedGeneration: input.loaded.generation,
                 loadGroup: async () => {
+                    await assertCurrent();
                     const group = await api.readGroup({
                         token: params.token,
                         group: {
@@ -311,6 +325,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                             groupId: input.groupId,
                         },
                     });
+                    await assertCurrent();
                     if (group) {
                         assertExactGroup(
                             group,
@@ -377,6 +392,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                     expectedRuntimeStateRevision,
                     runtimeState,
                 }) => {
+                    await assertCurrent();
                     const observedState = runtimeState.memberStates.find(
                         (candidate) => candidate.connectedAccountId
                             === observedAccountId,
@@ -416,7 +432,7 @@ export function createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(
                 },
             });
         },
-        applyGeneration: params.applyGeneration,
+        applyGeneration: async (input) => { await assertCurrent(); return await params.applyGeneration(input); },
         resolveGenerationConflict:
             resolveQualifiedGroupGenerationConflict,
         ...(params.emitEvent

@@ -4,6 +4,7 @@ import {
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -18,13 +19,20 @@ import {
   type CanonicalAbsolutePath,
 } from '@/utils/path/expandHomeDirPath';
 
-import { resolveSessionRuntimeSnapshot } from './resolveSessionRuntimeSnapshot';
+import { resolveSessionRuntimeSnapshot, SessionRuntimeDescriptorSelectionError } from './resolveSessionRuntimeSnapshot';
+
+/** Launch controls only: persisted Session identity and workspace stay authoritative. */
+export type InactiveSessionResumeRuntimeOptions = Partial<Pick<SpawnSessionOptions,
+  'permissionMode' | 'permissionModeUpdatedAt' | 'modelSelection' | 'resume' | 'environmentVariables'
+  | 'profileId' | 'terminal' | 'windowsRemoteSessionLaunchMode' | 'windowsRemoteSessionConsole' | 'windowsTerminalWindowName'
+  | 'agentModeId' | 'mcpSelection' | 'connectedServices' | 'transcriptStorage' | 'runtimeDescriptorV1' | 'sessionConfigOptionOverrides'>>;
 
 export type BuildInactiveSessionResumeSpawnOptionsParams = Readonly<{
   fallbackMachineId?: string | null;
   sessionId: string;
   rawSession: unknown;
   metadata: Record<string, unknown>;
+  incomingOptions?: InactiveSessionResumeRuntimeOptions;
   initialTranscriptAfterSeq?: number;
   executionAuthorization?: import('@happier-dev/protocol').SpawnSessionExecutionAuthorization;
 }>;
@@ -73,7 +81,7 @@ function selectCanonicalPersistedDirectory(
  * Ambiguity still fails closed: several flat keys with no higher authority
  * resolve to no Agent rather than to the first Agent in catalog order.
  */
-function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>): Readonly<{
+export function resolveSessionPersistedRuntimeIdentity(metadata: Record<string, unknown>): Readonly<{
   agentTarget?: NonNullable<SpawnSessionOptions['agentTarget']>;
   backendTarget?: NonNullable<SpawnSessionOptions['backendTarget']>;
   runtimeDescriptorV1?: SpawnSessionOptions['runtimeDescriptorV1'];
@@ -94,12 +102,14 @@ function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>)
         : undefined,
   );
 
-  if (parsedAgentTarget.success) {
-    if (
-      !identity.agentId
-      || !agentRoutingIdAddressesContributionIdentityV1(identity.agentId, parsedAgentTarget.data.identity)
-      || (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== identity.agentId)
-    ) return null;
+  // Creation correspondence is immutable provenance. Its qualified target can
+  // still address the current Agent, but must not override a later cutover's
+  // persisted target. Preserve the recipe while resolving the current identity.
+  if (parsedAgentTarget.success
+    && backendTarget?.sourceKind !== 'configured'
+    && identity.agentId
+    && agentRoutingIdAddressesContributionIdentityV1(identity.agentId, parsedAgentTarget.data.identity)) {
+    if (runtimeDescriptorV1 && runtimeDescriptorV1.agentId !== identity.agentId) return null;
     return {
       agentTarget: parsedAgentTarget.data,
       ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
@@ -109,6 +119,8 @@ function resolveExactPersistedBackendIdentity(metadata: Record<string, unknown>)
   if (!backendTarget) return null;
 
   if (backendTarget.sourceKind === 'configured') {
+    const flavorBackendId = readLegacyConfiguredAcpBackendId(metadata.flavor);
+    if (flavorBackendId !== null && flavorBackendId !== (backendTarget.configuredBackendId ?? backendTarget.backendId)) return null;
     // A configured ACP backend must carry no built-in Agent evidence at all;
     // any is a contradiction between the persisted target and the identity.
     if (identity.agentId || identity.vendorResumeKeyAgentIds.length > 0 || runtimeDescriptorV1) return null;
@@ -149,7 +161,7 @@ export function buildInactiveSessionResumeSpawnOptions(
 
   const persistedDirectory = selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
   const machineId = rawMachineId ?? metadataMachineId ?? readNonEmptyString(params.fallbackMachineId);
-  const runtimeIdentity = resolveExactPersistedBackendIdentity(params.metadata);
+  const runtimeIdentity = resolveSessionPersistedRuntimeIdentity(params.metadata);
   if (!persistedDirectory || !machineId || !runtimeIdentity) return null;
   const directory = resolveSessionMachineWorkspacePath({
     metadata: params.metadata,
@@ -183,11 +195,12 @@ export function buildInactiveSessionResumeSpawnOptions(
         ...(runtimeIdentity.backendTarget ? { backendTarget: runtimeIdentity.backendTarget } : {}),
         approvedNewDirectoryCreation: directoryKind !== 'managed',
         ...(runtimeIdentity.runtimeDescriptorV1 ? { runtimeDescriptorV1: runtimeIdentity.runtimeDescriptorV1 } : {}),
+        ...params.incomingOptions,
       },
       persistedMetadata: params.metadata,
     }).spawnOptions;
   } catch (error) {
-    if (error instanceof PersistedProviderResumeBindingError) return null;
+    if (error instanceof PersistedProviderResumeBindingError || error instanceof SessionRuntimeDescriptorSelectionError) return null;
     throw error;
   }
 

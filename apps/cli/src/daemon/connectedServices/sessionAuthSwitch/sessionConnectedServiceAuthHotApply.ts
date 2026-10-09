@@ -154,6 +154,7 @@ function readHotApplyFailureErrorCode(
 }
 
 export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
+  isSessionCurrent?: (sessionId: string) => Promise<boolean>;
   resolveRuntimeAuthAdapter?: (agentId: CatalogAgentId) => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
   validateGroupMutationCurrentness?: (input: Readonly<{
     serviceId: ConnectedAccountServiceKey;
@@ -172,6 +173,14 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
     serviceIds?: ReadonlySet<ConnectedAccountServiceKey>;
     runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, unknown>;
   }>): Promise<HotApplyResult> {
+    const isCurrent = async () => {
+      if (!deps?.isSessionCurrent) return true;
+      const sessionId = input.tracked.happySessionId;
+      if (!sessionId) return false;
+      try { return await deps.isSessionCurrent(sessionId); }
+      catch { return false; }
+    };
+    if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed' };
     const agentId = resolveTrackedSessionCatalogAgentId(input.tracked);
     if (!agentId) return { ok: false, errorCode: 'hot_apply_unavailable' };
     const adapter = await resolveRuntimeAuthAdapter(agentId);
@@ -194,8 +203,10 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
       const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
         materializedSelectionRecord?.credentialRevision,
       );
-      const validateCurrentBeforeMutation = binding.selection === 'group'
+      const validateCurrentBeforeMutation = binding.selection === 'group' || deps?.isSessionCurrent
         ? async () => {
+            if (!await isCurrent()) return { current: false as const, reason: 'requester_session_not_current' };
+            if (binding.selection !== 'group') return { current: true as const };
             const groupId = readString(materializedSelectionRecord?.groupId) ?? readString(binding.groupId);
             const profileId = readString(materializedSelectionRecord?.activeProfileId)
               ?? readString(materializedSelectionRecord?.profileId)
@@ -230,7 +241,9 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
         },
         ...(validateCurrentBeforeMutation ? { validateCurrentBeforeMutation } : {}),
       });
+      if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed', serviceId };
       const result = await adapter.hotApply(request);
+      if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed', serviceId };
       if (!resultApplied(result)) {
         const errorCode = readHotApplyFailureErrorCode(result);
         serviceResultsByServiceId[serviceId] = { status: 'failed', errorCode };

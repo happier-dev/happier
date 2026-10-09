@@ -11,6 +11,7 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import { randomUUID } from 'node:crypto';
 import { createCliWorkflowTriggerActions } from '@/session/actions/workflowTriggers';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { isOriginalLocalManagedSetupContext } from '@/api/externalActionExecutionAuthorization';
 
 import { prepareExternalActionRequesterAccountAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { StoredCredentials } from '@/persistence';
@@ -33,9 +34,12 @@ type ManagedMachineActionAdapterParams = Readonly<{
     serverBaseUrl: string;
     serverId: string;
     executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
+    executeEnvironmentSetup?: (machine: ManagedMachineV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
+    subscribeEnvironmentSetupChanges?: (context: ActionExecutorContext, callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
     /** Original requester-private observation only; the guest retains replay authority. */
     observeSessionStartApproval?: (args: Readonly<{ artifactId: string; context: ActionExecutorContext;
         machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<ActionExecuteResult>;
+    observeEnvironmentSetupApproval?: ManagedMachineActionAdapterParams['observeSessionStartApproval'];
     preflightSessionStart?: (context: ActionExecutorContext) => Promise<boolean>;
     resolveCurrentMachineExecutionOriginContext?: (signal?: AbortSignal) => Promise<CurrentMachineExecutionOriginContext | null>;
     installationIdentity: Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }> | null;
@@ -52,16 +56,35 @@ export type ManagedMachinePolicyRequest = Readonly<{ machine: ManagedMachineV1; 
 
 /** Captures this runtime's own requester Account services, never borrowed custodian credentials. */
 export function createManagedSessionStartApprovalObserver(params: Readonly<{
+    actionId?: 'session.spawn_new' | 'machines.environment.apply';
     credentials: StoredCredentials;
     machineId: string;
     observeRecordedApprovalExecution(args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult>;
-    isRequesterRuntimeCurrent?: () => Promise<boolean>;
+    isRequesterRuntimeCurrent?: (context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<boolean>;
 }>): NonNullable<ManagedMachineActionAdapterParams['observeSessionStartApproval']> {
     return async ({ artifactId, context, machine, isCurrent }) => {
         const authorization = context.externalActionExecutionAuthorization;
         const root = authorization?.binding;
         const requesterHttpProjection = authorization?.requesterHttpProjection;
-        if (!authorization || !root?.sessionActionOrigin || !root.sessionActionSource || root.machineId !== params.machineId
+        const actionId = params.actionId ?? 'session.spawn_new';
+        if (actionId === 'machines.environment.apply' && !authorization) {
+            // Observation consumes the original installed Account's private
+            // recorded result. Only the ordinary Home signer admits effects.
+            if (!machine.enrolledMachineId || !context.signal || !params.isRequesterRuntimeCurrent
+                || !isOriginalLocalManagedSetupContext({ context, credentials: params.credentials,
+                    custodianAccountId: machine.custodianAccountId, homeId: machine.homeId })) {
+                return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+            }
+            return params.observeRecordedApprovalExecution({ artifactId, signal: context.signal,
+                expectedOrigin: { actionId, requestId: context.actionRequestId!, accountId: machine.custodianAccountId,
+                    serverIdentityId: machine.homeId, machineId: machine.enrolledMachineId },
+                isCurrent: async () => await isCurrent() && await params.isRequesterRuntimeCurrent!(context, machine) });
+        }
+        if (!authorization || !root || root.actionId !== 'machines.managed.acquire'
+            || root.requestId !== context.actionRequestId || root.serverIdentityId !== machine.homeId
+            || root.machineId !== params.machineId || root.machineId !== machine.controller.machineId
+            || root.installationId !== machine.controller.installationId || root.custodianAccountId !== machine.custodianAccountId
+            || (actionId === 'session.spawn_new' && (!root.sessionActionOrigin || !root.sessionActionSource))
             || readAccountIdFromToken(params.credentials.token) !== root.accountId
             || !root.accountEncryptionMode || !requesterHttpProjection
             || requesterHttpProjection.accountId !== root.accountId
@@ -71,10 +94,10 @@ export function createManagedSessionStartApprovalObserver(params: Readonly<{
             return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
         return await params.observeRecordedApprovalExecution({ artifactId, signal: context.signal,
-            expectedOrigin: { actionId: 'session.spawn_new', requestId: root.requestId, accountId: root.accountId,
+            expectedOrigin: { actionId, requestId: root.requestId, accountId: root.accountId,
                 serverIdentityId: root.serverIdentityId, machineId: machine.enrolledMachineId },
             isCurrent: async () => await isCurrent()
-                && (!params.isRequesterRuntimeCurrent || await params.isRequesterRuntimeCurrent())
+                && (!params.isRequesterRuntimeCurrent || await params.isRequesterRuntimeCurrent(context, machine))
                 && await requesterHttpProjection.isCurrent(),
         });
     };
@@ -171,6 +194,23 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
         const result = await withBoundDriver(params, signal, async driver => await driver.execute(actionId, input, { requestId, context, signal,
+                ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
+                ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
+                    if (!machine.enrolledMachineId || !machine.preset || !await isCurrent()) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
+                    let setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
+                    if (setup.ok) {
+                        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(setup.result);
+                        if (approval.success && approval.data.actionId === 'machines.environment.apply') {
+                            if (!params.observeEnvironmentSetupApproval) throw Object.assign(new Error('approval_context_unavailable'), { code: 'approval_context_unavailable' });
+                            context.operationOwnerUpdate?.update({ observation: { kind: 'outcome_uncertain', code: 'approval_pending' } });
+                            setup = await params.observeEnvironmentSetupApproval({ artifactId: approval.data.artifactId, context, machine, isCurrent });
+                            if (setup.ok) context.operationOwnerUpdate?.update({ observation: null });
+                        }
+                    }
+                    if (!setup.ok) throw Object.assign(new Error(setup.errorCode), { code: setup.errorCode });
+                    const current = await driver.execute('machines.managed.get', { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal });
+                    return ManagedMachineV1Schema.parse(current);
+                } } : {}),
                 ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine, isCurrent }) => {
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
                     if (!machine.enrolledMachineId || !await isCurrent()) {

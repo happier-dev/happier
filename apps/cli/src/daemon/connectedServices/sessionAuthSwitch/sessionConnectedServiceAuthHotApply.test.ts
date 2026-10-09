@@ -37,7 +37,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({ ok: true });
@@ -73,7 +73,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({ ok: true });
@@ -81,7 +81,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     expect(hotApply).toHaveBeenCalledWith({
       target: { agentId: 'codex' },
       selection: expect.objectContaining({
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'work',
       }),
     });
@@ -120,13 +120,13 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({
       ok: true,
       verificationByServiceId: {
-        'openai-codex': {
+        'happier.agent.codex/openai-codex': {
           status: 'verified',
           activeAccountId: 'acct_work',
           proofStrength: 'exact',
@@ -152,7 +152,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           credentialRevision,
           credentialFingerprint: 'fingerprint-1',
           generationApplication: {
-            serviceId: 'claude-subscription',
+            serviceId: 'happier.agent.claude/claude-subscription',
             groupId: 'group-1',
             profileId: 'profile-1',
             generation: 7,
@@ -174,13 +174,13 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
         },
       },
     })).resolves.toMatchObject({
       ok: true,
       verificationByServiceId: {
-        'claude-subscription': {
+        'happier.agent.claude/claude-subscription': {
           credentialRevision,
           credentialFingerprint: 'fingerprint-1',
           generationApplication: { generation: 7, credentialRevision, credentialFingerprint: 'fingerprint-1' },
@@ -228,11 +228,11 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
         },
       },
-      runtimeAuthSelectionsByServiceId: new Map([['claude-subscription', {
-        serviceId: 'claude-subscription',
+      runtimeAuthSelectionsByServiceId: new Map([['happier.agent.claude/claude-subscription', {
+        serviceId: 'happier.agent.claude/claude-subscription',
         groupId: 'group-1',
         activeProfileId: 'profile-1',
         groupGeneration: 7,
@@ -241,10 +241,10 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     })).resolves.toMatchObject({
       ok: false,
       errorCode: 'credential_revision_superseded',
-      serviceId: 'claude-subscription',
+      serviceId: 'happier.agent.claude/claude-subscription',
     });
     expect(validateGroupMutationCurrentness).toHaveBeenCalledWith({
-      serviceId: 'claude-subscription',
+      serviceId: 'happier.agent.claude/claude-subscription',
       groupId: 'group-1',
       profileId: 'profile-1',
       generation: 7,
@@ -287,7 +287,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({ ok: true });
@@ -319,15 +319,15 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({
       ok: false,
       errorCode: 'hot_apply_failed',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       serviceResultsByServiceId: {
-        'openai-codex': { status: 'failed', errorCode: 'hot_apply_failed' },
+        'happier.agent.codex/openai-codex': { status: 'failed', errorCode: 'hot_apply_failed' },
       },
     });
   });
@@ -362,15 +362,15 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({
       ok: false,
       errorCode: 'hot_apply_restart_required',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       serviceResultsByServiceId: {
-        'openai-codex': { status: 'failed', errorCode: 'hot_apply_restart_required' },
+        'happier.agent.codex/openai-codex': { status: 'failed', errorCode: 'hot_apply_restart_required' },
       },
     });
   });
@@ -408,15 +408,15 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
     })).resolves.toEqual({
       ok: false,
       errorCode: 'hot_apply_restart_required',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       serviceResultsByServiceId: {
-        'openai-codex': { status: 'failed', errorCode: 'hot_apply_restart_required' },
+        'happier.agent.codex/openai-codex': { status: 'failed', errorCode: 'hot_apply_restart_required' },
       },
     });
   });
@@ -435,7 +435,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       resolveRuntimeAuthAdapter: async () => adapter,
     });
     const selection = {
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'work',
       record: { profileId: 'work' },
       invalidateTransports: async () => undefined,
@@ -454,16 +454,16 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
-      runtimeAuthSelectionsByServiceId: new Map([['openai-codex', selection]]),
+      runtimeAuthSelectionsByServiceId: new Map([['happier.agent.codex/openai-codex', selection]]),
     })).resolves.toEqual({ ok: true });
 
     expect(hotApply).toHaveBeenCalledWith({
       target: { agentId: 'codex' },
       selection: {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'work',
       },
     });
@@ -496,16 +496,16 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-          openai: { source: 'connected', selection: 'profile', profileId: 'api' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'api' },
         },
       },
-      serviceIds: new Set(['openai-codex']),
+      serviceIds: new Set(['happier.agent.codex/openai-codex']),
     })).resolves.toEqual({ ok: true });
 
     expect(hotApply).toHaveBeenCalledOnce();
     expect(hotApply).toHaveBeenCalledWith(expect.objectContaining({
-      selection: expect.objectContaining({ serviceId: 'openai-codex' }),
+      selection: expect.objectContaining({ serviceId: 'happier.agent.codex/openai-codex' }),
     }));
   });
 
@@ -514,7 +514,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       const selection = request.selection && typeof request.selection === 'object' && !Array.isArray(request.selection)
         ? request.selection as Readonly<Record<string, unknown>>
         : {};
-      return selection.serviceId === 'openai'
+      return selection.serviceId === 'happier.agent.claude/claude-subscription'
         ? { applied: false, reason: 'not_ready' }
         : { applied: true };
     });
@@ -543,18 +543,18 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       normalizedBindings: {
         v: 2,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-          openai: { source: 'connected', selection: 'profile', profileId: 'api' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'api' },
         },
       },
-      serviceIds: new Set(['openai-codex', 'openai']),
+      serviceIds: new Set(['happier.agent.codex/openai-codex', 'happier.agent.claude/claude-subscription']),
     })).resolves.toEqual({
       ok: false,
       errorCode: 'hot_apply_failed',
-      serviceId: 'openai',
+      serviceId: 'happier.agent.claude/claude-subscription',
       serviceResultsByServiceId: {
-        'openai-codex': { status: 'applied' },
-        openai: { status: 'failed', errorCode: 'hot_apply_failed' },
+        'happier.agent.codex/openai-codex': { status: 'applied' },
+        'happier.agent.claude/claude-subscription': { status: 'failed', errorCode: 'hot_apply_failed' },
       },
     });
 

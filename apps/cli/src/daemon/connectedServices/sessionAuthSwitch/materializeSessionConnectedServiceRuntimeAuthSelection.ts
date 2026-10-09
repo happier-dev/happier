@@ -10,8 +10,11 @@ import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedS
 import { createSessionConnectedServiceAuthTransport } from '@/session/runtime/control/transport';
 import {
   type AccountSettings,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol';
-import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+import { readQualifiedConnectedAccountCredentialMaterial } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey, resolveQualifiedConnectedAccountServiceForIngressServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from './switchSessionConnectedServiceAuth';
 
@@ -26,13 +29,17 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   input: SessionConnectedServiceRuntimeAuthSelectionMaterializerInput;
   accountSettings?: AccountSettings | null;
   processEnv?: NodeJS.ProcessEnv;
+  isCurrent?: () => Promise<boolean>;
 }>): Promise<unknown | null> {
   if (params.input.next.source !== 'connected') return null;
+  const assertCurrent = async () => {
+    if (params.isCurrent && !await params.isCurrent()) throw new Error('requester_session_not_current');
+  };
+  await assertCurrent();
   const legacyServiceId =
     resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
       params.input.serviceId,
     );
-  if (!legacyServiceId) return null;
   const binding = params.input.normalizedBindings.bindingsByServiceId[params.input.serviceId];
   if (!binding || binding.source !== 'connected') return null;
 
@@ -60,14 +67,30 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     : readNonEmptyString(binding.profileId);
   if (!profileId) return null;
 
-  const resolutions = await resolveConnectedServiceCredentialResolutions({
-    credentials: params.credentials,
-    api: params.api,
-    bindings: [{ serviceId: legacyServiceId, profileId }],
-  });
-  const resolution = resolutions.get(legacyServiceId);
-  if (resolution?.revisionSemantics !== 'revisioned') return null;
-  const { record, credentialRevision } = resolution;
+  let record: ConnectedServiceCredentialRecordV1 | undefined;
+  let credentialRevision: ConnectedServiceCredentialRevisionV1;
+  if (legacyServiceId) {
+    const resolutions = await resolveConnectedServiceCredentialResolutions({
+      credentials: params.credentials,
+      api: params.api,
+      bindings: [{ serviceId: legacyServiceId, profileId }],
+    });
+    const resolution = resolutions.get(legacyServiceId);
+    if (resolution?.revisionSemantics !== 'revisioned') return null;
+    record = resolution.record;
+    credentialRevision = resolution.credentialRevision;
+  } else {
+    const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(params.input.serviceId);
+    if (!service) return null;
+    const material = await readQualifiedConnectedAccountCredentialMaterial({
+      credentials: params.credentials,
+      account: { service, accountId: profileId },
+      getAccountEncryptionMode: async () => await params.api.getAccountEncryptionMode(),
+    });
+    if (!material) return null;
+    credentialRevision = material.snapshot.credentialRevision;
+  }
+  await assertCurrent();
   const fallbackProfileId = binding.selection === 'group'
     ? readNonEmptyString(groupMetadata?.fallbackProfileId)
       || readNonEmptyString(previousGroupSelection?.fallbackProfileId)
@@ -116,7 +139,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
         profileId,
         credentialRevision,
       }) satisfies ConnectedServiceChildSelection;
-  const targetMaterializedRoot = params.activeServerDir
+  const targetMaterializedRoot = params.activeServerDir && legacyServiceId
     ? resolveConnectedServiceMaterializedHomeRoot(params.input.agentId, {
         activeServerDir: params.activeServerDir,
         serviceId: legacyServiceId,
@@ -132,14 +155,20 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     ? await createConnectedServiceRuntimeAuthNativeHome({
         agentId: params.input.agentId,
         root: targetMaterializedRoot,
+        isCurrent: params.isCurrent,
       })
     : null;
 
+  await assertCurrent();
   return {
     ...baseSelection,
-    credential: record,
-    applyConnectedServiceAuthGeneration:
-      runtimeAuthTransport.applyConnectedServiceAuthGeneration,
+    ...(record ? { credential: record } : {}),
+    applyConnectedServiceAuthGeneration: async (...args: Parameters<typeof runtimeAuthTransport.applyConnectedServiceAuthGeneration>) => {
+      await assertCurrent();
+      const result = await runtimeAuthTransport.applyConnectedServiceAuthGeneration(...args);
+      await assertCurrent();
+      return result;
+    },
     ...(targetMaterializedRoot ? { targetMaterializedRoot } : {}),
     ...(nativeHome ? { nativeHome } : {}),
   };

@@ -26,6 +26,8 @@ import type {
 import type {
   BoundAgentCliLaunchSpec,
 } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+import type { RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
+import type { RequesterSessionRuntimeContext } from './sessionEncryption/requesterSessionCredentials';
 
 export type DaemonSpawnStartupReadinessFailure = Extract<
   SpawnSessionResult,
@@ -57,6 +59,10 @@ export type RunnerAgentBootstrapIdentity = Readonly<
  * Session tracking for daemon
  */
 export interface TrackedSession {
+  /** Live private Account ports; never serialized in a marker or respawn descriptor. */
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
+  /** Safe admitted launch facts, restored only through verified process adoption. */
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   startedBy: 'daemon' | string;
   happySessionId?: string;
   /** Exact currently open runtime turn. Persisted marker state is authoritative. */

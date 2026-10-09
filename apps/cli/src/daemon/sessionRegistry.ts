@@ -30,6 +30,8 @@ import {
   type RunnerManagedProviderRetainedAuthorityV1,
   withRunnerManagedProviderAuthorityRetention,
 } from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
+import { RequesterWorkAttributionStoredReadV1Schema, RequesterWorkAttributionV1Schema,
+  type RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
 
 const DaemonSessionMarkerSchema = z.object({
   pid: z.number().int().positive(),
@@ -40,6 +42,7 @@ const DaemonSessionMarkerSchema = z.object({
   flavor: z.enum(CATALOG_AGENT_IDS).optional(),
   startedBy: z.enum(['daemon', 'terminal']).optional(),
   cwd: z.string().optional(),
+  requesterWorkAttributionV1: RequesterWorkAttributionStoredReadV1Schema.optional(),
   // Legacy positive-classification witness and diagnostic snapshot. Mutable command text is not process generation.
   processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   // Canonical OS process-generation witness paired with the PID.
@@ -129,17 +132,19 @@ type SessionMarkerWriteInput = Omit<
 
 export { hashProcessCommand } from '@happier-dev/cli-common/processInstance';
 
-function daemonSessionsDir(): string {
+type SessionMarkerReadScope = Pick<typeof configuration, 'happyHomeDir' | 'publicReleaseRing'>;
+
+function daemonSessionsDir(scope: SessionMarkerReadScope = configuration): string {
   return join(
-    configuration.happyHomeDir,
+    scope.happyHomeDir,
     'tmp',
-    resolveReleaseRingScopedBasename('daemon-sessions', configuration.publicReleaseRing),
+    resolveReleaseRingScopedBasename('daemon-sessions', scope.publicReleaseRing),
   );
 }
 
-function daemonSessionMarkerDirs(): string[] {
-  const primaryDir = daemonSessionsDir();
-  const legacyPreviewDir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions.preview');
+function daemonSessionMarkerDirs(scope: SessionMarkerReadScope = configuration): string[] {
+  const primaryDir = daemonSessionsDir(scope);
+  const legacyPreviewDir = join(scope.happyHomeDir, 'tmp', 'daemon-sessions.preview');
   return primaryDir === legacyPreviewDir ? [primaryDir] : [primaryDir, legacyPreviewDir];
 }
 
@@ -482,8 +487,23 @@ async function writeSessionMarkerUnlocked(
     marker.runnerAgentSourceCustodyV1 === undefined
       ? existingRunnerAgentSourceCustody
       : undefined;
+  const incomingRequesterAttribution = marker.requesterWorkAttributionV1
+    ? RequesterWorkAttributionV1Schema.parse(marker.requesterWorkAttributionV1)
+    : undefined;
+  const existingRequesterAttribution = existingMarkerFromDisk?.requesterWorkAttributionV1
+    && marker.processStartTimeMs !== undefined
+    && (canonicalAdoptionRequested || sessionMarkerProcessOwnershipMatches(existingMarkerFromDisk, {
+      happySessionId: marker.happySessionId, processStartTimeMs: marker.processStartTimeMs,
+    }))
+      ? existingMarkerFromDisk.requesterWorkAttributionV1 : undefined;
+  if (incomingRequesterAttribution && existingRequesterAttribution
+    && !isDeepStrictEqual(incomingRequesterAttribution, existingRequesterAttribution)) {
+    throw new Error('session_marker_requester_attribution_conflict');
+  }
+  const requesterWorkAttributionV1 = incomingRequesterAttribution ?? existingRequesterAttribution;
   const payload: DaemonSessionMarker = DaemonSessionMarkerSchema.parse({
     ...marker,
+    ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
     ...(preservedConnectedServiceRestartIntent
       ? { connectedServiceRestartIntent: preservedConnectedServiceRestartIntent }
       : {}),
@@ -812,6 +832,7 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
     processCommandHash: string;
     processStartTimeMs: number;
     sourceCustody: PluginSourceCustodyV1;
+    requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   }>,
 ): Promise<boolean> {
   return await runWithSessionMarkerMutationLock(params.pid, async () => {
@@ -826,6 +847,9 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
           params.sourceCustody,
         )
       )
+      || (params.requesterWorkAttributionV1 !== undefined
+        && existing.requesterWorkAttributionV1 !== undefined
+        && !isDeepStrictEqual(existing.requesterWorkAttributionV1, params.requesterWorkAttributionV1))
     ) {
       return false;
     }
@@ -837,6 +861,8 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
     await writeSessionMarkerUnlocked({
       ...rest,
       runnerAgentSourceCustodyV1: params.sourceCustody,
+      ...(params.requesterWorkAttributionV1
+        ? { requesterWorkAttributionV1: params.requesterWorkAttributionV1 } : {}),
     });
     return true;
   });
@@ -1135,13 +1161,15 @@ export async function promoteSessionMarkerPid(
   });
 }
 
-export async function readSessionMarkerForPid(pid: number): Promise<DaemonSessionMarker | null> {
-  for (const dir of daemonSessionMarkerDirs()) {
+export async function readSessionMarkerForPid(pid: number,
+  scope: SessionMarkerReadScope = configuration,
+): Promise<DaemonSessionMarker | null> {
+  for (const dir of daemonSessionMarkerDirs(scope)) {
     const filePath = join(dir, `pid-${pid}.json`);
     try {
       const raw = await readFile(filePath, 'utf-8');
       const parsed = DaemonSessionMarkerSchema.safeParse(JSON.parse(raw));
-      if (parsed.success && parsed.data.happyHomeDir === configuration.happyHomeDir) {
+      if (parsed.success && parsed.data.happyHomeDir === scope.happyHomeDir) {
         return parsed.data;
       }
     } catch (e) {

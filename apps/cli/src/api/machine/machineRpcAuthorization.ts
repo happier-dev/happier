@@ -91,7 +91,9 @@ export type MachineRpcAdmissionCurrentInput = Readonly<{
   /** Actual local signer, usable only for the exact private physical SOURCE purpose. */
   workspaceSyncSourceReceiver?: Readonly<{ machineId: string; installationId: string }>;
   /** Actual local signer, usable only for the exact private physical TARGET purposes. */
-  workspaceSyncTargetReceiver?: Readonly<{ machineId: string; installationId: string }>;
+  workspaceSyncTargetReceiver?: Readonly<{ machineId: string; installationId: string;
+    /** Outgoing installed D -> P2 joint purpose; the proof remains signed by D. */
+    destinationMachineId?: string }>;
   /** Actual installed writer/receiver; its own Account is independent of the retained actor. */
   workspaceSyncSourceWriterTargetReceiver?: Readonly<{ machineId: string; installationId: string; accountId: string; destinationMachineId?: string }>;
   privateKey: string | Uint8Array;
@@ -130,10 +132,17 @@ export async function readMachineRpcAdmissionCurrent(input: MachineRpcAdmissionC
     const targetRouting = input.workspaceSyncTargetRouting === undefined
       ? undefined : WorkspaceSyncTargetRoutingV1Schema.parse(input.workspaceSyncTargetRouting);
     const targetReceiver = input.workspaceSyncTargetReceiver;
+    if (targetReceiver?.destinationMachineId !== undefined && (!writerTarget || !targetRouting
+      || typeof targetReceiver.destinationMachineId !== 'string' || !targetReceiver.destinationMachineId.trim()
+      || targetReceiver.destinationMachineId !== targetReceiver.destinationMachineId.trim()
+      || targetReceiver.machineId !== targetRouting.targetMachineId
+      || targetReceiver.installationId !== targetRouting.targetContext.machineAdmission.installationId
+      || !sameStrictJsonValue(context, targetRouting.targetContext.machineAdmission))) return null;
+    const targetMethodMachineId = targetReceiver?.destinationMachineId ?? targetReceiver?.machineId;
     if (writerTarget && (sourceRouting || sourceReceiver
       || targetRouting && (!targetReceiver || writerTargetReceiver || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(targetRouting, writerTarget))
       || !targetRouting && targetReceiver
-      || input.method !== `${targetReceiver?.machineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}`
+      || input.method !== `${targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}`
       || writerTarget.target.phase !== 'release' && (!originalRoot || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(originalRoot, writerTarget)))
       || writerTargetReceiver && !writerTarget) return null;
     if (writerTargetReceiver?.destinationMachineId && (!writerTarget
@@ -146,7 +155,7 @@ export async function readMachineRpcAdmissionCurrent(input: MachineRpcAdmissionC
     const retainedRoot = originalRoot ? { callerInputAuthorization: originalRoot } : {};
     if (sourceRouting && targetRouting || sourceReceiver && targetReceiver
       || targetRouting && (!targetReceiver || targetRouting.targetMachineId !== context.machineId
-        || input.method !== `${targetReceiver.machineId}:${readWorkspaceSyncTargetMethod(targetRouting.phase)}`)
+        || input.method !== `${targetMethodMachineId}:${readWorkspaceSyncTargetMethod(targetRouting.phase)}`)
       || targetReceiver && !targetRouting) return null;
     const signer = writerTargetReceiver ?? sourceReceiver ?? targetReceiver ?? { machineId: context.machineId, installationId: context.installationId };
     const routing = { ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),

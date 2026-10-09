@@ -22,8 +22,10 @@ import { resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwne
 import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from '../spawn/resolveDarwinBackgroundServiceSpawnDirectoryFailure';
 import { applyInitialTranscriptAfterSeqToAttachPayload } from '../sessionEncryption/applyInitialTranscriptAfterSeqToAttachPayload';
 import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
-import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
+import { AcpCatalogUnavailableError, resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirectory';
+import { isRequesterLaunchAdmissionCurrent } from '../lifecycle/requesterWorkAttribution';
 
 /**
  * A requested Agent that is not installed in the current catalog is an invalid
@@ -74,6 +76,9 @@ export type PrepareExecuteSpawnSessionRequestInput = Readonly<{
     options: SpawnSessionOptions;
     /** Account snapshot admitted by the daemon caller; never read from ambient UI/global state. */
     accountSettings?: Readonly<Record<string, unknown>>;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+    /** The captured Account caller owns async hydration and custody, not this admission projection. */
+    readAcpCatalogSnapshot?(): Promise<AcpCatalogSnapshotV1>;
     credentials: NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 }>;
 
@@ -93,6 +98,10 @@ export async function prepareExecuteSpawnSessionRequest(
     }>,
 ): Promise<PreparedExecuteSpawnSessionRequest | SpawnSessionResult> {
     const { options } = params.request;
+    if (!await isRequesterLaunchAdmissionCurrent(options)) {
+        return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+            errorMessage: 'Requester Machine admission unavailable' };
+    }
     const environmentVariableCount = options.environmentVariables && typeof options.environmentVariables === 'object'
         ? Object.keys(options.environmentVariables as Record<string, unknown>).length
         : 0;
@@ -214,15 +223,27 @@ export async function prepareExecuteSpawnSessionRequest(
         };
     }
 
+    const configuredBackendId = effectiveBackendTargetV2.sourceKind === 'configured'
+        ? (effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId).trim() : null;
+    let configuredBackend: ReturnType<typeof resolveConfiguredAcpBackendFromAccountSettings> = null;
+    if (configuredBackendId !== null) {
+        try {
+            const catalog = params.request.readAcpCatalogSnapshot
+                ? await params.request.readAcpCatalogSnapshot() : params.request.acpCatalogSnapshot;
+            configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(
+                params.request.accountSettings ?? {}, configuredBackendId, catalog,
+            );
+        } catch (error) {
+            if (!(error instanceof AcpCatalogUnavailableError)) throw error;
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: error.message };
+        }
+        if (!configuredBackend && !effectiveResume) return {
+            type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+            errorMessage: `Configured ACP backend '${configuredBackendId}' is unavailable.`,
+        };
+    }
     if (effectiveResume) {
         if (effectiveBackendTargetV2.sourceKind === 'configured') {
-            const configuredBackendId = (effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId).trim();
-            const configuredBackend = configuredBackendId
-                ? resolveConfiguredAcpBackendFromAccountSettings(
-                    params.request.accountSettings ?? {},
-                    configuredBackendId,
-                )
-                : null;
             // Configured ACP has no catalog Agent id; its load-session support is
             // proven by the resolved Account declaration at this admission seam.
             // The resume token is the provider Session id, and attach metadata

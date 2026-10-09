@@ -5,6 +5,15 @@ import type { AgentId } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AccountSettings, AccountSettingsV2GetResponse, BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
+import type { PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import type { RemoteHostCatalogSnapshotV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import type { ConnectedPresentationCatalogSnapshotV1, ConnectedAcknowledgementsCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { Credentials, StoredCredentials } from '@/persistence';
@@ -35,7 +44,7 @@ import {
   resetActiveAccountSettingsSnapshotForTests,
 } from './activeAccountSettingsSnapshot';
 import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpBaseUrl';
-import { AccountSettingsStaleError } from './accountSettingsRefreshError';
+import { AccountSettingsContentInvalidError, AccountSettingsStaleError, isAccountSettingsContentInvalidError } from './accountSettingsRefreshError';
 import {
   assertAccountEncryptionModeAllowedByEffectiveClientRequirement,
   isClientE2eeRequiredError,
@@ -63,6 +72,17 @@ export type AccountSettingsContext = Readonly<{
   settingsSecretsReadKeys: readonly Uint8Array[];
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   savedSecretCatalogState?: SavedSecretCatalogState;
+  profileCatalog?: ProfileCatalogSnapshotV1;
+  providerConnectionsCatalog?: ProviderConnectionsCatalogSnapshotV1;
+  promptLibraryCatalog?: PromptLibraryCatalogSnapshotV1;
+  acpCatalog?: AcpCatalogSnapshotV1;
+  mcpServerCatalog?: McpServerCatalogSnapshotV1;
+  connectedConfigurationCatalog?: ConnectedAccountCatalogSnapshotV1;
+  connectedPurposeCatalog?: ConnectedAccountCatalogSnapshotV1;
+  remoteHostCatalog?: RemoteHostCatalogSnapshotV1;
+  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
+  connectedPresentationCatalog?: ConnectedPresentationCatalogSnapshotV1;
+  connectedAcknowledgementsCatalog?: ConnectedAcknowledgementsCatalogSnapshotV1;
   scopeKey?: string;
   whenRefreshed: Promise<AccountSettingsContext> | null;
 }>;
@@ -84,7 +104,7 @@ function createAccountSettingsLiveApplyError(
 }
 
 function isAccountSettingsContentUnavailableError(error: unknown): boolean {
-  if (isAccountSettingsEncryptionMaterialUnavailableError(error)) return true;
+  if (isAccountSettingsEncryptionMaterialUnavailableError(error) || isAccountSettingsContentInvalidError(error)) return true;
   if (!error || typeof error !== 'object' || !('code' in error)) return false;
   return error.code === 'ACCOUNT_SETTINGS_DECRYPT_FAILED'
     || error.code === 'ACCOUNT_SETTINGS_SCOPE_CHANGED'
@@ -96,6 +116,15 @@ function contextFromActiveSnapshot(active: NonNullable<ReturnType<typeof getActi
     ...active,
     whenRefreshed: null,
   };
+}
+
+// Schema rejection is a data refusal, independent of network/cache fallback policy.
+function parseBootstrapAccountSettings(raw: unknown): AccountSettings {
+  try {
+    return accountSettingsParse(raw);
+  } catch (error) {
+    throw new AccountSettingsContentInvalidError(error);
+  }
 }
 
 function readRawAccountSettingsObject(value: unknown): Readonly<Record<string, unknown>> {
@@ -136,7 +165,11 @@ async function requestAccountSettingsV2(
   if (response.status < 200 || response.status >= 300) {
     throw new AccountSettingsV2RequestError(response.status);
   }
-  return AccountSettingsV2GetResponseSchema.parse(response.data);
+  try {
+    return AccountSettingsV2GetResponseSchema.parse(response.data);
+  } catch (error) {
+    throw new AccountSettingsContentInvalidError(error);
+  }
 }
 
 function resolveLiveApplyDisposition(params: Readonly<{
@@ -404,6 +437,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   backendTarget?: BackendTargetRefV1;
   mode?: AccountSettingsBootstrapMode;
   refresh?: AccountSettingsRefreshMode;
+  /** Finite requester admission reads must not retarget the daemon's Account or process defaults. */
+  publication?: 'active' | 'invocation';
   /**
    * When false, ignore `HAPPIER_ACCOUNT_SETTINGS_MODE` (defense-in-depth for
    * security-sensitive surfaces like external MCP, where the spawning client
@@ -530,6 +565,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
     lifetimeToken: number;
   }> => {
+    if (params.publication === 'invocation') {
+      if (params.shouldCommit?.() === false) {
+        throw createAccountSettingsLiveApplyError('ACCOUNT_SETTINGS_SOURCE_STALE', 'Requester policy admission is no longer current.');
+      }
+      const context = { ...candidate, scopeKey };
+      return { context, didCommit: false, snapshot: context,
+        lifetimeToken: activeLifetimeTokenAtBootstrapStart };
+    }
     if (params.shouldCommit?.() === false) {
       throw createAccountSettingsLiveApplyError(
         'ACCOUNT_SETTINGS_SOURCE_STALE',
@@ -622,7 +665,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         'The active account changed before fresh Settings could be reused.',
       );
     }
-    return applyPublicationSideEffects(currentPublication).context;
+    return params.publication === 'invocation'
+      ? currentPublication.context
+      : applyPublicationSideEffects(currentPublication).context;
   }
 
   const readCache = await deps.readCache(cachePath);
@@ -643,7 +688,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     }
     if (content.t === 'plain') {
       const rawSettings = readRawAccountSettingsObject(content.v);
-      const settings = accountSettingsParse(rawSettings);
+      const settings = parseBootstrapAccountSettings(rawSettings);
       assertAccountEncryptionModeAllowedByEffectiveClientRequirement('plain', settings);
       return {
         rawSettings,
@@ -661,7 +706,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     }
     return {
       rawSettings: decrypted,
-      settings: accountSettingsParse(decrypted),
+      settings: parseBootstrapAccountSettings(decrypted),
     };
   };
 
@@ -711,6 +756,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     if (!publication.didCommit && publication.context.settingsVersion > candidate.settingsVersion) {
       return publication.context;
     }
+    if (params.publication === 'invocation') return publication.context;
 
     if (settingsContent?.t !== 'plain') {
       try {

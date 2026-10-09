@@ -13,8 +13,8 @@ import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '../machines/identity/installationIdentity.js';
 import { ManagedWakeTargetV1Schema } from '../machines/managed/managedIntentV1.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionFamily.js';
-import { SessionRequesterInstallationSealedBootstrapV1Schema,
-  type ExternalActionRequesterAccountContextPurposeV1 } from '../sessions/creation/sessionRequesterBootstrapV1.js';
+import { SessionRequesterInstallationSealedBootstrapV1Schema } from '../sessions/creation/sessionRequesterBootstrapSchemasV1.js';
+import type { ExternalActionRequesterAccountContextPurposeV1 } from '../sessions/creation/sessionRequesterBootstrapV1.js';
 import type { ProjectTrustContentV1, ProjectTrustValueV1, QualifiedProjectTrustProjectV1 } from '../workspaces/projectSetup/projectTrustRowV1.js';
 import type { MachinePublishedRowV1 } from '../machines/machineContentKeyTransitionV1.js';
 import type { AuthoringMemoryContentV1, AuthoringMemoryValueV1 } from '../account/authoringMemory.js';
@@ -1228,9 +1228,9 @@ export const ExternalActionExecutionAuthorizationRequestV1Schema = lazyZodSchema
   if (value.sessionActionOrigin && value.sessionActionOrigin.requestId !== value.envelope.requestId) {
     context.addIssue({ code: 'custom', path: ['sessionActionOrigin', 'requestId'], message: 'Session origin must name the invocation request' });
   }
-  if (value.managedContinuation && value.envelope.v === 2 && !value.envelope.sessionSpawnAdmission) {
-    context.addIssue({ code: 'custom', path: ['envelope'], message: 'Sealed managed continuation requires Session admission facts' });
-  }
+  // The admitted child Action selects its required public facts at the server
+  // continuation owner: Session start requires Session facts; machine setup
+  // carries only its exact target and keeps the executable preset input sealed.
   if (value.handoffContinuation) {
     const root = value.handoffContinuation.authorization.binding;
     const handoff = value.envelope.handoffAdmission;

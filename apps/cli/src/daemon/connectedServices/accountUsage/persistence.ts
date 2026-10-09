@@ -11,6 +11,7 @@ import {
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { StoredCredentials } from '@/persistence';
+import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/requesterSessionCredentials';
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import {
   shouldPersistQuotaSnapshot,
@@ -61,6 +62,27 @@ export type ProviderAccountUsagePersistenceScheduler = Readonly<{
   flush(timeoutMs: number): Promise<void>;
   dispose(): void;
 }>;
+
+/** Existing daemon reconnect flush, supplied by its retained exact Session custody. */
+export async function flushProviderAccountUsagePersistenceForTrackedSessions(input: Readonly<{
+  ownedScheduler: ProviderAccountUsagePersistenceScheduler;
+  trackedSessions: Iterable<Readonly<{ happySessionId?: string | null }>>;
+  resolveSessionAccountContext: (sessionId: string) => Promise<Pick<RequesterSessionRuntimeContext, 'providerAccountUsagePersistence'> | null>;
+  timeoutMs: number;
+}>): Promise<void> {
+  const schedulers = new Set([input.ownedScheduler]);
+  await Promise.all([...input.trackedSessions].map(async tracked => {
+    if (!tracked.happySessionId) return;
+    try {
+      const context = await input.resolveSessionAccountContext(tracked.happySessionId);
+      if (context) schedulers.add(context.providerAccountUsagePersistence);
+    } catch {
+      // Lost requester custody is not ordinary Account authority. Other retained
+      // schedulers still reconnect, and each requester checks currentness at write.
+    }
+  }));
+  await Promise.all([...schedulers].map(scheduler => scheduler.flush(input.timeoutMs)));
+}
 
 function deriveProviderAccountUsageStatus(
   snapshot: ProviderAccountUsageSnapshotV1,

@@ -6,10 +6,16 @@ import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
+import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type {
     SocketRpcRequestPayload,
     SessionActionRpcOriginV1,
     SocketRpcTransportAcknowledgementV1,
+    SocketRpcMachineAdmissionContextV1,
+    WorkspaceSyncSourceRoutingV1,
+    WorkspaceSyncTargetRoutingV1,
+    WorkspaceSyncSourceWriterTargetRoutingV1,
 } from '@happier-dev/protocol/socketRpc';
 
 /**
@@ -32,24 +38,22 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     executionRunWorkflowObservationSink?: unknown;
     /** Identity from the admitted in-process Workflow caller; never transported in RPC input. */
     executionRunWorkflowRunId?: string;
-    operationProgress?: Readonly<{
-        update(progress: Readonly<{
-            label?: string;
-            phase?: string;
-            current?: number;
-            total?: number;
-        }>): void;
-    }>;
-    operationOwnerUpdate?: Readonly<{
-        update(update: Readonly<{
-            progress?: Readonly<{ label?: string; phase?: string; current?: number; total?: number }>;
-            domainRef?: import('@happier-dev/protocol/actions').ActionOperationDomainRefV1;
-        }>): void;
-    }>;
+    /** Accepted Workflow Machine ceiling from the in-process host, never RPC input. */
+    executionRunTargetMachineId?: string;
+    operationProgress?: ActionExecutorContext['operationProgress'];
+    operationAcceptance?: ActionExecutorContext['operationAcceptance'];
+    operationOwnerUpdate?: ActionExecutorContext['operationOwnerUpdate'];
+    operationCancellation?: ActionExecutorContext['operationCancellation'];
+    operationReview?: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationReviewContinuation;
+    requesterWorkAttributionV1?: RequesterWorkAttributionV1;
 }>;
 
 export type RpcHandlerContext = Readonly<{
     signal: AbortSignal;
+    /** Host-admitted private ordinary Session bootstrap, never a public Action field. */
+    requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
+    /** Host-owned handoff acceptance immediately before physical launch; never transported. */
+    beforeSessionRunnerLaunch?: () => Promise<boolean>;
     /** Verified server ingress authority; never read from decrypted caller input. */
     callerAuthority?: ActionExecutorContext['authority'];
     /** Validated Home stamp from the Session caller's currently hosting Machine. */
@@ -65,6 +69,16 @@ export type RpcHandlerContext = Readonly<{
      * an in-process caller cannot synthesize authenticated account authority.
      */
     authorization?: SocketRpcAuthorizationContext;
+    /** Current Home-stamped actor and exact Machine installation, independently of Session authority. */
+    machineAdmission?: SocketRpcMachineAdmissionContextV1;
+    /** Home-validated physical SOURCE routing retaining the original child authority. */
+    workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+    /** Home-validated physical TARGET routing retaining the original admitted child authority. */
+    workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+    /** Home-validated original SOURCE root and exact physical writer-to-target custody. */
+    workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+    /** Host-bound final admission check after preparation, never accepted from caller input. */
+    verifyMachineAdmissionCurrent?: () => Promise<boolean>;
     localActionContext?: RpcLocalActionContext;
 }>;
 
@@ -84,6 +98,8 @@ export type RpcHandlerInvoker = Readonly<{
     invokeLocal: (method: string, params: unknown, options?: Readonly<{
         signal?: AbortSignal;
         localActionContext?: RpcLocalActionContext;
+        /** Only the signed peer-grant admission may supply this host-side context. */
+        verifiedPeerAuthority?: 'present_user' | 'account_automation';
     }>) => Promise<unknown>;
 }>;
 
@@ -122,7 +138,16 @@ type RpcHandlerCommonConfig = {
         params: unknown;
         authorization?: SocketRpcAuthorizationContext;
         transportResponseEnvelopeVersion?: 1;
+        machineAdmission?: SocketRpcMachineAdmissionContextV1;
+        workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+        workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+        workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+        /** Whole original SOURCE root, independently verified by Home before retention. */
+        callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+        signal?: AbortSignal;
     }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
+    /** Installation-private custody, opened only after the Home transport admission above. */
+    prepareRequesterAccountContext?: import('@/daemon/externalActions/executeExternalAction').PrepareExternalActionRequesterAccountContext;
     projectTransportAcknowledgement?: (request: Readonly<{
         method: string;
         params: unknown;

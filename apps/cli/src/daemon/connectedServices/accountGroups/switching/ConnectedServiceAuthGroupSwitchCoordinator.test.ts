@@ -47,6 +47,20 @@ class TestGenerationConflictError extends Error {
 }
 
 describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
+  it('keeps same-named Account groups independent in the canonical lease owner', () => {
+    const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry();
+    const alice = leases.acquire({ serviceId: 'openai-codex', groupId: 'main',
+      accountScope: { serverId: 'home', accountId: 'alice' } });
+    const bob = leases.acquire({ serviceId: 'openai-codex', groupId: 'main',
+      accountScope: { serverId: 'home', accountId: 'bob' } });
+    expect(alice.kind).toBe('owner');
+    expect(bob.kind).toBe('owner');
+    expect(leases.acquire({ serviceId: 'openai-codex', groupId: 'main',
+      accountScope: { serverId: 'home', accountId: 'bob' } }).kind).toBe('loser');
+    if (alice.kind === 'owner') alice.finish();
+    if (bob.kind === 'owner') bob.finish();
+  });
+
   function rejectedStartFixture(overrides: Partial<ConnectedServiceAuthGroupSwitchState> = {}) {
     let current: ConnectedServiceAuthGroupSwitchState = {
       ...state('primary', 1),

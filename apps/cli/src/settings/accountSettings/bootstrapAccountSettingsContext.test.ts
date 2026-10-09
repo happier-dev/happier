@@ -1,13 +1,23 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+
+import { resolveSessionSpawnConnectedServicesDefaultsPayload, agentSupportsSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
+import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 
 import { configuration } from '@/configuration';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { Credentials, StoredCredentials, TokenOnlyCredentials } from '@/persistence';
 
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
+import { resolveAccountSettingsCachePath, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -31,6 +41,7 @@ function createTokenOnlyCredentialsStub(token = 'token-only'): TokenOnlyCredenti
 }
 
 function mutableConfigurationForTest(): {
+  activeServerDir: string;
   serverUrl: string;
   apiServerUrl: string;
   publicServerUrl: string;
@@ -38,7 +49,8 @@ function mutableConfigurationForTest(): {
   clientEncryptionRequirement: 'follow_account' | 'require_e2ee';
 } {
   return configuration as unknown as {
-    serverUrl: string;
+    activeServerDir: string;
+  serverUrl: string;
     apiServerUrl: string;
     publicServerUrl: string;
     webappUrl: string;
@@ -47,6 +59,7 @@ function mutableConfigurationForTest(): {
 }
 
 describe('bootstrapAccountSettingsContext', () => {
+  const originalActiveServerDir = configuration.activeServerDir;
   const originalServerUrl = configuration.serverUrl;
   const originalApiServerUrl = configuration.apiServerUrl;
   const originalPublicServerUrl = configuration.publicServerUrl;
@@ -57,15 +70,118 @@ describe('bootstrapAccountSettingsContext', () => {
     resetInMemoryAccountSettingsContextForTests();
   });
 
+  it.each([{ mode: 'plain' as const, custodian: true }, { mode: 'e2ee' as const, custodian: true },
+    { mode: 'plain' as const, custodian: false }])('loads invocation-bound requester $mode policy without replacing custodian state or process defaults (custodian=$custodian)', async ({ mode, custodian }) => {
+    const alice = { source: 'network' as const, settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'alice' };
+    if (custodian) setActiveAccountSettingsSnapshot(alice);
+    const applySideEffects = vi.fn();
+    const writeCache = vi.fn(async () => {});
+    const credentials = mode === 'plain' ? createTokenOnlyCredentialsStub('bob') : createCredentialsStubWithToken('bob');
+    const raw = { actionsSettingsV1: {} };
+    const content = mode === 'plain' ? { t: 'plain' as const, v: raw }
+      : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+        material: { type: 'legacy', secret: new Uint8Array(32).fill(1) }, payload: raw,
+        randomBytes: length => new Uint8Array(length).fill(7) }) };
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { content, version: 9 } });
+    const bob = await runWithServerHttpBaseUrl('https://requester-home.example', () => bootstrapAccountSettingsContext({ credentials,
+      publication: 'invocation', mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false,
+      deps: {
+        // Persistent cache, HTTP, and process environment are genuine boundaries.
+        resolveCachePath: () => '/tmp/happier-requester-bob-policy', readCache: async () => null,
+        writeCache, applySideEffects,
+      },
+    }));
+    expect(bob.settingsVersion).toBe(9);
+    expect(bob.rawSettings).toEqual(raw);
+    expect(bob.scopeKey).toBe(createAccountSettingsScopeKey({ cachePath: '/tmp/happier-requester-bob-policy', token: credentials.token }));
+    expect(getActiveAccountSettingsSnapshot()).toBe(custodian ? alice : null);
+    expect(writeCache).not.toHaveBeenCalled();
+    expect(applySideEffects).not.toHaveBeenCalled();
+    expect(get.mock.calls[0]?.[0]).toBe('https://requester-home.example/v2/account/settings');
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     Object.assign(mutableConfigurationForTest(), {
+      activeServerDir: originalActiveServerDir,
       serverUrl: originalServerUrl,
       apiServerUrl: originalApiServerUrl,
       publicServerUrl: originalPublicServerUrl,
       webappUrl: originalWebappUrl,
       clientEncryptionRequirement: originalClientEncryptionRequirement,
     });
+  });
+
+  const codexScope = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+    agentId: 'codex', contributions: readCurrentContributionRegistry(),
+  })?.authorizedPurposes.find((scope) => scope.serviceRefs[0]?.localId === 'openai-codex');
+  const sealSettings = (raw: unknown) => sealAccountScopedBlobCiphertext({
+    kind: 'account_settings', material: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    payload: raw, randomBytes: length => new Uint8Array(length).fill(7),
+  });
+  const resolveOmittedSelection = () => resolveSessionSpawnConnectedServicesDefaultsPayload({
+    agentId: 'codex', credentials: createCredentialsStub(),
+  });
+  const validQualifiedDefaults = () => {
+    if (!codexScope || !agentSupportsSpawnConnectedServicesDefaults('codex')) {
+      throw new Error('The real bundled Codex purpose must be available for the composed defaults test');
+    }
+    return { connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
+      purpose: codexScope.purpose, target: { kind: 'account', account: {
+        service: codexScope.serviceRefs[0], accountId: 'saved-codex',
+      } },
+    }] } };
+  };
+
+  it.each([{ withCache: false, encrypted: false }, { withCache: true, encrypted: false },
+    { withCache: false, encrypted: true }])('refuses malformed fetched defaults for omitted qualified selection (cache=$withCache, encrypted=$encrypted)', async ({ withCache, encrypted }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-qualified-default-bootstrap-'));
+    Object.assign(mutableConfigurationForTest(), { activeServerDir: directory, clientEncryptionRequirement: 'follow_account' });
+    try {
+      const valid = validQualifiedDefaults();
+      if (withCache) await writeAccountSettingsCacheAtomic(resolveAccountSettingsCachePath(createCredentialsStub()), {
+        version: 2, cachedAt: 0, settingsVersion: 1,
+        settingsContent: { t: 'encrypted', c: sealSettings(valid) },
+      });
+      // HTTP and persistent storage are genuine boundaries; the qualified catalog/default owner and bootstrap are real.
+      const malformed = { connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+        antigravity: { v: 1, bindingsByServiceId: {
+          'happier.agent.antigravity/antigravity-account': { source: 'connected', selection: 'profile' },
+        } },
+      } } };
+      vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { version: 2,
+        content: encrypted ? { t: 'encrypted', c: sealSettings(malformed) } : { t: 'plain', v: malformed },
+      } });
+      await expect(resolveOmittedSelection()).rejects.toMatchObject({
+        code: 'connected_services_default_unavailable', reason: 'connected_services_default_settings_invalid',
+      });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it.each(['network', 'encrypted network', 'cache'] as const)('keeps valid omitted qualified defaults from %s', async (source) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-qualified-default-bootstrap-'));
+    Object.assign(mutableConfigurationForTest(), { activeServerDir: directory, clientEncryptionRequirement: 'follow_account' });
+    try {
+      const valid = validQualifiedDefaults();
+      if (source === 'cache') {
+        await writeAccountSettingsCacheAtomic(resolveAccountSettingsCachePath(createCredentialsStub()), {
+          version: 2, cachedAt: 0, settingsVersion: 1,
+          settingsContent: { t: 'encrypted', c: sealSettings(valid) },
+        });
+        vi.spyOn(axios, 'get').mockRejectedValue(new Error('offline'));
+      } else {
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { version: 2,
+          content: source === 'encrypted network'
+            ? { t: 'encrypted', c: sealSettings(valid) } : { t: 'plain', v: valid },
+        } });
+      }
+      await expect(resolveOmittedSelection()).resolves.toMatchObject({
+        connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'saved-codex' },
+        } },
+      });
+    } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
   it('rejects plaintext settings before publishing when the environment requires E2EE', async () => {

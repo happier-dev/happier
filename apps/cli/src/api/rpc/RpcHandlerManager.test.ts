@@ -35,6 +35,7 @@ import * as installationStore from '@/daemon/identity/store';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 const bindingCallId = '0123456789abcdef0123456789abcdef';
 const boundWorkspaceModel = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'codex', providerConnectionId: null, modelId: 'bound-model' });
@@ -132,8 +133,16 @@ it.each(['ordinary Account-codec baseline', 'installation-sealed request', 'phys
     const refused = async (changed: Partial<typeof request>, changedParams: unknown = params) => {
       const result = await rpc.handleRequest({ ...request, ...changed,
         params: await socketRpcCodec.encodeParams(accountContent, changedParams, { method, callId: bindingCallId }) });
-      expect(await socketRpcCodec.decodeResult(accountContent, { ok: true, result }, bindingCallId))
-        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      const decoded = socketRpcCodec.decodeResult(accountContent, { ok: true, result }, bindingCallId);
+      if (result && typeof result === 'object' && !Array.isArray(result)
+        && 'error' in result && typeof result.error === 'string'
+        && 'errorCode' in result && typeof result.errorCode === 'string') {
+        // A refusal before request decoding has no bound reply/call id. The public
+        // codec rejects that raw typed refusal rather than treating it as a result.
+        await expect(decoded).rejects.toMatchObject({ name: 'RpcError', rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
+      } else {
+        expect(await decoded).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      }
     };
     await refused({ callerInputAuthorization: { ...root, token: 'forged-root' } });
     await refused({ workspaceSyncSourceWriterTargetRouting: { ...routing,
@@ -300,7 +309,6 @@ it.each(['scoped PAT', 'terminal', 'narrowed Account'] as const)(
 });
 
 it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody through the existing RPC carrier and real credential factory', async mode => {
-  const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
   const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
   const machineKey = new Uint8Array(32).fill(7);
   const credentials: StoredCredentials = { token: 'bob-private', encryption: mode === 'plain' ? null

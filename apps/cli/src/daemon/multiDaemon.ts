@@ -32,6 +32,7 @@ type NormalizedDaemonState = Readonly<{
   startupSource?: DaemonStartupSource;
   serviceLabel?: string;
   machineId?: string;
+  accountId?: string;
 }>;
 
 type StopDaemonOptions = Readonly<{
@@ -53,6 +54,7 @@ function parseDaemonStateFromJson(value: unknown): NormalizedDaemonState | null 
       startupSource: typeof data.startupSource === 'string' ? data.startupSource : undefined,
       serviceLabel: typeof data.serviceLabel === 'string' ? data.serviceLabel : undefined,
       machineId: typeof data.machineId === 'string' ? data.machineId.trim() || undefined : undefined,
+      accountId: typeof data.accountId === 'string' ? data.accountId : undefined,
     };
   }
   const startedAt = Date.parse(String(data.startTime ?? ''));
@@ -137,6 +139,8 @@ export async function resolveLiveDaemonControlTargetForServer(serverId: string):
   pid: number;
   httpPort: number;
   controlToken?: string;
+  machineId?: string;
+  accountId?: string;
 }> | null> {
   const normalizedServerId = String(serverId ?? '').trim();
   if (!normalizedServerId) return null;
@@ -146,6 +150,8 @@ export async function resolveLiveDaemonControlTargetForServer(serverId: string):
     pid: state.pid,
     httpPort: state.httpPort,
     ...(state.controlToken ? { controlToken: state.controlToken } : {}),
+    ...(state.machineId ? { machineId: state.machineId } : {}),
+    ...(state.accountId ? { accountId: state.accountId } : {}),
   };
 }
 
@@ -191,7 +197,7 @@ function readLoopbackHttpEndpointPort(endpoint: string): number | null {
  */
 export async function resolveLiveDaemonExternalActionEndpoint(
   endpoint: string,
-): Promise<Readonly<{ machineId: string }> | null> {
+): Promise<Readonly<{ machineId: string; accountId?: string }> | null> {
   const port = readLoopbackHttpEndpointPort(endpoint);
   if (port === null) return null;
 
@@ -203,13 +209,16 @@ export async function resolveLiveDaemonExternalActionEndpoint(
     return null;
   }
 
-  const machineIds = new Set<string>();
+  const targets = new Map<string, Readonly<{ machineId: string; accountId?: string }>>();
   for (const statePath of statePaths) {
     const state = await readDaemonStateFromPath(statePath);
     if (!state || state.httpPort !== port || (await inspectPublishedDaemonPresence(state)).status !== 'running') continue;
-    if (state.machineId) machineIds.add(state.machineId);
+    if (state.machineId) {
+      const target = { machineId: state.machineId, ...(state.accountId ? { accountId: state.accountId } : {}) };
+      targets.set(JSON.stringify(target), target);
+    }
   }
-  return machineIds.size === 1 ? { machineId: [...machineIds][0]! } : null;
+  return targets.size === 1 ? [...targets.values()][0]! : null;
 }
 
 export type DaemonStatusEntry = Readonly<{

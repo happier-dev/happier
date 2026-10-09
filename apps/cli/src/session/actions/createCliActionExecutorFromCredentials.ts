@@ -1,4 +1,5 @@
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
+import { randomUUID } from 'node:crypto';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
 import { importHistoricalSessionTranscript } from '@/session/transport/http/sessionsHttp';
 import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
@@ -12,13 +13,14 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { configuration } from '@/configuration';
-import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
+import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, getDaemonConfidentialSecretFillExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import { resolveCliApiTokenForSdk } from '@/auth/cliApiToken';
 import {
   normalizeServerHttpBaseUrl,
   runWithServerHttpBaseUrl,
 } from '@/api/client/serverHttpBaseUrl';
 import { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
+import { buildTerminalAuthorityCeiling } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import {
   resolveLiveDaemonControlTargetForServer,
   resolveLiveDaemonExternalActionEndpoint,
@@ -26,6 +28,7 @@ import {
 import {
   hasStoredSessionCredentialProvenance,
   readSettings,
+  readStoredCredentialsForServerId,
   sameStoredCredentials,
   type StoredCredentials,
 } from '@/persistence';
@@ -66,21 +69,47 @@ import type {
 } from '@/plugins/runtime/invocation/services/actionCaller';
 import type { ComposerAttachmentSendPreparationRegistryV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 import type {
+  createCliActionDeps,
   CliActionExactHomeTarget,
   MachineActionDirectTargetTransport,
   SessionActionRpcTransport,
   SessionSpawnDirectTargetTransport,
 } from './createCliActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
-import type { ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, requiresOriginalAccountMachineActionProof, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { MachineEnvironmentApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
   fetchServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { isSessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board/actionIds';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
+import { FilesystemPreparedCopyInputSchema, FilesystemTargetCopyInputSchema, FilesystemUploadOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
+import { createPreparedFilesystemTransferClient } from '@/machines/transfer/preparedFilesystemTransferClient';
+import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';
+import { getServerProfile } from '@/server/serverProfiles';
+import { createCliBoundSessionMetadataReader } from './resolveCliActionCallerSession';
+import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import { dispatchRequesterSessionSpawnNewRpc } from '@/session/transport/rpc/machineRpc';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 type CliActionExecutor = ReturnType<typeof createCliActionExecutor>;
 
@@ -262,6 +291,23 @@ function combineInvocationSignals(
   return AbortSignal.any([invocationSignal, requestSignal]);
 }
 
+async function resolveServiceRelocationSource(params: Readonly<{
+  credentials: StoredCredentials; input: unknown; serverId: string; serverApiUrl: string; signal?: AbortSignal;
+}>): Promise<CliActionMachineTarget> {
+  const parsed = ProjectServiceRelocateInputV1Schema.safeParse(params.input);
+  if (!parsed.success) return { ok: false, code: 'invalid_parameters' };
+  if (parsed.data.workspace.serverId !== params.serverId) return { ok: false, code: 'server_target_mismatch' };
+  try {
+    const rows = await runWithServerHttpBaseUrl(params.serverApiUrl, async () => await readProjectAccountRows({
+      credentials: params.credentials, serverId: params.serverId, ...(params.signal ? { signal: params.signal } : {}),
+    }));
+    const ref = resolveWorkspaceRefById(rows.workspaceRefs, parsed.data.workspace.refId, params.serverId);
+    return ref ? { ok: true, machineId: ref.machineId } : { ok: false, code: 'workspace_ref_unavailable' };
+  } catch {
+    return { ok: false, code: params.signal?.aborted ? 'cancelled' : 'workspace_ref_unavailable' };
+  }
+}
+
 async function resolvePatActionTransportPlan(params: Readonly<{
   actionId: string;
   credentials: StoredCredentials;
@@ -269,6 +315,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   context: ActionExecutorContext | undefined;
   machineId?: string;
   invocationSignal?: AbortSignal;
+  serverId: string;
   serverApiUrl: string;
   allowConfiguredMachineTarget: boolean;
 }>): Promise<PatActionTransportPlan> {
@@ -278,6 +325,47 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   }
 
   const spec = getActionSpec(publicActionId.data);
+  const signal = combineInvocationSignals(params.invocationSignal, params.context?.signal);
+  if (publicActionId.data === 'projects.service.relocate') {
+    const source = await resolveServiceRelocationSource({ ...params, ...(signal ? { signal } : {}) });
+    if (!source.ok) return { kind: 'settled', result: actionResolutionFailure(source) };
+    const capturedTarget = params.context?.externalActionTarget;
+    if ((params.machineId !== undefined && params.machineId !== source.machineId)
+      || (capturedTarget && (capturedTarget.kind !== 'machine' || capturedTarget.machineId !== source.machineId))) {
+      return { kind: 'settled', result: actionFailure('target_unavailable') };
+    }
+    const local = await resolveDaemonLocalActionMachineId(params.serverApiUrl);
+    if (local && local !== source.machineId) return { kind: 'settled', result: actionFailure('target_not_local') };
+    return { kind: 'ready', input: params.input,
+      target: capturedTarget ?? (local ? encryptedDaemonTarget(params.credentials, local)
+        : { kind: 'machine', machineId: source.machineId }) };
+  }
+  if (Object.hasOwn(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, publicActionId.data)) {
+    const request = readLocalServiceControlActionRequest(publicActionId.data, params.input);
+    if (!request) return { kind: 'settled', result: actionFailure('invalid_parameters') };
+    const machineId = request.target.machineId;
+    const capturedTarget = params.context?.externalActionTarget;
+    if ((params.machineId !== undefined && params.machineId !== machineId)
+      || (capturedTarget && (capturedTarget.kind !== 'machine' || capturedTarget.machineId !== machineId))) {
+      return { kind: 'settled', result: actionFailure('target_unavailable') };
+    }
+    const local = await resolveDaemonLocalActionMachineId(params.serverApiUrl);
+    if (local && local !== machineId) return { kind: 'settled', result: actionFailure('target_unavailable') };
+    if (local) {
+      return { kind: 'ready', input: request,
+        target: capturedTarget ?? encryptedDaemonTarget(params.credentials, local) };
+    }
+    const target = await resolvePatMachineTarget({
+      credentials: params.credentials,
+      requestedMachineId: machineId,
+      ...(signal ? { signal } : {}),
+      serverApiUrl: params.serverApiUrl,
+      allowConfiguredMachineTarget: params.allowConfiguredMachineTarget,
+    });
+    if (!target.ok) return { kind: 'settled', result: actionResolutionFailure(target) };
+    return { kind: 'ready', input: request,
+      target: capturedTarget ?? { kind: 'machine', machineId: target.machineId } };
+  }
   const workflowProjectTarget = publicActionId.data === 'workflow.run.start'
     && params.context?.externalActionTarget?.kind === 'machine'
     ? params.context.externalActionTarget.project
@@ -308,7 +396,6 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   }
   const inputSessionId = readNonEmptyString(readRecord(params.input)?.sessionId);
   const executionPlacement = resolveActionExecutionPlacementForInput(spec, params.input);
-  const signal = combineInvocationSignals(params.invocationSignal, params.context?.signal);
   // The generic Session command resolves its positional selector before
   // invoking this adapter; first-class CLI and MCP Actions carry `sessionId`.
   // In each case the selector remains this adapter's only Session-target input
@@ -448,6 +535,7 @@ async function executePatPublicAction(params: Readonly<{
   context: ActionExecutorContext | undefined;
   machineId?: string;
   invocationSignal?: AbortSignal;
+  serverId: string;
   serverApiUrl: string;
   allowConfiguredMachineTarget: boolean;
 }>): Promise<ActionExecuteResult> {
@@ -478,8 +566,11 @@ export type CliActionMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
 >;
 
-export function createCliActionExecutorFromCredentials(params: Readonly<{
+function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
+  requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
+  savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
+  onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchRequesterSessionSpawnNewRpc>[0]['onRequesterSessionCredentialDisclosure'];
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
   onAccountServerRequestIssued?: () => void;
@@ -493,6 +584,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   /** Exact admitted-turn depth supplied by the authenticated Session host. */
   getCurrentTurnWorkDepth?: Parameters<typeof createCliActionExecutor>[0]['getCurrentTurnWorkDepth'];
   resolvePluginNotifications?: Parameters<typeof createCliActionExecutor>[0]['resolvePluginNotifications'];
+  readPluginVoiceProviders?: Parameters<typeof createCliActionExecutor>[0]['readPluginVoiceProviders'];
   /** Explicit CLI machine selector for public Action transport. */
   machineId?: string;
   readCredentials?: () => Promise<StoredCredentials | null>;
@@ -502,7 +594,15 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   revalidatePluginActionCallerOccurrence?: RevalidatePluginActionCallerOccurrence;
   runtimeActionExecute?: RuntimeActionExecute;
   clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
+  confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
   workflowAction?: ActionExecutorDeps['workflowAction'];
+  managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+  machineEnvironmentApply?: ActionExecutorDeps['machineEnvironmentApply'];
+  hostActionApprovalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'];
+  projectAction?: ActionExecutorDeps['projectAction'];
+  projectWorkerAction?: ActionExecutorDeps['projectWorkerAction'];
+  projectDefinitionAction?: ActionExecutorDeps['projectDefinitionAction'];
+  filesystemActionExecute?: ActionExecutorDeps['filesystemActionExecute'];
   workflowAcceptedAuthorizationCurrentness?: Parameters<typeof createCliActionExecutor>[0]['workflowAcceptedAuthorizationCurrentness'];
   sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
   /** Current committed contributed Action declarations for catalog discovery. */
@@ -623,6 +723,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     };
   };
   const bindExecutorToActionServer = (source: CliActionExecutor): CliActionExecutor => ({
+    observeRecordedApprovalExecution: async args => await runWithActionServer(() => source.observeRecordedApprovalExecution(args)),
     prepare: async (...args) => {
       const prepared = await runWithActionServer(async () => await source.prepare(...args));
       if (prepared.kind !== 'ready') return prepared;
@@ -636,6 +737,9 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       };
     },
     execute: async (...args) => await runWithActionServer(async () => await source.execute(...args)),
+    continueConfidentialApprovalRequest: async (...args) => await runWithActionServer(
+      async () => await source.continueConfidentialApprovalRequest(...args),
+    ),
     replayApprovedApprovalRequest: async (...args) => await runWithActionServer(
       async () => await source.replayApprovedApprovalRequest(...args),
     ),
@@ -646,9 +750,13 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     })
   );
+  const readCurrentCredentials = async (): Promise<StoredCredentials | null> => params.readCredentials
+    ? await params.readCredentials().catch(() => null)
+    : params.credentials;
   const createExecutor = (
     credentials: StoredCredentials,
     transcriptFollowLeaseRegistry: ReturnType<typeof createFollowLeaseRegistry>,
+    sessionMemoryEnabled?: boolean,
   ): ReturnType<typeof createCliActionExecutor> => {
     const resolveServerFeaturesSnapshot = params.resolveServerFeaturesSnapshot
       ?? (async () => await resolveServerFeaturesSnapshotForCredentials(credentials));
@@ -705,12 +813,21 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     });
     return createCliActionExecutor({
       ...cryptoContext,
+      ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
       clientActionExecute: params.clientActionExecute ?? getDaemonClientActionExecutor(approvalServerId),
+      confidentialSecretFill: params.confidentialSecretFill ?? getDaemonConfidentialSecretFillExecutor(approvalServerId),
       ...(params.scmFilesystemAccessPolicy ? { scmFilesystemAccessPolicy: params.scmFilesystemAccessPolicy } : {}),
       ...(params.resolveExactSessionEncryptionMaterial
         ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial }
         : {}),
       ...(params.actionsSettingsProvider ? { actionsSettingsProvider: params.actionsSettingsProvider } : {}),
+      ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
+      ...(params.machineEnvironmentApply ? { machineEnvironmentApply: params.machineEnvironmentApply } : {}),
+      ...(params.hostActionApprovalLifetime ? { hostActionApprovalLifetime: params.hostActionApprovalLifetime } : {}),
+      ...(params.projectAction ? { projectAction: params.projectAction } : {}),
+      ...(params.projectWorkerAction ? { projectWorkerAction: params.projectWorkerAction } : {}),
+      ...(params.projectDefinitionAction ? { projectDefinitionAction: params.projectDefinitionAction } : {}),
+      ...(params.filesystemActionExecute ? { filesystemActionExecute: params.filesystemActionExecute } : {}),
       serverId: approvalServerId,
       ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
       serverHttpBaseUrl: approvalServerApiUrl,
@@ -762,8 +879,14 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       }),
       token: credentials.token,
       credentials,
+      isCredentialCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()),
+      ...(params.onRequesterSessionCredentialDisclosure
+        ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+      ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
+      ...(params.savedSecretOperationContext ? { savedSecretOperationContext: params.savedSecretOperationContext } : {}),
       resolveServerFeaturesSnapshot,
       ...(params.resolvePluginNotifications ? { resolvePluginNotifications: params.resolvePluginNotifications } : {}),
+      ...(params.readPluginVoiceProviders ? { readPluginVoiceProviders: params.readPluginVoiceProviders } : {}),
       ...(params.pluginActionExecutionOwner
         ? { pluginActionExecutionOwner: params.pluginActionExecutionOwner }
         : {}),
@@ -866,15 +989,30 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     transcriptFollowLeaseRegistry: ReturnType<typeof createFollowLeaseRegistry>,
     invocationSignal?: AbortSignal,
   ): CliActionExecutor => {
-    const readCurrentCredentials = async (): Promise<StoredCredentials | null> => params.readCredentials
-      ? await params.readCredentials().catch(() => null)
-      : params.credentials;
     const fixedExecutor = params.readCredentials
       ? null
       : shouldUsePatPublicActionTransport(params.credentials, undefined)
         ? null
         : createExecutor(params.credentials, transcriptFollowLeaseRegistry);
+    const originationPreferenceFailure = async (actionId: string, credentials: StoredCredentials,
+      context: ActionExecutorContext | undefined) => {
+      if (actionId !== 'machines.managed.acquire' || context?.externalActionExecutionAuthorization || context?.surface === 'rpc') return null;
+      if (!params.actionsSettingsProvider) await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
+      const provider = params.actionsSettingsProvider ?? createActionSettingsProvider({
+        scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+      });
+      return resolveActionOriginationPreferenceFailureV1(actionId, {
+        managedMachineCreationEnabled: provider.getAccountSettings?.()?.managedMachineCreationEnabled,
+      });
+    };
     return bindExecutorToActionServer({
+      observeRecordedApprovalExecution: async args => {
+        const credentials = await readCurrentCredentials();
+        if (!credentials) return actionFailure('not_authenticated');
+        const executor = fixedExecutor ?? createExecutor(credentials, transcriptFollowLeaseRegistry);
+        const signal = combineInvocationSignals(invocationSignal, args.signal) ?? args.signal;
+        return await executor.observeRecordedApprovalExecution({ ...args, signal });
+      },
       prepare: async (...args) => {
         const listAccessFailure = resolveActionSessionListAccessFailure(args[0], args[2]);
         if (listAccessFailure) return { kind: 'settled' as const, result: listAccessFailure };
@@ -886,6 +1024,8 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
           };
         }
         const [actionId, input, rawContext] = args;
+        const preferenceFailure = await originationPreferenceFailure(actionId, credentials, rawContext);
+        if (preferenceFailure) return { kind: 'settled' as const, result: preferenceFailure };
         if (shouldUsePatPublicActionTransport(credentials, rawContext)) {
           const plan = await resolvePatActionTransportPlan({
             actionId,
@@ -894,6 +1034,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
             credentials,
             ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
             ...(invocationSignal ? { invocationSignal } : {}),
+            serverId: approvalServerId,
             serverApiUrl: resolveActionServerApiUrl(),
             allowConfiguredMachineTarget: fixedServerId === null,
           });
@@ -920,6 +1061,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         if (
           !params.actionsSettingsProvider
           && !context?.externalActionExecutionAuthorization
+          && actionId !== 'machines.managed.acquire'
         ) {
           await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
         }
@@ -933,6 +1075,8 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
         const [actionId, input, rawContext] = args;
+        const preferenceFailure = await originationPreferenceFailure(actionId, credentials, rawContext);
+        if (preferenceFailure) return preferenceFailure;
         if (shouldUsePatPublicActionTransport(credentials, rawContext)) {
           return await executePatPublicAction({
             actionId,
@@ -941,42 +1085,152 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
             credentials,
             ...(params.machineId !== undefined ? { machineId: params.machineId } : {}),
             ...(invocationSignal ? { invocationSignal } : {}),
+            serverId: approvalServerId,
             serverApiUrl: resolveActionServerApiUrl(),
             allowConfiguredMachineTarget: fixedServerId === null,
           });
         }
         const context = await enrichApprovalRoutingContext(rawContext, credentials);
-        if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)) {
+        const mountedFilesystemCopy = params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
+          && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success);
+        // Finite original CLI work is admitted at Home before the selected
+        // retained guest is online. Keep policy/approval in the shared executor;
+        // admitted Session/Run origins retain their existing credentialed owner.
+        const originalCliCaller = (context.surface === undefined || context.surface === 'cli')
+          && (!context.actionCaller || context.actionCaller.kind === 'host')
+          && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+          && !context.rpcSessionAuthorization && !context.causalPermissionAuthority;
+        const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true });
+        const ordinary = provenance?.provenance.kind === 'account' && provenance.provenance.authority === 'present_user'
+          && context.authority !== 'account_automation';
+        // A paired terminal creates through its existing daemon ingress, where
+        // terminal policy and exact Machine admission are enforced. Home's
+        // finite-Action ingress does not admit terminal Session creation.
+        const pairedSessionCreation = actionId === 'session.spawn_new' && provenance?.provenance.kind === 'terminal'
+          ? SessionSpawnNewInputV2Schema.safeParse(input) : null;
+        const originalContext = params.externalActionClient && originalCliCaller && provenance?.provenance.kind === 'terminal'
+          ? { ...context, authority: 'account_automation' as const } : context;
+        const originalMachineEnvironment = actionId === 'machines.environment.apply' && originalCliCaller
+          ? MachineEnvironmentApplyInputV1Schema.safeParse(input) : null;
+        if (originalMachineEnvironment && (!originalMachineEnvironment.success
+          || originalMachineEnvironment.data.homeId !== context.serverIdentityId)) return actionFailure('target_unavailable');
+        const originalMachineTarget = context.externalActionTarget
+          ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId);
+        const originalFiniteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && originalCliCaller;
+        if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)
+          && originalCliCaller && (ordinary || pairedSessionCreation?.success || originalMachineTarget || actionId === 'projects.service.relocate')
+          && !mountedFilesystemCopy && !originalFiniteProjectAction) {
           const parsedActionId = SignedRootActionIdSchema.safeParse(actionId);
           if (!parsedActionId.success) return actionFailure('unsupported');
           const signal = combineInvocationSignals(invocationSignal, context?.signal);
+          let target = context?.externalActionTarget
+            ?? (params.machineId ? { kind: 'machine' as const, machineId: params.machineId } : undefined);
+          if (originalMachineEnvironment?.success) {
+            if (target && (target.kind !== 'machine' || target.machineId !== originalMachineEnvironment.data.machineId)) return actionFailure('target_unavailable');
+            target ??= { kind: 'machine', machineId: originalMachineEnvironment.data.machineId };
+          }
+          // Public V2 already names the Machine. Keep the same exact Account /
+          // publication check when the caller omits the optional outer flag.
+          if (!target && pairedSessionCreation?.success) {
+            target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
+          }
+          if (parsedActionId.data === 'projects.service.relocate') {
+            const source = await resolveServiceRelocationSource({ credentials, input, serverId: approvalServerId,
+              serverApiUrl: resolveActionServerApiUrl(), ...(signal ? { signal } : {}) });
+            if (!source.ok) return actionResolutionFailure(source);
+            if (target && (target.kind !== 'machine' || target.machineId !== source.machineId)) {
+              return actionFailure('target_unavailable');
+            }
+            target ??= { kind: 'machine', machineId: source.machineId };
+          }
           const daemonControlTarget = fixedServerId
             ? await resolveLiveDaemonControlTargetForServer(fixedServerId).catch(() => null)
             : undefined;
+          if (target?.kind === 'machine') {
+            // Home's API URL need not be the daemon's control URL. Preserve
+            // the fixed-Home publication's own Account/Machine offline dispatcher.
+            const localEndpoint = await resolveLiveDaemonExternalActionEndpoint(resolveActionServerApiUrl()).catch(() => null);
+            const accountId = readAccountIdFromToken(credentials.token);
+            const localPublication = daemonControlTarget ?? localEndpoint;
+            const ownLocal = (ordinary || pairedSessionCreation?.success) && accountId && localPublication?.machineId === target.machineId
+              && localPublication.accountId === accountId;
+            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data)) {
+              try {
+                const requester = await dispatchOriginalAccountAction({ actionId: parsedActionId.data, input,
+                  requestId: context.actionRequestId ?? randomUUID(), target, credentials,
+                  serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
+                  // Accepted legacy publications omit Account identity. Keep their
+                  // incumbent own-target bridge while Home still admits foreign work.
+                  ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
+                  ...(originalContext.authority ? { authority: originalContext.authority } : {}),
+                  ...(params.onRequesterSessionCredentialDisclosure
+                    ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+                  isCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()),
+                  ...(signal ? { signal } : {}) });
+                if (requester) return requester;
+              } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
+            }
+          }
           if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');
           return await requestDaemonSignedRootActionExecution({
             actionId: parsedActionId.data,
             input,
-            ...(context?.externalActionTarget
-              ? { target: context.externalActionTarget }
-              : params.machineId
-                ? { target: { kind: 'machine' as const, machineId: params.machineId } }
-                : {}),
+            ...(target ? { target } : {}),
             ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
           }, {
             ...(signal ? { signal } : {}),
             ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
+            ...(pairedSessionCreation?.success
+              ? context.authority === 'account_automation'
+                ? { authorityCeiling: 'account_automation' as const }
+                : buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl() })
+              : {}),
           });
         }
-        const executor = fixedExecutor ?? createExecutor(credentials, transcriptFollowLeaseRegistry);
+        const signal = combineInvocationSignals(invocationSignal, context?.signal);
+        let sessionMemoryEnabled: boolean | undefined;
+        const catalogSessionId = readNonEmptyString(context?.defaultSessionId);
+        if (params.pluginActionExecutionOwner === 'current_process' && context?.surface === 'agent'
+          && catalogSessionId && (actionId === 'action.spec.get' || actionId === 'action.spec.search')) {
+          // A reader belongs to one invocation: its preparation-local cache must
+          // never turn a daemon's long-lived catalog into a stale Session policy.
+          const ctx = resolveSessionEncryptionContextFromCredentials(credentials);
+          const readMetadata = createCliBoundSessionMetadataReader({
+            credentials, token: credentials.token, sessionId: catalogSessionId,
+            ...(ctx ? { mode: 'e2ee' as const, ctx } : { mode: 'plain' as const, ctx: null }),
+            resolveTransportForSession: (sessionId) => resolveSessionTransportContext({
+              credentials, idOrPrefix: sessionId, ...(signal ? { signal } : {}),
+            }),
+          });
+          const metadata = await readMetadata();
+          if (signal?.aborted) return actionFailure('cancelled');
+          if (!metadata) return actionFailure('target_unavailable');
+          sessionMemoryEnabled = readSessionMemoryEnabledV1(metadata);
+        }
+        const executor = sessionMemoryEnabled !== undefined
+          ? createExecutor(credentials, transcriptFollowLeaseRegistry, sessionMemoryEnabled)
+          : fixedExecutor ?? createExecutor(credentials, transcriptFollowLeaseRegistry);
         if (
           !params.actionsSettingsProvider
           && !context?.externalActionExecutionAuthorization
+          && actionId !== 'machines.managed.acquire'
         ) {
           await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
         }
+        return await executor.execute(actionId, input, signal ? { ...originalContext, signal } : originalContext);
+      },
+      continueConfidentialApprovalRequest: async (input, context) => {
+        const credentials = await readCurrentCredentials();
+        if (!credentials) return actionFailure('not_authenticated');
+        const executor = fixedExecutor ?? createExecutor(credentials, transcriptFollowLeaseRegistry);
         const signal = combineInvocationSignals(invocationSignal, context?.signal);
-        return await executor.execute(actionId, input, signal ? { ...context, signal } : context);
+        const resolvedContext = await enrichApprovalRoutingContext(
+          // The receiver's bound or authenticated Home identity admits a private
+          // claim; an invocation context cannot substitute another Home's stamp.
+          { ...context, ...(signal ? { signal } : {}), serverIdentityId: params.serverIdentityId },
+          credentials,
+        );
+        return await executor.continueConfidentialApprovalRequest(input, resolvedContext);
       },
       replayApprovedApprovalRequest: async (args) => {
         const credentials = await readCurrentCredentials();
@@ -1055,4 +1309,208 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       return createCredentialRefreshingExecutor(transcriptFollowLeaseRegistry, signal);
     },
   });
+}
+
+/** Public caller ingress; concrete byte drivers alone consume the private transport core. */
+export function createCliActionExecutorFromCredentials(params: Parameters<typeof createCliActionExecutionCoreFromCredentials>[0]): ReturnType<typeof createCliActionExecutionCoreFromCredentials> {
+  const core = createCliActionExecutionCoreFromCredentials(params);
+  const wrap = (executor: CliActionExecutor, invocationSignal?: AbortSignal): CliActionExecutor => {
+    const prepareConcreteCopy = async (input: unknown, context: ActionExecutorContext | undefined) => {
+      const copy = FilesystemPreparedCopyInputSchema.safeParse(input);
+      const targetCopy = copy.success ? null : FilesystemTargetCopyInputSchema.safeParse(input);
+      const parsed = copy.success ? copy.data : targetCopy?.success ? targetCopy.data : null;
+      if (!parsed) return null;
+      if (parsed.kind === 'prepared_transfer' && parsed.source.kind === 'entry_tree') {
+        return { failure: actionFailure('filesystem_transfer_custody_required') };
+      }
+      const signal = combineInvocationSignals(invocationSignal, context?.signal);
+      try {
+        signal?.throwIfAborted();
+        const outerCredentials = params.readCredentials ? await params.readCredentials() : params.credentials;
+        if (!outerCredentials) return { failure: actionFailure('not_authenticated') };
+        const pat = shouldUsePatPublicActionTransport(outerCredentials, context);
+        if (pat && parsed.kind === 'target_copy') {
+          return { failure: actionFailure('filesystem_transfer_custody_required') };
+        }
+        if ((params.serverId && params.serverId !== parsed.destination.serverId)
+          || (context?.serverId && context.serverId !== parsed.destination.serverId)
+          || (params.machineId && params.machineId !== parsed.destination.machineId)
+          || (context?.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
+            || context.externalActionTarget.machineId !== parsed.destination.machineId))) return { failure: actionFailure('target_unavailable') };
+        const resolveHome = async (serverId: string) => {
+          const target = await resolveActionCliCredentialTarget({ requestedServerId: serverId,
+            deps: { readCredentialsFn: async () => null, readCredentialsForServerIdFn: readStoredCredentialsForServerId, getServerProfileFn: getServerProfile } });
+          if (!target.credentials || !target.fixedServer || target.fixedServer.serverId !== serverId) throw new Error('Exact copy Home credentials are unavailable');
+          return { credentials: target.credentials, ...target.fixedServer };
+        };
+        // Capture local custody before policy/approval awaits; the effect never
+        // resolves a replacement Account after the containing Action is admitted.
+        const [sourceHome, destinationHome] = await Promise.all([resolveHome(parsed.source.serverId), resolveHome(parsed.destination.serverId)]);
+        if (!sameStoredCredentials(destinationHome.credentials, outerCredentials)
+          || (params.serverApiUrl && normalizeServerHttpBaseUrl(params.serverApiUrl) !== normalizeServerHttpBaseUrl(destinationHome.serverApiUrl))) {
+          return { failure: actionFailure('not_authenticated') };
+        }
+        const assertCurrent = async () => {
+          signal?.throwIfAborted();
+          const [sourceCurrent, destinationCurrent, outerCurrent] = await Promise.all([
+            readStoredCredentialsForServerId(sourceHome.serverId), readStoredCredentialsForServerId(destinationHome.serverId),
+            params.readCredentials ? params.readCredentials() : Promise.resolve(params.credentials),
+          ]);
+          if (!sameStoredCredentials(sourceHome.credentials, sourceCurrent) || !sameStoredCredentials(destinationHome.credentials, destinationCurrent)
+            || !sameStoredCredentials(outerCredentials, outerCurrent)) throw Object.assign(new Error('Copy Account custody is no longer current'), { errorCode: 'not_authenticated' });
+        };
+        const currentCredentialsFor = (home: typeof sourceHome) => async () => {
+          await assertCurrent();
+          return home.credentials;
+        };
+        const concreteContext: ActionExecutorContext = { ...context, serverId: destinationHome.serverId,
+          externalActionTarget: { kind: 'machine', machineId: parsed.destination.machineId }, ...(signal ? { signal } : {}) };
+        const run = async (admittedContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
+          const signal = combineInvocationSignals(invocationSignal, context?.signal);
+          let sourceTransport: Awaited<ReturnType<typeof createCredentialedFilesystemTransferClient>> | undefined;
+          let destinationTransport: Awaited<ReturnType<typeof createCredentialedFilesystemTransferClient>> | undefined;
+          let preparedAdmission: Extract<ReturnType<typeof FilesystemUploadOutputSchema.parse>, { success: true; status: 'accepted' }> | undefined;
+          try {
+            await assertCurrent();
+            const invoke = (home: typeof sourceHome, machineId: string): Parameters<typeof createPreparedFilesystemTransferClient>[0]['executeAction'] => async (id, value, targetContext) => {
+              await assertCurrent();
+              if (targetContext.serverId !== home.serverId || targetContext.externalActionTarget?.kind !== 'machine'
+                || targetContext.externalActionTarget.machineId !== machineId) return actionFailure('target_unavailable');
+              const endpointContext = { ...targetContext,
+                ...(admittedContext.surface ? { surface: admittedContext.surface } : {}), ...(admittedContext.authority ? { authority: admittedContext.authority } : {}),
+                ...(admittedContext.actionRequestId ? { actionRequestId: admittedContext.actionRequestId } : {}) };
+              let result: ActionExecuteResult;
+              if (shouldUsePatPublicActionTransport(home.credentials, endpointContext)) {
+                const endpointExecutor = createCliActionExecutionCoreFromCredentials({ ...home, machineId,
+                  readCredentials: currentCredentialsFor(home) });
+                result = await endpointExecutor.execute(id, value, endpointContext);
+              } else {
+                const method = getActionSpec(id).bindings?.rpcMethod;
+                if (!method) return actionFailure('unsupported');
+                const response = await callExactMachineRpc({ credentials: home.credentials, serverUrl: home.serverApiUrl,
+                  machineId, method, request: createTargetedActionRpcRequestV1(value, { kind: 'machine', machineId }, admittedContext),
+                  requireCurrentMachine: true, timeoutMs: null,
+                  ...(admittedContext.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
+                  ...(admittedContext.actionRequestId ? { requestId: admittedContext.actionRequestId } : {}), ...(signal ? { signal } : {}) });
+                const failure = ActionExecuteFailureSchema.safeParse(response);
+                result = failure.success ? failure.data : { ok: true, result: response };
+              }
+              await assertCurrent();
+              return result;
+            };
+            const executeSource = invoke(sourceHome, parsed.source.machineId);
+            const executeDestination = invoke(destinationHome, parsed.destination.machineId);
+            if (pat) {
+              // The existing API admits this exact prepared-file write once.
+              // Deferred approval is preserved without preparing a source.
+              const admission = await executeDestination('daemon.filesystem.copy', parsed, concreteContext);
+              if (!admission.ok) return admission;
+              if (ActionApprovalRequestCreatedResultSchema.safeParse(admission.result).success) return admission;
+              const receipt = FilesystemUploadOutputSchema.parse(admission.result);
+              if (!receipt.success || receipt.status !== 'accepted') return admission;
+              preparedAdmission = receipt;
+            }
+            const client = createPreparedFilesystemTransferClient({
+              openMachineTunnel: async request => {
+                await assertCurrent();
+                let transport: typeof sourceTransport;
+                if (request.serverId === parsed.source.serverId && request.targetMachineId === parsed.source.machineId) {
+                  sourceTransport ??= await createCredentialedFilesystemTransferClient({ ...sourceHome, executeAction: executeSource, ...(signal ? { signal } : {}) });
+                  transport = sourceTransport;
+                } else if (request.serverId === parsed.destination.serverId && request.targetMachineId === parsed.destination.machineId) {
+                  destinationTransport ??= await createCredentialedFilesystemTransferClient({ ...destinationHome, executeAction: executeDestination, ...(signal ? { signal } : {}) });
+                  transport = destinationTransport;
+                } else throw new Error('Copy endpoint is outside the captured operation');
+                await assertCurrent();
+                const tunnel = await transport.openMachineTunnel(request);
+                try { await assertCurrent(); } catch (error) { await tunnel.close(); throw error; }
+                return tunnel;
+              },
+              executeAction: async (id, value, targetContext) => {
+                if (targetContext.serverId === parsed.source.serverId && targetContext.externalActionTarget?.kind === 'machine'
+                  && targetContext.externalActionTarget.machineId === parsed.source.machineId) return await executeSource(id, value, targetContext);
+                if (targetContext.serverId === parsed.destination.serverId && targetContext.externalActionTarget?.kind === 'machine'
+                  && targetContext.externalActionTarget.machineId === parsed.destination.machineId) return await executeDestination(id, value, targetContext);
+                return actionFailure('target_unavailable');
+              },
+            });
+            const result = await client.copy({ ...parsed, ...(preparedAdmission ? { preparedAdmission } : {}), ...(signal ? { signal } : {}) });
+            return 'kind' in result || result.success ? { ok: true, result }
+              : { ok: false, errorCode: result.errorCode ?? 'filesystem_transfer_failed', error: result.error, details: result };
+          } catch (error) {
+            if (preparedAdmission) return { ok: false, errorCode: 'indeterminate',
+              error: 'The admitted copy could not confirm its terminal outcome',
+              details: { success: false, status: 'unknown', operationId: preparedAdmission.operationId, errorCode: 'indeterminate' } };
+            return { ok: false, errorCode: signal?.aborted ? 'cancelled'
+              : error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode : 'target_unavailable',
+              error: error instanceof Error ? error.message : 'Copy target is unavailable' };
+          } finally {
+            try { await sourceTransport?.close(); } finally { await destinationTransport?.close(); }
+          }
+        };
+        if (pat) return { patRun: () => run(concreteContext) };
+        const mounted = createCliActionExecutionCoreFromCredentials({ ...params, ...destinationHome,
+          readCredentials: currentCredentialsFor(destinationHome), filesystemActionExecute: async request => {
+            const result = await run(request.context);
+            return result.ok ? result.result : result;
+          } });
+        return { executor: invocationSignal ? mounted.bindInvocation(invocationSignal) : mounted, context: concreteContext };
+      } catch (error) {
+        return { failure: { ok: false as const, errorCode: signal?.aborted ? 'cancelled' : 'target_unavailable',
+          error: error instanceof Error ? error.message : 'Copy target is unavailable' } };
+      }
+    };
+    const execute: CliActionExecutor['execute'] = async (actionId, input, context) => {
+      if (actionId === 'session.spawn_new' && !params.sessionSpawnDirectTargetTransport) {
+        const parsed = SessionSpawnNewInputV2Schema.safeParse(input);
+        const credentials = params.readCredentials ? await params.readCredentials().catch(() => null) : params.credentials;
+        if (parsed.success && credentials && !shouldUsePatPublicActionTransport(credentials, context)) {
+          const serverId = params.serverId ?? context?.serverId ?? configuration.activeServerId;
+          const serverUrl = params.serverApiUrl ?? resolveServerHttpBaseUrl();
+          if (parsed.data.executionTarget.serverId === serverId) {
+            const signal = combineInvocationSignals(invocationSignal, context?.signal);
+            try {
+              const requester = await dispatchRequesterSessionSpawnNewRpc({ credentials, input,
+                ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+                serverId, serverUrl, context: { ...context, ...(signal ? { signal } : {}) } });
+              if (requester) return requester;
+            } catch {
+              const errorCode = signal?.aborted ? 'cancelled' : 'target_unavailable';
+              return { ok: false, errorCode, error: errorCode };
+            }
+          }
+        }
+      }
+      if (!params.filesystemActionExecute && actionId === 'daemon.filesystem.copy') {
+        const copy = await prepareConcreteCopy(input, context);
+        if (copy?.failure) return copy.failure;
+        if (copy?.patRun) return await copy.patRun();
+        if (copy?.executor) return await copy.executor.execute(actionId, input, copy.context);
+      }
+      const custodyFailure = params.filesystemActionExecute ? null : resolveFilesystemTransferCustodyFailure(actionId, context ?? {});
+      return custodyFailure ?? await executor.execute(actionId, input, context);
+    };
+    return {
+      ...executor, execute,
+      prepare: async (actionId, input, context) => {
+        if (actionId === 'session.spawn_new' && !params.sessionSpawnDirectTargetTransport
+          && SessionSpawnNewInputV2Schema.safeParse(input).success) {
+          // No Machine effect during prepare. The answering target's existing
+          // Action owner admits policy and approval when this one-shot is run.
+          return { kind: 'ready', invocation: createOneShotPatInvocation(() => execute(actionId, input, context)) };
+        }
+        const custodyFailure = !params.filesystemActionExecute && resolveFilesystemTransferCustodyFailure(actionId, context ?? {});
+        if (custodyFailure) return { kind: 'settled', result: custodyFailure };
+        if (!params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
+          && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success)) {
+          const copy = await prepareConcreteCopy(input, context);
+          if (copy?.failure) return { kind: 'settled', result: copy.failure };
+          if (copy?.patRun) return { kind: 'ready', invocation: createOneShotPatInvocation(copy.patRun) };
+          if (copy?.executor) return await copy.executor.prepare(actionId, input, copy.context);
+        }
+        return await executor.prepare(actionId, input, context);
+      },
+    };
+  };
+  return Object.freeze({ ...core, ...wrap(core), bindInvocation: signal => wrap(core.bindInvocation(signal), signal) });
 }

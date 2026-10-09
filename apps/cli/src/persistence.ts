@@ -5,6 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util';
 import { FileHandle } from 'node:fs/promises'
 import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
@@ -22,7 +23,8 @@ import {
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
 import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
-import { isPidPresent } from '@happier-dev/cli-common/process';
+import { isPidPresent, parseDaemonLockSnapshot, type DaemonLockRecord, type DaemonLockSnapshot } from '@happier-dev/cli-common/process';
+export type { DaemonLockSnapshot } from '@happier-dev/cli-common/process';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
@@ -32,6 +34,7 @@ import { logger } from './ui/logger';
 import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
+import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { reclaimJsonOwnerFileLockSnapshot } from './utils/fs/jsonOwnerFileLock';
 import { readProcessRunState } from './daemon/processRunState';
 import { decodeJwtPayload } from './cloud/decodeJwtPayload';
@@ -338,6 +341,7 @@ export interface DaemonLocallyPersistedState {
   startupSource?: DaemonStartupSource;
   serviceLabel?: string;
   machineId?: string;
+  accountId?: string;
   lastHeartbeatAt?: number;
   /**
    * Whether this daemon had completed its machine-control RPC registration as of
@@ -367,6 +371,7 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   startupSource: DaemonStartupSourceSchema.optional(),
   serviceLabel: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
+  accountId: z.string().trim().min(1).optional(),
   lastHeartbeatAt: z.number().int().nonnegative().optional(),
   machineControlReady: z.boolean().optional(),
   daemonLogPath: z.string().optional(),
@@ -675,6 +680,13 @@ export type CredentialProvenance = 'stored_session' | 'api_token';
 type CredentialProvenanceMarker = Readonly<{
   /** Missing provenance is intentionally treated as Account automation. */
   credentialProvenance?: CredentialProvenance;
+  /** Private Session custody restricts saved-Home readers; never encoded or transported. */
+  requesterSessionCredentialScope?: Readonly<{
+    serverId: string;
+    serverHttpBaseUrl: string;
+    /** Accepted private child custody, not serialized credentials or caller input. */
+    requesterSession?: Readonly<{ sessionId: string; attribution: RequesterWorkAttributionV1 }>;
+  }>;
 }>;
 
 export type Credentials = CredentialProvenanceMarker & {
@@ -688,6 +700,56 @@ export type TokenOnlyCredentials = CredentialProvenanceMarker & {
 }
 
 export type StoredCredentials = Credentials | TokenOnlyCredentials;
+
+/** Called only by admitted/private-custody owners, never by the serialized credential decoder. */
+export function bindRequesterSessionCredentialScope(credentials: StoredCredentials,
+  scope: NonNullable<StoredCredentials['requesterSessionCredentialScope']>): StoredCredentials {
+  const existing = credentials.requesterSessionCredentialScope;
+  if (existing) {
+    if (existing.serverId !== scope.serverId || existing.serverHttpBaseUrl !== scope.serverHttpBaseUrl) {
+      throw new Error('requester_session_credential_scope_mismatch');
+    }
+    if (scope.requesterSession && !isDeepStrictEqual(existing.requesterSession, scope.requesterSession)) {
+      throw new Error('requester_session_credential_scope_mismatch');
+    }
+    return credentials;
+  }
+  const requesterSession = scope.requesterSession ? Object.freeze({
+    sessionId: scope.requesterSession.sessionId,
+    attribution: Object.freeze(RequesterWorkAttributionV1Schema.parse(scope.requesterSession.attribution)),
+  }) : undefined;
+  Object.defineProperty(credentials, 'requesterSessionCredentialScope', {
+    value: Object.freeze({ ...scope, ...(requesterSession ? { requesterSession } : {}) }),
+    enumerable: false, writable: false, configurable: false,
+  });
+  return credentials;
+}
+
+/** Canonical access.key representation; private Session custody uses the same codec. */
+export function decodeStoredCredentials(value: unknown): StoredCredentials | null {
+  const parsed = credentialsSchema.safeParse(value);
+  if (!parsed.success || !parsed.data.token) return null;
+  const credentials = parsed.data;
+  return {
+    token: credentials.token!,
+    encryption: credentials.secret
+      ? { type: 'legacy', secret: decodeBase64(credentials.secret) }
+      : credentials.encryption
+        ? { type: 'dataKey', publicKey: decodeBase64(credentials.encryption.publicKey), machineKey: decodeBase64(credentials.encryption.machineKey) }
+        : null,
+    credentialProvenance: 'stored_session',
+  };
+}
+
+export function encodeStoredCredentials(credentials: StoredCredentials): z.infer<typeof credentialsSchema> {
+  return credentials.encryption?.type === 'legacy'
+    ? { token: credentials.token, secret: encodeBase64(credentials.encryption.secret) }
+    : credentials.encryption?.type === 'dataKey'
+      ? { token: credentials.token, encryption: {
+          publicKey: encodeBase64(credentials.encryption.publicKey), machineKey: encodeBase64(credentials.encryption.machineKey),
+        } }
+      : { token: credentials.token };
+}
 
 export class CliReloginRequiredError extends Error {
   readonly code = 'cli_relogin_required';
@@ -709,6 +771,8 @@ export function sameStoredCredentials(
   right: StoredCredentials | null | undefined,
 ): boolean {
   if (!right || left.token !== right.token || left.credentialProvenance !== right.credentialProvenance) return false;
+  if (left.requesterSessionCredentialScope?.serverId !== right.requesterSessionCredentialScope?.serverId
+    || left.requesterSessionCredentialScope?.serverHttpBaseUrl !== right.requesterSessionCredentialScope?.serverHttpBaseUrl) return false;
   if (left.encryption === null || right.encryption === null) return left.encryption === right.encryption;
   if (left.encryption.type === 'legacy' && right.encryption.type === 'legacy') {
     return sameCredentialBytes(left.encryption.secret, right.encryption.secret);
@@ -736,6 +800,13 @@ export async function readCredentials(): Promise<Credentials | null> {
 }
 
 export async function readStoredCredentials(): Promise<StoredCredentials | null> {
+  // Explicit Session custody is authoritative for this child. A missing,
+  // unsafe, or mismatched file must never become a custodian/global sign-in.
+  const requesterCredentialFile = process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
+  if (requesterCredentialFile !== undefined) {
+    const { readRequesterSessionCredentialsForChild } = await import('./daemon/sessionEncryption/requesterSessionCredentials');
+    return await readRequesterSessionCredentialsForChild(requesterCredentialFile);
+  }
   const apiToken = resolveCliApiToken();
   if (apiToken) {
     return {
@@ -772,31 +843,7 @@ async function readStoredCredentialsFile(path: string, options?: Readonly<{ inva
       await bestEffortChmod(path, 0o600);
       throw new CliReloginRequiredError();
     }
-    if (credentials.secret) {
-      return {
-        token: credentials.token,
-        encryption: {
-          type: 'legacy',
-          secret: decodeBase64(credentials.secret)
-        },
-        credentialProvenance: 'stored_session',
-      };
-    } else if (credentials.encryption) {
-      return {
-        token: credentials.token,
-        encryption: {
-          type: 'dataKey',
-          publicKey: decodeBase64(credentials.encryption.publicKey),
-          machineKey: decodeBase64(credentials.encryption.machineKey)
-        },
-        credentialProvenance: 'stored_session',
-      }
-    }
-    return {
-      token: credentials.token,
-      encryption: null,
-      credentialProvenance: 'stored_session',
-    };
+    return decodeStoredCredentials(credentials);
   } catch (error) {
     if (error instanceof CliReloginRequiredError) throw error;
     return null
@@ -891,17 +938,7 @@ export async function writeStoredCredentialsForServerId(
   if (!isServerIdFilesystemSafe(serverId) || !token) throw new Error('Invalid server credential target.');
   const serverDir = join(configuration.serversDir, serverId);
   const credentialPath = join(serverDir, 'access.key');
-  const persisted = credentials.encryption?.type === 'legacy'
-    ? { token, secret: encodeBase64(credentials.encryption.secret) }
-    : credentials.encryption?.type === 'dataKey'
-      ? {
-          token,
-          encryption: {
-            publicKey: encodeBase64(credentials.encryption.publicKey),
-            machineKey: encodeBase64(credentials.encryption.machineKey),
-          },
-        }
-      : { token };
+  const persisted = encodeStoredCredentials({ ...credentials, token });
   await mkdir(serverDir, { recursive: true });
   await bestEffortChmod(serverDir, 0o700);
   await writeFile(credentialPath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
@@ -1173,21 +1210,6 @@ export async function clearDaemonStateForTestTeardown(
  * The lock file proves the daemon is running and prevents multiple instances.
  * Returns the file handle to hold for the daemon's lifetime, or null if locked.
  */
-const DaemonLockRecordSchema = z.object({
-  t: z.literal('happier_daemon_lock_v2'),
-  pid: z.number().int().positive(),
-  ownerToken: z.string().uuid(),
-  processStartedAtMs: z.number().int().nonnegative(),
-  processInstanceFingerprint: z.string().trim().min(1).max(512).optional(),
-  createdAtMs: z.number().int().nonnegative(),
-}).strict();
-type DaemonLockRecord = z.infer<typeof DaemonLockRecordSchema>;
-export type DaemonLockSnapshot = Readonly<{
-  raw: string;
-  pid: number | null;
-  record: DaemonLockRecord | null;
-}>;
-
 const daemonLockRawByHandle = new WeakMap<FileHandle, string>();
 
 export type DaemonStateOwner = Readonly<
@@ -1290,33 +1312,7 @@ export function readDaemonLockSnapshot(lockPath = configuration.daemonLockFile, 
     if (strictRead) throw error;
     return { raw: '', pid: null, record: null };
   }
-  try {
-    const parsed = DaemonLockRecordSchema.safeParse(JSON.parse(raw) as unknown);
-    if (parsed.success) return { raw, pid: parsed.data.pid, record: parsed.data };
-  } catch { }
-  // ../0.2 writes only a decimal PID. This is the sole predecessor parse
-  // branch; it cannot grant structured identity or compare process births.
-  const legacyPid = /^\s*[1-9]\d*\s*$/u.test(raw) ? Number(raw.trim()) : null;
-  // A live undeployed v1 writer may still hold the development lock. Preserve
-  // its PID for liveness/classification, but never interpret its W3 birth as W1.
-  const unverifiedV1Pid = legacyPid === null && raw.includes('happier_daemon_lock_v1')
-    ? (() => {
-        try {
-          const candidate = JSON.parse(raw) as unknown;
-          if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
-          const record = candidate as Record<string, unknown>;
-          return record.t === 'happier_daemon_lock_v1'
-            && Number.isSafeInteger(record.pid) && (record.pid as number) > 0
-            ? record.pid as number
-            : null;
-        } catch { return null; }
-      })()
-    : null;
-  return {
-    raw,
-    pid: legacyPid !== null && Number.isSafeInteger(legacyPid) ? legacyPid : unverifiedV1Pid,
-    record: null,
-  };
+  return parseDaemonLockSnapshot(raw);
 }
 
 export function readDaemonLockPid(): number | null {

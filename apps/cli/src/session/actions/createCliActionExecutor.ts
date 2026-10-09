@@ -70,6 +70,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     /** Origin-neutral workflow family handler; absent until its server/session owners are bound. */
     workflowAction?: ActionExecutorDeps['workflowAction'];
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+    machineEnvironmentApply?: ActionExecutorDeps['machineEnvironmentApply'];
     /** Installed exact-target worker Status/retirement producer, overriding only those IDs. */
     projectWorkerAction?: ActionExecutorDeps['projectWorkerAction'];
     /** The canonical prepared filesystem owner installed by the daemon. */
@@ -195,6 +196,7 @@ export function createCliActionExecutor(
             : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' } } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
       ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
+      ...(params.machineEnvironmentApply ? { machineEnvironmentApply: params.machineEnvironmentApply } : {}),
       ...(params.hostActionApprovalLifetime ? { hostActionApprovalLifetime: params.hostActionApprovalLifetime } : {}),
       ...(params.filesystemActionExecute ? { filesystemActionExecute: async (request) => {
         const denied = filesystemRequesterAuthorityFailure(request.actionId, request.context);

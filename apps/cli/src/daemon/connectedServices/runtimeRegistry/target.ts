@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { RequesterWorkAttributionV1 } from '../../lifecycle/requesterWorkAttribution';
 import type { ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
 
 export type ConnectedServiceRuntimeBoundProfile = Readonly<{
@@ -35,6 +36,8 @@ export type ConnectedServiceRuntimeTargetInput = Readonly<{
   sessionDirectory?: string | null;
   /** Exact active purpose lease; Run refresh never borrows its runner's Session binding. */
   exactPurposeBindingSubjectId?: string;
+  /** Nonsecret ownership retained from the admitted host producer, never wire authority. */
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
 }>;
 
 export type ConnectedServiceRuntimeTargetUpdate = ConnectedServiceRuntimeTargetInput;
@@ -50,6 +53,7 @@ export type ConnectedServiceRuntimeTarget = Readonly<{
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
   sessionDirectory: string | null;
   exactPurposeBindingSubjectId?: string;
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   boundProfiles: ReadonlyArray<ConnectedServiceRuntimeBoundProfile>;
   activeBindings: ReadonlyArray<ConnectedServiceRuntimeBindingIdentity>;
   runtimeIdentityKey: string;

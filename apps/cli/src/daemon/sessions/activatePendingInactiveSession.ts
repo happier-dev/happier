@@ -7,6 +7,11 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/sh
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import type { AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
+import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 
 type PendingInactiveSessionActivationResult =
   | Readonly<{ status: 'activated' }>
@@ -17,7 +22,6 @@ type PendingInactiveSessionActivationResult =
         | 'authorization-stale'
         | 'target-mismatch'
         | 'snapshot-stale'
-        | 'session-directory-missing'
         | 'spawn-ambiguous';
     }>
   | Readonly<{
@@ -26,23 +30,55 @@ type PendingInactiveSessionActivationResult =
         | 'ineligible'
         | 'identity-unavailable'
         | 'takeover-required'
+        | 'session-directory-missing'
         | 'spawn-rejected';
     }>;
 
-export async function activatePendingInactiveSession(params: Readonly<{
+type PendingInactiveSessionActivationParams = Readonly<{
   credentials: StoredCredentials;
   machineId: string;
   sessionId: string;
   requestId: string;
   pendingVersion: number;
   spawnSession: (options: NonNullable<ReturnType<typeof buildInactiveSessionResumeSpawnOptions>>) => Promise<SpawnSessionResult>;
-}>): Promise<PendingInactiveSessionActivationResult> {
+  /** Supplied only by the canonical requester runtime resolver, never a pending hint. */
+  requester?: Pick<AdmittedRequesterSessionBootstrap, 'attribution' | 'serverHttpBaseUrl' | 'isCurrent'>;
+  expectedTarget?: SessionInputMachineTargetV1;
+  resolveCurrentMachineExecutionOriginContext?: () => Promise<CurrentMachineExecutionOriginContext | null>;
+}>;
+
+export async function activatePendingInactiveSession(params: PendingInactiveSessionActivationParams): Promise<PendingInactiveSessionActivationResult> {
+  return params.requester
+    ? await runWithServerHttpBaseUrl(params.requester.serverHttpBaseUrl, () => activateAtAdmittedHome(params))
+    : await activateAtAdmittedHome(params);
+}
+
+async function activateAtAdmittedHome(params: PendingInactiveSessionActivationParams): Promise<PendingInactiveSessionActivationResult> {
+  const matchesTarget = (actual: SessionInputMachineTargetV1 | undefined) => !params.expectedTarget || actual !== undefined
+    && actual.homeId === params.expectedTarget.homeId && actual.accountId === params.expectedTarget.accountId
+    && actual.sessionId === params.expectedTarget.sessionId && actual.machineId === params.expectedTarget.machineId
+    && actual.installationId === params.expectedTarget.installationId;
+  const isCurrent = async () => {
+    try {
+      if (params.expectedTarget) {
+        const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
+        if (origin?.serverIdentityId !== params.expectedTarget.homeId || origin.machineId !== params.expectedTarget.machineId) return false;
+      }
+      return params.requester ? await params.requester.isCurrent() : true;
+    }
+    catch { return false; }
+  };
+  if (params.requester && params.requester.attribution.machineId !== params.machineId) {
+    return { status: 'not-needed', reason: 'target-mismatch' };
+  }
+  if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
   const rawSession = await fetchSessionByIdCompat({
     token: params.credentials.token,
     sessionId: params.sessionId,
     reason: 'manual-recovery',
   });
-  if (!rawSession || rawSession.id !== params.sessionId) {
+  if (!rawSession || rawSession.id !== params.sessionId || !await isCurrent()
+    || params.requester && readSessionAccessProjectionRoleV1(rawSession) !== 'owner') {
     return { status: 'not-needed', reason: 'authorization-stale' };
   }
   const authorization = rawSession.pendingActivationAuthorization;
@@ -50,6 +86,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
     !authorization
     || authorization.requestId !== params.requestId
     || authorization.status !== 'waiting'
+    || !matchesTarget(authorization.admittedTarget)
   ) {
     return { status: 'not-needed', reason: 'authorization-stale' };
   }
@@ -59,6 +96,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
   const rejectTerminal = async (
     reason: Extract<PendingInactiveSessionActivationResult, { status: 'rejected' }>['reason'],
   ): Promise<PendingInactiveSessionActivationResult> => {
+    if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
     const report = await reportPendingSessionActivationFailure({
       token: params.credentials.token,
       sessionId: params.sessionId,
@@ -88,6 +126,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
     sessionId: params.sessionId,
     requestId: params.requestId,
   });
+  if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
   if (pendingEligibility === 'missing') {
     return { status: 'not-needed', reason: 'pending-resolved' };
   }
@@ -96,6 +135,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
     token: params.credentials.token,
   });
+  if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
 
   // Linearize against Pending mutation transactions without introducing a
   // second claim owner: read the exact row first, then the Session authorization
@@ -121,6 +161,9 @@ export async function activatePendingInactiveSession(params: Readonly<{
     || finalAuthorization.requestId !== params.requestId
     || finalAuthorization.requestedAt !== authorization.requestedAt
     || finalAuthorization.status !== 'waiting'
+    || !matchesTarget(finalAuthorization.admittedTarget)
+    || !await isCurrent()
+    || params.requester && readSessionAccessProjectionRoleV1(finalRawSession) !== 'owner'
   ) {
     return { status: 'not-needed', reason: 'authorization-stale' };
   }
@@ -144,7 +187,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
   // that activation. An unresolved link fails closed the same way.
   const linkAuthority = resolveLinkedExternalSessionAuthorityV1(metadata);
   if (!linkAuthority.ok) {
-    return { status: 'rejected', reason: 'takeover-required' };
+    return await rejectTerminal('takeover-required');
   }
   if (linkAuthority.transcriptStorage === 'direct') {
     return await rejectTerminal('takeover-required');
@@ -167,7 +210,11 @@ export async function activatePendingInactiveSession(params: Readonly<{
     return { status: 'not-needed', reason: 'target-mismatch' };
   }
 
-  const result = await params.spawnSession(options);
+  if (!await isCurrent()) return { status: 'not-needed', reason: 'authorization-stale' };
+  const result = await params.spawnSession(params.requester ? { ...options,
+    requesterWorkAttributionV1: params.requester.attribution,
+    verifyRequesterMachineAdmissionCurrent: isCurrent,
+  } : options);
   if (
     (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT)
     || (result.type === 'success' && result.sessionId !== params.sessionId)
@@ -175,7 +222,7 @@ export async function activatePendingInactiveSession(params: Readonly<{
     return { status: 'not-needed', reason: 'spawn-ambiguous' };
   }
   if (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
-    return { status: 'not-needed', reason: 'session-directory-missing' };
+    return await rejectTerminal('session-directory-missing');
   }
   if (result.type !== 'success') return await rejectTerminal('spawn-rejected');
   return { status: 'activated' };

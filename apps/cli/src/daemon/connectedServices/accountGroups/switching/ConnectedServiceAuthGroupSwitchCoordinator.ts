@@ -178,6 +178,8 @@ type LeaseAcquireResult<TServiceIdentity = string> =
 
 export const SESSION_SWITCH_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
+export type ConnectedServiceAuthGroupAccountScope = Readonly<{ serverId: string; accountId: string }>;
+
 function defaultServiceIdentityKey(serviceId: unknown): string {
     if (typeof serviceId === 'string') return `legacy:${JSON.stringify(serviceId)}`;
     return `qualified:${JSON.stringify(serviceId)}`;
@@ -250,12 +252,14 @@ export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
     acquire(input: Readonly<{
         serviceId: TServiceIdentity;
         groupId: string;
+        accountScope?: ConnectedServiceAuthGroupAccountScope;
     }>): LeaseAcquireResult<TServiceIdentity> {
-        const key = switchKey(
+        const groupKey = switchKey(
             this.options.serviceIdentityKey?.(input.serviceId)
                 ?? defaultServiceIdentityKey(input.serviceId),
             input.groupId,
         );
+        const key = JSON.stringify([input.accountScope?.serverId ?? null, input.accountScope?.accountId ?? null, groupKey]);
         const pending = this.pendingByKey.get(key);
         if (pending) {
             return {
@@ -736,6 +740,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     private readonly switchTimestampsBySessionKey = new Map<string, number[]>();
 
     constructor(private readonly deps: Readonly<{
+        accountScope?: ConnectedServiceAuthGroupAccountScope;
         leases: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
             TServiceIdentity
         >;
@@ -810,6 +815,32 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             event: ConnectedServiceAuthGroupSwitchEvent<TServiceIdentity>,
         ) => void;
     }>) {}
+
+    /** Observes the canonical selection without probing, preparing, leasing or switching. */
+    async readSelection(input: Readonly<{
+        serviceId: TServiceIdentity;
+        groupId: string;
+        providerLimitId?: string;
+    }>): Promise<Readonly<{
+        observedAtMs: number;
+        selection: ReturnType<typeof selectConnectedServiceAuthGroupCandidate>;
+    }>> {
+        const loaded = await this.deps.loadState(input);
+        const observedAtMs = this.deps.nowMs();
+        return {
+            observedAtMs,
+            selection: selectConnectedServiceAuthGroupCandidate({
+                nowMs: observedAtMs,
+                quotaFreshnessMs: this.deps.quotaFreshnessMs,
+                activeProfileId: loaded.activeProfileId,
+                policy: loaded.policy,
+                members: loaded.members,
+                memberStatesByProfileId: loaded.memberStatesByProfileId,
+                allowCurrentProfileRetry: true,
+                providerLimitId: input.providerLimitId,
+            }),
+        };
+    }
 
     private async selectPreparedCandidate(input: Readonly<{
         state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
@@ -1595,7 +1626,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
     }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
         const startedAtMs = this.deps.nowMs();
-        const lease = this.deps.leases.acquire(input);
+        const lease = this.deps.leases.acquire({ ...input, accountScope: this.deps.accountScope });
         if (lease.kind === 'loser') {
             const {
                 observed,
@@ -2262,7 +2293,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             didProbePreTurnQuota = true;
         }
 
-        const lease = this.deps.leases.acquire(input);
+        const lease = this.deps.leases.acquire({ ...input, accountScope: this.deps.accountScope });
         if (lease.kind === 'loser') {
             const { observed } = await this.waitForLeaseOwnerOrAuthoritativeState(input, lease);
             if (isLeaseResultCompletion(observed)) return observed.result;

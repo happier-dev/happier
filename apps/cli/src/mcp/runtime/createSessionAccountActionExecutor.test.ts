@@ -39,6 +39,11 @@ describe('Session MCP Account routing', () => {
     { actionId: 'notifications.notify_me' as const, input: { message: 'Notify' }, uncertain: true },
     { actionId: 'session.notes.set' as const, input: { sessionId: 'led-child', notes: 'Delegated notes' }, uncertain: false },
     { actionId: 'session.roles.apply_to_reports' as const, input: { sessionId: 'caller-session' }, uncertain: false },
+    { actionId: 'session.spawn_new' as const, input: {
+      executionTarget: { serverId: 'home', machineId: 'shared-machine' },
+      directory: { kind: 'path', path: '/workspace' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    }, uncertain: false },
     { actionId: 'ui.find' as const, input: { op: 'read' }, uncertain: false },
     { actionId: 'session.pending.next' as const, input: {}, uncertain: false },
     { actionId: 'workspace.tabs.list' as const, input: {}, uncertain: false },
