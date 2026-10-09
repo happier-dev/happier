@@ -91,4 +91,47 @@ describe('remoteHostLocalOverrides', () => {
         mod.upsertRemoteHostLocalOverrides('rh-upsert', { identityFilePath: '' });
         expect(mod.getRemoteHostLocalOverrides('rh-upsert')).toBeNull();
     });
+
+    it.each(['save', 'remove'] as const)('surfaces a web device override %s failure without acknowledging persistence', async operation => {
+        const persisted = new Map<string, string>();
+        let failWrite = false;
+        let failureReached = false;
+        const localStorage = {
+            getItem: (key: string) => persisted.get(key) ?? null,
+            setItem: (key: string, value: string) => {
+                if (failWrite && operation === 'save' && key.startsWith('remote-host-local-overrides-v1')) {
+                    failureReached = true;
+                    throw new Error('Browser device storage unavailable');
+                }
+                persisted.set(key, value);
+            },
+            removeItem: (key: string) => {
+                if (failWrite && operation === 'remove' && key.startsWith('remote-host-local-overrides-v1')) {
+                    failureReached = true;
+                    throw new Error('Browser device storage unavailable');
+                }
+                persisted.delete(key);
+            },
+        };
+        vi.stubGlobal('window', { localStorage });
+        vi.stubGlobal('document', {});
+        vi.resetModules();
+        try {
+            const owner = await import('./remoteHostLocalOverrides');
+            owner.upsertRemoteHostLocalOverrides('web-pending-host', { identityFilePath: '/device/acknowledged-key' });
+            failWrite = true;
+            const write = operation === 'save'
+                ? () => owner.upsertRemoteHostLocalOverrides('web-pending-host', { identityFilePath: '/device/pending-key' })
+                : () => owner.deleteRemoteHostLocalOverrides('web-pending-host');
+            expect(write).toThrow('Browser device storage unavailable');
+            expect(failureReached).toBe(true);
+            expect(owner.getRemoteHostLocalOverrides('web-pending-host')).toEqual({ identityFilePath: '/device/acknowledged-key' });
+            failWrite = false;
+            write();
+            expect(owner.getRemoteHostLocalOverrides('web-pending-host')).toEqual(operation === 'save'
+                ? { identityFilePath: '/device/pending-key' } : null);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
 });

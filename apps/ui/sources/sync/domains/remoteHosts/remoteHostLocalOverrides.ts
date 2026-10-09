@@ -124,18 +124,10 @@ function createDefaultStorage(): KeyValueStringStorage {
                 }
             },
             set: (key, value) => {
-                try {
-                    if (typeof window?.localStorage?.setItem === 'function') window.localStorage.setItem(key, value);
-                } catch {
-                    // ignore
-                }
+                window.localStorage.setItem(key, value);
             },
             delete: (key) => {
-                try {
-                    if (typeof window?.localStorage?.removeItem === 'function') window.localStorage.removeItem(key);
-                } catch {
-                    // ignore
-                }
+                window.localStorage.removeItem(key);
             },
         };
     }
