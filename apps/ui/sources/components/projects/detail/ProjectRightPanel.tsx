@@ -417,7 +417,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                     {availableTabIds.has('scripts') ? (
                         <RetainedPanelSurface isActive={activeTab === 'scripts'} testID="project-rightpanel-surface-scripts">
                             <React.Suspense fallback={<PaneLoadingFallback />}>
-                                {checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} presentation="widget" testID="project-rightpanel-scripts" />
+                                {checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} presentation="widget" testID="project-rightpanel-scripts" outputScopeId={props.scopeId} />
                                     : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} testID="project-rightpanel-scripts-unavailable" />}
                             </React.Suspense>
                         </RetainedPanelSurface>

@@ -262,6 +262,12 @@ function controller(frame: string): ProjectScriptsController {
         ? { code: 'project_setup_consent_required', reviewedEffectDigest: 'd' }
         : null,
     dismissConsent: () => {},
+    setupOperation: null,
+    // A specimen never stops anything: the Stop control reads as idle.
+    setupStop: { pending: false, feedback: null, failureCode: null, stopRequested: false,
+      retryUnconfirmedStop: false, requestStop: () => {}, pendingApproval: null },
+    setupReviewOpen: frame === 'SETUP',
+    openSetupReview: () => {},
   };
 }
 

@@ -50,12 +50,15 @@ export const SessionRightPanelScriptsView = React.memo(
   function SessionRightPanelScriptsView(
     props: Readonly<{
       checkout: WorkspaceAddressV1;
+      /** The Session pane whose bottom terminal shows script output. */
+      outputScopeId?: string;
     }>,
   ) {
     return (
       <ProjectScriptsBody
         workspace={props.checkout}
         presentation="widget"
+        outputScopeId={props.outputScopeId}
         testID="session-rightpanel-scripts"
       />
     );
