@@ -198,6 +198,7 @@ export function registerSessionClientRuntimeHandlers(
     const roleAccountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
     const actionsSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({
         scopeKey: roleAccountScopeKey,
+        getAccountSettings: () => ownerAccountSettingsForRuntime,
     });
     const approvalServerId = params.serverId;
     const approvalServerApiUrl = params.serverUrl;

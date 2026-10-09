@@ -987,6 +987,9 @@ export function createExecutionRunRpcActionExecutor(
   const executor = createActionExecutor(createExecutionRunRpcActionDeps(params));
   return {
     execute: async (actionId, input, context) => {
+      // Governance reads the same admitted Account holder as the runtime.
+      // Resolve it before policy/approval checks, never through focused state.
+      await params.context.resolveAccountSettings?.();
       if (context?.authority === 'present_user' && isAgentStartActionV1(actionId)
         && input && typeof input === 'object' && 'roleId' in input && typeof input.roleId === 'string'
         && !context.agentStartContext) {
