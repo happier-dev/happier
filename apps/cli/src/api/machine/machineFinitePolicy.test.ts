@@ -122,7 +122,7 @@ describe('Machine metadata finite policy carrier', () => {
     });
     onTestFinished(() => get.mockRestore());
     const { createAccountServerMachineFinitePolicyClient } = await import('./accountServerMachineFinitePolicyClient');
-    const client = await createAccountServerMachineFinitePolicyClient({ machineId: 'target', credentials: { token: 'test' },
+    const client = await createAccountServerMachineFinitePolicyClient({ machineId: 'target', credentials: { token: 'test', encryption: null },
       serverHttpBaseUrl: 'https://bound-home.test', isCredentialCurrent: () => credentialCurrent,
     });
     expect(await client.get()).toEqual({ status: 'ready', policy: { accepting: true, runAtMost: null }, source: 'default', metadataVersion: 1 });
