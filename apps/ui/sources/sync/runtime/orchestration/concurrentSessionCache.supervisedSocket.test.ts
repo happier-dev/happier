@@ -61,8 +61,6 @@ const fetchAndApplyMachinesSpy = vi.hoisted(() =>
 
 type SocketEventHandler = (...args: unknown[]) => void;
 
-let appliedActiveServerListener: ((serverId: string, generation: number) => void) | null = null;
-
 function createSocketStub() {
     const listeners = new Map<string, Set<SocketEventHandler>>();
     const socket = {
@@ -147,18 +145,6 @@ function mockConcurrentSessionCacheRuntimeDeps() {
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
     }));
-    vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
-        getAppliedActiveServerId: () => String(getActiveServerSnapshotSpy()?.serverId ?? ''),
-        subscribeAppliedActiveServer: (listener: (serverId: string, generation: number) => void) => {
-            appliedActiveServerListener = listener;
-            return () => {
-                if (appliedActiveServerListener === listener) {
-                    appliedActiveServerListener = null;
-                }
-            };
-        },
-        subscribeApplyingActiveServer: () => () => {},
-    }));
     vi.doMock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
         invalidateCachedTransferRoutesForServer: (...args: unknown[]) => invalidateCachedTransferRoutesForServerSpy(...args),
         invalidateCachedTransferRoutesForMachine: (
@@ -175,10 +161,6 @@ function mockConcurrentSessionCacheRuntimeDeps() {
         Encryption: {
             create: async () => ({}) as unknown,
         },
-    }));
-    vi.doMock('@/encryption/base64', async (importOriginal) => ({
-        ...await importOriginal<typeof import('@/encryption/base64')>(),
-        decodeBase64: () => new Uint8Array(32),
     }));
     vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
         fetchAndApplySessions: async (params: SessionSnapshotParams) => (
@@ -229,6 +211,9 @@ function mockRealTokenStorageDeviceBoundaries() {
 }
 
 async function configureConcurrentSelection(): Promise<void> {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('./appliedActiveServerRuntime');
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     storage.setState((state) => ({
@@ -282,12 +267,13 @@ beforeEach(() => {
         applyMachines([]);
     });
     process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
-    appliedActiveServerListener = null;
 });
 
 afterEach(async () => {
     vi.useRealTimers();
     try {
+        const { stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        stopConcurrentSessionCacheSync();
         const { setServerReachabilityNetworkAllowed, resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         setServerReachabilityNetworkAllowed(true);
         await resetServerReachabilitySupervisors();
@@ -304,7 +290,7 @@ describe('concurrent session cache supervised sockets', () => {
             headers: new Headers(),
         }));
         ioSpy.mockReturnValue(createSocketStub());
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -370,7 +356,7 @@ describe('concurrent session cache supervised sockets', () => {
         });
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -405,13 +391,14 @@ describe('concurrent session cache supervised sockets', () => {
     });
 
     it('projects an authenticated secondary HTTP rejection through the exact-token reachability owner', async () => {
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'secondary-account' })).toString('base64url')}.signature`;
         runtimeFetchSpy.mockImplementation(async (url: string) => new Response(
             JSON.stringify({ ok: !url.endsWith('/v1/test-secondary-auth') }),
             { status: url.endsWith('/v1/test-secondary-auth') ? 401 : 200, headers: new Headers() },
         ));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -433,7 +420,7 @@ describe('concurrent session cache supervised sockets', () => {
         const reachability = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
 
         await vi.waitFor(() => {
-            expect(reachability.peekServerReachabilityState('https://stack-b.example.test', 'token-b')?.phase).toBe('auth_failed');
+            expect(reachability.peekServerReachabilityState('https://stack-b.example.test', token)?.phase).toBe('auth_failed');
             expect(storage.getState().machineListStatusByServerId['server-b']).toBe('signedOut');
         });
         expect(reachability.peekServerReachabilityState('https://stack-b.example.test', 'some-other-token')).toBeNull();
@@ -444,7 +431,7 @@ describe('concurrent session cache supervised sockets', () => {
     it('marks a cold secondary Home offline even when it has no cached machine rows', async () => {
         runtimeFetchSpy.mockRejectedValue(new Error('secondary Home offline'));
         ioSpy.mockImplementation(() => createSocketStub());
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -481,7 +468,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -526,7 +513,7 @@ describe('concurrent session cache supervised sockets', () => {
         }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -587,7 +574,7 @@ describe('concurrent session cache supervised sockets', () => {
         }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -646,7 +633,7 @@ describe('concurrent session cache supervised sockets', () => {
         }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -713,7 +700,7 @@ describe('concurrent session cache supervised sockets', () => {
         });
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -824,7 +811,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -879,7 +866,7 @@ describe('concurrent session cache supervised sockets', () => {
         const firstSocket = createSocketStub();
         const secondSocket = createSocketStub();
         ioSpy.mockReturnValueOnce(firstSocket).mockImplementation(() => secondSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -945,7 +932,7 @@ describe('concurrent session cache supervised sockets', () => {
 
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -984,7 +971,7 @@ describe('concurrent session cache supervised sockets', () => {
         ioSpy.mockReturnValue(fakeSocket);
         getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
             if (serverUrl === 'https://stack-b.example.test') {
-                return { token: 'token-b', secret: 'secret-b' };
+                return { token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' };
             }
             return null;
         });
@@ -1026,7 +1013,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1043,8 +1030,8 @@ describe('concurrent session cache supervised sockets', () => {
 
         const { stopConcurrentSessionCacheSync } = await startConcurrentCacheAndWaitForReconcile();
 
-        expect(appliedActiveServerListener).toBeTypeOf('function');
-        appliedActiveServerListener?.('server-a', 2);
+        const { getAppliedActiveServerSnapshot, publishAppliedActiveServerSnapshot } = await import('./appliedActiveServerRuntime');
+        publishAppliedActiveServerSnapshot({ ...getAppliedActiveServerSnapshot(), generation: 2 });
 
         expect(invalidateCachedTransferRoutesForServerSpy).toHaveBeenCalledWith({ serverId: 'server-a' });
 
@@ -1055,7 +1042,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1072,8 +1059,8 @@ describe('concurrent session cache supervised sockets', () => {
 
         const { stopConcurrentSessionCacheSync } = await startConcurrentCacheAndWaitForReconcile();
 
-        expect(appliedActiveServerListener).toBeTypeOf('function');
-        appliedActiveServerListener?.('server-b', 1);
+        const { publishAppliedActiveServerSnapshot } = await import('./appliedActiveServerRuntime');
+        publishAppliedActiveServerSnapshot({ serverId: 'server-b', serverUrl: 'https://stack-b.example.test', generation: 1 });
 
         expect(invalidateCachedTransferRoutesForServerSpy).toHaveBeenCalledWith({ serverId: 'server-a' });
         expect(invalidateCachedTransferRoutesForServerSpy).toHaveBeenCalledWith({ serverId: 'server-b' });
@@ -1085,7 +1072,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1115,7 +1102,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1189,7 +1176,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1269,7 +1256,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1331,7 +1318,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1366,7 +1353,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1386,14 +1373,16 @@ describe('concurrent session cache supervised sockets', () => {
         const disposeObserver = subscribeHomeAccountChange(accountChangeObserver);
         const { stopConcurrentSessionCacheSync } = await startConcurrentCacheAndWaitForReconcile();
         await vi.waitFor(() => expect(fakeSocket.connect).toHaveBeenCalledTimes(1));
-        expect(accountChangeObserver).not.toHaveBeenCalled();
+        // Initial connection can miss writes after a reader's first snapshot too.
+        expect(accountChangeObserver).toHaveBeenCalledTimes(1);
+        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b' });
 
         // A reconnect may have missed any number of content-free Account wakes.
         // The existing projection owners therefore receive one conservative
         // invalidation for this captured secondary Home, never the focused Home.
         fakeSocket.emitServerEvent('connect', undefined);
-        expect(accountChangeObserver).toHaveBeenCalledTimes(1);
-        expect(accountChangeObserver).toHaveBeenCalledWith({ serverId: 'server-b' });
+        expect(accountChangeObserver).toHaveBeenCalledTimes(2);
+        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b' });
 
         disposeObserver();
         stopConcurrentSessionCacheSync();
@@ -1403,7 +1392,7 @@ describe('concurrent session cache supervised sockets', () => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
-        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'secret-b' });
+        getCredentialsForServerUrlSpy.mockResolvedValue({ token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' });
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
             { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
@@ -1465,7 +1454,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 { serverId: 'server-b' },
-                { token: 'token-b', secret: 'secret-b' },
+                { token: 'token-b', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' },
             )).resolves.toBe(true);
             const mutations: HomeCredentialMutationEvent[] = [];
             unsubscribeMutations = subscribeHomeCredentialMutations((event) => mutations.push(event));
@@ -1507,6 +1496,9 @@ describe('concurrent session cache exact-target credential reconciliation', () =
     });
 
     it('replaces a managed secondary Home transport promptly after an exact-target credential replacement without touching the focused Home', async () => {
+        // Both credentials belong to the same Account; only the transport token changes.
+        const oldToken = `header.${Buffer.from(JSON.stringify({ sub: 'secondary-account', jti: 'old' })).toString('base64url')}.signature`;
+        const newToken = `header.${Buffer.from(JSON.stringify({ sub: 'secondary-account', jti: 'new' })).toString('base64url')}.signature`;
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         ioSpy.mockImplementation(() => createSocketStub());
         listServerProfilesSpy.mockReturnValue([
@@ -1535,7 +1527,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 bTarget,
-                { token: 'token-b-old', secret: 'secret-b-old' },
+                { token: oldToken, secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' },
             )).resolves.toBe(true);
 
             const cache = await import('./concurrentSessionCache');
@@ -1554,7 +1546,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
                 1,
                 'https://stack-b.example.test',
                 expect.objectContaining({
-                    auth: expect.objectContaining({ token: 'token-b-old' }),
+                    auth: expect.objectContaining({ token: oldToken }),
                 }),
             );
 
@@ -1563,7 +1555,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 bTarget,
-                { token: 'token-b-new', secret: 'secret-b-new' },
+                { token: newToken, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' },
             )).resolves.toBe(true);
 
             // Promptly (long before the 5-minute periodic reconcile), the stale B
@@ -1575,7 +1567,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
                 2,
                 'https://stack-b.example.test',
                 expect.objectContaining({
-                    auth: expect.objectContaining({ token: 'token-b-new' }),
+                    auth: expect.objectContaining({ token: newToken }),
                 }),
             );
             const newSocket = ioSpy.mock.results[1]?.value as { connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> };
@@ -1598,7 +1590,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 bTarget,
-                { token: 'token-b-new', secret: 'secret-b-new' },
+                { token: newToken, secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' },
             )).resolves.toBe(true);
             await new Promise<void>((resolve) => {
                 setTimeout(resolve, 100);
@@ -1642,7 +1634,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 bTarget,
-                { token: 'token-b-old', secret: 'secret-b-old' },
+                { token: 'token-b-old', secret: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE' },
             )).resolves.toBe(true);
 
             const cache = await import('./concurrentSessionCache');
@@ -1669,7 +1661,7 @@ describe('concurrent session cache exact-target credential reconciliation', () =
             await expect(TokenStorage.setCredentialsForServerUrl(
                 'https://stack-b.example.test',
                 bTarget,
-                { token: 'token-b-new', secret: 'secret-b-new' },
+                { token: 'token-b-new', secret: 'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI' },
             )).resolves.toBe(false);
 
             await new Promise<void>((resolve) => {
