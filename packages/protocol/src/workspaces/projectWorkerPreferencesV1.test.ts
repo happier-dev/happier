@@ -43,6 +43,16 @@ describe('workspace worker preference authority', () => {
       .toEqual({ status: 'resolved', choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'accepted' } }, provenance: 'workflow' });
   });
 
+  it('refuses an implicit accepted worker for a primary-only declaration without silently rerouting the Workflow', () => {
+    const input = { execution: 'primary' as const, sourceMachineId: 'source', acceptedMachineId: 'worker',
+      preference: { status: 'ready' as const, value: preference } };
+    expect(resolve(input)).toEqual({ status: 'refused', reason: 'primary_only' });
+    expect(resolve({ ...input, acceptedMachineId: 'source' }))
+      .toEqual({ status: 'resolved', choice: { kind: 'primary' }, provenance: 'declaration' });
+    expect(resolve({ ...input, reviewedOverride: true, invocation: { kind: 'primary' } }))
+      .toEqual({ status: 'resolved', choice: { kind: 'primary' }, provenance: 'declaration' });
+  });
+
   it('classifies the frozen Workflow baseline against the admitted source, without granting a target override', () => {
     const source = { execution: 'portable' as const, scriptName: 'test', sourceMachineId: 'source',
       preference: { status: 'ready' as const, value: preference } };

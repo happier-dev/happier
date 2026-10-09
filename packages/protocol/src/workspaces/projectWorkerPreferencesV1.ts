@@ -150,7 +150,10 @@ export function resolveProjectExecutionChoiceV1(input: Readonly<{
   invocation?: ProjectExecutionChoiceV1; sourceMachineId?: string; acceptedMachineId?: string; reviewedOverride?: boolean;
   preference: ProjectWorkerPreferenceAvailabilityV1;
 }>): ProjectExecutionChoiceResolutionV1 {
-  if (input.execution === 'primary' && input.invocation?.kind === 'workers') return { status: 'refused', reason: 'primary_only' };
+  if (input.execution === 'primary' && (input.invocation?.kind === 'workers'
+    || input.acceptedMachineId !== undefined && input.acceptedMachineId !== input.sourceMachineId && !input.reviewedOverride)) {
+    return { status: 'refused', reason: 'primary_only' };
+  }
   if (input.preference.status !== 'ready' && input.preference.status !== 'absent') return { status: 'refused', reason: 'preferences_unavailable' };
   const preference = input.preference.status === 'ready' ? input.preference.value : createDefaultWorkspaceWorkerPreferenceV1();
   if (input.adHoc && !preference.allowAdHoc) return { status: 'refused', reason: 'ad_hoc_disabled' };
