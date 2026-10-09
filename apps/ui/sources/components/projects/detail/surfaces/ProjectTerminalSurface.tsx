@@ -107,8 +107,9 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
             title={state.descriptor?.title} focused={state.focused} chrome="none" />;
     }, [authority, props.scopeId]);
     if (!authority || retired) return <SurfaceStateCard kind="unavailable" iconName="terminal" title={t('machines.terminals.denied')} />;
-    const disclosure = <MachineShareTrustDisclosure disclosure={t('machines.terminals.sharedOs', { machine: context.sessionMachineName ?? props.machineId })}
-        notes={[]} idPrefix="project-terminal-" />;
+    const terminalMachine = context.sessionMachineName ?? props.machineId;
+    const disclosure = <MachineShareTrustDisclosure lead={t('machines.terminals.sharedOsLead', { machine: terminalMachine })}
+        detail={t('machines.terminals.sharedOsDetail', { machine: terminalMachine })} notes={[]} idPrefix="project-terminal-" />;
     if (props.terminalInstanceId) {
         const member = workspace.tabs.flatMap(tab => tab.terminals).find(candidate => candidate.id === props.terminalInstanceId);
         const descriptor = tabs.flatMap(tab => tab.members).find(candidate => candidate.terminalId === member?.id) ?? null;

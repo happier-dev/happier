@@ -1,11 +1,12 @@
 import { createMachineSharingTranslations } from '../machineSharingTranslations.shared';
 export const machineSharing = createMachineSharingTranslations({
-    terminals: { projectEmpty: '在此项目中打开终端。', opening: '正在打开终端。', sharedOs: '此终端以 {machine} 的操作系统用户身份运行。该用户可以读取本地凭据和加密密钥。建议使用团队专用机器进行共享工作。', denied: '你已无权访问此终端。', rootDenied: '此工作区无法用于终端。', offline: '此机器离线。正在显示最后已知的输出。', openUnknown: '终端可能已打开。请先检查现有终端，再重试。', unavailable: '此机器不支持终端。', failed: '无法打开此终端。' },
+    terminals: { projectEmpty: '在此项目中打开终端。', opening: '正在打开终端。', sharedOsLead: '此终端以 {machine} 的操作系统用户身份运行。', sharedOsDetail: '该用户可以读取本地凭据和加密密钥。建议使用团队专用机器进行共享工作。', denied: '你已无权访问此终端。', rootDenied: '此工作区无法用于终端。', offline: '此机器离线。正在显示最后已知的输出。', openUnknown: '终端可能已打开。请先检查现有终端，再重试。', unavailable: '此机器不支持终端。', failed: '无法打开此终端。' },
     revoked: '{owner} 已停止共享 {machine}。你在这里运行的工作正在停止。会话仍保留在历史记录中，但你无法在这里开始新工作。',
     recipientEncryptionIncompatible: '这台端到端加密机器需要使用端到端加密账户。',
     destinations: { yours: '你的机器', created: '由 Happier 创建', shared: '共享给你 · {team}', owner: '{owner} 的机器 · {platform}', pendingKey: '正在等待安全访问', sharedPurposeUnsupported: '此工作需要使用你自己的机器。' },
     title: '共享', description: '添加的人员和团队可以在 {machine} 的工作区启动会话、运行脚本和打开终端。',
-    trustedOs: '拥有 {machine} 终端或代理访问权限的人以你的操作系统用户身份运行，可以获取本地凭据以及账户加密密钥（如有）。Happier API 不会读取或导出所有者的凭据或密钥，但共享终端的输出可能包含这些内容。我们建议共享团队专用机器。',
+    trustedOsLead: '拥有 {machine} 终端或代理访问权限的人以你的操作系统用户身份运行。',
+    trustedOsDetail: '他们可以获取本地凭据以及账户加密密钥（如有）。Happier API 不会读取或导出所有者的凭据或密钥，但共享终端的输出可能包含这些内容。我们建议共享团队专用机器。',
     manageHelp: '可以管理 {machine} 的人也能将相同权限共享给其他人。', empty: '共享 {machine}，让团队成员在这里工作。',
     loading: '正在加载 {machine} 的访问权限。', readError: '无法加载 {machine} 的访问权限。', offline: '{machine} 已离线。访问权限更改会保存在这里。',
     denied: '只有可以管理 {machine} 的人才能更改共享设置。', use: '可以使用', manage: '可以管理', allMembers: '所有当前成员，包括以后加入的成员',

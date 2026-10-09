@@ -352,10 +352,18 @@ describe('SelectionTiles', () => {
                 : [resolvedStyle].filter(Boolean)),
         );
 
-        expect(flattenedStyle.width).toBe('48%');
-        expect(flattenedStyle.maxWidth).toBe('48%');
-        expect(flattenedStyle.flexGrow).toBe(0);
-        expect(flattenedStyle.flexShrink).toBe(0);
+        // The tile frame takes the column's share; its press target fills the frame rather than taking a
+        // second share of it.
+        expect(flattenedStyle.width).toBe('100%');
+        let frame = optionA.parent;
+        while (frame && !(Array.isArray(frame.props?.style) && frame.props.style.some((entry: { width?: unknown } | null) => entry?.width === '48%'))) {
+            frame = frame.parent;
+        }
+        const frameStyle = Object.assign({}, ...(frame?.props.style as object[]).filter(Boolean));
+        expect(frameStyle.width).toBe('48%');
+        expect(frameStyle.maxWidth).toBe('48%');
+        expect(frameStyle.flexGrow).toBe(0);
+        expect(frameStyle.flexShrink).toBe(0);
     });
 
     it('keeps a forced two-column compact layout at narrower measured widths for popover model grids', async () => {

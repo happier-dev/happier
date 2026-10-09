@@ -8,6 +8,76 @@ import { buildRetentionChoices } from './managedRetentionPresentation';
 installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 afterEach(() => standardCleanup());
 
+describe('explicit interrupting deadline', () => {
+    const at = new Date(2099, 0, 2, 18, 30).getTime();
+    const render = async (onChange: (policy: unknown) => void, deadline: boolean) => {
+        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
+        return renderScreen(<ManagedMachineKeepControl
+            policy={{ retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true }}
+            inherited presentation="choices" effects={['stop', 'delete']} canWake deadline={deadline}
+            consequence={() => 'Kept'} onChange={onChange} onReset={vi.fn()} testID="keep" />);
+    };
+    const type = async (screen: Awaited<ReturnType<typeof render>>, testID: string, text: string) => {
+        const input = screen.tree.findAll(node => node.props.testID === testID && typeof node.props.onChangeText === 'function')[0];
+        await act(async () => input?.props.onChangeText(text));
+    };
+
+    it('authors a deadline only through its reviewed consequence, and cancel writes nothing', async () => {
+        const onChange = vi.fn();
+        const screen = await render(onChange, true);
+        await screen.pressByTestIdAsync('keep:choice:deadline');
+        await type(screen, 'keep:deadline-date-input', '2099-01-02');
+        await type(screen, 'keep:deadline-time-input', '18:30');
+        expect(screen.findByTestId('keep:deadline:interrupts')).not.toBeNull();
+        expect(onChange).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('keep:deadline:cancel');
+        expect(screen.findByTestId('keep:deadline:confirm')).toBeNull();
+        expect(onChange).not.toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('keep:choice:deadline');
+        await type(screen, 'keep:deadline-date-input', '2099-01-02');
+        await type(screen, 'keep:deadline-time-input', '18:30');
+        await screen.pressByTestIdAsync('keep:deadline:effect:delete');
+        await screen.pressByTestIdAsync('keep:deadline:confirm');
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange).toHaveBeenCalledWith({
+            retention: { kind: 'deadline', at, effect: 'delete', interrupts: true }, wakeOnAcceptedMessage: false,
+        });
+        expect(screen.findByTestId('keep:deadline:confirm')).toBeNull();
+        await screen.unmount();
+    });
+
+    it('names a set deadline once and keeps its interruption in view', async () => {
+        const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<ManagedMachineKeepControl
+            policy={{ retention: { kind: 'deadline', at, effect: 'stop', interrupts: true }, wakeOnAcceptedMessage: true }}
+            inherited presentation="choices" effects={['stop', 'delete']} canWake deadline
+            consequence={() => 'Stop at the deadline'} onChange={vi.fn()} onReset={vi.fn()} testID="keep" />);
+        const consequence = screen.tree.findAll(node => node.props.testID === 'keep:consequence' && node.props.children !== undefined)[0];
+        expect(consequence?.props.children).toBe(t('managedRetention.interrupts'));
+        expect(screen.findByTestId('keep:choice:deadline')).not.toBeNull();
+        await screen.unmount();
+    });
+
+    it('refuses a past time and offers no deadline where the caller did not ask for one', async () => {
+        const onChange = vi.fn();
+        const screen = await render(onChange, true);
+        await screen.pressByTestIdAsync('keep:choice:deadline');
+        await type(screen, 'keep:deadline-date-input', '2001-01-02');
+        await type(screen, 'keep:deadline-time-input', '18:30');
+        expect(screen.findByTestId('keep:deadline-past-instant')).not.toBeNull();
+        expect(screen.findByTestId('keep:deadline:interrupts')).toBeNull();
+        const confirm = screen.tree.findAll(node => node.props.testID === 'keep:deadline:confirm' && node.props.title !== undefined)[0];
+        expect(confirm?.props.disabled).toBe(true);
+        expect(onChange).not.toHaveBeenCalled();
+        await screen.unmount();
+        const plain = await render(onChange, false);
+        expect(plain.findByTestId('keep:choice:deadline')).toBeNull();
+        await plain.unmount();
+    });
+});
+
 describe('finite resource lifetime control', () => {
     it('names the retention choice group for native and web accessibility', async () => {
         const { ManagedMachineKeepControl } = await import('./ManagedMachineKeepControl');

@@ -460,6 +460,7 @@ function ActionSelectionTiles<T extends string, I extends string>(props: Happier
 }
 
 const CARD_GAP_PX = 10;
+const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
 
 /** The unchosen mark of a card tile without its own icon: an empty ring the size of the check it becomes. */
 function SelectionRing(props: Readonly<{ size: number; color: string }>) {
@@ -598,7 +599,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 styles.tilePressable,
                 compact ? styles.tileCompact : null,
                 compact && !hasSubtitle ? styles.tileCompactWithoutSubtitle : null,
-                tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
+                // The frame above owns the column's share before measurement; the press target fills it
+                // (a second percentage here would take a share of the share).
+                tileWidth ? { width: tileWidth } : FILL_TILE_FRAME,
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
