@@ -90,9 +90,7 @@ function roles(id: CuaLocalProvisionerId) {
                 try {
                     const native = await provider(id, context);
                     if ('resource' in input) return await native.destroy(input.resource);
-                    const recovered = await native.reconcile(input.nativeOperation);
-                    return recovered.kind === 'bound' ? await native.destroy(CuaLocalResourceV1Schema.parse(recovered.resource.value))
-                        : { kind: 'unknown' as const, code: 'cua_cleanup_incomplete' };
+                    return await native.destroyPending(input.nativeOperation);
                 }
                 catch { return { kind: 'unknown' as const, code: 'cua_cleanup_incomplete' }; }
             } },

@@ -27,13 +27,15 @@ function fleetProcessResponse() {
     return Buffer.concat([frame(Buffer.from('0a040a02082a', 'hex')), frame(Buffer.from('0a07120512030080ff', 'hex')),
         frame(Buffer.from('0a041a020800', 'hex')), frame(Buffer.from('grpc-status: 0\r\n'), true)]);
 }
-async function harness() {
+async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'registry' | 'delete-reply' } = {}) {
     const actions = new Map<string, ActionHandler>();
     const processRequests: PluginExecSpawnRequest[] = [];
     const httpRequests: Parameters<HttpService['request']>[0][] = [];
     const purposes: string[] = [];
-    let created = false, bound = false, released = false, secret = false;
-    const row = { provider: 'aws', id: 'i-owned', type: 'instance', sandbox: `aws:${name}`, machine: '', region: 'us-west-2', state: 'running', expires: '', expired: false };
+    let created = false, bound = false, released = false, secret = false, suspended = false;
+    let hideCreatedOnce = false;
+    const row = { provider: 'aws', id: 'i-owned', type: 'instance', sandbox: `aws:${name}`,
+        machine: options.cleanupFailure ? 'relay-owned' : '', region: 'us-west-2', state: 'running', expires: '', expired: false };
     const claim = () => ({ metadata: { name, namespace: 'pool', creationTimestamp: '2026-10-09T00:00:00Z' },
         spec: { sandboxTemplateRef: { name: 'template' }, ttlSecondsAfterCreated: 7200, secretRef: { name: `cua-claim-${name}` } },
         status: { phase: bound ? 'Bound' : 'Pending', ...(bound ? { sandbox: { name: 'guest' } } : {}) } });
@@ -55,11 +57,30 @@ async function harness() {
         exec: { async run(request: PluginExecSpawnRequest) {
             processRequests.push(request);
             const args = request.args ?? [];
-            if (args.includes('status')) return processResult({ providers: [nativeProvider], resources: created ? [row] : [] });
-            if (args.includes('create')) { created = true; return processResult({}); }
-            if (args.includes('info')) return processResult({ id: `aws:${name}`, name, location: 'aws', state: 'running', status: 'ready', image: 'linux',
-                ephemeral: false, expires_at: null, provider_details: { provider: 'aws', id: 'i-owned' } });
-            if (args.includes('rm')) return processResult({ deleted: `aws:${name}`, missing: false });
+            if (args.includes('status')) {
+                const resources = created && !hideCreatedOnce ? [row] : [];
+                hideCreatedOnce = false;
+                return processResult({ providers: [nativeProvider], resources });
+            }
+            if (args.includes('create')) {
+                created = true;
+                if (options.lostCreateReply) { hideCreatedOnce = true; throw new Error('Create response lost'); }
+                return processResult({});
+            }
+            if (args.includes('images')) return processResult({ ref: 'ghcr.io/trycua/linux:24.04', published: true });
+            if (args.includes('suspend')) { suspended = true; return processResult('Suspending'); }
+            if (args.includes('info')) {
+                if (!created) throw new Error('Native sandbox record not found');
+                return processResult({ id: `aws:${name}`, name, location: 'aws', state: suspended ? 'suspended' : 'running',
+                    status: suspended ? 'stopped' : 'ready', image: 'ghcr.io/trycua/linux:24.04',
+                    ephemeral: false, expires_at: null, provider_details: { provider: 'aws', id: 'i-owned' } });
+            }
+            if (args.includes('ls') && args.includes('spaces')) throw new Error('Native registry read unavailable');
+            if (args.includes('rm') && args.includes('sandbox')) {
+                created = false;
+                if (options.cleanupFailure === 'delete-reply') throw new Error('Delete response lost');
+                return processResult({ deleted: `aws:${name}`, missing: false });
+            }
             if (args.includes('shell')) return { ...processResult(null), stdout: new Uint8Array([0, 128, 255]) };
             throw new Error('Unexpected native IO');
         } },
@@ -144,5 +165,41 @@ describe('activated Cua remote contributions', () => {
         expect(await h.invoke('fleet-destroy', { nativeOperation: resource })).toEqual({ kind: 'confirmed' });
         expect(h.httpRequests.filter(request => request.method === 'DELETE').every(request => /\/(osgymsandboxclaims|secrets)\//.test(request.url))).toBe(true);
         expect(h.processRequests).toEqual([]);
+    });
+    it('cancels the exact pending BYOC allocation after alias resolution and a lost create reply', async () => {
+        const h = await harness({ lostCreateReply: true });
+        const acquired = await h.invoke('byoc-acquire', { launch: byocLaunch, managedId });
+        expect(acquired).toMatchObject({ kind: 'pending' });
+        if (acquired.kind !== 'pending') throw new Error('Expected retained operation');
+        expect(await h.invoke('byoc-destroy', { nativeOperation: acquired.nativeOperationRef.value })).toEqual({ kind: 'confirmed' });
+        expect(h.processRequests.filter(request => request.args?.includes('create'))).toHaveLength(1);
+        expect(h.processRequests.filter(request => request.args?.includes('rm')).map(request => request.args))
+            .toEqual([['--json', '--embedded', 'sandbox', 'rm', `aws:${name}`, '--force']]);
+    });
+    it('confirms retained Stop from the native suspended observation', async () => {
+        const h = await harness();
+        await h.invoke('byoc-acquire', { launch: byocLaunch, managedId });
+        const resource = { cloud: 'aws', nativeResourceId: 'i-owned', sandboxId: `aws:${name}`, ownedAttachmentIds: [] };
+        expect(await h.invoke('byoc-power', { resource, intent: 'stop' })).toEqual({ kind: 'confirmed' });
+        expect(await h.invoke('byoc-inspect', { resource })).toMatchObject({ availability: 'present', power: 'stopped' });
+    });
+    it.each(['registry', 'delete-reply'] as const)('keeps cleanup unconfirmed after %s failure consumes native qualification records (CD9)', async cleanupFailure => {
+        const h = await harness({ cleanupFailure });
+        const acquired = await h.invoke('byoc-acquire', { launch: byocLaunch, managedId });
+        expect(acquired).toMatchObject({ kind: 'bound' });
+        if (acquired.kind !== 'bound') throw new Error('Expected exact retained resource');
+        const resource = acquired.resource.value;
+        expect(await h.invoke('byoc-destroy', { resource })).toEqual({ kind: 'unknown', code: 'cua_cleanup_incomplete' });
+        const retryStart = h.processRequests.length;
+        expect(await h.invoke('byoc-destroy', { resource })).toEqual({ kind: 'unknown', code: 'cua_cleanup_incomplete' });
+        expect(await h.invoke('byoc-inspect', { resource })).toMatchObject({ availability: 'unavailable' });
+        // The caller retains vendor ID/cloud and reviewed region for the existing
+        // recovery detail/manual-responsibility path; absence is never inferred.
+        expect(resource).toMatchObject({ cloud: 'aws', nativeResourceId: 'i-owned',
+            sandboxId: `aws:${name}`, spaceId: 'relay:relay-owned' });
+        expect(h.processRequests.slice(retryStart).every(request => request.args?.includes('status'))).toBe(true);
+        expect(h.processRequests.filter(request => request.args?.includes('rm')).map(request => request.args))
+            .toEqual([['--json', '--embedded', 'sandbox', 'rm', `aws:${name}`, '--force']]);
+        expect(h.processRequests.some(request => request.args?.includes('sweep'))).toBe(false);
     });
 });

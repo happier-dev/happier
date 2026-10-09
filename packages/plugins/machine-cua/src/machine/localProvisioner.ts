@@ -97,6 +97,17 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             const result = await leaf.destroy(resource(input), signal);
             return result.kind === 'deleted' ? { kind: 'confirmed' } : { kind: 'unknown', code: 'cua_cleanup_incomplete' };
         },
+        async destroyPending(input: unknown): Promise<MachineProvisionerPowerResultV1> {
+            const operation = CuaLocalNativeOperationV1Schema.parse(input);
+            const value = resource(operation.resource);
+            // Native identity/runtime/image qualifies created compute even when
+            // Space registration never completed. Enrollment still uses reconcile.
+            const observed = await sandbox.inspect(value, signal);
+            if (observed.existence !== 'present' || observed.imageId !== operation.imageId) {
+                return { kind: 'unknown', code: 'cua_cleanup_incomplete' };
+            }
+            return this.destroy(value);
+        },
         async exec(input: unknown, argv: readonly string[], inputBytes?: Uint8Array, timeoutMs?: number | null) {
             const value = await running(input);
             return native.execGuest(value.sandboxId, argv, inputBytes, signal, timeoutMs);

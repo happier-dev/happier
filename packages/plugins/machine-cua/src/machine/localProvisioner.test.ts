@@ -114,6 +114,63 @@ describe('consumed Cua local provisioner roles', () => {
             .toMatchObject({ kind: 'bound', resource: { value: resource } });
         expect(h.requests.some(request => request.args?.includes('create'))).toBe(false);
     });
+    it('deletes an allocated pending container Space after registration was aborted', async () => {
+        const abort = new AbortController();
+        const requests: PluginExecSpawnRequest[] = [];
+        const id = `local:happier-${managedId}`;
+        const remaining = new Set([id, 'local:neighbor']);
+        const containerLaunch = { ...launch, runtimeId: 'gvisor' };
+        const run: ExecService['run'] = async request => {
+            requests.push(request);
+            const args = request.args ?? [];
+            if (args.includes('doctor')) return result({ ...doctor, container: { reachable: true, gvisor: true, runtimes: ['runsc'] },
+                backends: [{ backend: 'container', ready: true, provisionable: false }] });
+            if (args.includes('images')) return result([{ ...images[0], local: 'container' }]);
+            if (args.includes('create')) {
+                abort.abort();
+                return result({ id, name: `happier-${managedId}`, location: 'local', runtime: 'gvisor', kind: 'container',
+                    image: launch.imageId, status: 'ready', state: 'running', ephemeral: false });
+            }
+            if (args.includes('info')) return result({ id, name: `happier-${managedId}`, location: 'local', runtime: 'gvisor', kind: 'container',
+                image: launch.imageId, status: 'ready', state: 'running', ephemeral: false });
+            if (args.includes('ls')) return result({ spaces: [] });
+            if (args.includes('rm') && args.includes('sandbox')) {
+                remaining.delete(args[args.indexOf('rm') + 1]);
+                return result({ deleted: id, missing: false });
+            }
+            throw new Error('Unexpected native operation');
+        };
+        const acquiring = await activated(true, run, abort.signal);
+        const acquired = await acquiring.action('space-acquire')({ launch: containerLaunch, managedId }, acquiring.context);
+        expect(acquired).toMatchObject({ kind: 'pending' });
+        if (acquired.kind !== 'pending') throw new Error('Expected retained operation');
+        const cleanup = await activated(true, run);
+        // Enrollment still requires registration; cleanup only needs the exact compute.
+        expect(await cleanup.action('space-reconcile')({ nativeOperation: acquired.nativeOperationRef.value }, cleanup.context))
+            .toMatchObject({ kind: 'pending' });
+        expect(await cleanup.action('space-destroy')({ nativeOperation: acquired.nativeOperationRef.value }, cleanup.context))
+            .toEqual({ kind: 'confirmed' });
+        expect([...remaining]).toEqual(['local:neighbor']);
+        expect(requests.filter(request => request.args?.includes('create'))).toHaveLength(1);
+        expect(requests.some(request => request.args?.includes('add'))).toBe(false);
+    });
+    it.each(['wrong-image', 'unavailable'])('refuses pending Space deletion when native identity qualification is %s', async condition => {
+        const requests: PluginExecSpawnRequest[] = [];
+        const pendingResource = { kind: 'space', spaceId: 'local:owned', sandboxId: 'local:owned', runtimeId: 'qemu' };
+        const h = await activated(true, async request => {
+            requests.push(request);
+            if (request.args?.includes('info')) {
+                if (condition === 'unavailable') throw new Error('Native read unavailable');
+                return result({ id: 'local:owned', name: 'owned', location: 'local', runtime: 'qemu', kind: 'vm',
+                    image: 'other-image', status: 'ready', state: 'running', ephemeral: false });
+            }
+            if (request.args?.includes('ls')) return result({ spaces: [] });
+            throw new Error('No cleanup effect is qualified');
+        });
+        expect(await h.action('space-destroy')({ nativeOperation: { resource: pendingResource, imageId: launch.imageId } }, h.context))
+            .toMatchObject({ kind: 'unknown' });
+        expect(requests.some(request => request.args?.includes('rm'))).toBe(false);
+    });
     it.each([987654, null])('forwards the containing guest budget %s and output delivery without applying it to reads', async timeoutMs => {
         const requests: Array<{ request: PluginExecSpawnRequest & { timeoutMs?: number }; options: unknown }> = [];
         const native = harness();

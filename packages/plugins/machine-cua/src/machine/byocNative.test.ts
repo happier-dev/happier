@@ -102,7 +102,7 @@ describe('Cua BYOC native operations', () => {
         expect(cleanup.argv.some(args => args.includes('rm'))).toBe(false);
     });
     it('uses retained stop only for VM routes and never starts an absent resource', async () => {
-        const h = harness(status, info, 'Suspending', status, { ...info, state: 'stopped', status: 'stopped' });
+        const h = harness(status, info, 'Suspending', status, { ...info, state: 'suspended', status: 'stopped' });
         expect(await h.byoc.power(resource, 'stop')).toMatchObject({ kind: 'observed', existence: 'present', power: 'stopped' });
         expect(h.argv[2]).toEqual(['--json', '--embedded', 'sandbox', 'suspend', 'aws:owned']);
         const missing = harness(status, { ...info, state: 'gone', status: 'unknown' });
@@ -123,5 +123,18 @@ describe('Cua BYOC native operations', () => {
         const attached = harness(attachedStatus, info, { deleted: 'aws:owned', missing: false }, { spaces: [] });
         expect(await attached.byoc.destroy(attachedRef)).toMatchObject({ kind: 'incomplete', native: 'absent', attachments: 'unknown' });
         expect(attached.argv.every(args => !args.includes('sweep') && !args.includes('connect'))).toBe(true);
+    });
+    it('qualifies an alias through the native image catalog when recovering the resolved image', async () => {
+        const resolved = 'ghcr.io/trycua/linux:24.04';
+        const h = harness(status, { ...info, image: resolved }, { ref: resolved, published: true });
+        expect(await h.byoc.recover(launch, 'aws:owned')).toEqual({ kind: 'bound', resource });
+        expect(h.argv.at(-1)).toEqual(['--json', 'images', 'info', 'linux']);
+        const wrongImage = harness(status, { ...info, image: 'ghcr.io/other/image:1' }, { ref: resolved, published: true });
+        expect(await wrongImage.byoc.recover(launch, 'aws:owned')).toEqual({ kind: 'unknown' });
+        const unavailable = harness(status, { ...info, image: resolved }, new Error('Catalog unavailable'));
+        expect(await unavailable.byoc.recover(launch, 'aws:owned')).toEqual({ kind: 'unknown' });
+        const custom = { ...launch, nativeImageId: 'ghcr.io/custom/image:1' };
+        const exact = harness(status, { ...info, image: custom.nativeImageId });
+        expect(await exact.byoc.recover(custom, 'aws:owned')).toEqual({ kind: 'bound', resource });
     });
 });

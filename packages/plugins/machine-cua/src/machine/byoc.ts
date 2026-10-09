@@ -71,6 +71,7 @@ const sandboxInfoSchema = z.object({ id: z.string(), name: z.string(), location:
     expires_at: z.nullable(z.iso.datetime({ offset: true })),
     provider_details: z.object({ provider: z.enum(['aws', 'gcp', 'modal']), id: z.string().check(z.minLength(1)) }) });
 const deleteSchema = z.object({ deleted: z.string(), missing: z.boolean() });
+const imageCatalogEntrySchema = z.object({ ref: z.string().check(z.minLength(1)), published: z.boolean() });
 const registrySchema = z.object({ spaces: z.array(z.object({ id: z.string(), provider: z.string() })) });
 
 /** Remote operations on C53's single native boundary. No enrollment or policy. */
@@ -112,7 +113,10 @@ export function createCuaByoc(native: CuaNativeClient) {
         if (facts.state === 'gone' || facts.state === 'terminated') {
             return { resource, existence: 'absent' as const, power: 'unknown' as const };
         }
-        const power = facts.state === 'running' || facts.state === 'stopped' ? facts.state : 'unknown';
+        // BYOC VM stop is exposed by the native sandbox layer as Suspended;
+        // this route retains disk, not a local sandbox's RAM suspension promise.
+        const power = facts.state === 'suspended' && resource.cloud !== 'modal' ? 'stopped'
+            : facts.state === 'running' || facts.state === 'stopped' ? facts.state : 'unknown';
         return { resource, existence: 'present' as const, power,
             ...(facts.expires_at !== null && { nativeExpiryAt: Date.parse(facts.expires_at) }) };
     }
@@ -166,6 +170,14 @@ export function createCuaByoc(native: CuaNativeClient) {
             if (decoded?.kind === 'bound') {
                 const observed = await exactSandbox(decoded.resource, signal);
                 if (observed && observed.image === launch.nativeImageId) return decoded;
+                if (observed?.image) {
+                    // Native CLI aliases are resolved before contrib persistence.
+                    // Catalog info owns that mapping; no local alias table or
+                    // guessed family/prefix matching may qualify a different image.
+                    const result = await native.json(['images', 'info', launch.nativeImageId], signal);
+                    const image = result.kind === 'success' ? imageCatalogEntrySchema.safeParse(result.value) : undefined;
+                    if (image?.success && image.data.published && image.data.ref === observed.image) return decoded;
+                }
             }
             return { kind: 'unknown' as const };
         },
@@ -204,6 +216,10 @@ export function createCuaByoc(native: CuaNativeClient) {
         },
         async destroy(input: unknown, signal?: AbortSignal) {
             const resource = ByocResourceV1Schema.parse(input);
+            // CD9: sandbox rm cannot reach provider.delete(vendorId) once
+            // sandbox state is gone. Retain unconfirmed custody for the existing
+            // cloud-console/manual-retire path; missing local records are not
+            // native absence, and a global sweep would touch unrelated resources.
             if (!await exactLedger(resource, signal) || !await exactSandbox(resource, signal)) return { kind: 'incomplete' as const, resource,
                 native: 'unknown' as const, registry: 'unknown' as const, attachments: 'unknown' as const };
             const response = await native.json(['--embedded', 'sandbox', 'rm', resource.sandboxId, '--force'], signal);
