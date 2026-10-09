@@ -1103,9 +1103,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true });
         const ordinary = provenance?.provenance.kind === 'account' && provenance.provenance.authority === 'present_user'
           && context.authority !== 'account_automation';
-        // A paired terminal creates through its existing daemon ingress, where
-        // terminal policy and exact Machine admission are enforced. Home's
-        // finite-Action ingress does not admit terminal Session creation.
+        // A paired terminal uses its own daemon ingress when locally placed;
+        // another selected Machine uses Home's named Session-start admission.
+        // Both retain terminal policy and exact Machine admission.
         const pairedSessionCreation = actionId === 'session.spawn_new' && provenance?.provenance.kind === 'terminal'
           ? SessionSpawnNewInputV2Schema.safeParse(input) : null;
         const originalContext = params.externalActionClient && originalCliCaller && provenance?.provenance.kind === 'terminal'

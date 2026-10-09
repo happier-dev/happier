@@ -8,8 +8,10 @@ import {
     ExternalActionExecutionAuthorizationV1Schema,
 } from '@happier-dev/protocol';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
-    WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
-import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget } from '@/app/auth/externalActionExecutionAuthorization';
+    WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
+    verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
+    hasCurrentExternalActionSessionSource } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
@@ -35,6 +37,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.optional(),
                 workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.optional(),
                 workspaceSyncSourceWriterTargetRouting: WorkspaceSyncSourceWriterTargetRoutingV1Schema.optional(),
+                workspaceSyncSourceExecution: WorkspaceSyncSourceExecutionV1Schema.optional(),
                 callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.optional(),
                 custodySubjectAccountId: z.string().min(1).optional(),
                 proof: MachineInstallationProofV1Schema,
@@ -42,17 +45,57 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const { context, proof, purpose, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncTargetRouting,
-            workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization } = request.body;
+            workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization, workspaceSyncSourceExecution } = request.body;
         const method = request.body.method ?? '';
         const targetPhaseMethods = { preflight: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
             prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
             release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE };
+        if (!writerRouting && (workspaceSyncSourceExecution || workspaceSyncSourceRouting?.originalActionEnvelope)) {
+            // Only the original Project D packet can attest decrypted Source
+            // facts to the installed P1. It is not a handoff or generic proof.
+            if (!workspaceSyncSourceRouting || !callerInputAuthorization || writerRouting || workspaceSyncTargetRouting
+                || purpose || custodySubjectAccountId
+                || !method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`)
+                || workspaceSyncSourceExecution && (method !== workspaceSyncSourceExecution.method
+                    || method !== `${request.params.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`)
+                || !isDeepStrictEqual(context, workspaceSyncSourceRouting.sourceContext?.machineAdmission)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            const writer = await db.machine.findUnique({ where: { id: request.params.id } });
+            if (!writer?.installationId || !writer.installationPublicKey || writer.accountId !== request.userId
+                || writer.accountId !== (workspaceSyncSourceExecution ? context.custodianAccountId : callerInputAuthorization.binding.custodianAccountId)
+                || !workspaceSyncSourceExecution && (writer.id !== callerInputAuthorization.binding.machineId
+                    || writer.installationId !== callerInputAuthorization.binding.installationId)
+                || classifyMachineAvailabilityState(writer) !== 'available'
+                || !verifyMachineInstallationProof({ payload: { version: 1, machineId: writer.id,
+                    installationId: writer.installationId, accountId: request.userId,
+                    rpcAdmission: { context, method, workspaceSyncSourceRouting, callerInputAuthorization,
+                        ...(workspaceSyncSourceExecution ? { workspaceSyncSourceExecution } : {}) } },
+                    proof, publicKey: encodeBase64(writer.installationPublicKey, 'base64url') })) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            const admitted = workspaceSyncSourceExecution
+                ? await verifyWorkspaceSyncProjectSourceAuthorization(callerInputAuthorization,
+                    workspaceSyncSourceRouting, workspaceSyncSourceExecution, app.resolveCurrentSessionMachine)
+                : await readCurrentWorkspaceSyncProjectSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting,
+                    method.slice(0, method.indexOf(':')), app.resolveCurrentSessionMachine);
+            if (!admitted || workspaceSyncSourceExecution && (admitted.route.parentMachineId !== writer.id
+                || admitted.route.parentInstallationId !== writer.installationId)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            const destination = await db.machine.findUnique({ where: { id: admitted.route.parentMachineId } });
+            if (!destination?.installationId || !destination.installationPublicKey
+                || destination.installationId !== admitted.route.parentInstallationId
+                || classifyMachineAvailabilityState(destination) !== 'available') return reply.code(403).send({ error: 'access_denied' });
+            return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+                installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
+        }
         if (writerRouting) {
             const release = writerRouting.target.phase === 'release';
             if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting
                 || writerRouting.source.accountServerId !== await getOrCreateServerIdentityId()
                 || method.slice(method.indexOf(':') + 1) !== targetPhaseMethods[writerRouting.target.phase]
-                || (release ? Boolean(callerInputAuthorization || workspaceSyncTargetRouting) : !callerInputAuthorization)) {
+                || (release ? Boolean(callerInputAuthorization || workspaceSyncTargetRouting || workspaceSyncSourceExecution) : !callerInputAuthorization)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             const receiver = await db.machine.findUnique({ where: { id: request.params.id } });
@@ -62,6 +105,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     installationId: receiver.installationId, accountId: request.userId,
                     rpcAdmission: { context, method, workspaceSyncSourceWriterTargetRouting: writerRouting,
                         ...(workspaceSyncTargetRouting ? { workspaceSyncTargetRouting } : {}),
+                        ...(workspaceSyncSourceExecution ? { workspaceSyncSourceExecution } : {}),
                         ...(callerInputAuthorization ? { callerInputAuthorization } : {}) } }, proof,
                     publicKey: encodeBase64(receiver.installationPublicKey, 'base64url') })) {
                 return reply.code(403).send({ error: 'access_denied' });
@@ -81,36 +125,41 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 return reply.send({ v: 1, ok: true });
             }
             const admitted = callerInputAuthorization
-                && await readCurrentWorkspaceSyncHandoffWriterTarget(callerInputAuthorization, writerRouting);
+                && await readCurrentWorkspaceSyncHandoffWriterTarget(callerInputAuthorization, writerRouting, app.resolveCurrentSessionMachine,
+                    workspaceSyncTargetRouting ? { routing: workspaceSyncTargetRouting, machineId: method.slice(0, method.indexOf(':')) } : undefined,
+                    workspaceSyncSourceExecution);
             if (!admitted) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             const { target } = admitted;
             let destinationId = target.machineId;
+            let destinationInstallationId = target.installationId;
             if (workspaceSyncTargetRouting) {
-                const { targetContext, ...phase } = workspaceSyncTargetRouting;
-                const { kind: _kind, ...targetAdmission } = target;
-                if (!isDeepStrictEqual(phase, writerRouting.target) || !isDeepStrictEqual(context, targetContext.machineAdmission)
-                    || !isDeepStrictEqual(targetContext.machineAdmission, targetAdmission)
-                    || targetContext.callerAuthority !== writerRouting.source.sourceContext.callerAuthority
-                    || !isDeepStrictEqual(targetContext.callerInputConstraints, writerRouting.source.sourceContext.callerInputConstraints)
-                    || !isDeepStrictEqual(targetContext.sessionActionOrigin, writerRouting.source.sourceContext.sessionActionOrigin)) {
+                const route = admitted.targetRoute;
+                if (!route || !isDeepStrictEqual(context, workspaceSyncTargetRouting.targetContext.machineAdmission)) {
                     return reply.code(403).send({ error: 'access_denied' });
                 }
-                const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, {
-                    accountServerId: workspaceSyncTargetRouting.accountServerId, childMachineId: target.machineId,
-                    childRootPath: workspaceSyncTargetRouting.targetRootPath, parentMachineId: receiver.id, releaseOnly: false });
-                if (!route || route.parentInstallationId !== receiver.installationId
-                    || method !== `${receiver.id}:${targetPhaseMethods[writerRouting.target.phase]}`) return reply.code(403).send({ error: 'access_denied' });
-                destinationId = receiver.id;
+                // The chosen D can ask Home for its physical P2 before sending
+                // the second hop. The same paired purpose also admits P2's
+                // receiver-side proof; neither changes the original Root.
+                if (method !== `${route.parentMachineId}:${targetPhaseMethods[writerRouting.target.phase]}`
+                    || (receiver.id === target.machineId ? receiver.installationId !== target.installationId
+                        : receiver.id !== route.parentMachineId || receiver.installationId !== route.parentInstallationId)) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                destinationId = route.parentMachineId;
+                destinationInstallationId = route.parentInstallationId;
             } else if (receiver.id !== writer.machineId || receiver.installationId !== writer.installationId
                 || method !== `${target.machineId}:${targetPhaseMethods[writerRouting.target.phase]}`
                 || !isDeepStrictEqual(context, writerRouting.source.sourceContext.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             const destination = await db.machine.findUnique({ where: { id: destinationId } });
-            if (!destination?.installationId || !destination.installationPublicKey
-                || classifyMachineAvailabilityState(destination) !== 'available') return reply.code(403).send({ error: 'access_denied' });
+            if (!destination?.installationId || destination.installationId !== destinationInstallationId || !destination.installationPublicKey
+                || classifyMachineAvailabilityState(destination) !== 'available'
+                || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
             return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
@@ -165,7 +214,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             return reply.code(403).send({ error: 'access_denied' });
         }
         if (callerInputAuthorization && (!workspaceSyncSourceRouting
-            || !await verifyWorkspaceSyncHandoffSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting))) {
+            || !await verifyWorkspaceSyncHandoffSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting, app.resolveCurrentSessionMachine))) {
             return reply.code(403).send({ error: 'access_denied' });
         }
         const current = await resolveMachineAdmission({ actorAccountId: isWorkspaceSyncChildRelease
@@ -206,6 +255,8 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         if (custodySubjectAccountId && await inTx(tx => resolveEffectiveMachineRoleInTx(tx, {
             actorAccountId: custodySubjectAccountId, machineId: context.machineId,
         })) !== null) return reply.code(403).send({ error: 'access_denied' });
+        if (callerInputAuthorization && !await hasCurrentExternalActionSessionSource(callerInputAuthorization.binding,
+            app.resolveCurrentSessionMachine)) return reply.code(403).send({ error: 'access_denied' });
         return reply.send({ v: 1, ok: true });
     });
 }

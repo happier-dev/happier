@@ -12,6 +12,7 @@ import {
     AccountApiTokenEncryptionAccessV1Schema,
     AuthTokenAuthenticationEvidenceSnapshotV1Schema,
     ApiTokenGrantV1Schema,
+    ManagedMachineActionIdV1Schema,
     StoredApiTokenGrantV1Schema,
     API_TOKEN_FULL_GRANT_V1,
     EmbedConfigV1Schema,
@@ -63,7 +64,8 @@ import {
 } from "./authenticationEvidence";
 import { verifyCurrentMaterializedRunnerPrincipal } from "@/app/ephemeralRunner/materializedRunnerPrincipalCurrentness";
 import { effectiveCredentialAuthority } from "./effectiveCredentialAuthority";
-import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
+import { hasCurrentSessionScopedMachineAccessInTx, hasCurrentSessionActionRpcSourceBinding } from "@/app/api/socket/sessionScopedBinding";
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 
 interface TokenGeneratorLike {
     new: (payload: Readonly<{
@@ -147,6 +149,10 @@ export type VerifiedApiTokenPrincipal = Readonly<{
     embedConfig: EmbedConfigV1 | null;
     authenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
 }>;
+
+export type ExternalActionExecutionAuthorizationMintInput<Binding = ExternalActionExecutionAuthorizationBindingV1> =
+    Binding extends ExternalActionExecutionAuthorizationBindingV1
+        ? Omit<Binding, 'custodianAccountId' | 'installationId'> : never;
 
 export type VerifiedAuthToken = Readonly<{
     userId: string;
@@ -330,7 +336,9 @@ type CreateApiTokenParams = Readonly<{
 
 export type ApiTokenRevocation = Readonly<{ revoked: boolean; revokedTokenIds: readonly string[] }>;
 export type ApiTokenRevokeAllResult = Readonly<{ revokedCount: number; revokedTokenIds: readonly string[] }>;
-export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown }>;
+export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
+    resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
+}>;
 
 /** The API adapter maps this canonical creation rejection to `invalid_request`. */
 export class InvalidApiTokenExpiryError extends Error {
@@ -557,13 +565,70 @@ class AuthModule {
     }
 
     async mintExternalActionExecutionAuthorization(
-        input: ExternalActionExecutionAuthorizationBindingV1,
+        input: ExternalActionExecutionAuthorizationMintInput,
         context: ExternalActionGrantEvaluationContext = {},
     ): Promise<ExternalActionExecutionAuthorizationV1> {
         if (!this.externalActionExecutionAuthorizationTokens) {
             throw new Error("Auth module not initialized");
         }
-        const supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse(input);
+        // Custody comes from the current Machine row, never from an invocation
+        // author's Account or target fields. The ingress separately admits use.
+        const machine = await db.machine.findUnique({ where: { id: input.machineId },
+            select: { accountId: true, installationId: true } });
+        if (!machine?.installationId) throw new ApiTokenOperationError('invalid_token');
+        const needsAccountMode = 'authentication' in input || ManagedMachineActionIdV1Schema.safeParse(input.actionId).success
+            || input.managedContinuation || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, input.actionId);
+        const accountMode = needsAccountMode
+            ? await db.account.findUnique({ where: { id: input.accountId }, select: { encryptionMode: true } }) : null;
+        if (needsAccountMode && !accountMode) {
+            throw new ApiTokenOperationError('invalid_token');
+        }
+        const supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({
+            ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
+            ...(accountMode ? { accountEncryptionMode: accountMode.encryptionMode } : {}),
+        });
+        if ('authentication' in supplied) {
+            const { isOriginalTerminalExecutionAction } = await import('./externalActionExecutionAuthorization');
+            if (supplied.authentication.kind === 'terminal'
+                && !isOriginalTerminalExecutionAction(supplied.actionId, supplied) && !supplied.workflowActionOrigin) {
+                throw new ApiTokenOperationError('invalid_token');
+            }
+            if (!await this.isSignedCredentialCurrent(db, supplied.accountId, supplied.authentication.tokenEpoch)) {
+                throw new ApiTokenOperationError('invalid_token');
+            }
+            if (supplied.handoffAdmission) {
+                const { readCurrentExternalActionHandoffBindingInTx } = await import('./externalActionExecutionAuthorization');
+                if (!await readCurrentExternalActionHandoffBindingInTx(db, { accountId: supplied.accountId,
+                    handoffAdmission: supplied.handoffAdmission })) throw new ApiTokenOperationError('invalid_token');
+            }
+            if (supplied.sessionActionOrigin) {
+                const source = supplied.sessionActionSource;
+                if (!source || supplied.handoffAdmission && (source.machineId !== supplied.handoffAdmission.sourceMachineId
+                    || source.installationId !== supplied.handoffAdmission.sourceInstallationId)) throw new ApiTokenOperationError('invalid_token');
+                const current = supplied.handoffContinuation
+                    ? await hasCurrentSessionScopedMachineAccessInTx({ tx: db, accountId: supplied.accountId,
+                        machineId: source.machineId, sessionId: supplied.sessionActionOrigin.caller.sessionId })
+                    : await hasCurrentSessionActionRpcSourceBinding({ accountId: supplied.accountId, ...source,
+                        sourceSessionId: supplied.sessionActionOrigin.caller.sessionId,
+                        resolveCurrentSessionMachine: context.resolveCurrentSessionMachine });
+                if (!current || !await this.isSignedCredentialCurrent(db, supplied.accountId, supplied.authentication.tokenEpoch)) {
+                    throw new ApiTokenOperationError('invalid_token');
+                }
+            }
+            if (supplied.workflowActionOrigin) {
+                const { isAutomationOriginRunPublisherTx } = await import('@/app/automations/automationTriggerCauseChain');
+                if (!ManagedMachineActionIdV1Schema.safeParse(supplied.actionId).success
+                    || !await isAutomationOriginRunPublisherTx(db, { accountId: supplied.accountId, machineId: supplied.machineId,
+                        runId: supplied.workflowActionOrigin.runId, requireCurrentScopeEnd: true })) {
+                    throw new ApiTokenOperationError('invalid_token');
+                }
+            }
+            const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
+                user: supplied.accountId,
+                extras: { externalActionExecutionAuthorizationV1: supplied },
+            });
+            return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding: supplied });
+        }
         const principal = await this.verifyCurrentApiTokenPrincipal(supplied);
         if (!principal) throw new ApiTokenOperationError("invalid_token");
         const qualifiedAction = parseQualifiedPluginActionId(supplied.actionId);
@@ -573,14 +638,16 @@ class AuthModule {
             ? PluginContributionIdentityV1Schema.safeParse(inputRecord?.action) : null;
         const contributedQualifiedId = qualifiedAction ? supplied.actionId
             : invokedAction?.success ? formatQualifiedPluginActionId(invokedAction.data) : undefined;
-        const admission = evaluateApiTokenGrantV1({ grant: principal.grant,
-            actionId: qualifiedAction ? "action.invoke" : supplied.actionId, contributedQualifiedId,
+        if (!isApiTokenGrantWithinV1(supplied.grant, principal.grant)) throw new ApiTokenOperationError('credential_scope_denied');
+        const { readExternalActionCredentialActionId } = await import('./externalActionExecutionAuthorization');
+        const admission = evaluateApiTokenGrantV1({ grant: supplied.grant,
+            actionId: qualifiedAction ? "action.invoke" : readExternalActionCredentialActionId(supplied), contributedQualifiedId,
             contributedActionAdmission: 'pre_open',
             target: supplied.target, targetMachineId: supplied.machineId,
-            ...(supplied.actionId === "session.spawn_new" && context.input !== undefined ? { spawnInput: context.input } : {}),
+            ...(supplied.actionId === "session.spawn_new" && !supplied.handoffContinuation && context.input !== undefined ? { spawnInput: context.input } : {}),
         });
         if (!admission.ok) throw new ApiTokenOperationError("credential_scope_denied");
-        const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, grant: principal.grant });
+        const binding = supplied;
         const token = await this.externalActionExecutionAuthorizationTokens.generator.new({
             user: binding.accountId,
             extras: { externalActionExecutionAuthorizationV1: binding },
@@ -1112,7 +1179,10 @@ class AuthModule {
         }
 
         // The account row is authoritative for revocation, including cache hits.
-        const account = await this.readCurrentSignedCredentialAccount(db, decoded.userId, decoded.tokenEpoch);
+        const account = await inTx(
+            tx => this.readCurrentSignedCredentialAccount(tx, decoded.userId, decoded.tokenEpoch),
+            { readOnly: true },
+        );
         if (!account) {
             return decoded.provenance.kind === "ephemeral_session_runner"
                 ? REJECTED_EPHEMERAL_SESSION_RUNNER_CREDENTIAL

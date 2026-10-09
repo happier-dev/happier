@@ -50,6 +50,7 @@ export { assertControllerDominates, createWorkflowAccountRunActionOwner, type Wo
 export { resolveActionAgentStartContextV1, requiresActionAgentStartDepthV1 } from './executor/agentStartAdmission.js';
 export {
   computeExternalActionRequestEnvelopeDigestV1,
+  isExternalActionAuthorizationBoundToEnvelope,
   computeExternalActionSocketRpcRequestDigestV1,
   signExternalActionMachineRequestV1,
   verifyExternalActionMachineRequestV1,

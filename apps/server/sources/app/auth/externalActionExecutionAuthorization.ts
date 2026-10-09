@@ -12,18 +12,18 @@ import {
     parseQualifiedPluginActionId,
     isExternalActionResolvedTargetAllowedV1,
     PublicActionIdSchema,
+    SignedRootActionIdSchema,
     ActionIdSchema,
     MachineAccessActionIdSchema,
     verifyExternalActionMachineRpcRequestV1,
     verifyExternalActionMachineRequestV1,
+    isExternalActionAuthorizationBoundToEnvelope,
     type ExternalActionExecutionAuthorizationBindingV1,
     type ExternalActionExecutionAuthorizationV1,
     type ExternalActionMachineRpcExecutionV1,
     type ExternalActionTargetV1,
     type ExternalActionMachineRpcEventV1,
     type ExternalActionServerPrincipalV1,
-    type ExternalActionRequestEnvelope,
-    computeExternalActionRequestEnvelopeDigestV1,
 } from "@happier-dev/protocol/actions";
 import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1,
     type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1 } from "@happier-dev/protocol/socketRpc";
@@ -32,7 +32,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, resolveCredentialActionAdmissionV1, ManagedMachineActionIdV1Schema,
     managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema,
     type ManagedControllerReportV1, type ManagedControllerIntentReportV1, type AuthTokenAuthenticationEvidenceV1,
-    decodeBase64 } from "@happier-dev/protocol";
+    decodeBase64, QualifiedConnectedServiceUsageSourceV4Schema, ProviderAccountUsageRecordIdSchema,
+    parseQualifiedConnectedAccountV4StructuredQueryValue } from "@happier-dev/protocol";
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema,
@@ -54,6 +55,9 @@ import { isRequesterProjectExecutionActionV1, PROJECT_FINITE_ACTION_RPC_METHODS_
 
 import { auth, type VerifiedApiTokenPrincipal } from "./auth";
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
+import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { PendingResetStartsReadInputV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { readExternalActionPendingResetStartPurpose } from './externalActionPendingResetStartPurpose';
 
 export type VerifiedExternalActionPrincipal = VerifiedApiTokenPrincipal
     | (Extract<ExternalActionServerPrincipalV1, { authentication: unknown }>
@@ -69,17 +73,28 @@ export function isOriginalAccountHandoffAction(actionId: string): boolean {
         && (actionId === 'session.handoff' || actionId.startsWith('session.handoff.'));
 }
 
-/** Interactive execution roots consume the incumbent public catalog and declaration families. */
+/** Interactive Account execution consumes the canonical signed-root catalog and declaration families. */
 export function isOriginalAccountExecutionAction(actionId: string): boolean {
-    const parsed = PublicActionIdSchema.safeParse(actionId);
+    const parsed = SignedRootActionIdSchema.safeParse(actionId);
     if (!parsed.success || parsed.data === 'session.spawn_new') return false;
     const spec = getActionSpec(parsed.data);
     return spec.executionPlacement === 'machine' || ManagedMachineActionIdV1Schema.safeParse(actionId).success
         || isOriginalAccountProjectAction(actionId) || isOriginalAccountHandoffAction(actionId)
         || isSettingsDeclarationActionIdV1(actionId)
+        || actionId === 'connectedServices.quota.get'
+        || actionId === 'session.pending.resetStart.set' || actionId === 'session.pending.resetStart.cancel'
         // The private approval owner reaches the exact daemon recorded by its
         // Account Artifact; native authority remains in that owner, not this reviewer.
         || spec.id === 'approval.request.decide';
+}
+
+/** A paired terminal may start on another own Machine, without inventing a Session source. */
+export function isOriginalTerminalExecutionAction(actionId: string,
+    origin?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin' | 'sessionActionSource' | 'workflowActionOrigin'>): boolean {
+    return Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)
+        || actionId === 'session.spawn_new' && !origin?.sessionActionOrigin && !origin?.sessionActionSource
+            && !origin?.workflowActionOrigin
+            && resolveCredentialActionAdmissionV1({ spec: getActionSpec('session.spawn_new'), authority: 'account_automation' }).ok;
 }
 
 /** Admission follows the actual existing native effect's C41 policy. */
@@ -94,7 +109,9 @@ export function resolveExternalActionExecutionMachineAdmissionInTx(reader: Tx,
 function parseExternalActionEffectAction(binding: ExternalActionExecutionAuthorizationBindingV1, actionId: string) {
     return binding.handoffContinuation && binding.handoffAdmission && binding.actionId === actionId
         && isOriginalAccountHandoffAction(actionId)
-        ? ActionIdSchema.safeParse(actionId) : PublicActionIdSchema.safeParse(actionId);
+        ? ActionIdSchema.safeParse(actionId)
+        : 'authentication' in binding && binding.authentication.kind === 'account'
+            ? SignedRootActionIdSchema.safeParse(actionId) : PublicActionIdSchema.safeParse(actionId);
 }
 
 /** Private phases spend only the original accepted handoff grant, never a fresh spawn grant. */
@@ -104,15 +121,7 @@ export function readExternalActionCredentialActionId(binding: ExternalActionExec
         ? 'session.handoff' : binding.actionId;
 }
 
-/** The existing issuer's root is reusable only for the exact originally admitted envelope. */
-export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalActionExecutionAuthorizationBindingV1,
-    input: Readonly<{ actionId: string; machineId: string; envelope: ExternalActionRequestEnvelope }>): boolean {
-    return binding.actionId === input.actionId && binding.machineId === input.machineId
-        && binding.requestId === input.envelope.requestId
-        && input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId
-        && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
-        && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope);
-}
+export { isExternalActionAuthorizationBoundToEnvelope };
 
 /** Always project the signed root's immutable authority, never a later broader credential. */
 export function projectExternalActionBoundPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -286,6 +295,7 @@ async function readCurrentExternalActionPrincipal(
     }
     if ('authentication' in binding) {
         if (!isOriginalAccountExecutionAction(binding.actionId)
+            && !(binding.authentication.kind === 'terminal' && isOriginalTerminalExecutionAction(binding.actionId, binding))
             && !(['session.spawn_new', 'machines.environment.apply'].includes(binding.actionId) && binding.managedContinuation)
             && !(binding.actionId === 'session.spawn_new' && binding.handoffContinuation)
             && !(binding.handoffContinuation && isOriginalAccountHandoffAction(binding.actionId))) return null;
@@ -294,7 +304,7 @@ async function readCurrentExternalActionPrincipal(
             ...(binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {}) };
         if (binding.workflowActionOrigin) return { ...base, authority: 'account_automation', workflowActionOrigin: binding.workflowActionOrigin };
         if (binding.authentication.kind === 'terminal') {
-            if (!Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, binding.actionId)) return null;
+            if (!isOriginalTerminalExecutionAction(binding.actionId, binding)) return null;
             return { accountId: binding.accountId, authentication: binding.authentication, authority: 'account_automation',
                 ...(binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {}),
                 ...(binding.sessionActionOrigin ? { sessionActionOrigin: binding.sessionActionOrigin } : {}) };
@@ -593,6 +603,33 @@ async function verifyCommon(
     return { binding, effectActionId: effectActionId.data, target, principal };
 }
 
+/** Quota reads consume B's canonical request schemas, not a generic Account read privilege. */
+function isQuotaReadHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
+    const url = new URL(proof.path, 'http://home.invalid');
+    const method = proof.method.toUpperCase();
+    if (method === 'POST') {
+        return url.pathname === '/v2/pending/reset-starts/read' && url.search === ''
+            && PendingResetStartsReadInputV1Schema.safeParse(proof.body).success;
+    }
+    if (method !== 'GET' || proof.body !== undefined) return false;
+    if (['/v1/account/encryption/currentness', '/v1/account/encryption', '/v2/account/settings'].includes(url.pathname)) {
+        return url.search === '';
+    }
+    const field = url.pathname === '/v4/connect/qualified/provider-account-usage/sources/resolve' ? 'source'
+        : url.pathname === '/v4/connect/qualified/provider-account-usage/record' ? 'recordId'
+        : url.pathname === '/v4/connect/qualified/provider-account-usage/history' ? 'query' : null;
+    if (!field || Array.from(url.searchParams.keys()).length !== 1 || !url.searchParams.has(field)) return false;
+    try {
+        const value = url.searchParams.get(field);
+        if (field === 'recordId') return ProviderAccountUsageRecordIdSchema.safeParse(value).success;
+        if (field === 'source') parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedServiceUsageSourceV4Schema, value);
+        else parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export async function verifyExternalActionDomainExecutionRequest(
     proof: ExternalActionExecutionRequestProof,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
@@ -651,6 +688,14 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (verified.binding.actionId !== 'session.handoff' || !verified.binding.handoffAdmission
             || proof.method.toUpperCase() !== 'POST' || !child.success || !child.data.handoffContinuation
             || readHandoffContinuationIssuanceAction(path) === null) return null;
+    } else if (verified.binding.actionId === 'connectedServices.quota.get') {
+        if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return null;
+    } else if (verified.binding.actionId === 'session.pending.resetStart.set'
+        || verified.binding.actionId === 'session.pending.resetStart.cancel') {
+        const purpose = readExternalActionPendingResetStartPurpose({ actionId: verified.effectActionId,
+            method: proof.method, path: proof.path, body: proof.body });
+        if (verified.effectActionId !== verified.binding.actionId || !purpose
+            || verified.binding.target.kind !== 'session' || purpose.sessionId !== verified.binding.target.sessionId) return null;
     } else if ('authentication' in verified.binding) {
         const path = proof.path.split('?')[0];
         const childPurpose = verified.binding.actionId === 'session.spawn_new' && verified.binding.managedContinuation
@@ -772,40 +817,64 @@ async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActi
     return { binding, principal: { ...principal, authority: context.callerAuthority }, effectActionId: binding.actionId, target: binding.target };
 }
 
-/** The current installed D's original packet attests verified decryption; P1 never signs as D. */
-export async function verifyWorkspaceSyncProjectSourceAuthorization(
+/** Only an installed D proof or its retained original packet can attest this exact Project purpose. */
+export async function readCurrentWorkspaceSyncProjectSourceAuthorization(
     authorization: ExternalActionExecutionAuthorizationV1,
     routing: WorkspaceSyncSourceRoutingV1,
-    execution: WorkspaceSyncSourceExecutionV1,
+    writerMachineId: string,
     resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
 ): Promise<Readonly<{ verified: VerifiedExternalActionExecutionRequest;
     route: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> }> | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     const envelope = routing.originalActionEnvelope;
-    const packet = execution.externalActionExecution;
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, authorization.binding)
         || binding.actionId !== 'projects.open' || binding.handoffAdmission || binding.handoffContinuation
         || routing.phase !== 'prepare' || routing.sourceSessionId !== undefined || !envelope
         || binding.serverIdentityId !== await getOrCreateServerIdentityId() || routing.accountServerId !== binding.serverIdentityId
-        || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: 'projects.open', machineId: binding.machineId, envelope })
-        || packet.authorization.token !== authorization.token || !matchesExternalActionAuthorizationBinding(binding, packet.authorization.binding)
-        || packet.effectActionId !== 'projects.open' || packet.installationId !== binding.installationId
-        || encodeExternalActionResolvedTargetV1(packet.target) !== encodeExternalActionResolvedTargetV1(binding.target)) return null;
-    const suffix = `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
-    if (!execution.method.endsWith(suffix)) return null;
-    const writerMachineId = execution.method.slice(0, -suffix.length);
+        || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: 'projects.open', machineId: binding.machineId, envelope })) return null;
     const verified = await readCurrentWorkspaceSyncSourceAuthorization(binding, routing, resolveCurrentSessionMachine);
     if (!verified) return null;
+    if (envelope.v === 1) {
+        const input = OpenProjectInputV1Schema.safeParse(envelope.input);
+        if (!input.success || !matchesWorkspaceSyncProjectSourceInput(input.data, binding, routing)) return null;
+    }
+    const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.accountServerId,
+        childMachineId: routing.sourceMachineId, childRootPath: routing.sourceRootPath,
+        parentMachineId: writerMachineId, releaseOnly: false });
+    return route && await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine) ? { verified, route } : null;
+}
+
+function matchesWorkspaceSyncProjectSourceInput(input: ReturnType<typeof OpenProjectInputV1Schema.parse>,
+    binding: ExternalActionExecutionAuthorizationBindingV1, routing: WorkspaceSyncSourceRoutingV1): boolean {
+    return input.serverId === binding.serverIdentityId && input.machineId === binding.machineId
+        && input.materialization.kind === 'sync' && (input.source.kind === 'workspace' || input.source.kind === 'source')
+        && input.source.checkout?.machineId === routing.sourceMachineId && input.source.checkout.rootPath === routing.sourceRootPath;
+}
+
+/** The current installed D's original packet attests verified decryption; P1 never signs as D. */
+export async function verifyWorkspaceSyncProjectSourceAuthorization(
+    authorization: ExternalActionExecutionAuthorizationV1, routing: WorkspaceSyncSourceRoutingV1,
+    execution: WorkspaceSyncSourceExecutionV1,
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
+): Promise<Awaited<ReturnType<typeof readCurrentWorkspaceSyncProjectSourceAuthorization>>> {
+    const suffix = `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    if (!execution.method.endsWith(suffix)) return null;
+    const admitted = await readCurrentWorkspaceSyncProjectSourceAuthorization(authorization, routing,
+        execution.method.slice(0, -suffix.length), resolveCurrentSessionMachine);
+    if (!admitted) return null;
+    const { binding } = admitted.verified;
+    const envelope = routing.originalActionEnvelope;
+    const packet = execution.externalActionExecution;
+    if (!envelope || packet.authorization.token !== authorization.token
+        || !matchesExternalActionAuthorizationBinding(binding, packet.authorization.binding)
+        || packet.effectActionId !== 'projects.open' || packet.installationId !== binding.installationId
+        || encodeExternalActionResolvedTargetV1(packet.target) !== encodeExternalActionResolvedTargetV1(binding.target)) return null;
     // Plain decoded packets can also be checked against the canonical Open input.
     // For opaque transport params, the same installed D signature binds the
     // unchanged envelope and exact Source facts after D's verified decryption.
     if (typeof execution.params !== 'string') {
         const input = OpenProjectInputV1Schema.safeParse(execution.params);
-        if (!input.success || input.data.serverId !== binding.serverIdentityId || input.data.machineId !== binding.machineId
-            || input.data.materialization.kind !== 'sync'
-            || (input.data.source.kind !== 'workspace' && input.data.source.kind !== 'source')
-            || input.data.source.checkout?.machineId !== routing.sourceMachineId
-            || input.data.source.checkout.rootPath !== routing.sourceRootPath
+        if (!input.success || !matchesWorkspaceSyncProjectSourceInput(input.data, binding, routing)
             || envelope.v === 1 && !sameManagedInput(envelope.input, input.data)) return null;
     }
     const rootMachine = await db.machine.findUnique({ where: { id: binding.machineId } });
@@ -816,10 +885,7 @@ export async function verifyWorkspaceSyncProjectSourceAuthorization(
             event: SOCKET_RPC_EVENTS.CALL, method: execution.method, requestId: execution.requestId,
             ...(execution.params === undefined ? {} : { params: execution.params }), workspaceSyncSourceRouting: routing,
             publicKey: rootMachine.installationPublicKey, signature: packet.machineSignature })) return null;
-    const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: routing.accountServerId,
-        childMachineId: routing.sourceMachineId, childRootPath: routing.sourceRootPath,
-        parentMachineId: writerMachineId, releaseOnly: false });
-    return route && await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine) ? { verified, route } : null;
+    return await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine) ? admitted : null;
 }
 
 /** One currentness decision for the original handoff's installed source writer and chosen target. */
@@ -828,13 +894,26 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     routing: WorkspaceSyncSourceWriterTargetRoutingV1,
     resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
     targetReceiver?: Readonly<{ routing: WorkspaceSyncTargetRoutingV1; machineId: string }>,
+    sourceExecution?: WorkspaceSyncSourceExecutionV1,
 ): Promise<Readonly<{ verified: VerifiedExternalActionExecutionRequest;
     writer: Extract<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'admitted' }>;
     target: Extract<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'admitted' }>;
     targetRoute?: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> }> | null> {
     if (routing.target.phase === 'release') return null;
-    const verified = await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, resolveCurrentSessionMachine);
-    if (!verified || verified.binding.handoffAdmission?.targetMachineId !== routing.target.targetMachineId) return null;
+    const project = authorization.binding.actionId === 'projects.open';
+    const projectSource = project && sourceExecution
+        ? await verifyWorkspaceSyncProjectSourceAuthorization(authorization, routing.source, sourceExecution, resolveCurrentSessionMachine) : null;
+    const verified = project ? projectSource?.verified
+        : !sourceExecution && await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, resolveCurrentSessionMachine);
+    if (!verified || (project ? verified.binding.machineId : verified.binding.handoffAdmission?.targetMachineId) !== routing.target.targetMachineId) return null;
+    const originalEnvelope = routing.source.originalActionEnvelope;
+    if (project && (originalEnvelope?.v === 1 || sourceExecution && typeof sourceExecution.params !== 'string')) {
+        // A readable original Root remains authoritative even when the installed
+        // SOURCE packet is sealed. V2 decryption belongs to the actual D owner.
+        const input = OpenProjectInputV1Schema.safeParse(originalEnvelope?.v === 1 ? originalEnvelope.input : sourceExecution?.params);
+        if (!input.success || input.data.materialization.kind !== 'sync'
+            || input.data.materialization.targetPath !== routing.target.targetRootPath) return null;
+    }
     const writer = await resolveMachineAdmission({ actorAccountId: routing.source.sourceContext.machineAdmission.custodianAccountId,
         machineId: routing.sourceWriter.machineId, requiredRole: 'manage' });
     if (writer.kind !== 'admitted' || writer.installationId !== routing.sourceWriter.installationId) return null;
@@ -846,7 +925,8 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     } else if (writer.installationId !== routing.source.sourceContext.machineAdmission.installationId) return null;
     const target = await resolveMachineAdmission({ actorAccountId: verified.binding.accountId,
         machineId: routing.target.targetMachineId, requiredRole: 'use' });
-    if (target.kind !== 'admitted' || target.installationId !== verified.binding.handoffAdmission.targetInstallationId) return null;
+    if (target.kind !== 'admitted' || target.installationId !== (project
+        ? verified.binding.installationId : verified.binding.handoffAdmission?.targetInstallationId)) return null;
     let targetRoute: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>> | undefined;
     if (targetReceiver) {
         const { targetContext, ...phase } = targetReceiver.routing;
@@ -875,6 +955,7 @@ export async function verifyExternalActionMachineRpcExecution(
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+        workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
         resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'] }>,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     if (!request.requestId) return null;
@@ -899,10 +980,10 @@ export async function verifyExternalActionMachineRpcExecution(
         const routing = request.workspaceSyncSourceWriterTargetRouting;
         const admitted = await readCurrentWorkspaceSyncHandoffWriterTarget(execution.authorization, routing, request.resolveCurrentSessionMachine,
             request.workspaceSyncTargetRouting ? { routing: request.workspaceSyncTargetRouting,
-                machineId: request.method.slice(0, request.method.indexOf(':')) } : undefined);
+                machineId: request.method.slice(0, request.method.indexOf(':')) } : undefined, request.workspaceSyncSourceExecution);
         const phaseMethod = routing.target.phase === 'preflight' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
             : routing.target.phase === 'prepare' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE : null;
-        if (!admitted || execution.effectActionId !== 'session.handoff' || !phaseMethod
+        if (!admitted || execution.effectActionId !== admitted.verified.effectActionId || !phaseMethod
             || request.method !== `${admitted.targetRoute?.parentMachineId ?? routing.target.targetMachineId}:${phaseMethod}`) return null;
         const signer = request.workspaceSyncTargetRouting ? admitted.target : admitted.writer;
         if (execution.installationId !== signer.installationId) return null;

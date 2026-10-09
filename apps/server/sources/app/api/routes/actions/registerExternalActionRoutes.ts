@@ -37,7 +37,7 @@ import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { ManagedMachineActionIdV1Schema, projectApiTokenSessionSpawnAdmissionV1, resolveCredentialActionAdmissionV1,
     SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1, MachineEnvironmentApplyInputV1Schema } from '@happier-dev/protocol';
-import { getActionSpec, PublicActionIdSchema } from '@happier-dev/protocol/actions';
+import { getActionSpec, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SessionRequesterHandoffBootstrapRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { hasCurrentSessionActionRpcSourceBinding } from '@/app/api/socket/sessionScopedBinding';
@@ -45,7 +45,7 @@ import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthori
 import { inTx } from '@/storage/inTx';
 import { readCurrentManagedFiniteWakeCustodyInTx } from '@/app/machines/managed/managedWake';
 import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrincipalInTx,
-    isOriginalAccountExecutionAction, isOriginalAccountHandoffAction, resolveExternalActionExecutionMachineAdmissionInTx,
+    isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction, isOriginalAccountHandoffAction, resolveExternalActionExecutionMachineAdmissionInTx,
     readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource,
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedMachineError, readManagedAdmissionState, projectManagedMachine, requireCurrentManagedMachineInTx, sameManagedInput } from '@/app/machines/managed/managedRows';
@@ -215,11 +215,12 @@ function createRequestLifetime(
 function readExternalActionRequestPrincipal(
     request: FastifyRequest,
     actionId: string,
+    origin?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin' | 'sessionActionSource' | 'workflowActionOrigin'>,
 ): ExternalActionServerPrincipalV1 | null {
     const publicAction = PublicActionIdSchema.safeParse(actionId);
     if (request.authTokenKind === 'terminal' && (request.authAuthority === 'account_automation' || request.authAuthority === 'present_user')
         && request.authTokenLegacy === false && request.authTokenEpoch !== undefined && publicAction.success
-        && (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || ManagedMachineActionIdV1Schema.safeParse(actionId).success)
+        && (isOriginalTerminalExecutionAction(actionId, origin) || ManagedMachineActionIdV1Schema.safeParse(actionId).success)
         && resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: 'account_automation' }).ok) {
         // Managed FIN issuance still requires its installed source proof below;
         // this is credential authentication, not a native Action admission.
@@ -230,11 +231,12 @@ function readExternalActionRequestPrincipal(
             ...(request.authTokenAuthenticationEvidence ? { evidence: [...request.authTokenAuthenticationEvidence] } : {}),
         } };
     }
+    const signedRootAction = SignedRootActionIdSchema.safeParse(actionId);
     if (request.authTokenKind === 'account' && request.authAuthority === 'present_user'
         && request.authTokenLegacy === false && request.authTokenEpoch !== undefined
-        && publicAction.success
+        && signedRootAction.success
         && isOriginalAccountExecutionAction(actionId)
-        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(publicAction.data), authority: request.authAuthority }).ok) {
+        && resolveCredentialActionAdmissionV1({ spec: getActionSpec(signedRootAction.data), authority: request.authAuthority }).ok) {
         return { accountId: request.userId, authority: 'present_user', authentication: {
             kind: 'account', tokenEpoch: request.authTokenEpoch,
             ...(request.authTokenAuthenticationEvidence ? { evidence: [...request.authTokenAuthenticationEvidence] } : {}),
@@ -439,9 +441,9 @@ export function registerExternalActionRoutes(
         },
         async (request, reply) => {
             reply.header("cache-control", "no-store");
-            let principal = readExternalActionRequestPrincipal(request, request.params.actionId);
             const actionId = ExternalActionActionIdV1Schema.safeParse(request.params.actionId);
             const body = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
+            let principal = readExternalActionRequestPrincipal(request, request.params.actionId, body.success ? body.data : undefined);
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let handoffContinuation: Awaited<ReturnType<typeof readHandoffContinuation>> = null;
             if (actionId.success && body.success && body.data.handoffContinuation) {
@@ -637,8 +639,8 @@ export function registerExternalActionRoutes(
                 );
             }
 
-            let principal = readExternalActionRequestPrincipal(request, request.params.actionId);
             const wrapped = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
+            let principal = readExternalActionRequestPrincipal(request, request.params.actionId, wrapped.success ? wrapped.data : undefined);
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let admittedRoot: Awaited<ReturnType<typeof readAdmittedRootRelay>> = null;
             if (wrapped.success && wrapped.data.executionAuthorization) {
