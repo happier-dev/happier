@@ -55,7 +55,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let record: PromptLibraryRecordV1 = { key: 'coding', value: { v: 1, scope: { kind: 'coding' }, entries: [neighbor] } };
     let revision = 4;
     let writes = 0;
-    const executor = createExecutor({ promptStacks: {
+    const executor = createExecutor({ isActionApprovalRequired: undefined, promptStacks: {
       serverId: 'home', assertCurrent: () => {},
       readCatalog: async () => ({ catalog: { status: 'ready' as const, rows: [{ record, revision }], tombstones: [], diagnostics: [] } }),
       writeRecord: async (input: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }) => {
@@ -94,7 +94,7 @@ describe('createActionExecutor (prompt library actions)', () => {
     let deleted = false;
     let unavailable = false;
     const writes: { record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }[] = [];
-    const executor = createExecutor({ promptStacks: {
+    const executor = createExecutor({ isActionApprovalRequired: undefined, promptStacks: {
       serverId: 'home', assertCurrent: () => {},
       readCatalog: async () => ({ catalog: unavailable ? { status: 'unavailable' as const, reason: 'encryption-material-unavailable' as const }
         : { status: 'ready' as const, rows: [], tombstones: deleted ? [{ key: 'coding' as const, revision: 8 }] : [], diagnostics: [] },
