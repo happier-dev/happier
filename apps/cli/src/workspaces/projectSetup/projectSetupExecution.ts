@@ -7,6 +7,7 @@ import type { TerminalPtySessionManager, TerminalPtyCustody } from '@/terminal/p
 import { ProjectNativeEnvironmentUncertainError, type ProjectNativeEnvironmentIo } from '@/workspaces/environment/produceProjectNativeEnvironment';
 import { configuration } from '@/configuration';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
+import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
 import {
     authorizePluginExecLaunchForHost,
     authorizeResolvedProjectExecLaunchForHost,
@@ -42,8 +43,8 @@ export type ProjectSetupExecutionOutcome = Readonly<{
 }>;
 
 /** Resource custody for selected callbacks under the original host operation. */
-export function createProjectNativeInvocationCustody(operation: Pick<ProjectSetupOperationContext, 'signal' | 'operationCancellation'> &
-    Partial<Pick<ProjectSetupOperationContext, 'operationOwnerUpdate'>>,
+export function createProjectNativeInvocationCustody(operation: Pick<ProjectSetupOperationContext, 'signal'> &
+    Partial<Pick<ProjectSetupOperationContext, 'operationOwnerUpdate' | 'operationCancellation'>>,
     invocations = new Set<ProjectNativeEffectCaptureForHost>()) {
     const observers = new Set<() => void>();
     const observeUncertainty = (error: unknown) => operation.operationOwnerUpdate?.update({ observation: {
@@ -143,72 +144,24 @@ export type ProjectFiniteProcessInput = ProjectFiniteAdmissionInput & Readonly<{
 /** Single finite process consumer of an already admitted final Exec tuple. */
 export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInput): Promise<ProjectSetupExecutionOutcome> {
     const signal = input.signal ?? input.operation.signal;
+    if (signal.aborted) return { kind: 'no_launch', result: actionFailure('cancelled') };
     const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
-    const failure = (kind: ProjectSetupExecutionOutcome['kind'], code: string, details?: unknown): ProjectSetupExecutionOutcome => ({ kind, result: actionFailure(code, details) });
-    if (signal.aborted) return failure('no_launch', 'cancelled');
-    if (!operationId || !input.requesterAccountId) return failure('no_launch', 'project_setup_operation_unavailable');
+    if (!operationId || !input.requesterAccountId) return { kind: 'no_launch', result: actionFailure('project_setup_operation_unavailable') };
     const attachment = publishProjectFiniteAdmission(input);
-    let terminal: ReturnType<TerminalPtySessionManager['ensure']>;
-    try {
-        terminal = input.terminalSessions.ensure({ terminalKey: `${operationId}:${input.purpose}:${input.step ?? 0}`,
-            cwd: input.launch.cwd ?? input.workspace.rootPath,
-            requesterAccountId: input.requesterAccountId, holdUntilExit: true,
-            ...(input.terminalCustody ? { custody: input.terminalCustody } : {}),
-            launchProcess: { file: input.launch.command, args: input.launch.args, env: input.launch.env,
-                ...(input.launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-            },
-        });
-    } catch { return failure('outcome_uncertain', 'outcome_uncertain'); }
-    if (!terminal.ok) return failure('no_launch', terminal.errorCode);
-    input.operation.operationOwnerUpdate.update({ state: 'running',
-        domainRef: { ...attachment, cwd: input.launch.cwd ?? attachment.cwd, terminalId: terminal.terminalId },
-        progress: { phase: input.purpose, label: 'Running project command', ...(input.totalSteps ? { current: input.step ?? 0, total: input.totalSteps } : {}) },
+    return await executeHostFiniteTerminalProcess({
+        operation: input.operation, terminalSessions: input.terminalSessions,
+        requesterAccountId: input.requesterAccountId, terminalCustody: input.terminalCustody,
+        terminalKey: `${operationId}:${input.purpose}:${input.step ?? 0}`, signal,
+        launch: { ...input.launch, cwd: input.launch.cwd ?? input.workspace.rootPath },
+        progress: { phase: input.purpose, label: 'Running project command',
+            ...(input.totalSteps ? { current: input.step ?? 0, total: input.totalSteps } : {}) },
+        failureCode: 'project_command_step_failed', failureDetails: { step: input.step ?? 0 },
+        attachment: observation => ({ ...attachment, cwd: input.launch.cwd ?? attachment.cwd, ...observation }),
     });
-    const stop = () => {
-        input.operation.operationProgress.update({ phase: 'stopping', label: 'Stopping project command' });
-        // A stop request cannot settle the admitted process. Keep observing the
-        // real exit without the caller cancellation signal.
-        void input.terminalSessions.requestStop({ terminalId: terminal.terminalId }).then(observation => {
-            if (observation.kind === 'unconfirmed' || observation.kind === 'unavailable') {
-                input.operation.operationOwnerUpdate.update({ observation: {
-                    kind: observation.kind === 'unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
-                    code: observation.kind === 'unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
-                } });
-            }
-        }).catch(() => {
-            input.operation.operationOwnerUpdate.update({ observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' } });
-        });
-    };
-    const cancellation = input.operation.operationCancellation;
-    const unsubscribe = cancellation?.onRequest(stop);
-    const onAbort = () => {
-        // The retained operation owner delivers each Stop itself. A separate
-        // preparation/caller abort still stops this exact process once.
-        if (!cancellation || !input.operation.signal.aborted) stop();
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) stop();
-    let observation: Awaited<ReturnType<TerminalPtySessionManager['waitForExit']>>;
-    try { observation = await input.terminalSessions.waitForExit({ terminalId: terminal.terminalId,
-        onOutcomeUncertain: () => input.operation.operationOwnerUpdate.update({
-            observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' },
-        }),
-    }); }
-    catch { return failure('outcome_uncertain', signal.aborted ? 'stop_unconfirmed' : 'outcome_uncertain'); }
-    finally { signal.removeEventListener('abort', onAbort); unsubscribe?.(); }
-    if (observation.kind === 'unavailable') return failure('outcome_uncertain', signal.aborted ? 'stop_unconfirmed' : 'outcome_uncertain');
-    input.operation.operationOwnerUpdate.update({ domainRef: { ...attachment,
-        cwd: input.launch.cwd ?? attachment.cwd, terminalId: terminal.terminalId,
-        ...(observation.exit.exitCode !== null ? { exitCode: observation.exit.exitCode } : {}),
-    } });
-    if (signal.aborted) return failure('process_settled', 'cancelled');
-    if (observation.exit.exitCode !== 0 || observation.exit.signal !== null && observation.exit.signal !== 0) {
-        return failure('process_settled', 'project_command_step_failed', { step: input.step ?? 0, ...observation.exit });
-    }
-    return { kind: 'process_settled', result: { ok: true, result: { kind: 'success' } } };
 }
 
-export function createProjectNativeLaunchAdmission(input: ProjectSetupExecutionInput, plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand,
+export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform'> &
+    Readonly<{ operation: Pick<ProjectSetupOperationContext, 'signal'> }>, plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand,
     signal = input.preparation.signal ?? input.operation.signal) {
     const nativeCommandEnvironment = command?.kind === 'native' ? command.resolution.nativeCommandEnvironment
         : command?.kind === 'pluginNative' ? command.resolution.environmentApplied : undefined;
@@ -272,7 +225,7 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
     });
 }
 
-function projectBaseEnvironment(input: ProjectSetupExecutionInput, plan: PreparedProjectSetupPlan): Record<string, string> {
+function projectBaseEnvironment(input: Pick<ProjectSetupExecutionInput, 'hostEnvironment'>, plan: PreparedProjectSetupPlan): Record<string, string> {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(input.hostEnvironment ?? process.env)) {
         if (value !== undefined) env[key] = value;

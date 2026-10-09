@@ -6,7 +6,7 @@ import type {
 import type { ActionOperationObservationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 
-/** Retained no-effect continuation; the original invocation owns review and re-entry. */
+/** Retained setup-review continuation; the original invocation owns review and re-entry. */
 export type ActionOperationReviewContinuation = Readonly<{
   waitForResume(details: ProjectSetupConsentFailureDetailsV1, producer?: Readonly<{
     /** Null means the canonical preparation owner has admitted the current effect. */

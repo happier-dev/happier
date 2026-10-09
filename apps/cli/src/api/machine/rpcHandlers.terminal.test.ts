@@ -1,7 +1,5 @@
 import { Buffer } from 'node:buffer';
 import axios from 'axios';
-// Load the real lazy API graph during collection, not inside a timed mounted RPC assertion.
-import '@/api/api';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +30,9 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { reviewProjectSetupEffect } from '@/workspaces/projectSetup/projectSetupPreparation';
+import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
+import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 
 class FakePty implements PtyProcess {
   readonly pid = 4321;
@@ -55,6 +56,8 @@ class FakePtyProvider implements PtyProvider {
 
 class FakeInteractivePty implements PtyProcess {
   constructor(readonly pid = 4343) {}
+  get ownedProcessGroupId(): number { return this.pid; }
+  exited = false;
   readonly writes: string[] = [];
   private readonly onDataBytesListeners = new Set<(data: Buffer | string) => void>();
   private readonly exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
@@ -89,7 +92,7 @@ class FakeInteractivePty implements PtyProcess {
     this.exitListeners.add(listener);
     return { dispose: () => { this.exitListeners.delete(listener); } };
   }
-  exit(exitCode: number): void { for (const listener of this.exitListeners) listener({ exitCode }); }
+  exit(exitCode: number): void { this.exited = true; for (const listener of this.exitListeners) listener({ exitCode }); }
 
   emitBytes(data: Buffer | string): void {
     for (const listener of this.onDataBytesListeners) {
@@ -100,15 +103,130 @@ class FakeInteractivePty implements PtyProcess {
 
 class FakeInteractivePtyProvider implements PtyProvider {
   public readonly spawned: Array<{ params: PtySpawnParams; pty: FakeInteractivePty }> = [];
+  onSpawn?: (params: PtySpawnParams) => void;
 
   spawn(params: PtySpawnParams): PtyProcess {
     const pty = new FakeInteractivePty(4343 + this.spawned.length);
     this.spawned.push({ params, pty });
+    this.onSpawn?.(params);
     return pty;
   }
 }
 
 describe('registerMachineTerminalRpcHandlers', () => {
+  it('reads retained machine setup output only through the exact admitted machine custody', async () => {
+    const h = await finiteHarness();
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, sessionManager: h.sessionManager } });
+    try {
+      const terminal = h.sessionManager.ensure({ terminalKey: 'setup', cwd: h.root,
+        custody: { kind: 'machine', serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation', rootPath: h.root } });
+      if (!terminal.ok) throw new Error('Setup output terminal missing');
+      h.provider.spawned[0]!.pty.emitBytes(Buffer.from('setup output'));
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, h.ingress)).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, h.ingress)).resolves.toMatchObject({ ok: true, terminals: [{ terminalId: terminal.terminalId }] });
+      for (const admission of [{ ...h.ingress.machineAdmission!, actorAccountId: 'other' }, { ...h.ingress.machineAdmission!, installationId: 'replaced' }]) {
+        await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, { ...h.ingress, machineAdmission: admission })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      }
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, { ...h.ingress, verifyMachineAdmissionCurrent: async () => false })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('prepares fresh Project shells before %s and refuses without a host fallback', async method => {
+    const h = await finiteHarness({ setup: true });
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler as RpcHandler<unknown, unknown>); } },
+      deps: { env: {}, sessionManager: h.sessionManager, projectFiniteRuntime: async () => h.runtime } });
+    const input = { terminalKey: 'shell', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    try {
+      await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'project_setup_consent_required',
+        details: { kind: 'pendingApproval', reviewedEffectDigest: expect.any(String) } });
+      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+      await writeFile(join(h.root, 'mise.toml'), '[env]\nVALUE = "native"\n');
+      const unavailable = { ...h.runtime, nativeIo: { resolveTool: async () => null } };
+      const missingRegistration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler as RpcHandler<unknown, unknown>); } },
+        deps: { env: {}, sessionManager: h.sessionManager, projectFiniteRuntime: async () => unavailable } });
+      await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'native_tool_unavailable' });
+      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, devcontainer: {} }));
+      // Child namespace inspection reads the published Machine row. A mode-only
+      // response is not a Machine; the real no-child row must be represented.
+      h.get.mockImplementation(async url => String(url).endsWith('/v1/machines/machine')
+        ? { status: 200, data: { machine: { id: 'machine', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain' } } }
+        : { status: 200, data: { mode: 'plain', updatedAt: 1 } });
+      await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'child_required' });
+      expect(h.provider.spawned).toHaveLength(0);
+      missingRegistration.dispose();
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it('launches an interactive Project shell with the complete native environment and reuses it without activating again', async () => {
+    const h = await finiteHarness({ observeInteractiveStop: true });
+    await mkdir(join(h.root, '.happier'));
+    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
+    await writeFile(join(h.root, 'mise.toml'), '[env]\nVALUE = "native"\n');
+    const nativeRun = vi.fn(async () => ({ exitCode: 0, stdout: 'PATH=/native/bin\0VALUE=native\0' }));
+    const nativeIo = { resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }) };
+    const environmentIo = { resolveTool: nativeIo.resolveTool, run: nativeRun,
+      createInvocation() { return { resolveTool: nativeIo.resolveTool, run: nativeRun }; } };
+    const runtime = { ...h.runtime, nativeIo, environmentIo, hostEnvironment: { PATH: '/host/bin', REMOVE: 'ambient' } };
+    const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: h.root, projectKey: 'project', createdAtMs: 1 };
+    const reviewed = await reviewProjectSetupEffect({ workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project' } },
+      requester: { credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup', platform: { os: 'linux', arch: 'x64' }, nativeIo });
+    if (reviewed.kind !== 'reviewed') throw new Error('Native review must resolve');
+    const rows = await h.post(`https://home.example${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`);
+    h.post.mockImplementation(async url => String(url).endsWith('/project-trust/read')
+      ? { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { project: reviewed.plan.project, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest, approvedAtMs: 1 } } } }
+      : rows);
+    await createProjectSetupSuccessStore({ homeDir: runtime.successHomeDir! }).recordCompletion({ serverId: 'home', machineId: 'machine', workspaceRefId: 'accepted' },
+      { v: 1, workspaceRefId: 'accepted', ...reviewed.plan.successBasis, completedAtMs: 1 });
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler as RpcHandler<unknown, unknown>); } },
+      deps: { env: { REMOVE: 'ambient' }, sessionManager: h.sessionManager, projectFiniteRuntime: async () => runtime } });
+    const input = { terminalKey: 'native-shell', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    try {
+      const opened = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, h.ingress);
+      expect(opened).toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned[0]!.params.options.env).toMatchObject({ PATH: '/native/bin', VALUE: 'native' });
+      expect(h.provider.spawned[0]!.params.options.env).not.toHaveProperty('REMOVE');
+      if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') throw new Error('Missing shell');
+      expect(h.sessionManager.isFiniteHeld(opened.terminalId)).toBe(false);
+      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, h.ingress)).resolves.toMatchObject({ ok: true, terminalId: opened.terminalId, reused: true });
+      expect(nativeRun).toHaveBeenCalledTimes(1);
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'project_setup_consent_required' });
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.pty.exited).toBe(false);
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it('prepares fresh Project shells by waiting for trusted setup to settle before opening the dependent shell', async () => {
+    const h = await finiteHarness({ setup: true, waived: true });
+    const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: h.root, projectKey: 'project', createdAtMs: 1 };
+    const reviewed = await reviewProjectSetupEffect({ workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project' } },
+      requester: { credentials: h.runtime.credentials, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl }, purpose: 'setup', platform: { os: 'linux', arch: 'x64' }, nativeIo: h.runtime.nativeIo });
+    if (reviewed.kind !== 'reviewed') throw new Error('Setup review must resolve');
+    const rows = await h.post(`https://home.example${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`);
+    h.post.mockImplementation(async url => String(url).endsWith('/project-trust/read')
+      ? { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { project: reviewed.plan.project, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest, approvedAtMs: 1 } } } }
+      : rows);
+    const started = new Promise<void>(resolve => { h.provider.onSpawn = () => resolve(); });
+    try {
+      const opened = h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'after-setup',
+        workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } }, h.ingress);
+      await started;
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.params.args).toContain('echo setup');
+      h.provider.spawned[0]!.pty.exit(0);
+      const result = await opened;
+      expect(result).toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned).toHaveLength(2);
+      expect(h.provider.spawned[1]!.params.args).not.toContain('echo setup');
+      if (!result || typeof result !== 'object' || !('terminalId' in result) || typeof result.terminalId !== 'string') throw new Error('Missing dependent shell');
+      expect(h.sessionManager.isFiniteHeld(result.terminalId)).toBe(false);
+      expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toMatchObject({ state: 'succeeded' });
+    } finally { await h.dispose(); }
+  });
+
   it('lists only the currently admitted Project namespace when accepted Projects share a root and logical key', async () => {
     const h = await finiteHarness();
     const provider = new FakeInteractivePtyProvider();
@@ -351,7 +469,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { await h.dispose(); }
   });
 
-  it('uses target-platform home and root identity while rejecting sibling-prefix Project roots', async () => {
+  it('reuses retained target-platform home and root identity while rejecting sibling-prefix Project roots', async () => {
     for (const entry of [
       { platform: 'win32' as const, home: 'C:\\Users\\Alice', accepted: 'c:/users/alice/repo/', requested: 'C:\\Users\\Alice\\repo', sibling: 'C:\\Users\\Alice2\\repo', cwd: '~\\repo' },
       { platform: 'darwin' as const, home: '/Users/alice', accepted: '/Users/alice/repo/', requested: '/Users/alice/repo', sibling: '/Users/alice2/repo', cwd: '~/repo' },
@@ -364,6 +482,16 @@ describe('registerMachineTerminalRpcHandlers', () => {
           projectFiniteRuntime: async () => h.runtime } });
       try {
         const workspace = { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: entry.requested };
+        const acceptedPath = authorizeFilesystemPath({ targetPath: entry.accepted, defaultDirectory: entry.home,
+          accessPolicy: { kind: 'restrictedRoots', roots: [entry.home] }, platform: entry.platform });
+        if (!acceptedPath.valid) throw new Error('Target-platform root must resolve');
+        // These virtual OS roots cannot exercise current-byte preparation on a
+        // Linux host. Existing retained custody exercises the path owner without
+        // inventing a Project association for the legacy unenriched row.
+        const retained = h.sessionManager.ensure({ terminalKey: 'shell', cwd: acceptedPath.resolvedPath,
+          custody: { serverId: 'home', requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+            workspaceRefId: 'accepted', projectKey: 'accepted', rootPath: acceptedPath.resolvedPath } });
+        expect(retained).toMatchObject({ ok: true });
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shell', workspace, cwd: entry.cwd }, h.ingress)).resolves.toMatchObject({ ok: true });
         expect(h.sessionManager.list()[0]!.cwd.replace(/\\/g, '/').toLowerCase()).toBe(entry.requested.replace(/\\/g, '/').toLowerCase());
         expect(h.sessionManager.getCustody(h.sessionManager.list()[0]!.terminalId)?.projectKey).toBe('accepted');
@@ -390,7 +518,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
       return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [{ key, revision: 1, content: { t: 'plain', v: { key, value: workspace } } }] } };
     });
     const provider = new FakeInteractivePtyProvider();
-    const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux', stopProcessTree: async ({ pid }) => {
+    const sessionManager = createTerminalPtySessionManager({ ptyProvider: provider, env: {}, platform: 'linux',
+      // The fake forkpty and OS group probe must agree about actual exit;
+      // a relay pid or callback alone cannot prove finite tree settlement.
+      probeProcessGroup: groupId => {
+        const process = provider.spawned.find(entry => entry.pty.ownedProcessGroupId === groupId)?.pty;
+        return process ? process.exited ? 'absent' : 'alive' : 'absent';
+      }, stopProcessTree: async ({ pid }) => {
       if (options.observeInteractiveStop) provider.spawned.find(entry => entry.pty.pid === pid)!.pty.exit(0);
     },
       config: { maxSessions: 1, idleTimeoutMs: 0, bufferMaxBytes: 1000, bufferMaxEvents: 10,
@@ -424,13 +558,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
           isCredentialCurrent: async () => current,
           sessionId: 'cli-global', serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {},
-            ...(options.waived ? { approvalWaivedSurfaces: { 'projects.script.run': ['api'] } } : {}) }) },
+            ...(options.waived ? { approvalWaivedSurfaces: { 'projects.script.run': ['api'], 'projects.prepare': ['api'] } } : {}) }) },
         }, { projectAction: createProjectFiniteAction(boundRuntime, context) }).executor,
       } });
     const invoke = (method: string = RPC_METHODS.DAEMON_TERMINAL_ENSURE, cwd = root, context = ingress) => handlers.get(method)!({
       terminalKey: 'mounted', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' },
     }, context);
-    return { root, ingress, invoke, provider, sessionManager, operationRuntime, runtime, admissionDrain, get, post, retire: () => { current = false; },
+    return { root, ingress, invoke, handlers, provider, sessionManager, operationRuntime, runtime, admissionDrain, get, post, retire: () => { current = false; },
       dispose: async () => { registration.dispose(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); } };
   }
 
@@ -468,7 +602,24 @@ describe('registerMachineTerminalRpcHandlers', () => {
   it('does not turn an invocation waiver into setup consent or infer a Project from an enclosing cwd', async () => {
     const h = await finiteHarness({ waived: true, setup: true });
     try {
-      await expect(h.invoke()).resolves.toMatchObject({ ok: false, error: 'project_setup_consent_required' });
+      // The mounted RPC waits for the real script attachment while D18 keeps
+      // the original operation/reservation available to the human review UI.
+      const review = new Promise<void>(resolve => {
+        const unsubscribe = h.operationRuntime.store.subscribe(() => {
+          if (h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.setupReview) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      const pending = h.invoke();
+      await review;
+      expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toMatchObject({
+        state: 'accepted', setupReview: { code: 'project_setup_consent_required' },
+      });
+      expect(h.provider.spawned).toHaveLength(0);
+      h.operationRuntime.runner.cancel({ accountId: 'owner', machineId: 'machine' }, 'operation');
+      await expect(pending).resolves.toMatchObject({ ok: false, error: 'cancelled' });
       await mkdir(join(h.root, 'nested'));
       await expect(h.invoke(RPC_METHODS.DAEMON_TERMINAL_RESTART, join(h.root, 'nested'))).resolves.toMatchObject({ ok: false, error: 'project_workspace_unavailable' });
       expect(h.provider.spawned).toHaveLength(0);
