@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import {
   AIBackendProfileSchema,
   SecretReferenceOverlayV1Schema,
@@ -11,6 +12,7 @@ import {
   readForegroundProfileRequiredSecretNamesMissingBinding,
   resolveForegroundProfileSavedSecretEnvironment,
   resolveSecretReferenceOverlayEnvironment,
+  resolveProjectSecretReferenceEnvironment,
 } from './resolveForegroundProfileSavedSecretEnvironment';
 
 const profile = AIBackendProfileSchema.parse({
@@ -225,7 +227,7 @@ describe('resolveForegroundProfileSavedSecretEnvironment secret reference overla
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(LaunchSecretReferenceOverlayError);
-    expect((thrown as LaunchSecretReferenceOverlayError).reason).toBe('reference_missing');
+    expect((thrown as LaunchSecretReferenceOverlayError).reason).toBe('reference_forbidden');
   });
 
   it('keeps an admitted current revision unavailable rather than misclassifying it as stale', () => {
@@ -297,6 +299,52 @@ describe('resolveForegroundProfileSavedSecretEnvironment secret reference overla
 });
 
 describe('resolveSecretReferenceOverlayEnvironment', () => {
+  it('preserves the catalog mode-mismatch reason without exposing plaintext', () => {
+    const binding = overlay({ ANTHROPIC_API_KEY: { ref: overlayBoundRef, revision: 7 } });
+    const resource = {
+      ...overlayResource,
+      materialStatus: 'recipient_mode_unsupported' as const,
+      storedContent: null,
+    };
+    for (const resolve of [
+      () => resolveSecretReferenceOverlayEnvironment({ accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: [resource], secretReferenceOverlay: binding }),
+      () => resolveForegroundProfileSavedSecretEnvironment({ profile, accountSettings: {}, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [], savedSecretResources: [resource], secretReferenceOverlay: binding }),
+      () => resolveProjectSecretReferenceEnvironment({ requirements: profile.envVarRequirements ?? [], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: [resource], secretReferenceOverlay: binding }),
+    ]) {
+      let failure: unknown;
+      try { resolve(); } catch (error) { failure = error; }
+      expect(failure).toMatchObject({ reason: 'reference_mode_incompatible', requirementName: 'ANTHROPIC_API_KEY' });
+      expect(String(failure)).not.toContain('overlay-value');
+    }
+  });
+
+  it('refuses wrong and missing shared revisions identically for Profile, Run and Project', () => {
+    for (const revision of [6, undefined]) {
+      const binding: SecretReferenceOverlayV1 = { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: overlayBoundRef, ...(revision === undefined ? {} : { revision }) } } };
+      for (const resolve of [
+        () => resolveSecretReferenceOverlayEnvironment({ accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding }),
+        () => resolveForegroundProfileSavedSecretEnvironment({ profile, accountSettings: {}, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [], savedSecretResources: resources, secretReferenceOverlay: binding }),
+        () => resolveProjectSecretReferenceEnvironment({ requirements: profile.envVarRequirements ?? [], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding }),
+      ]) {
+        expect(resolve).toThrow(expect.objectContaining({ reason: 'reference_stale', requirementName: 'ANTHROPIC_API_KEY' }));
+      }
+    }
+  });
+
+  it('reads stored binding extras recursively but retains validation of exact references', () => {
+    const storedSchema = createStoredReadSchema(SecretReferenceOverlayV1Schema);
+    expect(storedSchema.parse({ v: 1, future: true, bindings: { ANTHROPIC_API_KEY: { ref: overlayBoundRef, revision: 7, future: { value: true } } } })).toEqual(overlay({ ANTHROPIC_API_KEY: { ref: overlayBoundRef, revision: 7 } }));
+    expect(storedSchema.safeParse({ v: 1, bindings: { ANTHROPIC_API_KEY: { ref: overlayBoundRef } } }).success).toBe(false);
+    expect(SecretReferenceOverlayV1Schema.safeParse({ v: 1, future: true, bindings: { ANTHROPIC_API_KEY: { ref: overlayBoundRef, revision: 7 } } }).success).toBe(false);
+  });
+
+  it('materializes Project bindings through the generic body and enforces declared required secrets', () => {
+    const binding = overlay({ ANTHROPIC_API_KEY: { ref: overlayBoundRef, revision: 7 } });
+    expect(resolveProjectSecretReferenceEnvironment({ requirements: [{ name: 'ANTHROPIC_API_KEY', kind: 'secret', required: true }], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding })).toEqual({ ANTHROPIC_API_KEY: 'overlay-value' });
+    expect(() => resolveProjectSecretReferenceEnvironment({ requirements: profile.envVarRequirements ?? [], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding })).toThrow(expect.objectContaining({ reason: 'reference_missing', requirementName: 'OPENAI_API_KEY' }));
+    expect(() => resolveProjectSecretReferenceEnvironment({ requirements: [{ name: 'HAPPIER_REGION', kind: 'config', required: false }], accountSettings: {}, settingsSecretsReadKeys: [], savedSecretResources: resources, secretReferenceOverlay: binding })).toThrow(expect.objectContaining({ reason: 'undeclared_requirement', requirementName: 'ANTHROPIC_API_KEY' }));
+  });
+
   it('materializes direct Execution Run bindings without an Agent Launch Profile', () => {
     expect(resolveSecretReferenceOverlayEnvironment({
       accountSettings: {},
