@@ -14,6 +14,7 @@ import {
     ProviderSettingsV1Schema,
     SavedSecretResourceMaterialsResponseV1Schema,
     SharedSavedSecretListOutputV1Schema,
+    SharedSavedSecretPromoteInputV1Schema,
     VoiceCredentialBindingIdentityV1Schema,
 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
@@ -106,11 +107,61 @@ describe("Saved Secret material route (SQLite integration)", () => {
             () => db.team.deleteMany(),
             () => db.accountPasswordCredential.deleteMany(),
             () => db.accountIdentity.deleteMany(),
+            () => db.managedMachine.deleteMany(),
+            () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
     });
 
     afterAll(async () => harness.close());
+
+    it("reviews retained managed bootstrap custody before deleting a Saved Secret without claiming native deletion", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const resourceId = "managed-bootstrap-secret";
+        await inTx((tx) => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId, displayName: "Bootstrap", kind: "other", encryptionMode: "plain",
+            storedContent: { t: "plain", v: { v: 1, name: "Bootstrap", kind: "other", value: "private-bootstrap-value" } },
+        }));
+        const controller = await db.machine.create({ data: {
+            id: "bootstrap-review-controller", accountId: owner.id, metadata: '{"t":"plain","v":{}}', installationId: "bootstrap-review-installation",
+        } });
+        const provider = { pluginId: "fixture.compute", localId: "cloud" };
+        const managed = await db.managedMachine.create({ data: {
+            homeId: "bootstrap-review-home", custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+            admittedActionRequestId: "bootstrap-review-request", admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: "Retained", choices: {} },
+            allocation: "bound", resource: { contributionRef: provider, schemaVersion: 1, value: { id: "native-bootstrap" } },
+            bootstrapCredentialRef: { kind: "shared_resource", resourceId },
+            retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+            recovery: { reference: "native-bootstrap", reason: "manual_recovery" },
+        } });
+        const app = createAuthenticatedTestApp();
+        registerSavedSecretResourceRoutes(app);
+        await app.ready();
+        try {
+            const payload = { resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
+                referenceCensus: { accountMode: "plain", profiles: { referenceGuardRevision: "absent", rows: [] } } };
+            const review = await app.inject({ method: "POST", url: "/v1/account/saved-secrets/resources/delete",
+                headers: { "x-test-user-id": owner.id }, payload });
+            expect(review.statusCode).toBe(409);
+            expect(review.json()).toMatchObject({ error: "managed_resources_review_required", resources: [{ managedId: managed.id,
+                recovery: { reference: "native-bootstrap" }, resource: { value: { id: "native-bootstrap" } } }] });
+            expect(JSON.stringify(review.json())).not.toContain("private-bootstrap-value");
+            expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).not.toBeNull();
+            const removed = await app.inject({ method: "POST", url: "/v1/account/saved-secrets/resources/delete",
+                headers: { "x-test-user-id": owner.id }, payload: { ...payload, managedResourceDispositions: [{
+                    managedId: managed.id, expectedIntentRevision: 0, responsibility: "manual",
+                    expectedAllocation: 'bound', expectedResource: { contributionRef: provider, schemaVersion: 1, value: { id: 'native-bootstrap' } },
+                    expectedRecovery: { reference: 'native-bootstrap', reason: 'manual_recovery' },
+                }] } });
+            expect(removed.statusCode).toBe(200);
+            expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({ allocation: "bound" });
+        } finally {
+            await app.close();
+        }
+    });
 
     it("projects the exact resource id through the authenticated HTTP schema", async () => {
         const owner = await db.account.create({
@@ -234,7 +285,8 @@ describe("Saved Secret material route (SQLite integration)", () => {
                 method: "POST",
                 url: "/v1/account/saved-secrets/resources/delete",
                 headers: { "x-test-user-id": owner.id },
-                payload: { resourceId: malformedResourceId, expectedRevision: 4 },
+                payload: { resourceId: malformedResourceId, expectedRevision: 4, expectedSettingsVersion: 0,
+                    referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } } },
             });
             expect(deleteResponse.statusCode).toBe(200);
             expect(await db.savedSecretResource.findUnique({ where: { id: malformedResourceId } })).toBeNull();
@@ -371,6 +423,8 @@ describe("Saved Secret material route (SQLite integration)", () => {
             },
             expectedSettingsVersion: 1,
             nextSettings: { t: "plain", v: promotedSettings },
+            referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
+            profileMutations: [],
         }));
         expect(promoted).toEqual({ ok: true, value: { resourceId, settingsVersion: 2 } });
         await expect(db.accountChange.findFirst({
@@ -520,12 +574,12 @@ describe("Saved Secret material route (SQLite integration)", () => {
             })).toEqual({ ok: true, credential: { kind: "apiKey", value: "shared-provider-secret" } });
 
             const { createActiveAccountSettingsConnectedAccountSecrets } = await importCliTestModule<{
-                createActiveAccountSettingsConnectedAccountSecrets(): Readonly<{
+                createActiveAccountSettingsConnectedAccountSecrets(input: Readonly<{ expectedScopeKey: string }>): Readonly<{
                     has(ref: string): Promise<boolean>;
                     read(ref: string): Promise<string | null>;
                 }>;
             }>("../../../../../../cli/src/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence");
-            const connectedSecrets = createActiveAccountSettingsConnectedAccountSecrets();
+            const connectedSecrets = createActiveAccountSettingsConnectedAccountSecrets({ expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token) });
             await expect(connectedSecrets.has(sharedRef)).resolves.toBe(true);
             await expect(connectedSecrets.read(sharedRef)).resolves.toBe("shared-provider-secret");
 
@@ -619,7 +673,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
         });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
 
-        const body = (resourceId: string) => ({
+        const body = (resourceId: string) => SharedSavedSecretPromoteInputV1Schema.parse({
             resourceId,
             displayName: "Promoted team key",
             kind: "apiKey" as const,
@@ -631,6 +685,8 @@ describe("Saved Secret material route (SQLite integration)", () => {
             teamGrants: [team.id],
             expectedSettingsVersion: 1,
             nextSettings: { t: "plain" as const, v: { secrets: [] } },
+            referenceCensus: { accountMode: 'plain', profileTransferRevision: 'absent',
+                profiles: { referenceGuardRevision: 'absent', rows: [] } },
         });
 
         const app = createAuthenticatedTestApp();

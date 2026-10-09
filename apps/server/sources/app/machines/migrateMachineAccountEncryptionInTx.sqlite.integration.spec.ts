@@ -1,7 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { randomBytes, randomUUID } from "node:crypto";
+import tweetnacl from "tweetnacl";
+import { encryptWithDataKey, decryptWithDataKey } from "../../../../cli/src/api/encryption";
 import {
     encodePlainMachineStoredContent,
+    decodePlainMachineStoredContent,
     MACHINE_PLAIN_DATA_KEY_MARKER,
+    sealEncryptedDataKeyEnvelopeV1,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
@@ -65,6 +70,55 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("preserves finite Machine policy and user edits through the existing whole-inventory Plain/E2EE conversion", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        // Plan30's finitePolicy projection is carried by metadata, never a separate Account KV writer.
+        const metadata = { host: "host", displayName: "User name", finitePolicyV1: { accepting: false, runAtMost: 2 } };
+        const machines = await Promise.all([1, 2].map(() => db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, metadata: encodePlainMachineStoredContent(metadata), metadataVersion: 2,
+            daemonState: encodePlainMachineStoredContent({ status: "running" }), daemonStateVersion: 3,
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64")),
+        } })));
+        const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
+        await db.machineAccountGrant.create({ data: {
+            machineId: machines[0].id, accountId: recipient.id, accessLevel: "view", createdByAccountId: account.id,
+        } });
+        const recipientCursor = recipient.seq;
+        const key = randomBytes(32);
+        const envelope = Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+            dataKey: key, recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes,
+        })).toString("base64");
+        const items = machines.map((machine) => ({
+            machineId: machine.id, expectedMetadataVersion: 2, expectedDaemonStateVersion: 3,
+            metadata: Buffer.from(encryptWithDataKey(metadata, key)).toString("base64"),
+            daemonState: Buffer.from(encryptWithDataKey({ status: "running" }, key)).toString("base64"),
+            dataEncryptionKey: envelope, contentPublicKeyFingerprint: null,
+        }));
+        const migrate = (selected: typeof items) => inTx((tx) => migrateMachineAccountEncryptionInTx({
+            tx, accountId: account.id, toMode: "e2ee", directive: { action: "migrate", items: selected },
+        }));
+        expect(await migrate(items.slice(0, 1))).toEqual({ status: "migration_incomplete" });
+        expect(await migrate(items.map((item, index) => index ? { ...item, expectedMetadataVersion: 1 } : item))).toEqual({ status: "migration_incomplete" });
+        expect(await db.machine.findMany({ where: { accountId: account.id }, orderBy: { id: "asc" } }))
+            .toEqual([...machines].sort((a, b) => a.id.localeCompare(b.id)));
+        expect(await migrate(items)).toEqual({ status: "applied" });
+        expect((await db.account.findUniqueOrThrow({ where: { id: recipient.id } })).seq).toBeGreaterThan(recipientCursor);
+        for (const item of items) {
+            const encrypted = await db.machine.findUniqueOrThrow({ where: { id: item.machineId } });
+            expect(decryptWithDataKey(Buffer.from(encrypted.metadata, "base64"), key)).toEqual(metadata);
+        }
+        expect(await inTx((tx) => migrateMachineAccountEncryptionInTx({
+            tx, accountId: account.id, toMode: "plain", directive: { action: "migrate", items: items.map((item) => ({
+                ...item, expectedMetadataVersion: 3, expectedDaemonStateVersion: 4,
+                metadata: encodePlainMachineStoredContent(metadata), daemonState: encodePlainMachineStoredContent({ status: "running" }),
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            })) },
+        }))).toEqual({ status: "applied" });
+        for (const machine of machines) {
+            expect(decodePlainMachineStoredContent((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).metadata)).toEqual(metadata);
+        }
     });
 
     it.each(

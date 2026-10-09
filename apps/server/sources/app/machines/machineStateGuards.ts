@@ -2,7 +2,7 @@ import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import {
     readMachineIrohEndpointAuthorityV1,
-    MachineOperationProtocolCapabilitiesV1Schema,
+    MachineOperationProtocolCapabilitiesV1StoredReadSchema,
     type MachineOperationProtocolCapabilityNameV1,
     type MachineIrohEndpointAuthorityV1,
 } from "@happier-dev/protocol";
@@ -50,7 +50,7 @@ export async function readAvailableMachineIrohEndpointAuthority(params: Readonly
     });
     if (classifyMachineAvailabilityState(machine) !== "available" || machine === null) return null;
     if (params.requiredCapability) {
-        const capabilities = MachineOperationProtocolCapabilitiesV1Schema.safeParse(machine.operationProtocolCapabilities);
+        const capabilities = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(machine.operationProtocolCapabilities);
         if (!capabilities.success || !capabilities.data[params.requiredCapability]) return null;
     }
     return readMachineIrohEndpointAuthorityV1({

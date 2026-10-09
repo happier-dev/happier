@@ -234,6 +234,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                         ]).optional(),
                         requestedAction: PendingRequestedActionV1Schema.optional(),
                         resumeWhenAvailable: z.literal(true).optional(),
+                        targetMachineId: z.string().min(1).optional(),
                     }).strict(),
                     z.object({
                         content: SessionStoredMessageContentSchema,
@@ -245,6 +246,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                         ]).optional(),
                         requestedAction: PendingRequestedActionV1Schema.optional(),
                         resumeWhenAvailable: z.literal(true).optional(),
+                        targetMachineId: z.string().min(1).optional(),
                     }).strict(),
                 ]),
             },
@@ -306,6 +308,8 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             const resumeWhenAvailable = body && typeof body === "object" && "resumeWhenAvailable" in body
                 ? (body as { resumeWhenAvailable?: true }).resumeWhenAvailable
                 : undefined;
+            const targetMachineId = body && typeof body === 'object' && 'targetMachineId' in body
+                && typeof body.targetMachineId === 'string' ? body.targetMachineId : undefined;
             const res = await (content
                 ? enqueuePendingMessage({
                       actorUserId: request.userId,
@@ -313,7 +317,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                       sessionId,
                       ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}),
                       localId,
-                      ...(targetBody?.success ? { targetMachineId: targetBody.data.targetMachineId } : {}),
+                      ...(targetMachineId ? { targetMachineId } : {}),
                       content,
                       messageRole,
                       ...(deliveryMode ? { deliveryMode } : {}),
@@ -329,6 +333,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                       ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}),
                       localId,
                       ciphertext: ciphertext ?? "",
+                      ...(targetMachineId ? { targetMachineId } : {}),
                       messageRole,
                       ...(deliveryMode ? { deliveryMode } : {}),
                       ...(admissionMode ? { admissionMode } : {}),
@@ -590,22 +595,23 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
         },
     );
 
-    app.delete(
-        `${basePath}/:localId`,
-        {
+    for (const withdraw of [false, true]) app.route({
+            method: withdraw ? 'POST' : 'DELETE',
+            url: `${basePath}/:localId${withdraw ? '/withdraw' : ''}`,
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ runId, sessionId: z.string(), localId: PendingLocalIdSchema }),
+                ...(withdraw ? { body: z.object({}).strict() } : {}),
             },
             config: {
                 rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
-                ...(!executionRunTarget ? { apiTokenSessionAction: "session.message.send" as const,
+                ...(withdraw || !executionRunTarget ? { apiTokenSessionAction: withdraw ? 'session.pending.withdraw' as const : "session.message.send" as const,
                     restrictedCredentialBinding: { scope: "session" as const, session: "params.sessionId" } } : {}),
             },
-        },
-        async (request, reply) => {
+        handler: async (request, reply) => {
             const { sessionId, localId } = request.params;
-            const res = await deletePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId });
+            const res = await deletePendingMessage({ actorUserId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request), sessionId, ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}), localId,
+                ...(withdraw ? { withdraw: true } : {}) });
             if (!res.ok) {
                 const authenticationStatus = pendingAuthenticationStatus(res.error);
                 if (authenticationStatus) return reply.code(authenticationStatus).send({ error: res.error });
@@ -635,9 +641,9 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 sessionId,
             });
-            return reply.send({ ok: true, ...toPendingStateJson(res, request.params.runId) });
+            return reply.send({ ok: true, ...toPendingStateJson(res, request.params.runId), ...(withdraw && res.outcome ? { outcome: res.outcome } : {}) });
         },
-    );
+    });
 
     app.post(
         `${basePath}/:localId/discard`,

@@ -19,6 +19,7 @@ describe("resolveConnectedServicesFeature core contract", () => {
         expect(feature.capabilities?.connectedServices).toEqual({
             credentialDelete: { revisionGuard: true },
             qualifiedAccounts: { protocolVersion: 4 },
+            credentialRemovalReview: { protocolVersion: 1 },
         });
     });
 

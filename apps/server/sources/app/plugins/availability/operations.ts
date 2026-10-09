@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
+import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import {
+    type ManagedResourceDependencyV1,
     PluginAccountPluginIntentV1Schema,
     PluginAccountPluginPackageAssetLinkV1Schema,
     PluginAccountPluginUiArtifactLinkV1Schema,
@@ -99,10 +101,12 @@ import {
     materializePluginCollectionContractsFromManifestTx,
     materializePluginCollectionContractsTx,
     preparePluginCollectionWritableContractsTx,
+    readMaterializedPluginCollectionDeclaration,
 } from "@/app/plugins/data/collections/contracts";
 import { promotePluginCollectionCandidatePreparationInTx } from "@/app/plugins/data/collections/candidatePreparation";
 import { retirePluginCollectionCandidatePreparationStagesTx } from "@/app/plugins/data/collections/candidatePreparationLifecycle";
-import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { getOrCreateServerIdentityId, readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { requireManagedControllerInTx } from "@/app/machines/managed/managedRows";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -125,6 +129,7 @@ import {
 type Awaitable<T> = T | Promise<T>;
 
 export type PluginAvailabilityOperationErrorCode =
+    | "managed_resources_review_required"
     | "plugin_availability_authentication_required"
     | "plugin_availability_invalid_request"
     | "plugin_availability_intent_discovery_limit_exceeded"
@@ -155,6 +160,7 @@ export type PluginAvailabilityOperationErrorCode =
     | "plugin_package_asset_not_found";
 
 export class PluginAvailabilityOperationError extends Error {
+    readonly resources: readonly ManagedResourceDependencyV1[] | undefined;
     readonly code: PluginAvailabilityOperationErrorCode;
     readonly dimension: PluginCollectionQuotaDimensionV1 | undefined;
     readonly effectiveMaximum: number | undefined;
@@ -165,12 +171,14 @@ export class PluginAvailabilityOperationError extends Error {
             dimension: PluginCollectionQuotaDimensionV1;
             effectiveMaximum: number;
         }>,
+        resources?: readonly ManagedResourceDependencyV1[],
     ) {
         super(code);
         this.name = "PluginAvailabilityOperationError";
         this.code = code;
         this.dimension = quota?.dimension;
         this.effectiveMaximum = quota?.effectiveMaximum;
+        this.resources = resources;
     }
 }
 
@@ -531,6 +539,7 @@ async function transitionIntentTx(input: Readonly<{
         pluginId,
         currentIntent: current,
         targetReleaseVersion: next.desiredVersion,
+        targetReleaseLessDeclaration: next.releaseLessDeclaration,
         targetContracts: next.writableCollections,
     });
     const prepared = await preparePluginCollectionWritableContractsTx({
@@ -2059,6 +2068,15 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             // The cursor fences the whole UI projection, so it and the selected
             // intent/release facts must come from one committed snapshot.
             inTx(async (tx) => {
+                if (input.controller) {
+                    try {
+                        const homeId = await readCurrentServerIdentityId(process.env, tx);
+                        if (!homeId || (input.homeId !== undefined && input.homeId !== homeId)) throw new Error('home_changed');
+                        await requireManagedControllerInTx(tx, { homeId, custodianAccountId: params.accountId, controller: input.controller });
+                    } catch {
+                        throw new PluginAvailabilityOperationError('plugin_availability_invalid_request');
+                    }
+                }
                 const [account, intentRow] = await Promise.all([
                     tx.account.findUnique({
                         where: { id: params.accountId },
@@ -2127,7 +2145,13 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const packageAsset = release
                     ? await resolveStoredPackageAssetLinkTx(tx, release.id)
                     : null;
-                return { availabilityCursor: account.seq, intentRow, release, packageAsset };
+                const managedResources = input.includeManagedResources === true
+                    ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
+                        ...(input.controller ? { controller: input.controller } : {}) })
+                    : undefined;
+                return { availabilityCursor: account.seq, intentRow, release, packageAsset,
+                    ...(managedResources !== undefined ? { managedResources,
+                        managedResourcesReviewed: acceptsManagedResourceDispositions(managedResources, input.managedResourceDispositions) } : {}) };
             }),
         ]);
         const intent = current.intentRow ? intentFromRow(current.intentRow) : null;
@@ -2141,6 +2165,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 : null;
         return {
             availabilityCursor: current.availabilityCursor,
+            ...(current.managedResources !== undefined ? { managedResources: current.managedResources,
+                managedResourcesReviewed: current.managedResourcesReviewed } : {}),
             hostingCapability: capability,
             intent,
             release: facts,
@@ -2230,6 +2256,10 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         return { intent: currentIntent };
                     }
                 }
+                if (!input.enabled) {
+                    const resources = await readManagedResourceDependenciesInTx(tx, { kind: "plugin", accountId: params.accountId, pluginId: input.pluginId });
+                    if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) throw new PluginAvailabilityOperationError("managed_resources_review_required", undefined, resources);
+                }
                 return await transitionIntentTx({
                     tx,
                     accountId: params.accountId,
@@ -2271,7 +2301,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         accountId: string;
         input: unknown;
     }>): Promise<PluginAvailabilityCollectionWritersClaimActionOutputV1> {
-        const { manifest } = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(params.input);
+        const { manifest, prepare } = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(params.input);
         const pluginId = manifest.id;
         try {
             return await inTx(async (tx) => {
@@ -2303,6 +2333,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     select: INTENT_ROW_SELECT,
                 });
                 const currentIntent = current ? intentFromRow(current) : null;
+                if (prepare && currentIntent === null) {
+                    throw new PluginAvailabilityOperationError("plugin_intent_writable_collections_not_ready");
+                }
                 if (currentIntent !== null && currentIntent.desiredVersion !== null) {
                     throw new PluginAvailabilityOperationError(
                         "plugin_intent_release_selected",
@@ -2328,10 +2361,40 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 }
                 const writableCollections = [...writers.values()];
                 const currentDeclaration = readCurrentReleaseLessDeclarationV1(current, pluginId);
+                const claimedDeclaration = createReleaseLessDeclarationV1(manifest);
                 const releaseLessDeclaration = currentDeclaration !== null
                     && semver.lt(manifest.version, currentDeclaration.manifest.version)
                     ? currentDeclaration
-                    : createReleaseLessDeclarationV1(manifest);
+                    : claimedDeclaration;
+                if (prepare && currentIntent) {
+                    // Preparation reads the incumbent and materializes the target,
+                    // but never publishes a declaration or writer before promotion.
+                    const preparation: NonNullable<PluginAvailabilityCollectionWritersClaimActionOutputV1['preparation']> = [];
+                    for (const target of claimed) {
+                        const source = currentIntent.writableCollections.find((ref) => ref.collectionId === target.collectionId);
+                        if (!source || source.schemaVersion >= target.schemaVersion) continue;
+                        if (releaseLessDeclaration.manifestDigestSha256 !== claimedDeclaration.manifestDigestSha256) {
+                            throw new PluginAvailabilityOperationError("plugin_collection_contract_conflict");
+                        }
+                        const stored = await tx.pluginCollectionContract.findFirst({
+                            where: { pluginId, collectionId: source.collectionId, schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
+                        });
+                        if (!stored) throw new PluginAvailabilityOperationError("plugin_intent_writable_collections_not_ready");
+                        preparation.push({
+                            source: readMaterializedPluginCollectionDeclaration(stored),
+                            binding: {
+                                source,
+                                target,
+                                candidate: {
+                                    releaseVersion: manifest.version,
+                                    artifactDigest: releaseLessDeclaration.manifestDigestSha256,
+                                    releaseLessManifest: manifest,
+                                },
+                            },
+                        });
+                    }
+                    return { intent: currentIntent, preparation };
+                }
                 if (
                     currentIntent !== null
                     && collectionContractsEqual(currentIntent.writableCollections, writableCollections)

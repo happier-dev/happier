@@ -14,6 +14,8 @@ import {
     isRestrictedAuthTokenDeniedForRoute,
     admitApiTokenSessionOperation,
     readRestrictedCredentialRouteField,
+    resolveApiTokenSessionActionForRoute,
+    isExternalActionSessionRoutePurposeAllowed,
     PRESENT_USER_REQUIRED_ERROR,
 } from "./apiTokenRouteAdmission";
 import { readBearerCredential, verifyRequestPrincipal, type RequestPrincipalVerification } from "./verifyRequestPrincipal";
@@ -156,21 +158,43 @@ export function enableAuthentication(app: Fastify) {
                     ? await verifyExternalActionExecutionAuthorizationCurrentness({
                         ...proof,
                         outerActionId: authorizationCurrentnessActionId,
+                        resolveCurrentSessionMachine: app.resolveCurrentSessionMachine,
                     })
-                    : await verifyExternalActionDomainExecutionRequest(proof);
+                    : await verifyExternalActionDomainExecutionRequest({ ...proof, resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
                 if (!verified) return sendInvalidConnectionCredentialFailure(request, reply);
-                stampApiTokenPrincipal(request, verified.principal);
+                if (!isExternalActionSessionRoutePurposeAllowed(request, verified.effectActionId)) {
+                    return reply.code(403).send({ error: 'credential_scope_denied' });
+                }
+                if ('authentication' in verified.principal) {
+                    request.userId = verified.principal.accountId;
+                    request.authTokenKind = verified.principal.authentication.kind;
+                    request.authAuthority = verified.principal.authority;
+                    request.authTokenEpoch = verified.principal.authentication.tokenEpoch;
+                    request.authTokenLegacy = false;
+                    request.authTokenAuthenticationEvidence = verified.principal.authentication.evidence;
+                } else {
+                    stampApiTokenPrincipal(request, verified.principal);
+                }
                 if (isApiTokenRequestOriginDenied(request)) {
                     return reply.code(403).send({ error: "credential_origin_denied" });
                 }
                 request.externalActionExecutionAuthorized = true;
-                request.externalActionInputConstraints = {
+                request.externalActionExecutionAuthorizationBinding = verified.binding;
+                request.externalActionManagedGuestActivity = verified.managedGuestActivity;
+                // Ordinary authenticated callers have no PAT input ceiling.
+                // Carry that explicit fact through the same signed-effect
+                // projection rather than inventing a token grant.
+                request.externalActionInputConstraints = 'grant' in verified.binding ? {
                     models: verified.binding.grant.models,
                     permissionModes: verified.binding.grant.permissionModes,
-                };
+                } : { models: null, permissionModes: null };
                 request.externalActionEffectActionId = verified.effectActionId;
                 request.externalActionRootActionId = verified.binding.actionId;
                 request.externalActionExecutionTarget = verified.target;
+                request.externalActionExecutionRequestId = verified.binding.requestId;
+                request.externalActionExecutionRequestEnvelopeDigest = verified.binding.requestEnvelopeDigest;
+                request.externalActionExecutionMachineId = verified.binding.machineId;
+                request.externalActionExecutionCustodianAccountId = verified.binding.custodianAccountId;
                 if (isRestrictedAuthTokenDeniedForRoute(request)) {
                     return reply.code(403).send({ error: PRESENT_USER_REQUIRED_ERROR });
                 }
@@ -255,7 +279,7 @@ export function enableAuthentication(app: Fastify) {
                         ?? PRESENT_USER_REQUIRED_ERROR;
                 return reply.code(403).send({ error });
             }
-            const sessionAction = request.routeOptions.config.apiTokenSessionAction;
+            const sessionAction = resolveApiTokenSessionActionForRoute(request);
             const binding = request.routeOptions.config.restrictedCredentialBinding;
             if (apiTokenPrincipal && sessionAction && binding?.scope === "session") {
                 const sessionId = readRestrictedCredentialRouteField(request, binding.session);

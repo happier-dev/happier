@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import tweetnacl from 'tweetnacl';
 import type { Prisma } from "@prisma/client";
 import {
     buildTrustedHostSessionInputAdmissionV1,
@@ -13,6 +14,8 @@ import {
     type SessionInputAdmissionReceiptV1,
     type SessionMessageDeliveryResolutionV1,
     type SessionMessageProvenanceV1,
+    ManagedWakeTargetV1Schema,
+    ManagedResourceV1Schema, createManagedPolicyProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
@@ -48,7 +51,9 @@ import { inTx } from "@/storage/inTx";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { sessionPendingRoutes } from "@/app/api/routes/session/pendingRoutes";
 import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
+import { readManagedWakeTargets, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
 import { registerSessionListingRoutes } from "@/app/api/routes/session/registerSessionListingRoutes";
+import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -132,6 +137,30 @@ describe("pendingMessageService (shared sessions)", () => {
             },
             select,
         });
+    };
+
+    const createManagedPendingFixture = async () => {
+        const owner = await createAccount("managed-input-owner");
+        const session = await createSession(owner.id);
+        const homeId = `srv_${"c".repeat(32)}`;
+        process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
+        const controllerKeys = tweetnacl.sign.keyPair();
+        const controller = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: "{}", installationId: "input-controller-installation", installationPublicKey: Buffer.from(controllerKeys.publicKey) } });
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}", installationId: 'input-target-installation',
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: guest.id, sessionId: session.id, data: "encrypted" } });
+        const managed = await db.managedMachine.create({ data: {
+            homeId, custodianAccountId: owner.id, controllerMachineId: controller.id,
+            controllerInstallationId: controller.installationId!, enrolledMachineId: guest.id,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: "bound", desired: "stop",
+            launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "Guest", choices: {} },
+            resource: { contributionRef: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, value: { id: "retained-native" } },
+            retention: { kind: "until-delete" }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: "present", power: "stopped" },
+        } });
+        return { owner, session, homeId, controllerKeys, controller, guest, managed };
     };
 
     const markPendingProviderDeliveryClaimed = async (params: {
@@ -5462,6 +5491,123 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(del.ok).toBe(false);
         if (del.ok) throw new Error("expected forbidden");
         expect(del.error).toBe("forbidden");
+    });
+
+    it("retains only the protected accepted target for managed wake and clears it on confirmed withdrawal", async () => {
+        const { owner, session, homeId, controller, guest, managed } = await createManagedPendingFixture();
+        const localId = `protected-wake-${randomUUID()}`;
+        await expect(enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: controller.id,
+            targetMachineId: guest.id, sessionId: session.id, localId,
+            content: { t: "encrypted", c: "private-input" }, requestedAction: { v: 1, kind: "send_now" } }))
+            .resolves.toMatchObject({ status: "accepted" });
+        const authorization = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(authorization).toMatchObject({ pendingActivationRequestId: localId,
+            pendingActivationManagedTarget: { managedId: managed.id, enrolledMachineId: guest.id,
+                controller: { machineId: controller.id, installationId: controller.installationId },
+                origin: { kind: "session-input", pendingRequestId: localId, session: { homeId, sessionId: session.id } } } });
+        expect(JSON.stringify(authorization.pendingActivationManagedTarget)).not.toContain("private-input");
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({ desired: "stop" });
+        const request = { homeId, controller: { machineId: controller.id, installationId: controller.installationId! } };
+        expect(await readManagedWakeTargets({ actorAccountId: owner.id, request }))
+            .toMatchObject({ targets: [{ managedId: managed.id, origin: { kind: 'session-input', pendingRequestId: localId } }] });
+        await withAuthenticatedTestApp(registerSessionListingRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: '/v2/sessions', headers: { 'x-test-user-id': owner.id } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json().sessions.find((row: { id: string }) => row.id === session.id))
+                .toMatchObject({ pendingActivationAuthorization: { managedWakeTargetV1: { managedId: managed.id } } });
+        });
+        // Stored-reader normalization tolerates newer non-authority fields; strict ingress still rejects them.
+        await db.session.update({ where: { id: session.id }, data: { pendingActivationManagedTarget: {
+            ...(authorization.pendingActivationManagedTarget as Prisma.InputJsonObject), futureDisplay: 'ignored',
+        } } });
+        expect((await readManagedWakeTargets({ actorAccountId: owner.id, request })).targets).toHaveLength(1);
+        const target = ManagedWakeTargetV1Schema.parse(authorization.pendingActivationManagedTarget);
+        // The accepted placement cannot follow a replacement installation, even when its grants still exist.
+        await db.machine.update({ where: { id: guest.id }, data: { installationId: 'replacement-target-installation' } });
+        expect(await readManagedWakeTargets({ actorAccountId: owner.id, request })).toEqual({ targets: [] });
+        await expect(inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row: managed, target })))
+            .rejects.toMatchObject({ code: 'admission_unavailable' });
+        await db.machine.update({ where: { id: guest.id }, data: { installationId: guest.installationId } });
+        const admitted = await db.managedMachine.update({ where: { id: managed.id }, data: { intentRevision: { increment: 1 }, desired: 'start' } });
+        await expect(inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row: admitted, target }))).resolves.toBeUndefined();
+        // Reconnect requalifies the same accepted origin under the latest policy; it never creates another input.
+        expect((await readManagedWakeTargets({ actorAccountId: owner.id, request })).targets).toMatchObject([
+            { expectedIntentRevision: admitted.intentRevision, origin: target.origin },
+        ]);
+        await expect(deletePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, withdraw: true }))
+            .resolves.toMatchObject({ ok: true, outcome: "removed" });
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+            .toMatchObject({ pendingActivationRequestId: null, pendingActivationManagedTarget: null });
+        expect(await readManagedWakeTargets({ actorAccountId: owner.id, request })).toEqual({ targets: [] });
+        await expect(inTx(tx => assertManagedWakeOriginCurrentInTx(tx, { row: admitted, target })))
+            .rejects.toMatchObject({ code: 'admission_unavailable' });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({ desired: 'start' });
+    });
+
+    it("reports a definite managed activation failure only from its exact authenticated current controller", async () => {
+        const { owner, session, homeId, controllerKeys, controller, guest, managed } = await createManagedPendingFixture();
+        // A definite runtime refusal is reported by the original authenticated controller, never by possession of a target reference.
+        const failureId = `failure-${randomUUID()}`;
+        await enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: controller.id,
+            targetMachineId: guest.id, sessionId: session.id, localId: failureId,
+            content: { t: 'encrypted', c: 'still-owned-original' }, requestedAction: { v: 1, kind: 'send_now' } });
+        const failureTarget = ManagedWakeTargetV1Schema.parse((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingActivationManagedTarget);
+        const failurePath = '/v1/machines/managed/controller/activation-failed';
+        const failureBody = { target: failureTarget, failureCode: 'runtime_start_failed' };
+        const proof = encodeManagedPolicyProofV1(createManagedPolicyProofV1({
+            correlation: { homeId, managedId: managed.id, controller: failureTarget.controller,
+                expectedIntentRevision: failureTarget.expectedIntentRevision, requestId: `report-${failureId}` },
+            purpose: { kind: 'accepted-input-start', target: failureTarget }, resource: ManagedResourceV1Schema.parse(managed.resource),
+            custodianAccountId: owner.id, path: failurePath, body: failureBody, privateKey: controllerKeys.secretKey,
+        }));
+        await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+            const send = (signed = true, actor = owner.id) => app.inject({ method: 'POST', url: failurePath,
+                headers: { 'x-test-user-id': actor, ...(signed ? { [MANAGED_POLICY_PROOF_HEADER]: proof } : {}) }, payload: failureBody });
+            expect((await send()).json()).toEqual({ ok: true, didFail: true });
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingActivationStatus: 'failed' });
+            // Same-action retry preserves custody and arms a new timestamp, making the old signed failure stale.
+            await updatePendingRequestedAction({ actorUserId: owner.id, sessionId: session.id, localId: failureId,
+                requestedAction: { v: 1, kind: 'send_now' }, resumeWhenAvailable: true });
+            expect((await send(false)).statusCode).toBe(403);
+            expect((await send(true, 'wrong-controller-custodian')).statusCode).toBe(403);
+            expect((await send()).json()).toEqual({ ok: true, didFail: false });
+            await db.machine.update({ where: { id: controller.id }, data: { installationId: 'retired-controller-installation' } });
+            expect((await send()).statusCode).toBe(409);
+            await db.machine.update({ where: { id: controller.id }, data: { installationId: failureTarget.controller.installationId, revokedAt: new Date() } });
+            expect((await send()).statusCode).toBe(409);
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingActivationStatus: 'waiting' });
+        });
+    });
+
+    it("withdraw reports actual removal and never mistakes an absent or accepted request for a restored draft", async () => {
+        const owner = await createAccount("withdraw-owner");
+        const session = await createSession(owner.id);
+        const localId = `withdraw-${randomUUID()}`;
+        const request = { actorUserId: owner.id, sessionId: session.id, localId, withdraw: true };
+        await enqueuePendingMessage({ ...request, ciphertext: "withdraw-original", requestedAction: { v: 1, kind: "send_now" } });
+        await expect(deletePendingMessage(request)).resolves.toMatchObject({ ok: true, outcome: "removed", pendingCount: 0 });
+        await expect(db.session.findUniqueOrThrow({ where: { id: session.id } })).resolves.toMatchObject({ pendingActivationRequestId: null });
+        await expect(deletePendingMessage(request)).resolves.toMatchObject({ ok: true, outcome: "delivery_unknown" });
+
+        const acceptedId = `accepted-${randomUUID()}`;
+        await enqueuePendingMessage({ ...request, localId: acceptedId, ciphertext: "accepted-original" });
+        await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id });
+        await expect(deletePendingMessage({ ...request, localId: acceptedId })).resolves.toMatchObject({ ok: true, outcome: "delivery_unknown" });
+        await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId: acceptedId });
+        await expect(deletePendingMessage({ ...request, localId: acceptedId })).resolves.toMatchObject({ ok: true, outcome: "already_delivered" });
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId: acceptedId } })).resolves.toBe(1);
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const removedId = `route-withdraw-${randomUUID()}`;
+            await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId: removedId, ciphertext: 'route-original' });
+            const withdrawn = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/pending/${removedId}/withdraw`,
+                headers: { 'x-test-user-id': owner.id }, payload: {} });
+            expect(withdrawn.statusCode).toBe(200);
+            expect(withdrawn.json()).toMatchObject({ ok: true, outcome: 'removed' });
+            const legacy = await app.inject({ method: 'DELETE', url: `/v2/sessions/${session.id}/pending/${removedId}`,
+                headers: { 'x-test-user-id': owner.id } });
+            expect(legacy.statusCode).toBe(200);
+            expect(legacy.json()).not.toHaveProperty('outcome');
+        });
     });
 
     it("treats deletePendingMessage as a no-op when the localId does not exist", async () => {

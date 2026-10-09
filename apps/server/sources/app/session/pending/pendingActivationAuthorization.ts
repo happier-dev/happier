@@ -1,12 +1,20 @@
 import {
     PendingRequestedActionV1Schema,
     SessionInputAdmissionReceiptV1Schema,
+    ManagedWakeTargetV1Schema, createStoredReadSchema,
     type PendingActivationAuthorizationV1,
     type PendingActivationFailureCodeV1,
 } from '@happier-dev/protocol';
+import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { Tx } from '@/storage/inTx';
+import { getActivePrismaRuntime } from '@/storage/db';
+import { resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { readStoredSessionInputAdmissionReceipt, isCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 
-export type PendingActivationTarget = Readonly<{ accountId: string; requestId: string }>;
+export type PendingActivationTarget = Readonly<{ accountId: string; requestId: string;
+    machinePublication?: Readonly<{ target: SessionInputMachineTargetV1; custodianAccountId: string; requestedAt: number }>;
+    managedControllerPublication?: Readonly<{ accountId: string; cursor: number }> }>;
 
 export function shouldArmPendingActivationAuthorization(params: Readonly<{
     requestedAction: { kind: string };
@@ -23,14 +31,16 @@ const AUTHORIZATION_SELECT = {
     pendingActivationRequestedAt: true,
     pendingActivationStatus: true,
     pendingActivationFailureCode: true,
+    pendingActivationManagedTarget: true,
 } as const;
 
-const CLEAR_AUTHORIZATION_DATA = {
+function clearAuthorizationData() { return {
     pendingActivationRequestId: null,
     pendingActivationRequestedAt: null,
     pendingActivationStatus: null,
     pendingActivationFailureCode: null,
-} as const;
+    pendingActivationManagedTarget: getActivePrismaRuntime().DbNull,
+} as const; }
 
 function nextRequestedAt(params: Readonly<{
     now: Date;
@@ -45,7 +55,7 @@ function nextRequestedAt(params: Readonly<{
 }
 
 export function clearPendingActivationAuthorizationForPublisherActivityData() {
-    return CLEAR_AUTHORIZATION_DATA;
+    return clearAuthorizationData();
 }
 
 export function mapPendingActivationAuthorization(row: object): PendingActivationAuthorizationV1 | undefined {
@@ -60,13 +70,19 @@ export function mapPendingActivationAuthorization(row: object): PendingActivatio
         || !(lastActiveAt instanceof Date)
         || requestedAt.getTime() <= lastActiveAt.getTime()
     ) return undefined;
-    if (status === 'waiting') return { requestId, requestedAt: requestedAt.getTime(), status };
+    const target = createStoredReadSchema(ManagedWakeTargetV1Schema).safeParse(value.pendingActivationManagedTarget);
+    const managedWakeTargetV1 = target.success && target.data.origin.kind === 'session-input'
+        && target.data.origin.pendingRequestId === requestId && target.data.origin.requestedAt === requestedAt.getTime()
+        ? target.data : undefined;
+    if (status === 'waiting') return { requestId, requestedAt: requestedAt.getTime(), status,
+        ...(managedWakeTargetV1 ? { managedWakeTargetV1 } : {}) };
     if (status === 'failed' && value.pendingActivationFailureCode === 'runtime_start_failed') {
         return {
             requestId,
             requestedAt: requestedAt.getTime(),
             status,
             failureCode: value.pendingActivationFailureCode,
+            ...(managedWakeTargetV1 ? { managedWakeTargetV1 } : {}),
         };
     }
     return undefined;
@@ -92,13 +108,13 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         },
     });
     const requestedAction = PendingRequestedActionV1Schema.safeParse(eligible?.requestedAction);
-    const inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.safeParse(
+    const inputAdmissionReceipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(
         eligible?.inputAdmissionReceipt,
     );
     if (
         !eligible
         || !inputAdmissionReceipt.success
-        || inputAdmissionReceipt.data.issuer !== 'authenticatedAccount'
+        || !['authenticatedAccount', 'authenticatedMachine'].includes(inputAdmissionReceipt.data.issuer)
         || eligible.messageRole !== 'user'
         || eligible.status !== 'queued'
         || eligible.deliveryState !== null
@@ -109,17 +125,22 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
             resumeWhenAvailable: params.resumeWhenAvailable,
         })
     ) return undefined;
-
     const session = await params.tx.session.findUniqueOrThrow({
         where: { id: params.sessionId },
         select: AUTHORIZATION_SELECT,
     });
+    const admittedTarget = inputAdmissionReceipt.data.admittedTarget;
+    if (admittedTarget && (admittedTarget.accountId !== session.accountId || admittedTarget.sessionId !== params.sessionId
+        || !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget))) return undefined;
+    const actorAccountId = inputAdmissionReceipt.data.issuer === 'authenticatedMachine'
+        ? session.accountId : inputAdmissionReceipt.data.actorAccountId;
     if (
-        inputAdmissionReceipt.data.sessionRelationship !== 'owner'
-        || session.accountId !== inputAdmissionReceipt.data.actorAccountId
+        (inputAdmissionReceipt.data.issuer === 'authenticatedAccount'
+            && (inputAdmissionReceipt.data.sessionRelationship !== 'owner'
+                || session.accountId !== actorAccountId))
         || (
             eligible.authorAccountId !== null
-            && eligible.authorAccountId !== inputAdmissionReceipt.data.actorAccountId
+            && eligible.authorAccountId !== actorAccountId
         )
     ) return undefined;
     const requestedAt = nextRequestedAt({
@@ -127,6 +148,18 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         lastActiveAt: session.lastActiveAt,
         priorRequestedAt: session.pendingActivationRequestedAt,
     });
+    const retained = createStoredReadSchema(ManagedWakeTargetV1Schema).safeParse(session.pendingActivationManagedTarget);
+    const priorTarget = retained.success && retained.data.origin.kind === 'session-input'
+        && retained.data.origin.session.sessionId === params.sessionId && retained.data.origin.pendingRequestId === params.requestId
+        && session.pendingActivationRequestId === params.requestId ? retained.data : undefined;
+    const managedTarget = admittedTarget
+        ? await resolveManagedWakeTargetInTx(params.tx, { actorAccountId,
+            machineId: admittedTarget.machineId, origin: { kind: 'session-input',
+                session: { homeId: admittedTarget.homeId, sessionId: params.sessionId },
+                pendingRequestId: params.requestId, requestedAt: requestedAt.getTime() } })
+        : undefined;
+    if (inputAdmissionReceipt.data.issuer === 'authenticatedMachine' && !managedTarget && !admittedTarget) return undefined;
+    if (priorTarget && managedTarget && priorTarget.managedId !== managedTarget.managedId) return undefined;
     await params.tx.session.update({
         where: { id: params.sessionId },
         data: {
@@ -134,9 +167,42 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
             pendingActivationRequestedAt: requestedAt,
             pendingActivationStatus: 'waiting',
             pendingActivationFailureCode: null,
+            pendingActivationManagedTarget: managedTarget ?? getActivePrismaRuntime().DbNull,
         },
     });
-    return { accountId: session.accountId, requestId: params.requestId };
+    let managedControllerPublication: PendingActivationTarget['managedControllerPublication'];
+    if (managedTarget) {
+        const controller = await params.tx.machine.findUniqueOrThrow({ where: { id: managedTarget.controller.machineId }, select: { accountId: true } });
+        managedControllerPublication = { accountId: controller.accountId,
+            cursor: await markAccountChanged(params.tx, { accountId: controller.accountId, kind: 'machine', entityId: managedTarget.controller.machineId }) };
+    }
+    const targetMachine = admittedTarget ? await params.tx.machine.findUniqueOrThrow({ where: { id: admittedTarget.machineId }, select: { accountId: true } }) : undefined;
+    return { accountId: session.accountId, requestId: params.requestId,
+        ...(admittedTarget && targetMachine ? { machinePublication: { target: admittedTarget,
+            custodianAccountId: targetMachine.accountId, requestedAt: requestedAt.getTime() } } : {}),
+        ...(managedControllerPublication ? { managedControllerPublication } : {}) };
+}
+
+/** Reconnect and lossy hints read one exact retained receipt, never enumerate candidate keys. */
+export async function readPendingActivationTargetInTx(tx: Tx, sessionId: string): Promise<PendingActivationTarget | undefined> {
+    const session = await tx.session.findUnique({ where: { id: sessionId }, select: { ...AUTHORIZATION_SELECT, archivedAt: true } });
+    if (!session || session.archivedAt !== null || session.pendingActivationStatus !== 'waiting'
+        || !session.pendingActivationRequestId || !session.pendingActivationRequestedAt
+        || session.pendingActivationRequestedAt <= session.lastActiveAt) return undefined;
+    const row = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
+        sessionId, localId: session.pendingActivationRequestId }, targetExecutionRunId: null },
+        select: { status: true, messageRole: true, deliveryState: true, providerAction: true,
+            authorAccountId: true, inputAdmissionReceipt: true } });
+    const receipt = readStoredSessionInputAdmissionReceipt(row?.inputAdmissionReceipt);
+    if (!row || row.status !== 'queued' || row.messageRole !== 'user' || row.deliveryState !== null || row.providerAction !== null
+        || !receipt || !receipt.admittedTarget || receipt.admittedTarget.accountId !== session.accountId
+        || receipt.admittedTarget.sessionId !== sessionId || row.authorAccountId !== null && row.authorAccountId !== session.accountId
+        || receipt.issuer === 'authenticatedAccount' && (receipt.actorAccountId !== session.accountId || receipt.sessionRelationship !== 'owner')
+        || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.admittedTarget)) return undefined;
+    const machine = await tx.machine.findUniqueOrThrow({ where: { id: receipt.admittedTarget.machineId }, select: { accountId: true } });
+    return { accountId: session.accountId, requestId: session.pendingActivationRequestId,
+        machinePublication: { target: receipt.admittedTarget, custodianAccountId: machine.accountId,
+            requestedAt: session.pendingActivationRequestedAt.getTime() } };
 }
 
 export async function reconcilePendingActivationAuthorizationForRemovedRequestInTx(params: Readonly<{
@@ -155,7 +221,7 @@ export async function reconcilePendingActivationAuthorizationForRemovedRequestIn
             pendingActivationRequestId: params.requestId,
             pendingActivationRequestedAt: session.pendingActivationRequestedAt,
         },
-        data: CLEAR_AUTHORIZATION_DATA,
+        data: clearAuthorizationData(),
     });
     return updated.count > 0;
 }

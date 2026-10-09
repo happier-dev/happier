@@ -23,6 +23,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { getSocketRooms } from '../../../../socketRooms';
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { resolvePeerTcpTunnelRelayCaps, type PeerTcpTunnelRelayCaps } from './relayCaps';
 import {
     createPeerMediationFlowEvent,
@@ -60,6 +61,7 @@ type RelayMeteringCaps = Readonly<{
 type AuthorizedRelayState = Readonly<{
     flowKind: PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'];
     meteringCaps: RelayMeteringCaps;
+    installationId?: string;
 }>;
 
 const registeredSockets = new WeakSet<object>();
@@ -587,6 +589,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     socket: TunnelRelaySocket,
     ctx: Readonly<{
         io: TunnelRelayIo;
+        readMachineAdmission?: (machineId: string) => ReturnType<typeof resolveMachineAdmission>;
         relayAuthorizationTrustRoots?: readonly PeerTcpTunnelRelayAuthorizationTrustRootV1[];
         nowMs?: () => number;
         observability?: PeerMediationObservabilityEmitter;
@@ -613,6 +616,23 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     registeredSockets.add(socketObject);
 
     const caps = resolvePeerTcpTunnelRelayCaps(ctx);
+    const readMachineAdmission = ctx.readMachineAdmission ?? ((machineId: string) => resolveMachineAdmission({ actorAccountId: userId, machineId }));
+    const pendingCurrentnessByTunnelKey = new Map<TunnelKey, Promise<string | null>>();
+    async function readCurrentInstallation(machineId: string, expectedInstallationId?: string): Promise<string | null> {
+        try {
+            const admission = await readMachineAdmission(machineId);
+            return admission.kind === 'admitted' && admission.actorAccountId === userId && admission.custodianAccountId === userId
+                && (expectedInstallationId === undefined || admission.installationId === expectedInstallationId)
+                ? admission.installationId : null;
+        } catch { return null; }
+    }
+    async function readOrderedCurrentInstallation(tunnelKey: TunnelKey, machineId: string, expectedInstallationId?: string): Promise<string | null> {
+        const previous = pendingCurrentnessByTunnelKey.get(tunnelKey);
+        const current = (previous ?? Promise.resolve()).then(() => readCurrentInstallation(machineId, expectedInstallationId));
+        pendingCurrentnessByTunnelKey.set(tunnelKey, current);
+        try { return await current; }
+        finally { if (pendingCurrentnessByTunnelKey.get(tunnelKey) === current) pendingCurrentnessByTunnelKey.delete(tunnelKey); }
+    }
     const isServerRoutedFlowEnabled = (
         flowKind: PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'],
     ): boolean => {
@@ -799,7 +819,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     type PendingOpen = {
         ready: Promise<void>;
         resolveReady(): void;
-        cancelledReason: 'relay_cap_exceeded' | 'relay_socket_disconnected' | null;
+        cancelledReason: 'relay_cap_exceeded' | 'relay_socket_disconnected' | 'route_unavailable' | null;
         queuedBytes: number;
     };
     const pendingOpenByTunnelKey = new Map<TunnelKey, PendingOpen>();
@@ -909,7 +929,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         }
         const tunnelId = envelope.v === 1 ? getFrameTunnelId(envelope.frame) : decodedBinary?.header.tunnelId ?? '';
         const tunnelKey = buildTunnelKey(envelope, tunnelId);
-        const now = ctx.nowMs?.() ?? Date.now();
+        let now = ctx.nowMs?.() ?? Date.now();
         const openEnvelope = envelope.v === 1 && envelope.frame.kind === 'open' ? envelope : null;
         const isV1OpenFrame = openEnvelope !== null;
         const isTerminalFrame =
@@ -918,6 +938,9 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 : decodedBinary?.ok === true
                     && !decodedBinary.header.substreamId
                     && (decodedBinary.header.kind === 'close' || decodedBinary.header.kind === 'abort');
+
+        const machineId = participantMachineId(envelope);
+        let currentInstallationId: string | null = null;
 
         if (envelope.sender.kind === 'machine' && socket.id && ingress === "socket") {
             const routeResult = ctx.coordinator.routeMachineEnvelope({
@@ -961,6 +984,15 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 pending.queuedBytes -= queuedBytes;
                 if (pending.cancelledReason || ownerSocketDisconnected) return;
             }
+            currentInstallationId = machineId ? await readOrderedCurrentInstallation(tunnelKey, machineId, authorizationStateByTunnelKey.get(tunnelKey)?.installationId) : null;
+            if (!currentInstallationId || (envelope.sender.kind === 'machine' && ingress === 'socket'
+                && socket.data?.verifiedMachineInstallationId !== currentInstallationId)) {
+                emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode: 'route_unavailable', tunnelKey, senderSocketId: socket.id, notifyAttachedMachine: true });
+                clearTunnelState(tunnelKey);
+                emitSocketError(socket, 'Server-routed peer tunnel Machine admission is no longer current');
+                return;
+            }
+            now = ctx.nowMs?.() ?? Date.now();
         }
 
         // Production socket composition provides a flow map and therefore waits
@@ -1130,12 +1162,21 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 queuedBytes: 0,
             };
             pendingOpenByTunnelKey.set(tunnelKey, pending);
+            currentInstallationId = await readCurrentInstallation(payload.targetMachineId);
+            if (!currentInstallationId || ownerSocketDisconnected || pending.cancelledReason) {
+                pendingOpenByTunnelKey.delete(tunnelKey);
+                pending.cancelledReason ??= 'route_unavailable';
+                pending.resolveReady();
+                emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode: 'route_unavailable', tunnelKey, senderSocketId: socket.id });
+                return;
+            }
             const admissionPromise = ctx.coordinator.admit({
                 accountId: userId,
                 tunnelKey,
                 grantId: payload.grantId,
                 grantExpiresAt: payload.exp,
                 machineId: payload.targetMachineId,
+                expectedInstallationId: currentInstallationId,
                 nowMs: now,
                 onMachineEnvelope: (machineEnvelope, machineSocketId) => handleRelayPayload(
                     machineEnvelope,
@@ -1160,6 +1201,8 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 },
             });
             const admission = await admissionPromise;
+            const installationStillCurrent = await readCurrentInstallation(payload.targetMachineId, currentInstallationId);
+            now = ctx.nowMs?.() ?? Date.now();
             if (admission.status !== 'attached') {
                 pendingOpenByTunnelKey.delete(tunnelKey);
                 pending.resolveReady();
@@ -1171,7 +1214,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 emitSocketError(socket, 'Server-routed peer tunnel cluster admission failed');
                 return;
             }
-            if (ownerSocketDisconnected || pending.cancelledReason) {
+            if (ownerSocketDisconnected || pending.cancelledReason || !installationStillCurrent || payload.exp <= now) {
                 pendingOpenByTunnelKey.delete(tunnelKey);
                 pending.resolveReady();
                 ctx.coordinator.release(tunnelKey);
@@ -1182,7 +1225,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 return;
             }
             coordinatorByTunnelKey.set(tunnelKey, ctx.coordinator);
-            authorizationStateByTunnelKey.set(tunnelKey, authorizationState);
+            authorizationStateByTunnelKey.set(tunnelKey, { ...authorizationState, installationId: currentInstallationId });
         }
 
         const lastActivityAt = tunnelLastActivityAtByKey.get(tunnelKey) ?? now;

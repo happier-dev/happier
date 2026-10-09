@@ -5,6 +5,9 @@ import {
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import type { Tx } from "@/storage/inTx";
+import { compareAndSwapMachineContentInTx } from "./compareAndSwapMachineContentInTx";
+import { serializeMachineKeyBasis } from "./machineSerialization";
+import { resolveCurrentMachineRecipientAccountIdsInTx } from "./machineAccess";
 
 export class MachineAccountEncryptionMigrationConflictError extends Error {
     constructor() {
@@ -196,38 +199,33 @@ export async function migrateMachineAccountEncryptionInTx(params: Readonly<{
 
     const markChanged =
         params.markChanged
-        ?? (async (machineId: string) =>
-            await markAccountChanged(params.tx, {
-                accountId: params.accountId,
-                kind: "machine",
-                entityId: machineId,
-            }));
+        ?? (async (machineId: string) => {
+            for (const accountId of await resolveCurrentMachineRecipientAccountIdsInTx(params.tx, machineId)) {
+                await markAccountChanged(params.tx, { accountId, kind: "machine", entityId: machineId });
+            }
+        });
 
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
     for (const item of params.directive.items) {
-        const updated = await params.tx.machine.updateMany({
-            where: {
-                accountId: params.accountId,
-                id: item.machineId,
+        const current = rowsById.get(item.machineId);
+        if (!current) throw new MachineAccountEncryptionMigrationConflictError();
+        const updated = await compareAndSwapMachineContentInTx({
+            tx: params.tx,
+            accountId: params.accountId,
+            machineId: item.machineId,
+            expected: {
+                dataEncryptionKey: serializeMachineKeyBasis(current).dataEncryptionKey,
                 metadataVersion: item.expectedMetadataVersion,
                 daemonStateVersion: item.expectedDaemonStateVersion,
             },
-            data: {
+            next: {
                 metadata: item.metadata,
-                metadataVersion: item.expectedMetadataVersion + 1,
                 daemonState: item.daemonState,
-                daemonStateVersion: item.expectedDaemonStateVersion + 1,
-                dataEncryptionKey:
-                    item.dataEncryptionKey === null
-                        ? null
-                        : new Uint8Array(
-                            Buffer.from(item.dataEncryptionKey, "base64"),
-                        ),
-                contentPublicKeyFingerprint:
-                    item.contentPublicKeyFingerprint,
-                updatedAt: new Date(),
+                dataEncryptionKey: item.dataEncryptionKey,
+                contentPublicKeyFingerprint: item.contentPublicKeyFingerprint,
             },
         });
-        if (updated.count !== 1) {
+        if (!updated) {
             throw new MachineAccountEncryptionMigrationConflictError();
         }
         await markChanged(item.machineId);

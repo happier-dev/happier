@@ -5,10 +5,12 @@ import type { ExternalActionExecutionAuthorizationV1 } from "@happier-dev/protoc
 
 import {
     isPlainMachineDataKeyMarker,
+    type SocketRpcMachineAdmissionContextV1,
     type AnyClientUpgradeRequiredV1,
 } from "@happier-dev/protocol";
 import {
     RPC_ERROR_CODES,
+    RPC_METHODS,
     RPC_ERROR_MESSAGES,
     type SocketRpcAuthorizationContext,
 } from "@happier-dev/protocol/rpc";
@@ -17,6 +19,9 @@ import {
     SocketRpcTransportResponseEnvelopeV1Schema,
     type SocketRpcRequestPayload,
     type SessionTransferRoutingV1,
+    type WorkspaceSyncSourceRoutingV1,
+    type WorkspaceSyncTargetRoutingV1,
+    type WorkspaceSyncSourceWriterTargetRoutingV1,
     type SessionActionRpcOriginV1,
     type SocketRpcTransportAcknowledgementV1,
 } from "@happier-dev/protocol/socketRpc";
@@ -110,14 +115,21 @@ export async function forwardRpcCall(params: Readonly<{
     callParams: unknown;
     timeoutMs?: unknown;
     authorization?: SocketRpcAuthorizationContext;
+    /** Home-owned current Machine routing facts; never copied from inbound fields. */
+    machineAdmission?: SocketRpcMachineAdmissionContextV1;
     transportResponseEnvelopeVersion?: 1;
     callerSocketId?: string;
     callerSocket?: Pick<Socket, "data">;
+    /** Trusted source continuation ceiling, never copied from inbound generic RPC fields. */
+    callerAuthority?: SocketRpcRequestPayload['callerAuthority'];
     /** Trusted ingress stamp admitted by the source Machine/current Session guard. */
     sessionActionOrigin?: SessionActionRpcOriginV1;
     /** Verified credential constraints; inbound RPC fields are never authoritative. */
     callerInputConstraints?: CallerInputConstraintsV1;
     transferRouting?: SessionTransferRoutingV1;
+    workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+    workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+    workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
     /** Trusted ingress producer, invoked only inside the selected target's currentness guard. */
     createCallerInputAuthorization?: (input: Readonly<{
         target: RpcAckResponseEmitter;
@@ -136,6 +148,8 @@ export async function forwardRpcCall(params: Readonly<{
      * The normal Socket-RPC result remains backward-compatible.
      */
     onSubmittedUnknown?: () => void;
+    /** Accepted wake discovery consumes the original invocation's budget and currentness. */
+    callerLifetime?: Parameters<typeof waitForRpcTargetAvailability>[0]['callerLifetime'];
 }>): Promise<RpcForwardResult> {
     const callStartedAt = Date.now();
     const lookupStartedAt = Date.now();
@@ -143,6 +157,7 @@ export async function forwardRpcCall(params: Readonly<{
         graceMs: resolveRpcMethodAvailabilityGraceMs(params.method),
         pollMs: resolveRpcMethodAvailabilityPollMs(),
         excludedSocketId: params.callerSocketId,
+        ...(params.callerLifetime ? { callerLifetime: params.callerLifetime } : {}),
         discoverTargets: async () => {
             const targets = await discoverRpcTargets({
                 io: params.io,
@@ -261,15 +276,19 @@ export async function forwardRpcCall(params: Readonly<{
         const request: SocketRpcRequestPayload = {
             method: params.method,
             params: params.callParams,
-            callerAuthority: !params.sessionActionOrigin && params.callerSocket?.data?.authAuthority === "present_user"
+            callerAuthority: params.callerAuthority ?? (!params.sessionActionOrigin && params.callerSocket?.data?.authAuthority === "present_user"
                 ? "present_user"
-                : "account_automation",
+                : "account_automation"),
             ...(params.sessionActionOrigin ? { sessionActionOrigin: params.sessionActionOrigin } : {}),
             ...(params.callerInputConstraints ? { callerInputConstraints: params.callerInputConstraints } : {}),
             ...(params.transferRouting ? { transferRouting: params.transferRouting } : {}),
+            ...(params.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: params.workspaceSyncSourceRouting } : {}),
+            ...(params.workspaceSyncTargetRouting ? { workspaceSyncTargetRouting: params.workspaceSyncTargetRouting } : {}),
+            ...(params.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: params.workspaceSyncSourceWriterTargetRouting } : {}),
             timeoutMs,
             ...(targetRequestId ? { requestId: targetRequestId } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),
+            ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
             ...(params.transportResponseEnvelopeVersion === 1
                 ? { transportResponseEnvelopeVersion: 1 as const }
                 : {}),
@@ -293,10 +312,10 @@ export async function forwardRpcCall(params: Readonly<{
                 callerInputAuthorization ? {
                     ...request,
                     callerInputAuthorization,
-                    callerInputConstraints: {
+                    ...('grant' in callerInputAuthorization.binding ? { callerInputConstraints: {
                         models: callerInputAuthorization.binding.grant.models,
                         permissionModes: callerInputAuthorization.binding.grant.permissionModes,
-                    },
+                    } } : {}),
                 } : request,
             );
             const cancellationSignal = params.cancellation?.signal;
@@ -386,7 +405,9 @@ export async function forwardRpcCall(params: Readonly<{
         });
         return {
             ok: false,
-            error: error instanceof Error ? error.message : "RPC call failed",
+            ...(params.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`)
+                ? { error: 'confidential_continuation_failed', errorCode: 'confidential_continuation_failed' }
+                : { error: error instanceof Error ? error.message : "RPC call failed" }),
         };
     }
 }

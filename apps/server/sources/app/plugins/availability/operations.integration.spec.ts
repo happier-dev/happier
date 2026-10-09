@@ -26,6 +26,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import {
     retirePluginCollectionCandidatePreparation,
+    pagePluginCollectionCandidatePreparationSource,
     stagePluginCollectionCandidatePreparation,
 } from "@/app/plugins/data/collections/candidatePreparation";
 import { readCurrentPluginCollectionContract } from "@/app/plugins/data/collections/uiQuery";
@@ -44,6 +45,7 @@ import {
 } from "./operations";
 import { registerPluginAvailabilityRoutes } from "./routes";
 import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 
 const ACCOUNT_ID = "account-plugin-availability";
 const MACHINE_ID = "machine-plugin-availability";
@@ -247,6 +249,7 @@ describe("plugin Availability operations", () => {
             () => db.accountPluginIntent.deleteMany(),
             () => db.artifact.deleteMany(),
             () => db.pluginCollectionContract.deleteMany(),
+            () => db.managedMachine.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
@@ -285,6 +288,72 @@ describe("plugin Availability operations", () => {
             resolveServerIdentityId: async () => SERVER_IDENTITY_ID,
         });
     }
+
+    it("reviews retained native resources before disabling their provisioner and permits exact manual responsibility", async () => {
+        await seedAccountAndMachine();
+        const service = operations();
+        const enabled = { pluginId: PLUGIN_ID, desiredVersion: null, enabled: true,
+            offlineUiHosting: "disabled", writableCollections: [], expectedRevision: null };
+        await service.setIntent({ accountId: ACCOUNT_ID, input: enabled });
+        const provider = { pluginId: PLUGIN_ID, localId: "cloud" };
+        const retained = await db.managedMachine.create({ data: {
+            homeId: SERVER_IDENTITY_ID, custodianAccountId: ACCOUNT_ID, controllerMachineId: MACHINE_ID,
+            controllerInstallationId: "machine-installation-availability", admittedActionRequestId: "plugin-retention-request", admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: "Retained", choices: {} },
+            allocation: "may-exist", retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+            recovery: { reference: "native-plugin-123", reason: "unknown_acquisition" },
+        } });
+        const disable = { ...enabled, enabled: false, expectedRevision: "0" };
+        await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID,
+            includeManagedResources: true } })).resolves.toMatchObject({
+            managedResources: [{ managedId: retained.id, allocation: "may-exist", recovery: { reference: "native-plugin-123" } }],
+            managedResourcesReviewed: false,
+        });
+        await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID,
+            includeManagedResources: true, managedResourceDispositions: [{
+                managedId: retained.id, expectedIntentRevision: 0, responsibility: "manual",
+                expectedAllocation: "may-exist", expectedRecovery: { reference: "native-plugin-123", reason: "unknown_acquisition" },
+            }] } })).resolves.toMatchObject({ managedResourcesReviewed: true });
+        expect(await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } })).not.toHaveProperty("managedResources");
+        await expect(service.setIntent({ accountId: ACCOUNT_ID, input: disable })).rejects.toMatchObject({
+            code: "managed_resources_review_required", resources: [{ managedId: retained.id,
+                allocation: "may-exist", recovery: { reference: "native-plugin-123" } }],
+        });
+        expect(await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } } }))
+            .toMatchObject({ enabled: true });
+        await expect(service.setIntent({ accountId: ACCOUNT_ID, input: { ...disable, managedResourceDispositions: [{
+            managedId: retained.id, expectedIntentRevision: 0, responsibility: "manual",
+            expectedAllocation: 'may-exist', expectedRecovery: { reference: 'native-plugin-123', reason: 'unknown_acquisition' },
+        }] } })).resolves.toMatchObject({ intent: { enabled: false, revision: "1" } });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: retained.id } })).toMatchObject({ allocation: "may-exist" });
+    });
+
+    it('limits local plugin removal review to its authenticated controller installation', async () => {
+        await seedAccountAndMachine();
+        const homeId = await getOrCreateServerIdentityId();
+        const service = operations();
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: MACHINE_ID } });
+        const provider = { pluginId: PLUGIN_ID, localId: 'cloud' };
+        const current = await db.managedMachine.create({ data: {
+            homeId, custodianAccountId: ACCOUNT_ID, controllerMachineId: MACHINE_ID,
+            controllerInstallationId: machine.installationId!, admittedActionRequestId: 'local-controller-resource', admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: 'Local controller', choices: {} },
+            allocation: 'may-exist', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            archivedAt: new Date(1), creationState: 'retired',
+        } });
+        await db.managedMachine.create({ data: {
+            homeId, custodianAccountId: ACCOUNT_ID, controllerMachineId: 'another-controller',
+            controllerInstallationId: 'another-installation', admittedActionRequestId: 'other-controller-resource', admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: 'Other controller', choices: {} },
+            allocation: 'may-exist', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const result = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID,
+            includeManagedResources: true, homeId, controller: { machineId: MACHINE_ID, installationId: machine.installationId } } });
+        expect(result.managedResources?.map(resource => resource.managedId)).toEqual([current.id]);
+        await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID,
+            includeManagedResources: true, homeId, controller: { machineId: MACHINE_ID, installationId: 'replaced-installation' } } }))
+            .rejects.toMatchObject({ code: 'plugin_availability_invalid_request' });
+    });
 
     async function publishHostedRelease(
         service: ReturnType<typeof operations>,
@@ -1164,6 +1233,7 @@ describe("plugin Availability operations", () => {
                 properties: {
                     id: { type: "string", maxLength: 256 },
                     status: { type: "string", enum: ["closed", "open"] },
+                    privateNote: { type: "string", maxLength: 256 },
                 },
                 required: ["id", "status"],
                 additionalProperties: false,
@@ -1175,6 +1245,11 @@ describe("plugin Availability operations", () => {
         const CLAIMED_TASKS_V2 = {
             ...CLAIMED_TASKS_V1,
             schemaVersion: 2,
+            readableSchemaVersions: [1, 2],
+            migrations: [{ id: "tasks-v1-to-v2", fromSchemaVersion: 1, toSchemaVersion: 2 }],
+            // A projected addition needs the callback/stage path, not the
+            // existing optional-private-addition identity adoption shortcut.
+            serverReadable: ["status", "title"],
             schema: {
                 ...CLAIMED_TASKS_V1.schema,
                 properties: {
@@ -1241,6 +1316,102 @@ describe("plugin Availability operations", () => {
                 .resolves.toMatchObject({ pluginIds: [PLUGIN_ID] });
         });
 
+        it("promotes a populated release-less Collection through candidate preparation with retained rows", async () => {
+            await seedAccountAndMachine();
+            await db.account.update({ where: { id: ACCOUNT_ID }, data: { encryptionMode: "plain" } });
+            const service = operations();
+            await service.claimCollectionWriters({
+                accountId: ACCOUNT_ID,
+                input: { manifest: claimManifest([CLAIMED_TASKS_V1]) },
+            });
+            const source = claimedRef(CLAIMED_TASKS_V1);
+            const contract = await db.pluginCollectionContract.findFirstOrThrow({
+                where: { pluginId: PLUGIN_ID, collectionId: source.collectionId, contractDigest: source.contractDigest },
+                select: { id: true },
+            });
+            const retained = await db.pluginCollectionRow.create({
+                data: {
+                    accountId: ACCOUNT_ID, pluginId: PLUGIN_ID, collectionId: source.collectionId,
+                    rowId: "retained-task", schemaVersion: source.schemaVersion, revision: 1,
+                    contractId: contract.id, contractDigest: source.contractDigest,
+                    contentEnvelope: { t: "plain", v: { privateNote: "retained private bytes" } },
+                },
+            });
+            await db.pluginCollectionProjection.createMany({
+                data: [
+                    { fieldId: "status", typedEncodedValue: JSON.stringify("open") },
+                ].map((projection) => ({
+                    ...projection, rowDbId: retained.id, accountId: ACCOUNT_ID, pluginId: PLUGIN_ID,
+                    collectionId: source.collectionId, rowId: retained.rowId, rowRevision: retained.revision,
+                })),
+            });
+
+            await expect(service.claimCollectionWriters({
+                accountId: ACCOUNT_ID,
+                input: { manifest: claimManifest([CLAIMED_TASKS_V2]) },
+            })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+            await expect(db.pluginCollectionRow.findUnique({ where: { id: retained.id } })).resolves.toEqual(retained);
+            await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
+                .resolves.toMatchObject({ intent: { writableCollections: [source], revision: "0" } });
+            await expect(readCurrentPluginCollectionContract({ accountId: ACCOUNT_ID, request: { ref: source } }))
+                .resolves.toMatchObject({ access: "writable" });
+
+            const preparation = await service.claimCollectionWriters({
+                accountId: ACCOUNT_ID,
+                input: { manifest: claimManifest([CLAIMED_TASKS_V2]), prepare: true },
+            });
+            expect(preparation.intent.writableCollections).toEqual([source]);
+            const binding = preparation.preparation![0]!.binding;
+            await expect(pagePluginCollectionCandidatePreparationSource({
+                accountId: ACCOUNT_ID,
+                request: { binding: { ...binding, candidate: { ...binding.candidate, artifactDigest: `sha256:${"f".repeat(64)}` } }, limit: 50 },
+            })).rejects.toMatchObject({ code: "collection_candidate_preparation_contract_mismatch" });
+            const page = await pagePluginCollectionCandidatePreparationSource({
+                accountId: ACCOUNT_ID, request: { binding, limit: 50 },
+            });
+            expect(page.rows).toHaveLength(1);
+            await stagePluginCollectionCandidatePreparation({
+                accountId: ACCOUNT_ID,
+                request: {
+                    binding,
+                    items: [{
+                        source: { rowId: retained.rowId, revision: retained.revision },
+                        target: {
+                            content: retained.contentEnvelope,
+                            projection: { status: "open", title: null },
+                        },
+                    }],
+                },
+            });
+            await expect(readCurrentPluginCollectionContract({ accountId: ACCOUNT_ID, request: { ref: source } }))
+                .resolves.toMatchObject({ access: "writable" });
+            // An old writer can still commit during preparation. Promotion must
+            // refuse the obsolete stage atomically, then accept a fresh retry.
+            await db.pluginCollectionRow.update({ where: { id: retained.id }, data: { revision: 2 } });
+            await db.pluginCollectionProjection.updateMany({ where: { rowDbId: retained.id }, data: { rowRevision: 2 } });
+            await expect(service.claimCollectionWriters({ accountId: ACCOUNT_ID, input: { manifest: claimManifest([CLAIMED_TASKS_V2]) } }))
+                .rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+            await expect(service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } }))
+                .resolves.toMatchObject({ intent: { writableCollections: [source], revision: "0" } });
+            await retirePluginCollectionCandidatePreparation({ accountId: ACCOUNT_ID, request: { binding } });
+            await stagePluginCollectionCandidatePreparation({
+                accountId: ACCOUNT_ID,
+                request: { binding, items: [{ source: { rowId: retained.rowId, revision: 2 }, target: { content: retained.contentEnvelope, projection: { status: "open", title: null } } }] },
+            });
+            await expect(service.claimCollectionWriters({
+                accountId: ACCOUNT_ID, input: { manifest: claimManifest([CLAIMED_TASKS_V2]) },
+            })).resolves.toMatchObject({
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
+            });
+            const promoted = await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: retained.id } });
+            expect(promoted).toMatchObject({ rowId: retained.rowId, schemaVersion: 2, contentEnvelope: retained.contentEnvelope });
+            await expect(readCurrentPluginCollectionContract({
+                accountId: ACCOUNT_ID, request: { ref: claimedRef(CLAIMED_TASKS_V2) },
+            })).resolves.toMatchObject({ access: "writable" });
+            await expect(db.pluginCollectionCandidatePreparationStage.count({ where: { accountId: ACCOUNT_ID } }))
+                .resolves.toBe(0);
+        });
+
         it("rejoins an identical claim, never lowers a schemaVersion, and refuses an unbumped schema change", async () => {
             await seedAccountAndMachine();
             const service = operations();
@@ -1249,17 +1420,23 @@ describe("plugin Availability operations", () => {
                 input: { manifest: claimManifest([collection], version) },
             });
 
-            await claim(CLAIMED_TASKS_V2);
+            await claim(CLAIMED_TASKS_V1);
+            await expect(claim(CLAIMED_TASKS_V2)).resolves.toMatchObject({
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
+            });
+            await expect(readCurrentPluginCollectionContract({
+                accountId: ACCOUNT_ID, request: { ref: claimedRef(CLAIMED_TASKS_V2) },
+            })).resolves.toMatchObject({ access: "writable" });
             const seqAfterClaim = await readAccountSeq();
 
             await expect(claim(CLAIMED_TASKS_V2)).resolves.toMatchObject({
-                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "0" },
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
             });
             // A lagging machine's lower claim is settled by the monotonic rule:
             // the pointer stays at v2, the newer declaration stays, and nothing
             // semantic changes.
             await expect(claim(CLAIMED_TASKS_V1, "1.2.2")).resolves.toMatchObject({
-                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "0" },
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
             });
             await expect(readAccountSeq()).resolves.toBe(seqAfterClaim);
 
@@ -1278,7 +1455,7 @@ describe("plugin Availability operations", () => {
                 accountId: ACCOUNT_ID,
                 input: { pluginId: PLUGIN_ID },
             })).resolves.toMatchObject({
-                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "0" },
+                intent: { writableCollections: [claimedRef(CLAIMED_TASKS_V2)], revision: "1" },
             });
         });
 

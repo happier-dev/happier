@@ -28,6 +28,7 @@ import type { PreparedLayout1SessionCreate } from "./prepareLayout1SessionCreate
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { restoreSessionTagRejoinInTx } from "./restoreSessionTagRejoinInTx";
 import type { ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions";
+import { readSessionCreationApiTokenIdInTx } from './apiTokenSessionCreationAuthorization';
 
 /**
  * Ordinary released create-or-rejoin identity: `(accountId, tag)` owns
@@ -135,6 +136,9 @@ export async function createOrRejoinLayout1SessionByTagInTx(
     authentication: SessionAccessAuthentication,
     sessionCreationAuthorization?: ExternalActionExecutionAuthorizationBindingV1,
 ): Promise<Layout1SessionCreateOutcome> {
+    // Both fresh creation and the released tag-rejoin mutation consume the
+    // same already-verified invocation inside this transaction.
+    await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
     const invariants = await ensureLayout1SessionCreateInvariantsInTx(tx, prepared);
     if (!invariants.ok) {
         return { kind: "rejected", rejection: invariants.rejection };
@@ -173,7 +177,11 @@ export async function createOrRejoinLayout1SessionByTagInTx(
 export async function rejoinLayout1SessionByTagInTx(
     tx: Tx,
     prepared: PreparedLayout1SessionCreate,
+    sessionCreationAuthorization?: ExternalActionExecutionAuthorizationBindingV1,
 ): Promise<Layout1SessionCreateOutcome | null> {
+    // The unique-insert loser starts a fresh transaction: its original
+    // invocation must still be current before restoring the winner's row.
+    await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
     await acquireAccountSessionOwnerMetadataFenceInTx(tx, prepared.accountId);
     const currentness = await readSessionCreatorCurrentness(tx, prepared.accountId);
     if (currentness?.status === "inactive") {
@@ -218,7 +226,7 @@ export async function createOrRejoinLayout1SessionByTag(
         // A competing Layout-1 create can pass the initial lookup and lose the
         // unique `(accountId, tag)` insert. It must rejoin the winner's atomic
         // placement rather than retrying a placement write of its own.
-        const rejoined = await inTx(async (tx) => rejoinLayout1SessionByTagInTx(tx, prepared));
+        const rejoined = await inTx(async (tx) => rejoinLayout1SessionByTagInTx(tx, prepared, sessionCreationAuthorization));
         if (rejoined === null) throw error;
         if (rejoined.kind === "rejoined" && rejoined.publication) {
             await publishSessionArchiveTransition(rejoined.publication);

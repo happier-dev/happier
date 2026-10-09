@@ -17,6 +17,8 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { Server, Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { resolveSocketMaxHttpBufferSizeFromEnv } from './transportBudget';
+import { getMachineInstallationSocketRoom } from '../socketRooms';
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 
 import { resolveMachineLiveStreamRelayCaps } from '../../machines/peer/mediation/stream/relayCaps';
 import { applyMachineLiveStreamRelayBackpressure } from '../../machines/peer/mediation/stream/metering';
@@ -34,6 +36,8 @@ type MachineLiveStreamRelayState = {
     streamId: string;
     sourceMachineId: string;
     targetMachineId: string;
+    sourceMachineInstallationId: string;
+    targetMachineInstallationId: string;
     // Per-tab viewer target (C3). When set, the watcher is a user-scoped browser socket and
     // relayed frames/controls are delivered directly to that socket (`io.to(viewerSocketId)`)
     // rather than the `machine:<targetMachineId>:<userId>` room the viewer never joins. Empty
@@ -81,13 +85,20 @@ function buildStreamKey(input: Readonly<{
     return `${input.userId}:${input.sourceMachineId}:${input.targetMachineId}:${input.streamId}`;
 }
 
-function machineRoom(userId: string, machineId: string): string {
-    return `machine:${machineId}:${userId}`;
-}
-
 function readMachineId(socket: Socket): string {
     const data = socket.data as { machineId?: unknown; clientType?: unknown };
     return data.clientType === 'machine-scoped' && typeof data.machineId === 'string' ? data.machineId : '';
+}
+
+function readEnvelopeStreamId(envelope: MachineLiveStreamRelayEnvelopeV1): string | null {
+    const message = envelope.message;
+    if (message.kind === 'start' || message.kind === 'renew') return message.startRequest.streamId;
+    if (message.kind === 'frame') return message.frame.streamId;
+    if (message.kind === 'receipt') {
+        const receipt = MachineLiveStreamReceiptV1Schema.safeParse(message.receipt);
+        return receipt.success ? receipt.data.streamId : null;
+    }
+    return message.control.streamId;
 }
 
 function isUserScopedSocket(socket: Socket): boolean {
@@ -133,7 +144,15 @@ function emitToMachine(params: Readonly<{
     machineId: string;
     envelope: MachineLiveStreamRelayEnvelopeV1;
 }>): void {
-    params.io.to(machineRoom(params.userId, params.machineId)).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
+    const streamId = readEnvelopeStreamId(params.envelope);
+    if (!streamId) return;
+    const state = streamStateByKey.get(buildStreamKey({ userId: params.userId,
+        sourceMachineId: params.envelope.sourceMachineId, targetMachineId: params.envelope.targetMachineId, streamId }));
+    if (!state) return;
+    const installationId = params.machineId === state.sourceMachineId ? state.sourceMachineInstallationId
+        : params.machineId === state.targetMachineId ? state.targetMachineInstallationId : null;
+    if (!installationId) return;
+    params.io.to(getMachineInstallationSocketRoom(params.userId, params.machineId, installationId)).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
 }
 
 type EmitToConsumerResult =
@@ -291,6 +310,8 @@ function createState(input: Readonly<{
     streamId: string;
     sourceMachineId: string;
     targetMachineId: string;
+    sourceMachineInstallationId: string;
+    targetMachineInstallationId: string;
     viewerSocketId: string;
     startRequest: MachineLiveStreamStartRequestV1;
     caps: MachineLiveStreamRelayCaps;
@@ -307,6 +328,8 @@ function createState(input: Readonly<{
         streamId: input.streamId,
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
+        sourceMachineInstallationId: input.sourceMachineInstallationId,
+        targetMachineInstallationId: input.targetMachineInstallationId,
         viewerSocketId: input.viewerSocketId,
         startRequest: input.startRequest,
         caps: input.caps,
@@ -703,6 +726,7 @@ export function machineLiveStreamRelayHandler(
     ctx: Readonly<{
         io: RelayIo;
         resolveAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | null>;
+        readMachineAdmission?: (machineId: string) => ReturnType<typeof resolveMachineAdmission>;
         serverRoutedLiveStreamEnabled?: boolean;
         relayCaps?: MachineLiveStreamRelayCaps | null;
         relayAuthorizationTrustRoots?: readonly RelayAuthorizationTrustRoot[];
@@ -717,6 +741,29 @@ export function machineLiveStreamRelayHandler(
     const socketStreamKeys = new Set<MachineLiveStreamKey>();
     let disconnected = false;
     const socketMaxHttpBufferSize = ctx.socketMaxHttpBufferSize ?? resolveSocketMaxHttpBufferSizeFromEnv(process.env);
+    const readMachineAdmission = ctx.readMachineAdmission ?? ((machineId: string) => resolveMachineAdmission({ actorAccountId: userId, machineId }));
+
+    const readCurrentInstallations = async (sourceMachineId: string, targetMachineId: string,
+        expected?: Pick<MachineLiveStreamRelayState, 'sourceMachineInstallationId' | 'targetMachineInstallationId'>,
+    ): Promise<{ sourceMachineInstallationId: string; targetMachineInstallationId: string } | null> => {
+        try {
+            const sourceAdmission = readMachineAdmission(sourceMachineId);
+            const [source, target] = await Promise.all([
+                sourceAdmission,
+                sourceMachineId === targetMachineId ? sourceAdmission : readMachineAdmission(targetMachineId),
+            ]);
+            if (source.kind !== 'admitted' || target.kind !== 'admitted'
+                || source.custodianAccountId !== userId || target.custodianAccountId !== userId
+                || source.actorAccountId !== userId || target.actorAccountId !== userId
+                || (expected && (source.installationId !== expected.sourceMachineInstallationId || target.installationId !== expected.targetMachineInstallationId))) return null;
+            const socketMachineId = readMachineId(socket);
+            if (socketMachineId) {
+                const installationId = socketMachineId === sourceMachineId ? source.installationId : target.installationId;
+                if (socket.data.verifiedMachineInstallationId !== installationId) return null;
+            }
+            return { sourceMachineInstallationId: source.installationId, targetMachineInstallationId: target.installationId };
+        } catch { return null; }
+    };
 
     const emitObservability = (input: Readonly<{
         accountId?: string;
@@ -829,7 +876,8 @@ export function machineLiveStreamRelayHandler(
         }
     };
 
-    socket.on(MACHINE_LIVE_STREAM_SOCKET_EVENT, async (raw: unknown) => {
+    const handleEnvelope = async (envelope: MachineLiveStreamRelayEnvelopeV1): Promise<void> => {
+        if (disconnected) return;
         const socketMachineId = readMachineId(socket);
         // C3: a per-tab viewer is a user-scoped browser socket (not machine-scoped). It may only
         // send consumer-side control (ack/stop/etc.) for a stream minted against its own socket id.
@@ -839,12 +887,6 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        const parsed = MachineLiveStreamRelayEnvelopeV1Schema.safeParse(raw);
-        if (!parsed.success) {
-            emitError(socket, 'invalid_live_stream_payload');
-            return;
-        }
-        const envelope = parsed.data;
         const isSourceSocket = socketMachineId !== '' && envelope.sourceMachineId === socketMachineId;
         const isControlKind = (
             envelope.message.kind === 'control'
@@ -891,10 +933,16 @@ export function machineLiveStreamRelayHandler(
             }
             const streamKey = buildStreamKey({ userId, sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId, streamId });
-            // Socket.IO preserves arrival order but does not await async listeners. Source
-            // frames/results and viewer controls share the same account/viewer admission.
-            const pendingAdmission = pendingStartAdmissionsByKey.get(streamKey);
-            if (pendingAdmission) await pendingAdmission;
+            const state = streamStateByKey.get(streamKey);
+            if (state && !(await readCurrentInstallations(state.sourceMachineId, state.targetMachineId, state))) {
+                const stop = createStateStopControlEnvelope(state, 'machine_unavailable');
+                emitToConsumer({ io: ctx.io, userId, sourceMachineId: state.sourceMachineId,
+                    targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope: stop });
+                emitToMachine({ io: ctx.io, userId, machineId: state.sourceMachineId, envelope: stop });
+                closeStreamWithObservability({ streamKey, kind: 'flow.errored', reasonCode: 'machine_unavailable' });
+                emitError(socket, 'machine_unavailable');
+                return;
+            }
         }
 
         if (envelope.message.kind === 'start') {
@@ -987,6 +1035,11 @@ export function machineLiveStreamRelayHandler(
                     emitError(socket, 'stream_encryption_mode_unavailable');
                     return;
                 }
+                const installations = await readCurrentInstallations(envelope.sourceMachineId, envelope.targetMachineId, streamStateByKey.get(streamKey));
+                if (!installations || disconnected) {
+                    emitError(socket, 'machine_unavailable');
+                    return;
+                }
                 // Ownership and Account reads can outlive the signed admission window.
                 // Re-sample at the synchronous state/resource admission boundary.
                 nowMs = ctx.nowMs?.() ?? Date.now();
@@ -1045,6 +1098,7 @@ export function machineLiveStreamRelayHandler(
                     streamId: startRequest.streamId,
                     sourceMachineId: envelope.sourceMachineId,
                     targetMachineId: envelope.targetMachineId,
+                    ...installations,
                     viewerSocketId,
                     startRequest,
                     caps: { ...serverCaps, ...effectiveCaps },
@@ -1067,12 +1121,7 @@ export function machineLiveStreamRelayHandler(
                     });
                 }
             })();
-            pendingStartAdmissionsByKey.set(streamKey, admission);
-            try {
-                await admission;
-            } finally {
-                if (pendingStartAdmissionsByKey.get(streamKey) === admission) pendingStartAdmissionsByKey.delete(streamKey);
-            }
+            await admission;
             return;
         }
 
@@ -1365,6 +1414,26 @@ export function machineLiveStreamRelayHandler(
             });
             return;
         }
+    };
+
+    socket.on(MACHINE_LIVE_STREAM_SOCKET_EVENT, async (raw: unknown) => {
+        if (!readMachineId(socket) && !isUserScopedSocket(socket)) {
+            emitError(socket, 'machine_scoped_socket_required');
+            return;
+        }
+        const parsed = MachineLiveStreamRelayEnvelopeV1Schema.safeParse(raw);
+        if (!parsed.success) { emitError(socket, 'invalid_live_stream_payload'); return; }
+        const envelope = parsed.data;
+        const streamId = readEnvelopeStreamId(envelope);
+        if (!streamId) { emitError(socket, 'invalid_live_stream_payload'); return; }
+        const streamKey = buildStreamKey({ userId, sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId });
+        // Current DB admission is asynchronous. Preserve the existing stream arrival
+        // order across source frames and viewer controls while each effect is checked.
+        const previous = pendingStartAdmissionsByKey.get(streamKey);
+        const operation = (previous ?? Promise.resolve()).then(() => handleEnvelope(envelope));
+        pendingStartAdmissionsByKey.set(streamKey, operation);
+        try { await operation; }
+        finally { if (pendingStartAdmissionsByKey.get(streamKey) === operation) pendingStartAdmissionsByKey.delete(streamKey); }
     });
 
     socket.on('disconnect', () => {

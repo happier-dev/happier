@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+    QualifiedConnectedAccountCredentialDeleteResponseV4Schema,
+    ManagedResourceDispositionV1Schema,
     QualifiedConnectedAccountConfigurationPatchV4Schema,
     QualifiedConnectedAccountConfigurationSnapshotV4Schema,
     QualifiedConnectedAccountConfigurationTargetV4Schema,
@@ -134,6 +136,9 @@ const CredentialDeleteQuerySchema = z.object({
     ref: z.union([z.string(), z.array(z.string())]),
     expectedCredentialRevision: z.string().trim().min(1).max(128),
     cleanupGroupReferences: z.enum(["true", "false"]),
+    emergencyRevoke: z.enum(["true", "false"]).optional(),
+    reviewOnly: z.enum(["true", "false"]).optional(),
+    managedResourceDispositions: z.union([z.string(), z.array(z.string())]).optional(),
 }).strict();
 const ProviderUsageRecordQuerySchema =
     QualifiedProviderAccountUsageRecordQueryV4Schema;
@@ -504,7 +509,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         schema: {
             querystring: CredentialDeleteQuerySchema,
             response: {
-                200: QualifiedConnectedAccountSuccessV4Schema,
+                200: QualifiedConnectedAccountCredentialDeleteResponseV4Schema,
                 400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: NotFoundResponseSchema,
                 409: QualifiedConnectedAccountCredentialErrorV4Schema,
@@ -512,11 +517,13 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         },
     }, async (request, reply) => {
         let ref;
+        let managedResourceDispositions;
         try {
             ref = parseQualifiedConnectedAccountV4StructuredQueryValue(
                 QualifiedConnectedAccountRefSchema,
                 request.query.ref,
             );
+            if (request.query.managedResourceDispositions !== undefined) managedResourceDispositions = parseQualifiedConnectedAccountV4StructuredQueryValue(z.array(ManagedResourceDispositionV1Schema), request.query.managedResourceDispositions);
         } catch {
             return reply.code(400).send({ error: "invalid-params" });
         }
@@ -527,6 +534,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 request.query.expectedCredentialRevision,
             cleanupGroupReferences:
                 request.query.cleanupGroupReferences === "true",
+            emergencyRevoke: request.query.emergencyRevoke === "true",
+            reviewOnly: request.query.reviewOnly === "true",
+            managedResourceDispositions,
         });
         if (
             result.status === "storage_mode_mismatch"
@@ -544,6 +554,8 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_credential_referenced_by_group",
             });
         }
+        if (result.status === "managed_resources_review_required") return reply.code(409).send({ error: result.status, resources: result.resources });
+        if (result.status === "ready") return reply.send({ status: "ready" });
         if (result.status === "superseded") {
             return reply.code(409).send({
                 error: "connect_credential_mutation_superseded",

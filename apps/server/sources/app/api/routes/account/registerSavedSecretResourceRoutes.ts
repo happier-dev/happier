@@ -265,30 +265,32 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         let result;
         try {
             result = await inTx((tx) => promoteSavedSecretResourceInTx(tx, {
-            accountId: request.userId,
-            authentication: readTeamOperationAuthenticationFromRequest(request),
-            resourceId: body.resourceId,
-            displayName: body.displayName,
-            kind: body.kind,
-            encryptionMode: body.encryptionMode,
-            storedContent: body.storedContent,
-            accountGrants: body.accountGrants,
-            teamGrants: body.teamGrants,
-            groupGrants: body.groupGrants,
-            keyEnvelopes,
-            expectedSettingsVersion: body.expectedSettingsVersion,
-            nextSettings: body.nextSettings,
+                accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
+                resourceId: body.resourceId,
+                displayName: body.displayName,
+                kind: body.kind,
+                encryptionMode: body.encryptionMode,
+                storedContent: body.storedContent,
+                accountGrants: body.accountGrants,
+                teamGrants: body.teamGrants,
+                groupGrants: body.groupGrants,
+                keyEnvelopes,
+                expectedSettingsVersion: body.expectedSettingsVersion,
+                nextSettings: body.nextSettings,
+                referenceCensus: body.referenceCensus,
+                profileMutations: body.profileMutations,
             }));
         } catch (error) {
             if (error instanceof SavedSecretResourceTransactionAbort) {
-                const status = error.error === "settings_conflict" ? 409 : 400;
+                const status = error.error === "settings_conflict" || error.error === 'references_conflict' || error.error === 'resource_changed' ? 409 : 400;
                 return reply.code(status).send({ error: error.error });
             }
             throw error;
         }
         if (!result.ok) {
             const status = result.error === "forbidden" || result.error === "recipient_mode_unsupported" ? 403
-                : result.error === "resource_changed" || result.error === "settings_conflict" ? 409 : 400;
+                : result.error === "resource_changed" || result.error === "settings_conflict" || result.error === 'references_conflict' ? 409 : 400;
             return reply.code(status).send({ error: result.error });
         }
         return reply.send(result.value);
@@ -379,14 +381,27 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         const parsed = SharedSavedSecretDeleteInputV1Schema.safeParse(request.body);
         if (!parsed.success) return reply.code(400).send({ error: "invalid_resource" });
         const body = parsed.data;
-        const result = await inTx((tx) => deleteSavedSecretResourceInTx(tx, {
-            accountId: request.userId,
-            resourceId: body.resourceId,
-            expectedRevision: body.expectedRevision,
-        }));
+        let result;
+        try {
+            result = await inTx((tx) => deleteSavedSecretResourceInTx(tx, {
+                accountId: request.userId,
+                resourceId: body.resourceId,
+                expectedRevision: body.expectedRevision,
+                expectedSettingsVersion: body.expectedSettingsVersion,
+                referenceCensus: body.referenceCensus,
+                managedResourceDispositions: body.managedResourceDispositions,
+            }));
+        } catch (error) {
+            if (error instanceof SavedSecretResourceTransactionAbort) {
+                const status = error.error === 'resource_changed' || error.error === 'references_conflict' || error.error === 'settings_conflict' ? 409 : 400;
+                return reply.code(status).send({ error: error.error });
+            }
+            throw error;
+        }
         if (!result.ok) {
+            if (result.error === "managed_resources_review_required") return reply.code(409).send({ error: result.error, resources: [...result.resources] });
             const status = result.error === "resource_not_found" ? 404
-                : result.error === "resource_changed" ? 409
+                : result.error === "resource_changed" || result.error === 'settings_conflict' || result.error === 'references_conflict' ? 409
                     : result.error === "forbidden" ? 403 : 400;
             return reply.code(status).send({ error: result.error });
         }

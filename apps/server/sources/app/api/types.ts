@@ -16,9 +16,10 @@ import type {
 } from "@happier-dev/protocol";
 import type { AuthTokenAuthenticationEvidenceV1 } from "@happier-dev/protocol";
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
-import type { ExternalActionTargetV1 } from "@happier-dev/protocol/actions";
+import type { ExternalActionTargetV1, ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions";
 import type { ActionId } from "@happier-dev/protocol/actions";
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
+import type { CurrentSessionPublisherAuthority } from '@/app/presence/sessionPublisherPresence';
 
 /**
  * Exact request field that names the Session an HTTP route acts on. A route
@@ -81,6 +82,8 @@ declare module 'fastify' {
         allowScopedApiToken?: true;
         /** Session operation checked through the shared grant and effective-access admission owner. */
         apiTokenSessionAction?: ActionId;
+        /** Exact semantic mode on the existing pending-delete route; unknown/combined values fail closed. */
+        apiTokenSessionActionWhen?: Readonly<{ field: 'withdraw'; equals: 'true'; actionId: ActionId }>;
         /** Account Directory tokens are denied unless a Directory route opts in. */
         allowAccountDirectoryToken?: true;
         /** Released pre-provenance Home credentials are denied when a route family opts out. */
@@ -97,6 +100,8 @@ declare module 'fastify' {
     interface FastifyInstance {
         /** Sole live Session publisher locality resolver; offline locality remains unavailable. */
         resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
+        /** Same publisher owner, exposing its request-local initial-mint fact. */
+        resolveCurrentSessionPublisher?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<CurrentSessionPublisherAuthority | null>;
         disconnectApiTokenSockets?: (tokenIds: readonly string[]) => void;
     }
     interface FastifyRequest {
@@ -117,7 +122,9 @@ declare module 'fastify' {
         sessionRuntimePrincipal?: VerifiedEphemeralSessionRunnerPrincipal;
         /** Exact Machine-bound external Action proof admitted this request. */
         externalActionExecutionAuthorized?: true;
-        /** Immutable invocation grant constraints from the verified proof, not the later current grant. */
+        /** Exact immutable binding admitted by the installed execution proof. */
+        externalActionExecutionAuthorizationBinding?: ExternalActionExecutionAuthorizationBindingV1;
+        /** Immutable caller input ceiling from verified invocation admission, not a later PAT grant. */
         externalActionInputConstraints?: CallerInputConstraintsV1;
         /** Effect id from the verified Machine signature; never read from caller input. */
         externalActionEffectActionId?: string;
@@ -125,6 +132,16 @@ declare module 'fastify' {
         externalActionRootActionId?: string;
         /** Exact target from the verified Machine signature; never read from route input. */
         externalActionExecutionTarget?: ExternalActionTargetV1;
+        /** Exact admitted request correlation, stamped only after Machine-signature verification. */
+        externalActionExecutionRequestId?: string;
+        /** Digest from the incumbent admitted Action envelope; private correlation only. */
+        externalActionExecutionRequestEnvelopeDigest?: string;
+        /** Current installation whose signature admitted the protected request body. */
+        externalActionExecutionMachineId?: string;
+        /** Custodian from the verified execution binding, independent of requester principal. */
+        externalActionExecutionCustodianAccountId?: string;
+        /** Home-derived retained guest scope; only verified controller signatures stamp it. */
+        externalActionManagedGuestActivity?: Readonly<{ machineId: string; installationId: string; encryptionMode: 'plain' | 'e2ee' }>;
         startTime?: number;
         accountStoredContentCompatibility?: AccountStoredContentCompatibilityEvaluation;
     }

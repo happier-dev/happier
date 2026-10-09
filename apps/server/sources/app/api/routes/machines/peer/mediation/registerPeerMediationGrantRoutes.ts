@@ -28,9 +28,8 @@ import {
 import { readMachineLiveStreamFeatureEnv, readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     readAvailableMachineIrohEndpointAuthority,
-    readMachineAvailabilityState,
-    type MachineAvailabilityState,
 } from "@/app/machines/machineStateGuards";
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import {
     createServerFeatureGatePreHandler,
     isPeerMediationGrantSigningAdvertisedForRequest,
@@ -46,10 +45,12 @@ import { resolveMachineLiveStreamRelayCaps } from "@/app/machines/peer/mediation
 import { mintMachineLiveStreamRelayAuthorizationV1 } from "@/app/machines/peer/mediation/stream";
 import { mintPeerTcpTunnelRelayAuthorizationV2 } from "@/app/machines/peer/mediation/tunnel";
 import type { PeerMediationViewerSocketOwnershipVerifier } from "@/app/api/socket/viewerSocketOwnership";
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 type PeerMediationGrantRouteRequest = Readonly<{
     body?: unknown;
     userId?: unknown;
+    authAuthority?: "present_user" | "account_automation";
 }>;
 
 type RoutePreHandlerArray = Extract<NonNullable<RouteShorthandOptions["preHandler"]>, readonly unknown[]>;
@@ -65,17 +66,6 @@ type PeerMediationGrantRouteApp = Readonly<{
     ) => void;
 }>;
 
-/**
- * Ownership-state reader (C2). The mint route signs client-supplied machine ids; before signing
- * ANY grant we must confirm each referenced machine is an `available` machine owned by the
- * authenticated account. Injectable so route tests can supply ownership facts without a live db;
- * the production default reads `db.machine` via `readMachineAvailabilityState`.
- */
-export type PeerMediationMachineOwnershipReader = (params: Readonly<{
-    accountId: string;
-    machineId: string;
-}>) => Promise<MachineAvailabilityState>;
-
 export type PeerMediationMachineIrohEndpointAuthorityReader = (params: Readonly<{
     accountId: string;
     machineId: string;
@@ -84,28 +74,9 @@ export type PeerMediationMachineIrohEndpointAuthorityReader = (params: Readonly<
 export type RegisterPeerMediationGrantRoutesOptions = Readonly<{
     env?: NodeJS.ProcessEnv;
     nowMs?: () => number;
-    readMachineOwnershipState?: PeerMediationMachineOwnershipReader;
     readMachineIrohEndpointAuthority?: PeerMediationMachineIrohEndpointAuthorityReader;
     verifyViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;
 }>;
-
-/**
- * Maps a non-available ownership state to the grant-rejection reason code (C2). `available`
- * returns null (passes). A `missing` machine covers the "a profile id is never accepted as a
- * machine id" case — a profile id will never resolve to an owned `db.machine` row.
- */
-function ownershipRejectionReasonCode(state: MachineAvailabilityState): string | null {
-    switch (state) {
-        case "available":
-            return null;
-        case "revoked":
-            return "machine_revoked";
-        case "replaced":
-            return "machine_replaced";
-        case "missing":
-            return "machine_not_owned";
-    }
-}
 
 const LoopbackPeerMediationGrantRequestSchema = z.object({
     machineId: z.string().min(1),
@@ -259,7 +230,6 @@ export function registerPeerMediationGrantRoutes(
 ): void {
     const env = options.env ?? process.env;
     const nowMs = options.nowMs ?? Date.now;
-    const readMachineOwnershipState = options.readMachineOwnershipState ?? readMachineAvailabilityState;
     const readMachineIrohEndpointAuthority =
         options.readMachineIrohEndpointAuthority ?? readAvailableMachineIrohEndpointAuthority;
     const verifyViewerSocketOwnership =
@@ -273,10 +243,14 @@ export function registerPeerMediationGrantRoutes(
     async function rejectUnlessMachinesOwned(
         accountId: string,
         machineIds: readonly string[],
+        sharedReasonCode: 'route_unavailable' | 'machine_rpc_method_server_required' = 'route_unavailable',
     ): Promise<{ ok: false; reasonCode: string; receipt: string } | null> {
         for (const machineId of new Set(machineIds)) {
-            const state = await readMachineOwnershipState({ accountId, machineId });
-            const reasonCode = ownershipRejectionReasonCode(state);
+            const admission = await resolveMachineAdmission({ actorAccountId: accountId, machineId });
+            // Existing signed carriers have one Account identity, not separate
+            // actor/custodian currentness. A share cannot authorize such a ticket.
+            const reasonCode = admission.kind === 'denied' ? admission.code
+                : admission.custodianAccountId !== accountId ? sharedReasonCode : null;
             if (reasonCode) {
                 return {
                     ok: false,
@@ -449,17 +423,17 @@ export function registerPeerMediationGrantRoutes(
                 });
             }
 
-            const ownershipRejection = await rejectUnlessMachinesOwned(accountId, [
-                parsed.data.machineId,
-                parsed.data.targetMachineId,
-            ]);
-            if (ownershipRejection) return ownershipRejection;
             const viewerSocketOwnershipRejection = await rejectUnlessUserSocketOwned(
                 accountId,
                 parsed.data.viewerSocketId,
                 "viewer_socket_not_owned",
             );
             if (viewerSocketOwnershipRejection) return viewerSocketOwnershipRejection;
+            const ownershipRejection = await rejectUnlessMachinesOwned(accountId, [
+                parsed.data.machineId,
+                parsed.data.targetMachineId,
+            ]);
+            if (ownershipRejection) return ownershipRejection;
 
             const featureEnv = readMachineLiveStreamFeatureEnv(env);
             if (!featureEnv.serverRoutedEnabled || !featureEnv.serverRoutedCaps) {
@@ -515,7 +489,7 @@ export function registerPeerMediationGrantRoutes(
             ...(irohBinding?.initiator.kind === "machine"
                 ? [irohBinding.initiator.machineId]
                 : []),
-        ]);
+        ], parsed.data.flowKind === 'machine_rpc' ? 'machine_rpc_method_server_required' : 'route_unavailable');
         if (directOwnershipRejection) return directOwnershipRejection;
         if (irohBinding) {
             const endpointAuthorityRejection = await rejectUnlessIrohMachineEndpointsCurrent(
@@ -548,6 +522,11 @@ export function registerPeerMediationGrantRoutes(
             return mintDirectRouteGrantV2({
                 ...directGrantInput,
                 scope: parsed.data.scope,
+                ...(parsed.data.scope.kind === 'machine_rpc'
+                    && parsed.data.scope.allowedMethods.some(method => method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
+                        || method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START)
+                    ? { callerAuthority: request.authAuthority === 'present_user' ? 'present_user' as const : 'account_automation' as const }
+                    : {}),
                 ...(irohBinding ? { iroh: irohBinding } : {}),
                 ephemeralPublicKeyBase64Url: parsed.data.ephemeralPublicKeyBase64Url,
             });

@@ -56,16 +56,19 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
 import { createAutomationReplyHandoffDaemonDispatcher } from "./socket/automationReplyHandoffDispatcher";
-import { createExternalActionDaemonDispatcher, resolveCurrentSessionMachineFromServer } from "./socket/externalActionDispatcher";
+import { createExternalActionDaemonDispatcher, resolveCurrentSessionMachineFromServer, resolveCurrentSessionPublisherFromServer } from "./socket/externalActionDispatcher";
 import {
     createSessionServerStartAutomationIngress,
     createSessionServerStartDaemonDispatcher,
 } from "./socket/sessionServerStartDispatcher";
 import { resolveVerifiedMachineSocketInstallationId } from "./socket/machineSocketInstallationProof";
+import { installSessionPublisherCredentialCurrentness } from "./socket/socketCredentialCurrentness";
+import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import {
     getAccountRevocationSocketRoom,
     getApiTokenRevocationSocketRoom,
     getAccountTerminalSocketRoom,
+    getMachineInstallationSocketRoom,
     getProtectedSocketRooms,
     type SocketClientType,
 } from "./socketRooms";
@@ -76,6 +79,7 @@ import {
     getRedisSocketClusterAdapterClient,
 } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
+import { forwardRpcCall } from './socket/rpc/forwardRpcCall';
 import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
@@ -290,6 +294,9 @@ export function startSocket(app: Fastify) {
         ...input, io, presence: sessionPublisherPresence,
     });
     app.resolveCurrentSessionMachine = resolveCurrentSessionMachine;
+    app.resolveCurrentSessionPublisher = input => resolveCurrentSessionPublisherFromServer({
+        ...input, io, presence: sessionPublisherPresence,
+    });
     const humanPresence = createSessionHumanPresenceService({
         io,
         clusterAccessChangePublicationEnabled: shouldEnableRedisAdapter,
@@ -354,7 +361,7 @@ export function startSocket(app: Fastify) {
     });
     const verifyPeerMediationViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier(io);
     app.verifyPeerMediationViewerSocketOwnership = verifyPeerMediationViewerSocketOwnership;
-    eventRouter.setIo(io);
+    eventRouter.setIo(io, { forwardRpc: (request) => forwardRpcCall({ io, ...request }) });
     io.on(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, (delivery: unknown) => {
         void eventRouter.receiveCredentialQualifiedSessionDelivery(io.local, delivery);
     });
@@ -398,7 +405,10 @@ export function startSocket(app: Fastify) {
                 }
             },
             emit: () => undefined,
-        }, tunnelRelayHandlerOptions);
+        }, {
+            ...tunnelRelayHandlerOptions,
+            readMachineAdmission: (machineId: string) => resolveMachineAdmission({ actorAccountId: accountId, machineId }),
+        });
 
         return {
             relaySocketId: transport.relaySocketId,
@@ -812,6 +822,9 @@ export function startSocket(app: Fastify) {
                 !handshakeEphemeralRunnerAdmission
                 && readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol,
         });
+        if (clientType === 'machine-scoped' && machineId && typeof socket.data.verifiedMachineInstallationId === 'string') {
+            protectedRooms.push(getMachineInstallationSocketRoom(userId, machineId, socket.data.verifiedMachineInstallationId));
+        }
 
         log(
             {
@@ -1105,6 +1118,9 @@ export function startSocket(app: Fastify) {
             });
         }
         if (ephemeralRunnerAdmission?.kind !== "machine-runtime") {
+            if (!ephemeralRunnerAdmission && sessionBinding?.proof === "machine-access-key") {
+                installSessionPublisherCredentialCurrentness(userId, socket);
+            }
             sessionUpdateHandler(
                 userId,
                 socket,
@@ -1147,6 +1163,7 @@ export function startSocket(app: Fastify) {
             });
             machineLiveStreamRelayHandler(userId, socket, {
                 io,
+                readMachineAdmission: (machineId: string) => resolveMachineAdmission({ actorAccountId: userId, machineId }),
                 socketMaxHttpBufferSize,
                 resolveAccountEncryptionMode: async () => {
                     const account = await db.account.findUnique({ where: { id: userId }, select: { encryptionMode: true } });
@@ -1183,6 +1200,7 @@ export function startSocket(app: Fastify) {
         ) {
             registerPeerTcpTunnelRelaySocketHandler(userId, socket, {
                 ...tunnelRelayHandlerOptions,
+                readMachineAdmission: (machineId: string) => resolveMachineAdmission({ actorAccountId: userId, machineId }),
             });
         }
 

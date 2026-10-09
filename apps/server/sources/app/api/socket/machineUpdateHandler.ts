@@ -29,7 +29,10 @@ import {
     MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
     SessionPendingEnqueueByMachineRequestV1Schema,
     isPlainMachineDataKeyMarker,
+    machineStoredContentMatchesAccountMode,
     machineUpdateMatchesStoredMode,
+    decodePlainMachineStoredContent,
+    isMachinePublishedContentSafeV1,
     type ExternalSessionOperationSocketBatchLimitResolutionV1,
     type MachineUpdateMetadataResponse,
     type MachineSessionTerminalCaptureResponseV1,
@@ -37,6 +40,7 @@ import {
     type SessionServerStartIngressResponseV1,
 } from "@happier-dev/protocol";
 import { projectActionOperationSnapshotPush } from './actionOperationSnapshotPush';
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { enqueuePendingMessageByAuthenticatedMachine } from "@/app/session/pending/pendingMessageService";
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
@@ -61,6 +65,15 @@ import {
 } from "@happier-dev/protocol/teams";
 import { retireExternalBrokerOperationInTx } from "@/app/teams/credentials/externalBrokerOperation";
 import { verifyExternalActionMachineRpcExecution } from "@/app/auth/externalActionExecutionAuthorization";
+import * as privacyKit from "privacy-kit";
+import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
+import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
+import { MachineUpdateStateRequestSchema, type MachineUpdateStateResponse } from "@happier-dev/protocol/machines/metadataUpdate";
+import {
+    resolveMachineAdmissionInTx,
+    resolveMachineAccessInTx,
+    resolveCurrentMachineRecipientAccountIdsInTx,
+} from "@/app/machines/machineAccess";
 
 function readMarkedMachineSocketUpgradeRequired(
     socket: Socket,
@@ -92,6 +105,27 @@ function readSocketMachineIdentity(socket: Socket): {
 function readAuthenticatedMachineId(socket: Socket): string | null {
     const { clientType, machineId } = readSocketMachineIdentity(socket);
     return clientType === 'machine-scoped' ? machineId : null;
+}
+
+function hasCurrentMachineSocketInstallation(socket: Socket, installationId: string | null): boolean {
+    if (!readAuthenticatedMachineId(socket)) return true;
+    if (installationId === null) return false;
+    return readVerifiedMachineSocketInstallationIdFromSocketData(socket.data) === installationId;
+}
+
+function encodedMachineEnvelope(dataEncryptionKey: Uint8Array<ArrayBuffer> | null): string | null {
+    return dataEncryptionKey === null ? null : privacyKit.encodeBase64(dataEncryptionKey);
+}
+
+function isSafePlainMachinePublication(metadata: string, daemonState: string | null): boolean {
+    try {
+        return isMachinePublishedContentSafeV1({
+            metadata: decodePlainMachineStoredContent(metadata),
+            daemonState: daemonState === null ? null : decodePlainMachineStoredContent(daemonState),
+        });
+    } catch {
+        return false;
+    }
 }
 
 function resolveMachineScopedPayloadMachineId(socket: Socket, payloadMachineId: unknown): string | null {
@@ -263,7 +297,7 @@ export function machineUpdateHandler(
                     localId: parsed.data.localId,
                     content: parsed.data.content,
                     requestedAction: parsed.data.requestedAction,
-                    ...(verifiedInvocation ? { callerInputConstraints: {
+                    ...(verifiedInvocation && 'grant' in verifiedInvocation.binding ? { callerInputConstraints: {
                         models: verifiedInvocation.binding.grant.models,
                         permissionModes: verifiedInvocation.binding.grant.permissionModes,
                     } } : {}),
@@ -459,14 +493,21 @@ export function machineUpdateHandler(
         }
     });
 
-    const handleActionOperationSnapshotPush = (raw: unknown) => {
-        const payload = projectActionOperationSnapshotPush(raw, readAuthenticatedMachineId(socket));
-        if (!payload) return;
-        eventRouter.emitEphemeral({
-            userId,
-            payload,
-            recipientFilter: { type: 'user-scoped-only' },
-        });
+    const handleActionOperationSnapshotPush = async (raw: unknown) => {
+        try {
+            if (!await hasCurrentSocketCredential(userId, socket)) return;
+            const account = await db.account.findUnique({ where: { id: userId }, select: { encryptionMode: true } });
+            if (!account) return;
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+            if (mode.status !== 'ready') return;
+            const payload = projectActionOperationSnapshotPush(raw, readAuthenticatedMachineId(socket), {
+                accountId: userId, encryptionMode: mode.mode,
+            });
+            if (!payload || !await hasCurrentSocketCredential(userId, socket)) return;
+            eventRouter.emitEphemeral({ userId, payload, recipientFilter: { type: 'user-scoped-only' } });
+        } catch {
+            // Unavailable Account admission cannot disclose an operation observation.
+        }
     };
     socket.on(ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1, handleActionOperationSnapshotPush);
     socket.on(ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, handleActionOperationSnapshotPush);
@@ -556,12 +597,34 @@ export function machineUpdateHandler(
                 return;
             }
 
+            if (!(await hasCurrentSocketCredential(userId, socket))) {
+                return;
+            }
+
             // Check machine validity using cache
             const isValid = await activityCache.isMachineValid(machineId, userId);
             if (!isValid) {
                 return;
             }
-            if (!(await isMachineAvailableForSocket(userId, machineId))) {
+            const recipientAccountIds = await inTx(async tx => {
+                const machine = await tx.machine.findUnique({
+                    where: { id: machineId },
+                    select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true },
+                });
+                if (!machine) return null;
+                if (machine.installationId === null) {
+                    // Released uninstalled custodian daemons have no installation
+                    // proof. This adapter retains only their owned heartbeat;
+                    // installed publishers always consume C41 admission below.
+                    if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available') return null;
+                } else {
+                    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
+                    if (admission.kind !== 'admitted' || admission.custodianAccountId !== userId
+                        || !hasCurrentMachineSocketInstallation(socket, admission.installationId)) return null;
+                }
+                return await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
+            });
+            if (!recipientAccountIds) {
                 activityCache.invalidateMachine(machineId);
                 return;
             }
@@ -570,11 +633,13 @@ export function machineUpdateHandler(
             await recordMachineAlive({ accountId: userId, machineId, timestamp: t });
 
             const machineActivity = buildMachineActivityEphemeral(machineId, true, t);
-            eventRouter.emitEphemeral({
-                userId,
-                payload: machineActivity,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
+            for (const accountId of recipientAccountIds) {
+                eventRouter.emitEphemeral({
+                    userId: accountId,
+                    payload: machineActivity,
+                    recipientFilter: { type: 'user-scoped-only' },
+                });
+            }
         } catch {
             log(
                 {
@@ -705,8 +770,15 @@ export function machineUpdateHandler(
                 return;
             }
             await inTx(async (tx) => {
+                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
+                if (admission.kind !== 'admitted'
+                    || admission.custodianAccountId !== userId
+                    || !hasCurrentMachineSocketInstallation(socket, admission.installationId)) {
+                    afterTx(tx, () => callback?.({ v: 1, result: 'error', code: 'machine_unavailable' }));
+                    return null;
+                }
                 const machine = await tx.machine.findFirst({
-                    where: { accountId: userId, id: machineId },
+                    where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
                     select: {
                         operationProtocolCapabilitiesRevision: true,
                         revokedAt: true,
@@ -727,6 +799,7 @@ export function machineUpdateHandler(
                     where: {
                         accountId: userId,
                         id: machineId,
+                        installationId: admission.installationId,
                         revokedAt: null,
                         replacedByMachineId: null,
                         operationProtocolCapabilitiesRevision: expectedRevision,
@@ -739,23 +812,22 @@ export function machineUpdateHandler(
                 if (count !== 1) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { revokedAt: true, replacedByMachineId: true },
+                        select: { revokedAt: true, replacedByMachineId: true, installationId: true },
                     });
                     afterTx(tx, () => callback?.({
                         v: 1,
                         result: 'error',
                         code: classifyMachineAvailabilityState(fresh) === 'available'
+                            && fresh?.installationId === admission.installationId
                             ? 'internal_error'
                             : 'machine_unavailable',
                     }));
                     return null;
                 }
 
-                await markAccountChanged(tx, {
-                    accountId: userId,
-                    kind: 'machine',
-                    entityId: machineId,
-                });
+                for (const accountId of await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)) {
+                    await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
+                }
                 afterTx(tx, () => callback?.({
                     v: 1,
                     result: 'success',
@@ -795,7 +867,7 @@ export function machineUpdateHandler(
                 }
                 return;
             }
-            const { metadata, expectedVersion } = parsed.data;
+            const { metadata, expectedVersion, expectedDataEncryptionKey } = parsed.data;
 
             if (!await hasCurrentSocketCredential(userId, socket)) {
                 callback?.({ result: 'error', message: 'Forbidden' });
@@ -803,12 +875,22 @@ export function machineUpdateHandler(
                 return;
             }
             await inTx(async (tx) => {
+                // Metadata is an offline content edit, not installation execution admission.
+                // The canonical access owner keeps a legacy owner's nullable installation valid.
+                const admission = await resolveMachineAccessInTx(tx, { actorAccountId: userId, machineId });
+                if (!admission || admission.role !== 'manage' || admission.accessState !== 'ready') {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Forbidden' }));
+                    return null;
+                }
                 const machine = await tx.machine.findFirst({
-                    where: { accountId: userId, id: machineId },
+                    where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
                     select: {
                         metadataVersion: true,
+                        daemonStateVersion: true,
                         metadata: true,
+                        daemonState: true,
                         dataEncryptionKey: true,
+                        installationId: true,
                         revokedAt: true,
                         replacedByMachineId: true,
                     },
@@ -826,6 +908,14 @@ export function machineUpdateHandler(
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                     return null;
                 }
+                if (!hasCurrentMachineSocketInstallation(socket, machine.installationId)) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
+                    return null;
+                }
+                if (encodedMachineEnvelope(machine.dataEncryptionKey) !== expectedDataEncryptionKey) {
+                    afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
+                    return null;
+                }
                 const upgradeRequired =
                     readMarkedMachineSocketUpgradeRequired(
                         socket,
@@ -835,10 +925,11 @@ export function machineUpdateHandler(
                     afterTx(tx, () => callback?.(upgradeRequired));
                     return null;
                 }
-                if (!machineUpdateMatchesStoredMode({
+                if (!machineStoredContentMatchesAccountMode({
+                    mode: admission.encryptionMode,
                     dataEncryptionKey: machine.dataEncryptionKey,
                     metadata,
-                })) {
+                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication(metadata, machine.daemonState))) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
                     return null;
                 }
@@ -849,14 +940,18 @@ export function machineUpdateHandler(
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
+                    where: {
+                        accountId: admission.custodianAccountId, id: machineId, metadataVersion: expectedVersion,
+                        dataEncryptionKey: machine.dataEncryptionKey, installationId: machine.installationId,
+                        revokedAt: null, replacedByMachineId: null,
+                    },
                     data: { metadata, metadataVersion: expectedVersion + 1 },
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
-                        where: { accountId: userId, id: machineId },
-                        select: { metadataVersion: true, metadata: true, revokedAt: true, replacedByMachineId: true },
+                        where: { accountId: admission.custodianAccountId, id: machineId },
+                        select: { metadataVersion: true, metadata: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true },
                     });
                     const freshState = classifyMachineAvailabilityState(fresh);
                     if (freshState === "revoked") {
@@ -871,21 +966,38 @@ export function machineUpdateHandler(
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
                         return null;
                     }
+                    if (fresh.installationId !== admission.installationId
+                        || !hasCurrentMachineSocketInstallation(socket, fresh.installationId)) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
+                        return null;
+                    }
+                    if (encodedMachineEnvelope(fresh.dataEncryptionKey) !== expectedDataEncryptionKey) {
+                        afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
+                        return null;
+                    }
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh.metadataVersion, metadata: fresh.metadata }));
                     return null;
                 }
 
-                const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: machineId });
                 const metadataUpdate = { value: metadata, version: expectedVersion + 1 };
-                afterTx(tx, () => {
-                    const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), metadataUpdate);
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: updatePayload,
-                        recipientFilter: { type: 'machine-scoped-only', machineId }
+                const child = await readMachineDevcontainerChildInTx(tx, machineId);
+                for (const accountId of await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)) {
+                    const access = await resolveMachineAccessInTx(tx, { actorAccountId: accountId, machineId });
+                    const devcontainerChild = access?.accessState === 'ready' ? child : null;
+                    const cursor = await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
+                    afterTx(tx, () => {
+                        const updatePayload = buildUpdateMachineUpdate(machineId, cursor, randomKeyNaked(12), metadataUpdate, undefined, {
+                            keyBasis: serializeMachineKeyBasis({ ...machine, metadataVersion: expectedVersion + 1 }),
+                            devcontainerChild,
+                        });
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload: updatePayload,
+                            recipientFilter: { type: 'machine-scoped-only', machineId },
+                        });
                     });
-                    callback?.({ result: 'success', version: expectedVersion + 1, metadata });
-                });
+                }
+                afterTx(tx, () => callback?.({ result: 'success', version: expectedVersion + 1, metadata }));
                 return null;
             });
         } catch {
@@ -905,18 +1017,19 @@ export function machineUpdateHandler(
     });
 
     // Machine daemon state update with optimistic concurrency control
-    socket.on('machine-update-state', async (data: any, callback: (response: any) => void) => {
+    socket.on('machine-update-state', async (data: unknown, callback: (response: MachineUpdateStateResponse) => void) => {
         try {
-            const { daemonState, expectedVersion } = data;
-            const machineId = resolveMachineScopedPayloadMachineId(socket, data?.machineId);
+            const parsed = MachineUpdateStateRequestSchema.safeParse(data);
+            const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
 
             // Validate input
-            if (!machineId || typeof daemonState !== 'string' || typeof expectedVersion !== 'number') {
+            if (!parsed.success || !machineId) {
                 if (callback) {
                     callback({ result: 'error', message: 'Invalid parameters' });
                 }
                 return;
             }
+            const { daemonState, expectedVersion, expectedDataEncryptionKey } = parsed.data;
 
             if (!await hasCurrentSocketCredential(userId, socket)) {
                 callback?.({ result: 'error', message: 'Forbidden' });
@@ -924,12 +1037,22 @@ export function machineUpdateHandler(
                 return;
             }
             await inTx(async (tx) => {
+                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
+                if (admission.kind !== 'admitted'
+                    || admission.custodianAccountId !== userId
+                    || !hasCurrentMachineSocketInstallation(socket, admission.installationId)) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Forbidden' }));
+                    return null;
+                }
                 const machine = await tx.machine.findFirst({
-                    where: { accountId: userId, id: machineId },
+                    where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
                     select: {
                         daemonStateVersion: true,
+                        metadataVersion: true,
                         daemonState: true,
+                        metadata: true,
                         dataEncryptionKey: true,
+                        installationId: true,
                         revokedAt: true,
                         replacedByMachineId: true,
                     },
@@ -947,6 +1070,14 @@ export function machineUpdateHandler(
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                     return null;
                 }
+                if (!hasCurrentMachineSocketInstallation(socket, machine.installationId)) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
+                    return null;
+                }
+                if (encodedMachineEnvelope(machine.dataEncryptionKey) !== expectedDataEncryptionKey) {
+                    afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
+                    return null;
+                }
                 const upgradeRequired =
                     readMarkedMachineSocketUpgradeRequired(
                         socket,
@@ -956,10 +1087,14 @@ export function machineUpdateHandler(
                     afterTx(tx, () => callback?.(upgradeRequired));
                     return null;
                 }
-                if (!machineUpdateMatchesStoredMode({
-                    dataEncryptionKey: machine.dataEncryptionKey,
+                if (!machineUpdateMatchesStoredMode({ dataEncryptionKey: machine.dataEncryptionKey, daemonState })
+                    || !machineStoredContentMatchesAccountMode({
+                    mode: admission.encryptionMode,
+                    metadata: machine.metadata,
                     daemonState,
-                })) {
+                    dataEncryptionKey: machine.dataEncryptionKey,
+                    storedRead: true,
+                }) || (admission.encryptionMode === 'plain' && !isSafePlainMachinePublication(machine.metadata, daemonState))) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Invalid parameters' }));
                     return null;
                 }
@@ -971,7 +1106,11 @@ export function machineUpdateHandler(
 
                 const activeAt = Date.now();
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null, replacedByMachineId: null },
+                    where: {
+                        accountId: userId, id: machineId, daemonStateVersion: expectedVersion,
+                        dataEncryptionKey: machine.dataEncryptionKey, installationId: machine.installationId,
+                        revokedAt: null, replacedByMachineId: null,
+                    },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
@@ -983,7 +1122,7 @@ export function machineUpdateHandler(
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { daemonStateVersion: true, daemonState: true, revokedAt: true, replacedByMachineId: true },
+                        select: { daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true },
                     });
                     const freshState = classifyMachineAvailabilityState(fresh);
                     if (freshState === "revoked") {
@@ -994,31 +1133,41 @@ export function machineUpdateHandler(
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine replaced' }));
                         return null;
                     }
-                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.daemonStateVersion ?? expectedVersion, daemonState: fresh?.daemonState }));
+                    if (!fresh) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
+                        return null;
+                    }
+                    if (!hasCurrentMachineSocketInstallation(socket, fresh.installationId)) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine installation changed' }));
+                        return null;
+                    }
+                    if (encodedMachineEnvelope(fresh.dataEncryptionKey) !== expectedDataEncryptionKey) {
+                        afterTx(tx, () => callback?.({ result: 'key-mismatch' }));
+                        return null;
+                    }
+                    afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh.daemonStateVersion, daemonState: fresh.daemonState }));
                     return null;
                 }
 
-                const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: machineId });
                 const daemonStateUpdate = { value: daemonState, version: expectedVersion + 1 };
-                afterTx(tx, () => {
-                    const updatePayload = buildUpdateMachineUpdate(
-                        machineId,
-                        cursor,
-                        randomKeyNaked(12),
-                        undefined,
-                        daemonStateUpdate,
-                        {
-                            active: true,
-                            activeAt,
-                        },
-                    );
-                    eventRouter.emitUpdate({
-                        userId,
-                        payload: updatePayload,
-                        recipientFilter: { type: 'machine-scoped-only', machineId }
+                const child = await readMachineDevcontainerChildInTx(tx, machineId);
+                for (const accountId of await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)) {
+                    const access = await resolveMachineAccessInTx(tx, { actorAccountId: accountId, machineId });
+                    const devcontainerChild = access?.accessState === 'ready' ? child : null;
+                    const cursor = await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
+                    afterTx(tx, () => {
+                        const updatePayload = buildUpdateMachineUpdate(
+                            machineId, cursor, randomKeyNaked(12), undefined, daemonStateUpdate,
+                            { active: true, activeAt, keyBasis: serializeMachineKeyBasis({ ...machine, daemonStateVersion: expectedVersion + 1 }), devcontainerChild },
+                        );
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload: updatePayload,
+                            recipientFilter: { type: 'machine-scoped-only', machineId },
+                        });
                     });
-                    callback?.({ result: 'success', version: expectedVersion + 1, daemonState });
-                });
+                }
+                afterTx(tx, () => callback?.({ result: 'success', version: expectedVersion + 1, daemonState }));
                 return null;
             });
         } catch {

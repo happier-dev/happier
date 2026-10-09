@@ -142,6 +142,7 @@ export function pluginDataRoutes(app: Fastify): void {
                 400: PluginAccountDataEraseServerErrorV1Schema,
                 403: PluginAccountDataEraseServerErrorV1Schema,
                 404: PluginAccountDataEraseServerOutputV1Schema,
+                409: PluginAccountDataEraseServerErrorV1Schema,
                 426: AccountStoredContentUpgradeRequiredV1Schema,
             },
         },
@@ -162,7 +163,11 @@ export function pluginDataRoutes(app: Fastify): void {
         const result = await erasePluginAccountData({
             accountId: request.userId,
             pluginId: request.body.pluginId,
+            managedResourceDispositions: request.body.managedResourceDispositions,
         });
+        if (result.status === "managed-resources-review-required") {
+            return await reply.code(409).send({ error: "managed_resources_review_required", resources: [...result.resources] });
+        }
         if (result.status === "account-not-found") {
             return await reply.code(404).send(result);
         }

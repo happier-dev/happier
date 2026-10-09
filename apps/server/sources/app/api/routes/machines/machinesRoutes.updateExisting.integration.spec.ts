@@ -1,169 +1,127 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
-import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
-import { createInTxHarness } from "../../testkit/txHarness";
+import { randomBytes, randomUUID } from "node:crypto";
+import tweetnacl from "tweetnacl";
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { encryptWithDataKey, decryptWithDataKey } from "../../../../../../cli/src/api/encryption";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { machinesRoutes } from "./machinesRoutes";
 
-const markAccountChanged = vi.fn(async () => 123);
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
-vi.mock("@/app/changes/markAccountChangedAfterCommit", () => ({ markAccountChangedAfterCommit: vi.fn(async () => 123) }));
+describe("machinesRoutes canonical repeated registration (SQLite)", () => {
+    let harness: LightSqliteHarness;
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-registration-", initAuth: false });
+    }, 120_000);
+    afterEach(async () => {
+        await db.machine.deleteMany();
+        await db.account.deleteMany();
+    });
+    afterAll(async () => { if (harness) await harness.close(); });
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-
-// Keep event routing out of scope for this behavior test.
-vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate: vi.fn() },
-    buildNewMachineUpdate: vi.fn(),
-    buildUpdateMachineUpdate: vi.fn(),
-}));
-vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd") }));
-
-const existingMachine = {
-    id: "m1",
-    accountId: "u1",
-    metadata: "meta-old",
-    metadataVersion: 1,
-    daemonState: null,
-    daemonStateVersion: 0,
-    dataEncryptionKey: new Uint8Array([0, 9, 9, 9]),
-    seq: 1,
-    active: true,
-    lastActiveAt: new Date(1),
-    createdAt: new Date(1),
-    updatedAt: new Date(1),
-};
-const accountContentBinding = createSignedAccountContentBinding();
-
-const dbMocks = createDbMocks({
-    machine: ["findFirst", "findUnique"],
-    account: ["findUnique"],
-} as const);
-const txDbMocks = createDbMocks({
-    accessKey: ["deleteMany"],
-    machine: ["create", "findFirst", "update"],
-} as const);
-
-installDbModuleMock(() => ({
-    db: dbMocks.db,
-    isPrismaErrorCode: () => false,
-}));
-
-const harness = createInTxHarness(() => ({
-    accessKey: txDbMocks.db.accessKey,
-    machine: txDbMocks.db.machine,
-}));
-
-vi.mock("@/storage/inTx", () => ({
-    afterTx: harness.afterTx,
-    inTx: harness.inTx,
-}));
-
-describe("machinesRoutes (update existing machine)", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        dbMocks.reset();
-        txDbMocks.reset();
-        dbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
-        dbMocks.db.machine.findUnique.mockResolvedValue(null);
-        dbMocks.db.account.findUnique.mockResolvedValue({
-            ...accountContentBinding,
-            encryptionMode: "e2ee",
+    it("returns the winning envelope and matching ciphertexts without replacing user edits with a distinct proposal", async () => {
+        const recipient = tweetnacl.box.keyPair();
+        const binding = createSignedAccountContentBinding(recipient.publicKey);
+        const account = await db.account.create({ data: { ...binding, encryptionMode: "e2ee" } });
+        const winningKey = randomBytes(32);
+        const proposedKey = randomBytes(32);
+        const seal = (key: Uint8Array) => sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: recipient.publicKey, randomBytes });
+        const encode = (value: unknown, key: Uint8Array) => Buffer.from(encryptWithDataKey(value, key)).toString("base64");
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id,
+            metadata: encode({ host: "host", displayName: "User name" }, winningKey), metadataVersion: 4,
+            daemonState: encode({ status: "running" }, winningKey), daemonStateVersion: 8,
+            dataEncryptionKey: seal(winningKey),
+        } });
+        await withAuthenticatedTestApp(machinesRoutes, async (app) => {
+            const response = await app.inject({ method: "POST", url: "/v1/machines", headers: { "x-test-user-id": account.id }, payload: {
+                id: machine.id, metadata: encode({ host: "bootstrap" }, proposedKey),
+                daemonState: encode({ status: "starting" }, proposedKey), dataEncryptionKey: Buffer.from(seal(proposedKey)).toString("base64"),
+                contentPublicKey: Buffer.from(binding.contentPublicKey).toString("base64"),
+            } });
+            expect(response.statusCode).toBe(200);
+            const published = response.json().machine;
+            expect(published.dataEncryptionKey).toBe(Buffer.from(machine.dataEncryptionKey!).toString("base64"));
+            expect(openEncryptedDataKeyEnvelopeV1({
+                envelope: Buffer.from(published.dataEncryptionKey, "base64"),
+                recipientSecretKeyOrSeed: recipient.secretKey,
+            })).toEqual(new Uint8Array(winningKey));
+            expect(published.storageMode).toBe("e2ee");
+            expect(published.metadataVersion).toBe(4);
+            expect(published.daemonStateVersion).toBe(8);
+            expect(decryptWithDataKey(Buffer.from(published.metadata, "base64"), winningKey)).toEqual({ host: "host", displayName: "User name" });
+            expect(decryptWithDataKey(Buffer.from(published.daemonState, "base64"), winningKey)).toEqual({ status: "running" });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).toEqual(machine);
         });
-        txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
-        txDbMocks.db.machine.create.mockImplementation(async () => { throw new Error("unexpected create"); });
-        txDbMocks.db.machine.findFirst.mockResolvedValue(existingMachine);
-        txDbMocks.db.machine.update.mockImplementation(async (args: any) => ({
-            ...existingMachine,
-            ...args.data,
-            lastActiveAt: new Date(),
-            updatedAt: new Date(),
-        }));
     });
 
-    it("updates dataEncryptionKey when machine already exists for the authenticated account", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/machines",
-            registerRoutes(app) {
-                machinesRoutes(app as any);
-            },
+    it("projects the persistent Machine envelope and custodian mode to authenticated SDK bootstrap", async () => {
+        const binding = createSignedAccountContentBinding();
+        const account = await db.account.create({ data: { ...binding, encryptionMode: "e2ee" } });
+        const envelope = sealEncryptedDataKeyEnvelopeV1({ dataKey: randomBytes(32), recipientPublicKey: binding.contentPublicKey, randomBytes });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, metadata: "opaque", dataEncryptionKey: envelope,
+        } });
+        await withAuthenticatedTestApp(machinesRoutes, async (app) => {
+            const result = await app.inject({ method: "GET", url: "/v1/machines", headers: {
+                "x-test-user-id": account.id, "x-test-auth-token-kind": "api_token",
+            } });
+            expect(result.statusCode).toBe(200);
+            expect(result.json()).toEqual([expect.objectContaining({ id: machine.id, dataEncryptionKey: Buffer.from(envelope).toString("base64"), access: expect.objectContaining({ resourceMode: "e2ee", accessState: "ready" }) })]);
+            expect(result.json()[0]).not.toHaveProperty("metadata");
         });
-
-        const { response, reply } = await route.invoke(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "meta-old",
-                    daemonState: undefined,
-                    // base64 for bytes [0,1,2,3]
-                    dataEncryptionKey: "AAECAw==",
-                    contentPublicKey: Buffer.from(accountContentBinding.contentPublicKey).toString("base64"),
-                },
-            },
-        );
-
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ accountId: "u1", kind: "machine", entityId: "m1" }),
-        );
-
-        expect(txDbMocks.db.machine.update).toHaveBeenCalledWith(expect.objectContaining({
-            where: { accountId_id: { accountId: "u1", id: "m1" } },
-            data: expect.objectContaining({
-                // Ensure the update writes the new key instead of leaving stale state.
-                dataEncryptionKey: expect.any(Uint8Array),
-            }),
-        }));
-
-        expect(reply.send).toHaveBeenCalled();
-        expect(response).toEqual(
-            expect.objectContaining({
-                machine: expect.objectContaining({
-                    id: "m1",
-                    metadata: "meta-old",
-                    dataEncryptionKey: "AAECAw==",
-                }),
-            }),
-        );
     });
 
-    it("preserves existing metadata when daemon registration refreshes daemon state", async () => {
-        const { machinesRoutes } = await import("./machinesRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/machines",
-            registerRoutes(app) {
-                machinesRoutes(app as any);
-            },
+    it("adopts one complete winner when distinct registration proposals race", async () => {
+        const recipient = tweetnacl.box.keyPair();
+        const binding = createSignedAccountContentBinding(recipient.publicKey);
+        const account = await db.account.create({ data: { ...binding, encryptionMode: "e2ee" } });
+        const id = randomUUID();
+        const proposals = ["first", "second"].map((label) => {
+            const key = randomBytes(32);
+            return {
+                id,
+                metadata: Buffer.from(encryptWithDataKey({ host: label }, key)).toString("base64"),
+                daemonState: Buffer.from(encryptWithDataKey({ status: label }, key)).toString("base64"),
+                dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: recipient.publicKey, randomBytes })).toString("base64"),
+                contentPublicKey: Buffer.from(recipient.publicKey).toString("base64"),
+            };
         });
+        await withAuthenticatedTestApp(machinesRoutes, async (app) => {
+            const responses = await Promise.all(proposals.map((payload) => app.inject({ method: "POST", url: "/v1/machines", headers: { "x-test-user-id": account.id }, payload })));
+            responses.forEach((response) => expect(response.statusCode).toBe(200));
+            const stored = await db.machine.findUniqueOrThrow({ where: { id } });
+            const winner = proposals.find((proposal) => proposal.dataEncryptionKey === Buffer.from(stored.dataEncryptionKey!).toString("base64"));
+            expect(winner).toBeDefined();
+            expect(stored).toMatchObject({ metadata: winner!.metadata, daemonState: winner!.daemonState, metadataVersion: 1, daemonStateVersion: 1 });
+            responses.forEach((response) => expect(response.json().machine).toMatchObject({
+                metadata: winner!.metadata, daemonState: winner!.daemonState, dataEncryptionKey: winner!.dataEncryptionKey,
+                metadataVersion: 1, daemonStateVersion: 1,
+            }));
+        });
+    });
 
-        const { response } = await route.invoke(
-            {
-                userId: "u1",
-                body: {
-                    id: "m1",
-                    metadata: "daemon-bootstrap-meta",
-                    daemonState: "daemon-state-new",
-                },
-            },
-        );
-
-        expect(txDbMocks.db.machine.update).toHaveBeenCalledWith(expect.objectContaining({
-            where: { accountId_id: { accountId: "u1", id: "m1" } },
-            data: {
-                daemonState: "daemon-state-new",
-                daemonStateVersion: { increment: 1 },
-            },
-        }));
-        expect(response).toEqual(expect.objectContaining({
-            machine: expect.objectContaining({
-                metadata: "meta-old",
-                metadataVersion: 1,
-                daemonState: "daemon-state-new",
-            }),
-        }));
+    it("withholds contradictory owner content while projecting the persisted custodian mode", async () => {
+        const binding = createSignedAccountContentBinding();
+        const account = await db.account.create({ data: { ...binding, encryptionMode: "e2ee" } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id,
+            metadata: encodePlainMachineStoredContent({ host: "private-host" }),
+            daemonState: encodePlainMachineStoredContent({ status: "running" }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64")),
+        } });
+        await withAuthenticatedTestApp(machinesRoutes, async (app) => {
+            const result = await app.inject({ method: "GET", url: `/v1/machines/${machine.id}`, headers: { "x-test-user-id": account.id } });
+            expect(result.statusCode).toBe(200);
+            expect(result.json().machine).toMatchObject({ storageMode: "e2ee", metadata: null, daemonState: null,
+                dataEncryptionKey: null, access: { resourceMode: "e2ee", accessState: "refused" } });
+            const registration = await app.inject({ method: "POST", url: "/v1/machines", headers: { "x-test-user-id": account.id }, payload: {
+                id: machine.id, metadata: machine.metadata, daemonState: machine.daemonState,
+            } });
+            expect(registration.statusCode).toBe(400);
+            expect(registration.json()).toMatchObject({ reason: "machine_storage_mode_mismatch" });
+        });
     });
 });

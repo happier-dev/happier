@@ -10,6 +10,8 @@ import {
     CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD,
     CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
     decodeBase64,
+    encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
     uiBrowserAutomationDispatchMethod,
 } from "@happier-dev/protocol";
@@ -21,6 +23,7 @@ import { auth } from "@/app/auth/auth";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { computeExternalActionSocketRpcRequestDigestV1, ExternalActionExecutionAuthorizationV1Schema } from "@happier-dev/protocol/actions";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import type {
     CurrentSessionPublisherAuthority,
@@ -68,10 +71,11 @@ function createOwnedSessionAccessRow(sessionId = "sess_1") {
     };
 }
 
-const machineFindFirstMock = vi.hoisted(() => vi.fn(async (): Promise<{ revokedAt: Date | null; replacedByMachineId: string | null; installationId?: string; installationPublicKey?: Uint8Array; kind?: string }> => ({
+const machineFindFirstMock = vi.hoisted(() => vi.fn(async (_args?: unknown): Promise<{ revokedAt: Date | null; replacedByMachineId: string | null; installationId?: string; installationPublicKey?: Uint8Array; kind?: string }> => ({
     revokedAt: null,
     replacedByMachineId: null,
 })));
+const managedMachineFindUniqueMock = vi.hoisted(() => vi.fn());
 const accessKeyFindUniqueMock = vi.hoisted(() => vi.fn(async (): Promise<{ machineId?: string; accountId?: string; session?: { accountId: string }; machine?: { revokedAt: Date | null; replacedByMachineId: string | null } } | null> => ({
     machineId: "machine-1",
     machine: {
@@ -102,8 +106,22 @@ vi.mock("@/app/monitoring/metrics/index", () => rpcMetricsMocks);
 
 vi.mock("@/storage/db", () => {
     const databaseBoundary = {
-        machine: { findFirst: machineFindFirstMock },
+        machine: { findFirst: machineFindFirstMock, findUnique: async (args: Readonly<{ where: { id: string } }>) => {
+            const observed = await machineFindFirstMock(args);
+            if (!observed) return null;
+            // Genuine Prisma boundary: return the persisted relations consumed
+            // by the real C41 owner instead of mocking its admission decision.
+            return { id: args.where.id, accountId: 'user-1', kind: 'persistent', active: true,
+                metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: 'test',
+                    homeDir: '/home/fixture', happyHomeDir: '/home/fixture/.happier' }), metadataVersion: 1,
+                daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), installationId: null,
+                account: { id: 'user-1', status: 'active', encryptionMode: 'plain', firstName: null,
+                    lastName: null, username: null, avatar: null }, accountGrants: [], teamGrants: [], groupGrants: [],
+                ...observed };
+        } },
         account: { findUnique: accountFindUniqueMock },
+        managedMachine: { findUnique: managedMachineFindUniqueMock },
         accessKey: { findUnique: accessKeyFindUniqueMock },
         ephemeralRunnerActivation: { findFirst: ephemeralRunnerActivationFindFirstMock },
         session: { findUnique: sessionFindUniqueMock, findFirst: sessionFindFirstMock },
@@ -207,6 +225,35 @@ function createRoomAwareIo() {
 }
 
 describe("registerSocketRpcHandlers", () => {
+    it.each([undefined, 'old-installation', 'current-installation'])('registers current-service admission only on the current verified installation: %s', async (installationId) => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'current-installation' });
+        const join = vi.fn(async () => {});
+        const socket = createFakeSocket({ id: 'daemon', join, data: { clientType: 'machine-scoped', machineId: 'machine-1',
+            ...(installationId ? { verifiedMachineInstallationId: installationId } : {}) } });
+        const { io } = createIo();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+        const method = 'machine-1:daemon.localServices.preview.admission';
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        if (installationId === 'current-installation') {
+            expect(join).toHaveBeenCalledWith(`rpc:user-1:${method}`);
+            expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTERED, { method });
+        } else {
+            expect(join).not.toHaveBeenCalled();
+            expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ type: 'register', error: 'Forbidden' }));
+        }
+    });
+    it("refuses client-forged current-service admission before any target lookup", async () => {
+        const socket = createFakeSocket({ id: 'caller', data: { clientType: 'user-scoped' } });
+        const { io, fetchSockets } = createTargetRoutingIo({});
+        registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+        const acknowledge = vi.fn();
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+            method: 'machine-1:daemon.localServices.preview.admission', params: { v: 1, kind: 'read' },
+            authorization: { kind: 'localServices.preview.admission.serverOrigin' },
+        }, acknowledge);
+        expect(acknowledge).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(fetchSockets).not.toHaveBeenCalled();
+    });
     const sessionActionOrigin = {
         v: 1, caller: { kind: 'session', sessionId: 'lead', starterDepth: 2, turnDepth: 4 },
         callerPermissionMode: 'read-only', sourceTurnId: 'turn-original', requestId: 'action-original', workspaceWrites: 'deny',
@@ -214,8 +261,15 @@ describe("registerSocketRpcHandlers", () => {
     };
     async function createSessionActionFixture() {
         sessionFindUniqueMock.mockImplementation(async (args?: { where?: { id?: string } }) => createOwnedSessionAccessRow(args?.where?.id));
-        accessKeyFindUniqueMock.mockResolvedValue({ session: { accountId: 'user-1' }, machine: { revokedAt: null, replacedByMachineId: null } });
-        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-source', kind: 'regular' });
+        accessKeyFindUniqueMock.mockImplementation(async (args?: Readonly<{ where?: { accountId_machineId_sessionId?: {
+            accountId: string; machineId: string; sessionId: string;
+        } } }>) => {
+            const tuple = args?.where?.accountId_machineId_sessionId;
+            const session = await sessionFindUniqueMock({ where: { id: tuple?.sessionId } });
+            return session ? { accountId: tuple?.accountId ?? 'user-1', machineId: tuple?.machineId ?? 'machine-source',
+                session: { accountId: session.accountId }, machine: { revokedAt: null, replacedByMachineId: null } } : null;
+        });
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-source', kind: 'persistent' });
         const source = createFakeSocket({ id: 'source-daemon', data: {
             clientType: 'machine-scoped', machineId: 'machine-source', authTokenKind: 'account', verifiedMachineInstallationId: 'installation-source',
         }, handshake: { auth: { token: await auth.createToken('user-1', undefined, { kind: 'account', authority: 'present_user' }) } } });
@@ -271,7 +325,7 @@ describe("registerSocketRpcHandlers", () => {
         const originalIn = io.in.bind(io);
         io.in = ((room: string) => {
             if (room === 'rpc:user-1:report:session.notes.set') {
-                if (scenario === 'installation') machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'replacement', kind: 'regular' });
+                if (scenario === 'installation') machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'replacement', kind: 'persistent' });
                 else publisher.data.sessionPublisherAuthority.machineId = 'replacement';
             }
             return originalIn(room);
@@ -284,6 +338,267 @@ describe("registerSocketRpcHandlers", () => {
         expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
     });
+
+    async function createWorkspaceSyncSourcePhaseFixture() {
+        const fixture = await createSessionActionFixture();
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const routing = { v: 1, phase: 'prepare', operationId: 'source-operation', accountServerId: homeId, sourceMachineId: 'machine-source',
+            sourceRootPath: '/child/custom', sourceSessionId: 'lead' };
+        const managedRow = { id: 'managed-child', homeId, custodianAccountId: 'user-1',
+            controllerMachineId: 'machine-parent', controllerInstallationId: 'installation-parent',
+            enrolledMachineId: routing.sourceMachineId, creationState: 'active', allocation: 'bound', archivedAt: null,
+            resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' },
+                schemaVersion: 1, value: {}, devcontainerObservation: { nativeResourceId: 'container-current', user: 'coder',
+                    workspaceFolder: routing.sourceRootPath,
+                    storage: { kind: 'bind', hostPath: '/parent/source', childPath: routing.sourceRootPath } } } };
+        managedMachineFindUniqueMock.mockImplementation(async (args: Readonly<{ where: { enrolledMachineId?: string; id?: string } }>) =>
+            args.where.enrolledMachineId === managedRow.enrolledMachineId || args.where.id === managedRow.id ? managedRow : null);
+        machineFindFirstMock.mockImplementation(async (args?: unknown) => {
+            const where = args && typeof args === 'object' && 'where' in args ? args.where : undefined;
+            const machineId = where && typeof where === 'object' && 'id' in where ? where.id : undefined;
+            return { revokedAt: null, replacedByMachineId: null, kind: 'persistent',
+                installationId: machineId === 'machine-parent' ? 'installation-parent' : 'installation-source' };
+        });
+        const method = 'machine-parent:daemon.workspaceSync.handoffSourcePhase.v1';
+        const effect = vi.fn(async (_event: string, _request: unknown) => ({ prepared: true }));
+        const target = { id: 'parent-daemon', data: { clientType: 'machine-scoped', machineId: 'machine-parent',
+            verifiedMachineInstallationId: 'installation-parent' }, timeout: () => ({ emitWithAck: effect }) };
+        fixture.rooms[`rpc:user-1:${method}`] = [target];
+        fixture.rooms[target.id] = [target];
+        return { ...fixture, homeId, routing, managedRow, method, target, effect };
+    }
+
+    it('routes bind-child Workspace Sync SOURCE phases with original child admission and present-user identity', async () => {
+        const { source, effect, io, routing, method } = await createWorkspaceSyncSourcePhaseFixture();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-source-phase',
+            workspaceSyncSourceRouting: routing }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            params: 'sealed-source-phase', callerAuthority: 'present_user', workspaceSyncSourceRouting: routing,
+            machineAdmission: { actorAccountId: 'user-1', custodianAccountId: 'user-1', machineId: 'machine-source',
+                installationId: 'installation-source', role: 'manage', encryptionMode: 'plain' },
+        }));
+        expect(effect.mock.calls[0]?.[1]).not.toHaveProperty('sessionActionOrigin');
+    });
+
+    it('preserves genuine Session Action origin through bind-child Workspace Sync SOURCE routing', async () => {
+        const { source, effect, io, routing, method } = await createWorkspaceSyncSourcePhaseFixture();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-source-phase',
+            workspaceSyncSourceRouting: routing,
+            authorization: { kind: 'session.action', sessionId: 'lead', origin: sessionActionOrigin } }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            callerAuthority: 'account_automation', sessionActionOrigin,
+            machineAdmission: expect.objectContaining({ machineId: 'machine-source', installationId: 'installation-source' }),
+        }));
+    });
+
+    it('preserves the Home-admitted shared child actor through SOURCE routing without a parent grant', async () => {
+        const { source, effect, io, routing, method } = await createWorkspaceSyncSourcePhaseFixture();
+        const originalMachineRead = machineFindFirstMock.getMockImplementation()!;
+        let grantLevel: 'view' | 'admin' | null = 'view';
+        machineFindFirstMock.mockImplementation(async args => {
+            const where = args && typeof args === 'object' && 'where' in args ? args.where : undefined;
+            const machineId = where && typeof where === 'object' && 'id' in where ? where.id : undefined;
+            return { ...await originalMachineRead(args), accountGrants: machineId === routing.sourceMachineId && grantLevel
+                ? [{ accountId: 'requester', accessLevel: grantLevel, account: { id: 'requester', status: 'active',
+                    firstName: null, lastName: null, username: null, avatar: null } }] : [] };
+        });
+        const { resolveMachineAdmission } = await import('@/app/machines/machineAccess');
+        expect(await resolveMachineAdmission({ actorAccountId: 'requester', machineId: 'machine-parent',
+            requiredRole: 'use', requireOnline: true })).toMatchObject({ kind: 'denied', code: 'access_denied' });
+        const admitted = await resolveMachineAdmission({ actorAccountId: 'requester', machineId: routing.sourceMachineId,
+            requiredRole: 'use', requireOnline: true });
+        expect(admitted.kind).toBe('admitted');
+        if (admitted.kind !== 'admitted') throw new Error('Shared child fixture must use real current Machine admission');
+        const { kind: _kind, ...machineAdmission } = admitted;
+        const sourceRouting = { ...routing, sourceContext: { machineAdmission, callerAuthority: 'account_automation',
+            callerInputConstraints: { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
+                modelId: 'allowed-model' }], permissionModes: ['read-only'] } } };
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-shared-source',
+            workspaceSyncSourceRouting: sourceRouting }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            machineAdmission, callerAuthority: 'account_automation',
+            callerInputConstraints: sourceRouting.sourceContext.callerInputConstraints,
+            workspaceSyncSourceRouting: sourceRouting,
+        }));
+        expect(machineAdmission).toMatchObject({ actorAccountId: 'requester', role: 'use', machineId: 'machine-source' });
+        expect(effect.mock.calls[0]?.[1]).not.toHaveProperty('sessionActionOrigin');
+        const widerRouting = { ...sourceRouting, sourceContext: { ...sourceRouting.sourceContext,
+            machineAdmission: { ...machineAdmission, role: 'manage' } } };
+        const wider = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-shared-source',
+            workspaceSyncSourceRouting: widerRouting }, wider);
+        expect(wider).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        grantLevel = 'admin';
+        const stillNarrow = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-shared-source',
+            workspaceSyncSourceRouting: sourceRouting }, stillNarrow);
+        expect(stillNarrow).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect.mock.calls[1]?.[1]).toMatchObject({ machineAdmission,
+            callerAuthority: 'account_automation', callerInputConstraints: sourceRouting.sourceContext.callerInputConstraints });
+        grantLevel = null;
+        const revoked = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-shared-source',
+            workspaceSyncSourceRouting: sourceRouting }, revoked);
+        expect(revoked).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        const releaseRouting = { ...sourceRouting, phase: 'abort' };
+        const release = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-retained-shared-abort',
+            workspaceSyncSourceRouting: releaseRouting }, release);
+        expect(release).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect.mock.calls[2]?.[1]).toMatchObject({ machineAdmission, workspaceSyncSourceRouting: releaseRouting });
+        grantLevel = 'view';
+        source.data!.clientType = 'user-scoped';
+        const refused = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-shared-source',
+            workspaceSyncSourceRouting: sourceRouting }, refused);
+        expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).toHaveBeenCalledTimes(3);
+    });
+
+    it.each(['user-socket', 'foreign-child', 'stale-source', 'wrong-home', 'wrong-root', 'child-volume', 'retired-relation', 'replaced-parent'])
+    ('refuses invalid bind-child Workspace Sync SOURCE routing before a parent effect: %s', async (scenario) => {
+        const { source, effect, io, routing, managedRow, method } = await createWorkspaceSyncSourcePhaseFixture();
+        if (scenario === 'user-socket') source.data!.clientType = 'user-scoped';
+        if (scenario === 'foreign-child') routing.sourceMachineId = 'foreign-child';
+        if (scenario === 'stale-source') source.data!.verifiedMachineInstallationId = 'old-child-installation';
+        if (scenario === 'wrong-home') routing.accountServerId = `srv_${'b'.repeat(32)}`;
+        if (scenario === 'wrong-root') routing.sourceRootPath = '/child/other';
+        if (scenario === 'child-volume') managedRow.resource.devcontainerObservation.storage.kind = 'child';
+        if (scenario === 'retired-relation') managedRow.creationState = 'retired';
+        if (scenario === 'replaced-parent') managedRow.controllerInstallationId = 'old-parent-installation';
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-source-phase',
+            workspaceSyncSourceRouting: routing }, ack);
+        expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).not.toHaveBeenCalled();
+    });
+
+    it.each(['commit', 'abort'])('routes only retained SOURCE %s cleanup after Session adoption and native root drift', async phase => {
+        const { source, effect, io, routing, managedRow, publisher, method } = await createWorkspaceSyncSourcePhaseFixture();
+        routing.phase = phase;
+        publisher.data.sessionPublisherAuthority.machineId = 'adopted-target';
+        managedRow.resource.devcontainerObservation.storage.kind = 'child';
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-retained-cleanup',
+            workspaceSyncSourceRouting: routing }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            workspaceSyncSourceRouting: routing,
+            machineAdmission: expect.objectContaining({ machineId: 'machine-source', installationId: 'installation-source' }),
+        }));
+        Object.assign(source, { handshake: { auth: { token: 'retired-account-credential' } } });
+        const refused = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-retained-cleanup',
+            workspaceSyncSourceRouting: routing }, refused);
+        expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).toHaveBeenCalledOnce();
+    });
+
+    it.each(['commit', 'abort'])('routes retained SOURCE %s cleanup after replacement clears child enrollment', async phase => {
+        const { source, effect, io, routing, managedRow, method } = await createWorkspaceSyncSourcePhaseFixture();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const prepare = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-source-prepare',
+            workspaceSyncSourceRouting: routing }, prepare);
+        expect(prepare).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        // reportManagedIntent's replacement transition clears the inverse enrollment,
+        // while the original installed child can still run until fresh enrollment.
+        Object.assign(managedRow, { enrolledMachineId: null, replacementEnrollment: { machineId: routing.sourceMachineId } });
+        routing.phase = phase;
+        const cleanup = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-retained-cleanup',
+            workspaceSyncSourceRouting: routing }, cleanup);
+        expect(cleanup).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect.mock.calls[1]?.[1]).toMatchObject({ workspaceSyncSourceRouting: routing,
+            machineAdmission: { machineId: 'machine-source', installationId: 'installation-source' } });
+        routing.phase = 'prepare';
+        const fresh = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-new-prepare',
+            workspaceSyncSourceRouting: routing }, fresh);
+        expect(fresh).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['source-session', 'parent-installation'])('rechecks bind-child SOURCE %s at selected parent dispatch', async scenario => {
+        const { source, effect, io, routing, managedRow, publisher, method } = await createWorkspaceSyncSourcePhaseFixture();
+        const originalIn = io.in.bind(io);
+        io.in = ((room: string) => {
+            if (room === `rpc:user-1:${method}`) {
+                if (scenario === 'source-session') publisher.data.sessionPublisherAuthority.machineId = 'adopted-target';
+                else managedRow.controllerInstallationId = 'replaced-parent-installation';
+            }
+            return originalIn(room);
+        }) as typeof io.in;
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-source-phase',
+            workspaceSyncSourceRouting: routing }, ack);
+        expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).not.toHaveBeenCalled();
+    });
+
+    it('routes TARGET preflight with the original shared child admission and no source Session hosting requirement', async () => {
+        const { source, io, routing, publisher, target, effect, rooms } = await createWorkspaceSyncSourcePhaseFixture();
+        const originalMachineRead = machineFindFirstMock.getMockImplementation()!;
+        machineFindFirstMock.mockImplementation(async args => {
+            const where = args && typeof args === 'object' && 'where' in args ? args.where : undefined;
+            const machineId = where && typeof where === 'object' && 'id' in where ? where.id : undefined;
+            return { ...await originalMachineRead(args), accountGrants: machineId === routing.sourceMachineId
+                ? [{ accountId: 'requester', accessLevel: 'view', account: { id: 'requester', status: 'active',
+                    firstName: null, lastName: null, username: null, avatar: null } }] : [] };
+        });
+        const { resolveMachineAdmission } = await import('@/app/machines/machineAccess');
+        expect(await resolveMachineAdmission({ actorAccountId: 'requester', machineId: 'machine-parent',
+            requiredRole: 'use', requireOnline: true })).toMatchObject({ kind: 'denied', code: 'access_denied' });
+        const admitted = await resolveMachineAdmission({ actorAccountId: 'requester', machineId: routing.sourceMachineId,
+            requiredRole: 'use', requireOnline: true });
+        expect(admitted).toMatchObject({ kind: 'admitted' });
+        if (admitted.kind !== 'admitted') throw new Error('Real shared target child admission required');
+        const { kind: _kind, ...machineAdmission } = admitted;
+        const targetRouting = { v: 1, phase: 'preflight', operationId: routing.operationId,
+            accountServerId: routing.accountServerId, targetMachineId: routing.sourceMachineId,
+            targetRootPath: routing.sourceRootPath,
+            targetContext: { machineAdmission, callerAuthority: 'account_automation',
+                callerInputConstraints: { models: null, permissionModes: ['read-only'] } } };
+        const method = `machine-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+        rooms[`rpc:user-1:${method}`] = [target];
+        publisher.data.sessionPublisherAuthority.machineId = 'unrelated-source';
+        registerSocketRpcHandlers({ userId: 'user-1', socket: source as unknown as Socket, io,
+            sessionPublisherPresence: createSessionPublisherPresence() });
+        const ack = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-target-preflight',
+            workspaceSyncTargetRouting: targetRouting }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
+        expect(effect.mock.calls[0]?.[1]).toMatchObject({ machineAdmission,
+            callerAuthority: 'account_automation', callerInputConstraints: targetRouting.targetContext.callerInputConstraints,
+            workspaceSyncTargetRouting: targetRouting });
+        expect(effect.mock.calls[0]?.[1]).not.toHaveProperty('sessionActionOrigin');
+        source.data!.clientType = 'user-scoped';
+        const refused = vi.fn();
+        await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-target-preflight',
+            workspaceSyncTargetRouting: targetRouting }, refused);
+        expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).toHaveBeenCalledOnce();
+    });
+
     it.each([
         uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' }),
         RPC_METHODS.UI_ACTION_EXECUTE,
@@ -336,7 +651,8 @@ describe("registerSocketRpcHandlers", () => {
         await auth.init();
     });
     afterAll(() => restoreEnv(authEnvironment));
-    function createTokenViewer(sessionId = "sess_1", approve = false, includePermission = false) {
+    function createTokenViewer(sessionId = "sess_1", approve = false, includePermission = false,
+        permissionModes: ApiTokenGrantV1['permissionModes'] = null) {
         const credentialId = "00000000-0000-4000-8000-000000000001";
         const secret = "a".repeat(43);
         const principal = {
@@ -346,7 +662,7 @@ describe("registerSocketRpcHandlers", () => {
             grant: {
                 v: 1, actions: { families: [], ids: ["session.transcript.get", "session.message.send", ...(includePermission ? ["session.permission.respond"] : [])] },
                 targets: { sessions: [sessionId], machines: [] }, approve,
-                origins: [], models: null, permissionModes: null, create: null,
+                origins: [], models: null, permissionModes, create: null,
             },
         };
         const tokenRow = {
@@ -371,15 +687,13 @@ describe("registerSocketRpcHandlers", () => {
 
     it("admits a viewer's declared message RPC but refuses another action sharing its input capability", async () => {
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
-        const { socket, admission, principal, tokenRow } = createTokenViewer();
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-current', kind: 'persistent' });
+        const { socket, admission, principal } = createTokenViewer('sess_1', false, false, ['read-only']);
         const effect = vi.fn(async (_event: string, _request: Record<string, unknown>) => ({ success: true }));
         accessKeyFindUniqueMock.mockResolvedValue({ session: { accountId: 'user-1' }, machine: { revokedAt: null, replacedByMachineId: null } });
         const target = { id: "session-daemon", data: { clientType: "session-scoped",
-            sessionPublisherAuthority: { v: 1, accountId: 'user-1', sessionId: 'sess_1', machineId: 'machine-current', committedFenceMs: 2 } }, timeout: () => {
-                // Simulate a database grant update between ingress and target dispatch.
-                apiTokenFindUniqueMock.mockResolvedValue({ ...tokenRow, accessGrant: { ...principal.grant, permissionModes: ['read-only'] } });
-                return { emitWithAck: effect };
-            } };
+            sessionPublisherAuthority: { v: 1, accountId: 'user-1', sessionId: 'sess_1', machineId: 'machine-current', committedFenceMs: 2 } },
+            timeout: () => ({ emitWithAck: effect }) };
         const method = `sess_1:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`;
         const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
         registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io, ephemeralRunnerAdmission: admission,
@@ -404,6 +718,29 @@ describe("registerSocketRpcHandlers", () => {
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: `sess_1:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`, params: {} }, denied);
         expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(effect).toHaveBeenCalledOnce();
+    });
+
+    it('refuses a captured wider viewer grant when the real issuer observes in-flight narrowing', async () => {
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-current', kind: 'persistent' });
+        accessKeyFindUniqueMock.mockResolvedValue({ session: { accountId: 'user-1' }, machine: { revokedAt: null, replacedByMachineId: null } });
+        const { socket, admission, principal, tokenRow } = createTokenViewer();
+        const effect = vi.fn(async () => ({ success: true }));
+        const target = { id: 'session-daemon', data: { clientType: 'session-scoped',
+            sessionPublisherAuthority: { v: 1, accountId: 'user-1', sessionId: 'sess_1', machineId: 'machine-current', committedFenceMs: 2 } },
+            timeout: () => {
+                // The persistent DB boundary narrows the credential after ingress, before actual proof minting.
+                apiTokenFindUniqueMock.mockResolvedValue({ ...tokenRow, accessGrant: { ...principal.grant, permissionModes: ['read-only'] } });
+                return { emitWithAck: effect };
+            } };
+        const method = `sess_1:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`;
+        const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+        registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io,
+            ephemeralRunnerAdmission: admission, sessionPublisherPresence: createSessionPublisherPresence() });
+        const refused = vi.fn();
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'session-ciphertext' }, refused);
+        expect(refused).toHaveBeenCalledWith({ ok: false, error: 'credential_scope_denied' });
+        expect(effect).not.toHaveBeenCalled();
     });
 
     it("refuses token viewer registration and permission decisions without approve", async () => {
@@ -458,6 +795,120 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method,
             params: { t: "session_file_upload_v1", path: "/workspace/notes.txt", sizeBytes: 0 } }, ack);
         expect(ack).toHaveBeenCalledWith({ ok: true, result });
+    });
+
+    describe("optional SCM Session proof", () => {
+        function createScmSessionProofFixture(rpcMethod: string = RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ) {
+            const method = `machine-1:${rpcMethod}`;
+            const effect = vi.fn(async (_event: string, _request: Record<string, unknown>) => "sealed-result");
+            const ownerEffect = vi.fn(async () => "wrong-owner-result");
+            const target = { id: "scm-machine", data: { clientType: "machine-scoped", machineId: "machine-1" },
+                timeout: () => ({ emitWithAck: effect }) };
+            const ownerTarget = { id: "session-owner-machine", data: { clientType: "machine-scoped", machineId: "machine-1" },
+                timeout: () => ({ emitWithAck: ownerEffect }) };
+            const { io, fetchSockets } = createTargetRoutingIo({
+                [`rpc:user-1:${method}`]: [target], [`rpc:session-owner:${method}`]: [ownerTarget],
+                [target.id]: [target], [ownerTarget.id]: [ownerTarget],
+            });
+            const socket = createFakeSocket({ id: "scm-caller", data: { clientType: "user-scoped" } });
+            registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io });
+            return { method, socket, effect, ownerEffect, fetchSockets };
+        }
+
+        it.each([RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ, RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE])(
+            "keeps workspace %s without proof and never promotes its input sessionId", async (rpcMethod) => {
+                sessionFindUniqueMock.mockResolvedValue(null);
+                const { method, socket, effect } = createScmSessionProofFixture(rpcMethod);
+                const ack = vi.fn();
+                await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                    method, params: { cwd: "/workspace", sessionId: "private-session", resultId: "result-1" },
+                }, ack);
+                expect(ack).toHaveBeenCalledWith({ ok: true, result: "sealed-result" });
+                expect(effect.mock.calls[0]![1].authorization).toBeUndefined();
+                expect(sessionFindUniqueMock).not.toHaveBeenCalled();
+            });
+
+        it("stamps separately authorized Session access without changing Machine routing", async () => {
+            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
+                accessLevel: "view", canApprovePermissions: false });
+            const { method, socket, effect, ownerEffect, fetchSockets } = createScmSessionProofFixture();
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" },
+            }, ack);
+            expect(ack).toHaveBeenCalledWith({ ok: true, result: "sealed-result" });
+            expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" },
+            }));
+            expect(fetchSockets).toHaveBeenCalledWith(`rpc:user-1:${method}`);
+            expect(ownerEffect).not.toHaveBeenCalled();
+        });
+
+        it.each([null, {}, { kind: "session.write", sessionId: "" },
+            { kind: "session.write", sessionId: "private-session", extra: true },
+            { kind: "session.permission.respond", sessionId: "private-session" },
+        ])("refuses malformed or inappropriate supplied proof %j", async (authorization) => {
+            const { method, socket, effect, fetchSockets } = createScmSessionProofFixture();
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: "sealed-scm-input", authorization }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).not.toHaveBeenCalled();
+            expect(fetchSockets).not.toHaveBeenCalled();
+        });
+
+        it("refuses proof for a Session unavailable to the actual caller", async () => {
+            sessionShareFindUniqueMock.mockResolvedValue(null);
+            const { method, socket, effect } = createScmSessionProofFixture();
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" },
+            }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).not.toHaveBeenCalled();
+        });
+
+        it.each([RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, RPC_METHODS.SCM_DIFF_SUMMARY_REFINE,
+            RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS, RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS,
+        ])("requires Session input authority for %s", async (rpcMethod) => {
+            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
+                accessLevel: "view", canApprovePermissions: false });
+            const { method, socket, effect } = createScmSessionProofFixture(rpcMethod);
+            const request = { method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" } };
+            const denied = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, denied);
+            expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).not.toHaveBeenCalled();
+            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
+                accessLevel: "edit", canApprovePermissions: false });
+            const accepted = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, accepted);
+            expect(accepted).toHaveBeenCalledWith({ ok: true, result: "sealed-result" });
+        });
+
+        it("revalidates optional Session proof before dispatch", async () => {
+            const permitted = { ...createOwnedSessionAccessRow("private-session"), accountId: "session-owner",
+                shares: [{ id: "share-1", sharedWithUserId: "user-1", accessLevel: "view", canApprovePermissions: false }] };
+            sessionFindUniqueMock.mockResolvedValueOnce(permitted).mockResolvedValue({ ...permitted, shares: [] });
+            const { method, socket, effect } = createScmSessionProofFixture();
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" },
+            }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }));
+            expect(effect).not.toHaveBeenCalled();
+        });
+
+        it("does not let valid Session proof bypass Machine availability", async () => {
+            sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow("private-session"));
+            machineFindFirstMock.mockResolvedValue({ revokedAt: new Date(1), replacedByMachineId: null });
+            const { method, socket, effect } = createScmSessionProofFixture();
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+                method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" },
+            }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }));
+            expect(effect).not.toHaveBeenCalled();
+        });
     });
 
     it("refuses detached execution-run decisions under automation authority and forwards present-user decisions", async () => {
@@ -1178,7 +1629,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
 
         expect(userJoin).not.toHaveBeenCalled();
-expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
+        expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
             error: "Forbidden",
         }));
@@ -1189,6 +1640,7 @@ expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.obj
         });
 
         const machineJoin = vi.fn().mockResolvedValue(undefined);
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-1', kind: 'persistent' });
         const machineSocket = createFakeSocket({
             id: "machine-socket",
             data: { clientType: "machine-scoped", machineId: "machine-1" },
@@ -1204,8 +1656,11 @@ expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.obj
         expect(machineJoin).toHaveBeenCalledWith(`rpc:user-1:${method}`);
     });
 
-    it("reserves the external Action relay method for an exact machine daemon and rejects client calls", async () => {
-        const method = `machine-1:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+    it.each([
+        EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+        RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
+    ])("reserves server-origin method %s for an exact machine daemon and rejects client calls", async (rpcMethod) => {
+        const method = `machine-1:${rpcMethod}`;
         const userJoin = vi.fn().mockResolvedValue(undefined);
         const userSocket = createFakeSocket({
             id: "user-socket",
@@ -1222,7 +1677,9 @@ expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.obj
 
         await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
         const callback = vi.fn();
-        await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
+        const callParams = rpcMethod === RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS
+            ? { v: 1, subjectAccountId: 'another-account' } : {};
+        await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: callParams }, callback);
 
         expect(userJoin).not.toHaveBeenCalled();
 expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
@@ -1235,24 +1692,26 @@ expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.obj
             errorCode: RPC_ERROR_CODES.FORBIDDEN,
         });
 
-        const unverifiedMachineJoin = vi.fn().mockResolvedValue(undefined);
-        const unverifiedMachineSocket = createFakeSocket({
-            id: "unverified-machine-socket",
-            data: { clientType: "machine-scoped", machineId: "machine-1" },
-            join: unverifiedMachineJoin,
-            leave: vi.fn().mockResolvedValue(undefined),
-        } as any);
-        registerSocketRpcHandlers({
-            userId: "user-1",
-            socket: unverifiedMachineSocket as any,
-            io: {} as Server,
-        });
-        await triggerSocketHandler(unverifiedMachineSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
-        expect(unverifiedMachineJoin).not.toHaveBeenCalled();
-expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
-            type: "register",
-            error: "Forbidden",
-        }));
+        const bareMethodCallback = vi.fn();
+        await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method: rpcMethod, params: callParams }, bareMethodCallback);
+        expect(bareMethodCallback).toHaveBeenCalledWith({ ok: false, error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+
+        for (const data of [
+            { clientType: 'machine-scoped', machineId: 'machine-1' },
+            { clientType: 'machine-scoped', machineId: 'machine-other', verifiedMachineInstallationId: 'installation-1' },
+        ]) {
+            const deniedJoin = vi.fn().mockResolvedValue(undefined);
+            const deniedSocket = createFakeSocket({
+                id: 'invalid-machine-socket', data,
+                join: deniedJoin, leave: vi.fn().mockResolvedValue(undefined),
+            });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: deniedSocket as unknown as Socket, io: {} as Server });
+            await triggerSocketHandler(deniedSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
+            expect(deniedJoin).not.toHaveBeenCalled();
+            expect(deniedSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
+                type: 'register', error: 'Forbidden',
+            }));
+        }
 
         const machineJoin = vi.fn().mockResolvedValue(undefined);
         const machineSocket = createFakeSocket({
@@ -1274,8 +1733,9 @@ expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERRO
         expect(machineJoin).toHaveBeenCalledWith(`rpc:user-1:${method}`);
     });
 
-    it("reserves the Session server-start method for a proof-attested exact machine daemon and rejects client calls", async () => {
-        const method = `machine-1:${SESSION_SERVER_START_DAEMON_RPC_METHOD_V1}`;
+    it.each([SESSION_SERVER_START_DAEMON_RPC_METHOD_V1, 'daemon.localServices.preview.admission'])("reserves %s for a proof-attested exact machine daemon and rejects client calls", async (reservedMethod) => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installation-1', kind: 'persistent' });
+        const method = `machine-1:${reservedMethod}`;
         const userJoin = vi.fn().mockResolvedValue(undefined);
         const userSocket = createFakeSocket({
             id: "user-socket",
@@ -1606,6 +2066,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     ])("registers and forwards owner presentation custody with a server-minted socket origin: %s", async (rpcMethod) => {
         const method = `sess_1:${rpcMethod}`;
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow("sess_1"));
+        accessKeyFindUniqueMock.mockResolvedValue({ session: { accountId: 'user-1' }, machine: { revokedAt: null, replacedByMachineId: null } });
         const targetEmitWithAck = vi.fn().mockResolvedValue({ status: "accepted" });
         const targetJoin = vi.fn().mockResolvedValue(undefined);
         const target = createFakeSocket({
@@ -1866,8 +2327,10 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("rejects session-scoped RPC registration when a lingering access key points at a replaced machine", async () => {
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
         accessKeyFindUniqueMock.mockResolvedValue({
             machineId: "machine-old",
+            session: { accountId: 'user-1' },
             machine: {
                 revokedAt: null,
                 replacedByMachineId: "machine-current",
@@ -1903,10 +2366,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                     machineId: "machine-old",
                     sessionId: "sess_1",
                 },
-            },
-            select: {
-                machineId: true,
-                machine: { select: { revokedAt: true, replacedByMachineId: true } },
             },
         }));
         expect(join).not.toHaveBeenCalled();
@@ -2578,8 +3037,10 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("rejects session-scoped RPC calls when a lingering access key points at a replaced machine", async () => {
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
         accessKeyFindUniqueMock.mockResolvedValue({
             machineId: "machine-old",
+            session: { accountId: 'user-1' },
             machine: {
                 revokedAt: null,
                 replacedByMachineId: "machine-current",
@@ -2626,10 +3087,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                     machineId: "machine-old",
                     sessionId: "sess_1",
                 },
-            },
-            select: {
-                machineId: true,
-                machine: { select: { revokedAt: true, replacedByMachineId: true } },
             },
         }));
         expect(inMock).not.toHaveBeenCalled();
@@ -2734,6 +3191,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("leaves all owned rooms on disconnect cleanup", async () => {
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow('sess_1'));
+        accessKeyFindUniqueMock.mockResolvedValue({ session: { accountId: 'user-1' }, machine: { revokedAt: null, replacedByMachineId: null } });
         const leave = vi.fn().mockResolvedValue(undefined);
         const socket = createFakeSocket({
             id: "caller-socket",

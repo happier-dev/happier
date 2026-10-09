@@ -20,7 +20,7 @@ import {
     homeGovernanceErrorHttpStatusV1,
     type AccountStatusV1,
 } from "@happier-dev/protocol";
-import { HomeEmptinessGetInputV1Schema, HomeEmptinessV1Schema } from "@happier-dev/protocol/home/governance";
+import { HomeAccountDeleteInputV1Schema, HomeEmptinessGetInputV1Schema, HomeEmptinessV1Schema } from "@happier-dev/protocol/home/governance";
 
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -347,7 +347,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
             preHandler: [app.authenticate],
             attachValidation: true,
             schema: {
-                body: HomeAccountTargetInputV1Schema,
+                body: HomeAccountDeleteInputV1Schema,
                 response: { 200: HomeAccountDeleteResultV1Schema, ...ERROR_RESPONSES },
             },
             config: GOVERNANCE_RATE_LIMIT,
@@ -359,6 +359,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
             // transactions, so nothing here may shortcut that decision.
             const result = await deleteAccountForErasure({
                 accountId: request.body.accountId,
+                managedResourceDispositions: request.body.managedResourceDispositions,
                 actor: { kind: "home_administration", actorAccountId: request.userId },
             });
             if (result.status === "deleted" || result.status === "already-deleted") {
@@ -369,6 +370,8 @@ export function homeGovernanceRoutes(app: Fastify): void {
                 return await reply.send({ status: "deleted" as const });
             }
             switch (result.code) {
+                case "account_erasure_managed_resources_review_required":
+                    return await reply.code(409).send({ error: result.code, resources: result.resources });
                 case "home_governance_forbidden":
                 case "home_account_not_found":
                 case "home_owner_transfer_required":

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import type { Prisma } from "@prisma/client";
 import {
+    type ManagedResourceDependencyV1, type ManagedResourceDispositionV1,
     CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
     ConnectedServiceCredentialHealthV1Schema,
     StoredJsonContentEnvelopeSchema,
@@ -21,6 +22,7 @@ import {
     type ConnectedServiceCredentialHealthV1,
     type StoredJsonContentEnvelope,
 } from "@happier-dev/protocol";
+import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { db } from "@/storage/db";
@@ -135,9 +137,11 @@ export type QualifiedConnectedServiceCredentialHealthMutationResult =
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedServiceCredentialDeleteResult =
+    | Readonly<{ status: "ready" }>
     | Readonly<{ status: "deleted" }>
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "referenced" }>
+    | Readonly<{ status: "managed_resources_review_required"; resources: readonly ManagedResourceDependencyV1[] }>
     | Readonly<{ status: "revision_required" }>
     | Readonly<{ status: "storage_mode_mismatch" }>
     | Readonly<{
@@ -2478,6 +2482,9 @@ export function deleteQualifiedConnectedServiceCredential(
         ref: QualifiedConnectedAccountRef;
         expectedCredentialRevision: string;
         cleanupGroupReferences: boolean;
+        emergencyRevoke?: boolean;
+        reviewOnly?: boolean;
+        managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
     }>,
 ): Promise<QualifiedConnectedServiceCredentialDeleteResult>;
 export function deleteQualifiedConnectedServiceCredential(
@@ -2487,6 +2494,9 @@ export function deleteQualifiedConnectedServiceCredential(
         expectedCredentialRevision?: string;
         expectedStorageMode: "plain" | "sealed";
         cleanupGroupReferences: boolean;
+        emergencyRevoke?: boolean;
+        reviewOnly?: boolean;
+        managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
     }>,
 ): Promise<QualifiedConnectedServiceCredentialDeleteStorageResult>;
 export async function deleteQualifiedConnectedServiceCredential(
@@ -2496,6 +2506,9 @@ export async function deleteQualifiedConnectedServiceCredential(
         expectedCredentialRevision?: string;
         expectedStorageMode?: "plain" | "sealed";
         cleanupGroupReferences: boolean;
+        emergencyRevoke?: boolean;
+        reviewOnly?: boolean;
+        managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
     }>,
 ): Promise<QualifiedConnectedServiceCredentialDeleteStorageResult> {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
@@ -2581,8 +2594,13 @@ export async function deleteQualifiedConnectedServiceCredential(
             if (
                 memberships.length > 0
                 && !params.cleanupGroupReferences
+                && !params.emergencyRevoke
             ) {
                 return { status: "referenced" };
+            }
+            if (!params.emergencyRevoke) {
+                const resources = await readManagedResourceDependenciesInTx(tx, { kind: "connected-account", accountId: params.accountId, ref });
+                if (!acceptsManagedResourceDispositions(resources, params.managedResourceDispositions)) return { status: "managed_resources_review_required", resources };
             }
             const content =
                 decodeQualifiedConnectedServiceCredentialRowContent({
@@ -2608,6 +2626,7 @@ export async function deleteQualifiedConnectedServiceCredential(
                     return { status: "storage_mode_mismatch" };
                 }
             }
+            if (params.reviewOnly) return { status: "ready" };
 
             let deleted = await tx.serviceAccountToken.deleteMany({
                 where: {

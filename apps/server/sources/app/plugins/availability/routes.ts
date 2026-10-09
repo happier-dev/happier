@@ -64,6 +64,10 @@ async function sendOperationError(
     error: unknown,
 ): Promise<void> {
     if (error instanceof PluginAvailabilityOperationError) {
+        if (error.code === "managed_resources_review_required") {
+            reply.code(409).send({ error: error.code, resources: error.resources });
+            return;
+        }
         const statusCode = error.code.endsWith("_not_found")
             ? 404
             : error.code === "plugin_availability_authentication_required"

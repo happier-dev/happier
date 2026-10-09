@@ -29,6 +29,7 @@ export function resolveConnectedServicesFeature(
             connectedServices: {
                 credentialDelete: { revisionGuard: true },
                 qualifiedAccounts: { protocolVersion: 4 },
+                credentialRemovalReview: { protocolVersion: 1 },
             },
         },
     };

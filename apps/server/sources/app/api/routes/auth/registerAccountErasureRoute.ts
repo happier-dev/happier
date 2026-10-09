@@ -27,7 +27,10 @@ export function registerAccountErasureRoute(app: Fastify): void {
             if (request.validationError) {
                 return await reply.code(400).send({ error: "invalid_request" });
             }
-            const result = await deleteAccountForErasure({ accountId: request.userId });
+            const result = await deleteAccountForErasure({ accountId: request.userId, managedResourceDispositions: request.body.managedResourceDispositions });
+            if (result.status === "failed" && result.code === "account_erasure_managed_resources_review_required") {
+                return await reply.code(409).send({ error: result.code, resources: result.resources });
+            }
             if (result.status === "failed" && result.code === "account_erasure_transition_cleanup_pending") {
                 return await reply.code(409).send({ error: result.code });
             }

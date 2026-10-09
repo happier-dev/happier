@@ -26,6 +26,17 @@ vi.mock('@/app/monitoring/metrics/index', () => ({
 import { forwardRpcCall } from './forwardRpcCall';
 
 describe('forwardRpcCall', () => {
+    it('does not return a private continuation transport error echo', async () => {
+        const secret = 'd26-recognizable-private-value';
+        const emitWithAck = vi.fn().mockRejectedValue(new Error(`socket echoed ${secret}`));
+        const target = { id: 'receiver', data: { clientType: 'session-scoped' }, timeout: () => ({ emitWithAck }) };
+        const fetchSockets = vi.fn().mockResolvedValue([target]);
+        const io = { in: () => ({ timeout: () => ({ fetchSockets }), fetchSockets }) } as unknown as Server;
+        const result = await forwardRpcCall({ io, targetUserId: 'user-1',
+            method: 'machine-1:daemon.approval.request.secretContinue.v1', callParams: { value: secret } });
+        expect(JSON.stringify(result)).not.toContain(secret);
+        expect(result).toEqual({ ok: false, error: 'confidential_continuation_failed', errorCode: 'confidential_continuation_failed' });
+    });
     beforeEach(() => {
         machineFindFirstMock.mockReset().mockResolvedValue({
             revokedAt: null,
