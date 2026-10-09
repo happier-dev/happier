@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import * as references from './savedSecretReferenceV1.js';
 
 describe('SavedSecret raw reference carrier census', () => {
+  it('does not merge an additive reference property into the canonical ValueRef carrier path', () => {
+    expect(references.listSavedSecretReferenceCarrierPathsV1({ env: {
+      TOKEN: { t: 'savedSecret', secretId: 'known-key', savedSecretId: 'other-key' },
+    } })).toEqual(['env.TOKEN', 'env.TOKEN.savedSecretId']);
+    expect(references.listSavedSecretReferenceCarrierPathsV1({ binding: { savedSecretId: 'plugin-key' } }))
+      .toEqual(['binding']);
+  });
+
   it('finds identifiable references before tolerant Profile projection can drop their carriers', () => {
     expect(references.listSavedSecretReferenceCarrierPathsV1({
       secretBindings: { TOKEN: 'personal-key' },

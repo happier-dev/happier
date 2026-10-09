@@ -39,6 +39,15 @@ export function formatSharedSavedSecretRefV1(resourceId: string): string {
   return `${SHARED_SAVED_SECRET_REF_V1_PREFIX}${resourceId}`;
 }
 
+/** Canonical carrier paths keep opaque ids and field names unambiguous. */
+export function formatSavedSecretReferencePathSegmentV1(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/u.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+}
+
+export function appendSavedSecretReferencePathV1(path: string, key: string): string {
+  return path ? `${path}${formatSavedSecretReferencePathSegmentV1(key)}` : key;
+}
+
 /**
  * Identifiable reference carriers in original JSON, before stored projections
  * can discard additive fields. This does not authorize or rewrite a reference:
@@ -49,8 +58,6 @@ export function listSavedSecretReferenceCarrierPathsV1(
   options: Readonly<{ secretId?: string; initialPath?: string }> = {},
 ): readonly string[] {
   const paths = new Set<string>();
-  const segment = (key: string) => /^[A-Za-z_$][\w$]*$/u.test(key)
-    ? `.${key}` : `[${JSON.stringify(key)}]`;
   const visit = (candidate: unknown, path: string, referenceContainer: boolean): void => {
     if (Array.isArray(candidate)) {
       candidate.forEach((entry, index) => visit(entry, `${path}[${index}]`, referenceContainer));
@@ -59,13 +66,13 @@ export function listSavedSecretReferenceCarrierPathsV1(
     if (candidate === null || typeof candidate !== 'object') return;
     const record = candidate as Record<string, unknown>;
     for (const [key, entry] of Object.entries(record)) {
-      const childPath = path ? `${path}${segment(key)}` : key;
+      const childPath = appendSavedSecretReferencePathV1(path, key);
       const isReference = key === 'secretId' || key === 'savedSecretId' || key === 'secretRef'
         || key === 'bootstrapCredentialRef' || /(?:SecretId|SecretRef)$/u.test(key)
         || (key === 'ref' && (record.t === 'savedSecret' || record.kind === 'savedSecret'));
       if (typeof entry === 'string' && (options.secretId === undefined || entry === options.secretId)
         && (referenceContainer || isReference)) {
-        paths.add(key === 'savedSecretId' || (key === 'secretId' && record.t === 'savedSecret')
+        paths.add((key === 'savedSecretId' && record.t !== 'savedSecret') || (key === 'secretId' && record.t === 'savedSecret')
           ? path : childPath);
       }
       const isReferenceContainer = key === 'secretRefs' || key === 'secretBindings'
