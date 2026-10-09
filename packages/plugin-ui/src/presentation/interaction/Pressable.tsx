@@ -143,14 +143,19 @@ export type HappierPressableProps = Readonly<{
   /** Checked state for checkbox, radio, switch, and checked menu-item semantics. */
   checked?: boolean;
   accessibilityRole?: HappierPressableRole;
-  /** ARIA-only composite-menu role; native assistive tech uses accessibilityRole. */
-  webRole?: 'menuitemcheckbox' | 'menuitemradio';
+  /**
+   * ARIA-only composite role (a menu's checked items, a tree's items); native assistive tech uses
+   * accessibilityRole.
+   */
+  webRole?: 'menuitemcheckbox' | 'menuitemradio' | 'treeitem';
+  /** Nesting level of a tree item (1-based), projected to `aria-level`. */
+  accessibilityLevel?: number;
   accessibilityLabel?: string;
   accessibilityHint?: string;
   /** Native assistive actions, supplied by the owning domain operation. */
   accessibilityActions?: readonly Readonly<{ name: string; label?: string }>[];
   onAccessibilityAction?: (event: Readonly<{ nativeEvent: Readonly<{ actionName: string }> }>) => void;
-  hitSlop?: number;
+  hitSlop?: number | Readonly<{ top?: number; bottom?: number; left?: number; right?: number }>;
   testID?: string;
   /** Internal composite-widget focus registration; disabled controls report no target. */
   controlRef?: (instance: HappierFocusable | null) => void;
@@ -239,6 +244,7 @@ export function HappierPressable({
   checked,
   accessibilityRole = 'button',
   webRole,
+  accessibilityLevel,
   accessibilityLabel,
   accessibilityHint,
   accessibilityActions,
@@ -332,6 +338,14 @@ export function HappierPressable({
     if (key === null) return;
 
     if (!onKeyDown?.(key, event)) {
+      // RNW does not activate role=tab with Space. Keep that press semantic
+      // here; compound widgets that already handle it retain first refusal.
+      if (Platform.OS === 'web' && accessibilityRole === 'tab' && (key === ' ' || key === 'Spacebar')) {
+        candidate.preventDefault?.();
+        candidate.stopPropagation?.();
+        handlePress({ nativeEvent: { key } });
+        return;
+      }
       if (Platform.OS === 'web' && key === 'Enter') consumedKeyboardPressRef.current = null;
       return;
     }
@@ -343,7 +357,7 @@ export function HappierPressable({
     if (Platform.OS === 'web' && key === 'Enter') consumedKeyboardPressRef.current = key;
     candidate.preventDefault?.();
     candidate.stopPropagation?.();
-  }, [onKeyDown]);
+  }, [accessibilityRole, handlePress, onKeyDown]);
 
   const state: HappierPressableState = {
     hovered,
@@ -375,7 +389,7 @@ export function HappierPressable({
   const platformRoleProps = Platform.OS === 'web'
     ? { role: webRole ?? accessibilityRole }
     : { accessibilityRole: nativeAccessibilityRole };
-  const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab'
+  const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab' || webRole === 'treeitem'
     ? selected === true
     : Platform.OS !== 'web' && current !== undefined ? true : undefined;
   // The `aria-posinset`/`aria-setsize` pair below is React Native Web only —
@@ -441,6 +455,7 @@ export function HappierPressable({
       aria-disabled={isDisabled || undefined}
       aria-selected={Platform.OS === 'web' && current !== undefined ? undefined : semanticSelected}
       aria-current={current}
+      aria-level={accessibilityLevel}
       aria-posinset={accessibilityPositionInSet}
       aria-setsize={accessibilitySetSize}
       // @ts-expect-error React Native's published types omit the Android-only collection-item prop its view config accepts.

@@ -20,7 +20,12 @@ export type HappierPageChrome = Readonly<{
   columnMaxWidthPx?: number;
 }>;
 
-const HappierPageChromeContext = createContext<HappierPageChrome | null>(null);
+/** Same-realm host binding only; not part of the public page-chrome contract. */
+export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
+  renderNavigationActions?: (actions: ReactNode) => ReactNode;
+}>;
+
+const HappierPageChromeContext = createContext<HappierPageChromeInternal | null>(null);
 
 /** @internal The surface bridge re-provides this across the host's details pane (`components/surfaceBridge.tsx`). */
 export const HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL = HappierPageChromeContext;
@@ -30,5 +35,10 @@ export function HappierPageChromeProvider(props: Readonly<{ chrome: HappierPageC
 }
 
 export function useHappierPageChrome(): HappierPageChrome | null {
+  return useContext(HappierPageChromeContext);
+}
+
+/** @internal Public adapters delegate navigation placement to the incumbent host owner. */
+export function useHappierPageChromeInternal(): HappierPageChromeInternal | null {
   return useContext(HappierPageChromeContext);
 }

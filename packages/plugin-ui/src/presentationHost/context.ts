@@ -7,7 +7,7 @@ import type { HappierUiPalette, HappierUiTypography } from '../environment/types
 import type { HappierFocusable, HappierStyleProp } from '../presentation/portableTypes.js';
 import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
-import type { HappierPageChrome } from '../presentation/layout/pageChrome.js';
+import type { HappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
 import type { CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
 import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
@@ -16,6 +16,7 @@ import type { HappierSceneRenderRequest } from '../presentation/state/scenes.js'
 import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
 import type { HappierAgentCursorMotionDriver } from '../presentation/copresence/AgentCursor.js';
 import type { HappierLiveStreamProps } from '../presentation/media/LiveStream.js';
+import type { HappierFloatingFramePointerBinding } from '../presentation/layout/FloatingFrame.js';
 import type { HappierStoredImageHost } from '../presentation/content/StoredImage.js';
 import type { DragSourceProps, DropTargetProps } from '../components/EntityDragDrop.js';
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
@@ -51,6 +52,7 @@ export type PluginUiQRCodePresentation = Readonly<{
 export type PluginUiTargetBrandMarkInput = Readonly<{
   pluginId: string;
   size?: 'small' | 'medium' | 'large';
+  pixelSize?: number;
   showName?: boolean;
   /** An adjacent host-owned label already supplies the one canonical name. */
   externallyLabelled?: boolean;
@@ -111,6 +113,10 @@ export type PluginUiDetailsPanePresentation = Readonly<{
   /** Private semantic binding to the incumbent pane header, never an author DOM/native-ref API. */
   headingRef?: (target: HappierFocusable | null) => void;
   subtitle?: string;
+  /** The item's identity mark beside the title (a kind glyph); it stands on its own, with no tile. */
+  leading?: ReactNode;
+  /** A mark leading the subtitle line (the source's brand mark). */
+  subtitleLeading?: ReactNode;
   actions?: ReactNode;
   onClose(): void;
   children?: ReactNode;
@@ -230,6 +236,12 @@ export type PluginUiPresentationHost = Readonly<{
    * capsule whose changes land at once.
    */
   capsuleHost?: HappierCapsuleHost;
+  /**
+   * The host's platform pointer boundary for the shared companion drag session, so a public
+   * `FloatingFrame` drags with the same listener/coordinate owner as Happier's own companions.
+   * Absent (a hosted-web realm, native), frames move through their keyboard and menu controls.
+   */
+  companionPointer?: HappierFloatingFramePointerBinding;
   /** Each mounted read-only viewer is admitted and disposed by the app's capture owner. */
   renderLiveStream?(input: HappierLiveStreamProps): ReactNode;
   /** The host's motion for the agent cursor (`AgentCursor`). Absent, the hand lands at once. */
@@ -253,7 +265,7 @@ export type PluginUiPresentationHost = Readonly<{
    * chrome, the back control, the content column), so the public `PageHeader`
    * and page sections place themselves exactly as Happier's own pages do.
    */
-  pageChrome?: HappierPageChrome;
+  pageChrome?: HappierPageChromeInternal;
   /** Manifest-owned brand fact for the mounted plugin; authors cannot replace it. */
   brand?: Readonly<{
     displayName: string;

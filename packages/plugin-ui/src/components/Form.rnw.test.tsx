@@ -1070,6 +1070,32 @@ describe('shared control visuals (D6)', () => {
     mount.unmount();
   });
 
+  it('leads a segmented option with its icon, decorative, inside the option\'s own press target', () => {
+    // No presentation host: the portable glyph stands in for the host's icon renderer.
+    const mount = mountForm(
+      <Form.Select
+        label="View"
+        presentation="segmented"
+        value="list"
+        options={[
+          { value: 'list', label: 'List', icon: 'list', testID: 'view-list' },
+          { value: 'board', label: 'Board', icon: 'board', testID: 'view-board' },
+        ]}
+        onChange={() => undefined}
+      />,
+    );
+    const radios = [...mount.container.querySelectorAll<HTMLElement>('[role="radio"]')];
+    // The icon is decorative: each option is still named by its words alone.
+    expect(radios.map((radio) => radio.textContent)).toEqual(['List', 'Board']);
+    for (const radio of radios) {
+      const icon = radio.querySelector<HTMLElement>('[aria-hidden="true"]');
+      expect(icon).not.toBeNull();
+      const words = [...radio.querySelectorAll('[dir="auto"]')].at(-1)!;
+      expect(icon!.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    mount.unmount();
+  });
+
   it('rejects a multiple-choice segmented Select', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() => mountForm(

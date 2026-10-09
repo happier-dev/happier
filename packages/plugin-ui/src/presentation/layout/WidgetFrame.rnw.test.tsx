@@ -1,4 +1,5 @@
-import { Text } from 'react-native';
+import { act, useEffect, useState } from 'react';
+import { Pressable, Text, TextInput } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
@@ -45,6 +46,47 @@ function byId(root: ParentNode, id: string): HTMLElement | null {
 }
 
 describe('HappierWidgetFrame', () => {
+  it('keeps controlled disclosure separate from header actions and retains the body input across collapse', async () => {
+    let mounts = 0;
+    let inspections = 0;
+    function Body() {
+      const [text, setText] = useState('draft');
+      useEffect(() => { mounts += 1; }, []);
+      return <><TextInput testID="retained-input" value={text} onChangeText={setText} />
+        <Pressable testID="edit-input" onPress={() => setText('edited draft')}><Text>Edit</Text></Pressable></>;
+    }
+    function Frame() {
+      const [collapsed, setCollapsed] = useState(false);
+      return <HappierWidgetFrame frameStyle="plain" placement="companion" title="Notes" testID="disclosure"
+        disclosure={{ collapsed, onCollapsedChange: setCollapsed, expandLabel: 'Expand notes', collapseLabel: 'Collapse notes' }}
+        accessory={<Pressable accessibilityRole="button" testID="header-action" onPress={() => { inspections += 1; }}><Text>About</Text></Pressable>}>
+        <Body />
+      </HappierWidgetFrame>;
+    }
+    const view = mountThroughReactNativeWeb(<Frame />);
+    const input = byId(view.container, 'retained-input') as HTMLInputElement;
+    const toggle = () => byId(view.container, 'disclosure.disclosure')!;
+    expect(toggle()).not.toBeNull();
+    await act(async () => { byId(view.container, 'edit-input')!.click(); });
+    expect(input.value).toBe('edited draft');
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    await act(async () => { toggle().click(); });
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    expect(byId(view.container, 'header-action')).not.toBeNull();
+    expect(byId(view.container, 'retained-input')).toBe(input);
+    expect(input.closest('[aria-hidden="true"]')).not.toBeNull();
+    await act(async () => { byId(view.container, 'header-action')!.click(); });
+    expect(inspections).toBe(1);
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    await act(async () => { toggle().click(); });
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    expect(byId(view.container, 'retained-input')).toBe(input);
+    expect(input.closest('[aria-hidden="true"]')).toBeNull();
+    expect(input.value).toBe('edited draft');
+    expect(mounts).toBe(1);
+    view.unmount();
+  });
+
   it('draws a card: the adapter surface around the header, body and a footer on a divider', () => {
     const view = mount();
     const frame = byId(view.container, 'frame')!;

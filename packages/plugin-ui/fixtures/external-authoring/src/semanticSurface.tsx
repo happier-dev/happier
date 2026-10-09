@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Button,
+  Collection,
   type ComposerDecorationSetV1,
   type ComposerHandle,
   defineUiSurface,
@@ -11,21 +12,40 @@ import {
   Status,
   Tabs,
   Text,
+  Tree,
+  type TreeItem,
   useComposer,
   useComposerView,
   usePluginHostApi,
   usePluginTranslation,
   usePluginUiFocusTarget,
   useSurfaceContext,
+  WidgetFrame,
 } from '@happier-dev/plugin-ui';
 import { useHappierUiAccessibility, useHappierUiLocalization } from '@happier-dev/plugin-ui/environment';
-import { HappierStack, HappierText } from '@happier-dev/plugin-ui/presentation';
+import {
+  FloatingFrame, HappierStack, HappierText, resolveFloatingFrameRect, resolveHappierTreeFocusKey,
+  useHappierCollection, type FrameRect, type HappierTreeNode,
+} from '@happier-dev/plugin-ui/presentation';
 
 const externalReviews = Object.freeze([
   Object.freeze({ id: 'current', title: 'Current review' }),
   Object.freeze({ id: 'terminal', title: 'Terminal review' }),
   Object.freeze({ id: 'release', title: 'Release review' }),
 ]);
+
+const externalTreeNodes = [{
+  key: 'review-root', parentKey: null, depth: 0, kind: 'branch', expanded: false,
+}] satisfies readonly HappierTreeNode[];
+const externalAvailableRect = { x: 0, y: 0, width: 640, height: 480 } satisfies FrameRect;
+
+/** The author's own visible tree projection: a collapsed branch's children are simply absent. */
+function externalReviewTree(expanded: boolean): readonly TreeItem[] {
+  return [
+    { key: 'review-root', parentKey: null, depth: 0, kind: 'branch', expanded, title: 'Reviews' },
+    ...(expanded ? [{ key: 'review-current', parentKey: 'review-root', depth: 1, kind: 'leaf' as const, expanded: false, title: 'Current review', meta: 'today' }] : []),
+  ];
+}
 
 const externalComposerRef = {
   kind: 'session',
@@ -54,6 +74,11 @@ function matchesExternalReview(
 function ExternalAuthoringAdvancedPanel() {
   const { direction, locale } = useHappierUiLocalization();
   const { textScale } = useHappierUiAccessibility();
+  const treeFocus = resolveHappierTreeFocusKey(externalTreeNodes, null);
+  const frame = resolveFloatingFrameRect({
+    rect: { x: 600, y: 440, width: 160, height: 120 },
+    availableRect: externalAvailableRect,
+  });
 
   return (
     <HappierStack
@@ -62,6 +87,20 @@ function ExternalAuthoringAdvancedPanel() {
       testID="external-advanced-authoring-facts"
     >
       <HappierText>{`Advanced ${locale} ${direction} ${textScale}`}</HappierText>
+      <HappierText>{`Neutral owners ${treeFocus} ${frame.rect.x},${frame.rect.y}`}</HappierText>
+      <FloatingFrame
+        mode="docked"
+        rect={frame.rect}
+        availableRect={externalAvailableRect}
+        aspectRatio={16 / 10}
+        moveInput="surface"
+        onRectChange={() => undefined}
+        onModeChange={() => undefined}
+        controls={<HappierText>Review preview controls</HappierText>}
+        accessibilityLabel="Framed review preview"
+      >
+        <HappierText>Framed review preview</HappierText>
+      </FloatingFrame>
     </HappierStack>
   );
 }
@@ -78,10 +117,19 @@ function ExternalAuthoringSemanticSurface() {
   const composerView = useComposerView(composerHandle);
   const hostApi = usePluginHostApi();
   const [savedLocale, setSavedLocale] = useState<string | undefined>();
+  const [authoringStatus, setAuthoringStatus] = useState<string | undefined>();
   const [composerAttachmentStatus, setComposerAttachmentStatus] = useState<string | undefined>();
   const [composerDecorationStatus, setComposerDecorationStatus] = useState<string | undefined>();
   const [reviewQuery, setReviewQuery] = useState('');
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>('current');
+  const [reviewChoice, setReviewChoice] = useState<string | null>('current');
+  const [widgetExpanded, setWidgetExpanded] = useState(true);
+  const [reviewTreeExpanded, setReviewTreeExpanded] = useState(false);
+  const [openedReviewKey, setOpenedReviewKey] = useState<string | null>(null);
+  const reviewModel = useHappierCollection({
+    items: externalReviews, keyOf: (review) => review.id,
+    openKey: null, onOpenChange: () => undefined,
+  });
   const [reviewScope, setReviewScope] = useState<'current' | 'all'>('current');
   const [reviewSection, setReviewSection] = useState<'summary' | 'history'>('summary');
   const saveFocusTarget = usePluginUiFocusTarget();
@@ -107,6 +155,20 @@ function ExternalAuthoringSemanticSurface() {
   return (
     <>
       <ExternalAuthoringAdvancedPanel />
+      <Button
+        title="Open an editable authoring draft"
+        onPress={async () => {
+          const result = await hostApi.executeAction('session.authoring.open', {
+            seed: { prompt: 'Help me update this review integration.' },
+          });
+          setAuthoringStatus('kind' in result
+            ? result.kind === 'opened'
+              ? 'Draft opened; review and Send in Happier'
+              : 'Draft unavailable; nothing sent'
+            : 'Draft awaiting approval; nothing sent');
+        }}
+      />
+      {authoringStatus ? <Status tone="info" label={authoringStatus} /> : null}
       <Button
         title={reviewLabel}
         focusTarget={saveFocusTarget}
@@ -182,6 +244,37 @@ function ExternalAuthoringSemanticSurface() {
           onSelectedKeyChange: setSelectedReviewId,
         }}
         renderItem={(review) => <List.Item title={review.title} />}
+      />
+      <WidgetFrame
+        frameStyle="card"
+        placement="board"
+        title="Review choices"
+        disclosure={{ collapsed: !widgetExpanded, onCollapsedChange: (collapsed) => setWidgetExpanded(!collapsed),
+          expandLabel: 'Expand review choices', collapseLabel: 'Collapse review choices' }}
+      >
+        <Collection
+          model={reviewModel}
+          accessibilityLabel="External review choice"
+          presentation="list"
+          detail="none"
+          scroll="page"
+          minListWidth={240}
+          minDetailWidth={240}
+          preferredListRatio={0.5}
+          anatomy={{ glyph: () => null, title: (review) => review.title,
+            accessibilityLabel: (review) => `Choose ${review.title}`, columnTitles: { title: 'Review' } }}
+          selection={{ single: { value: reviewChoice, onValueChange: setReviewChoice } }}
+        />
+      </WidgetFrame>
+      <Tree
+        items={externalReviewTree(reviewTreeExpanded)}
+        accessibilityLabel="External review tree"
+        selectedKey={openedReviewKey}
+        onExpandedChange={(_key, expanded) => setReviewTreeExpanded(expanded)}
+        onActivate={setOpenedReviewKey}
+        expandLabel={(item) => `Expand ${item.title}`}
+        collapseLabel={(item) => `Collapse ${item.title}`}
+        testID="external-review-tree"
       />
       <Form
         hints={{

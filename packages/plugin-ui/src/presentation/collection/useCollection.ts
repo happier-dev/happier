@@ -86,6 +86,8 @@ export type HappierCollectionActions = Readonly<{
     event?: unknown;
     store?: HappierListMultiSelectionStore | null;
     eligibleKeys?: readonly string[];
+    /** Controlled single choice consumes navigation without opening the row. */
+    onValueChange?: (key: string) => void;
   }>) => boolean;
   showColumn: (key: string) => void;
 }>;
@@ -248,7 +250,7 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     const navigationKeys = allKeys.filter(key => eligible === null || eligible.has(key));
     const from = commandInputRef.current.focusKey !== null && navigationKeys.includes(commandInputRef.current.focusKey)
       ? commandInputRef.current.focusKey : input.from;
-    const store = input.store ?? selectionStore;
+    const store = input.onValueChange === undefined ? input.store ?? selectionStore : null;
     const selectionSnapshot = store?.getSnapshot();
     const selectionKeys = selectionSnapshot === undefined ? null : new Set(selectionSnapshot.visibleOrderedKeys);
     const modifiers = readHappierPointerModifiers(input.event);
@@ -264,12 +266,17 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
       return true;
     }
     // After selection declines them, activation belongs to the row (or table Space peek), not navigation.
-    if (input.key === 'Enter' || input.key === ' ' || input.key === 'Spacebar') return false;
+    if (input.key === 'Enter' || input.key === ' ' || input.key === 'Spacebar') {
+      if (input.onValueChange === undefined || !navigationKeys.includes(from)) return false;
+      input.onValueChange(from);
+      return true;
+    }
     const next = intent?.kind === 'extendRange' ? allKeys[intent.toIndex] ?? null
       : resolveHappierCollectionSpatialFocus({ key: input.key, from, sections: sectionKeys,
         presentation: input.presentation, ...(input.columns === undefined ? {} : { columns: input.columns }),
-        ...(eligible === null ? {} : { eligibleKeys: eligible }), rtl });
+        ...(eligible === null ? {} : { eligibleKeys: eligible }), listNavigationKeys: input.onValueChange === undefined, rtl });
     if (next === null) return false;
+    input.onValueChange?.(next);
     if (intent?.kind === 'extendRange' && store !== null) {
       const snapshot = store.getSnapshot();
       if (snapshot.count === 0) store.replaceWith(from);

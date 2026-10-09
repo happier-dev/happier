@@ -357,6 +357,13 @@ export type HappierTextFieldProps = Readonly<{
    * field's name stays its `label`.
    */
   leading?: ReactNode;
+  /**
+   * Controls inside the well between the leading glyph and the text (a search field's filter tokens). They stay
+   * reachable and named; the field's own name stays its `label`.
+   */
+  inline?: ReactNode;
+  /** A decorative mark at the end of the well (the field's keyboard shortcut), hidden from assistive technology. */
+  trailing?: ReactNode;
   theme: HappierUiTheme;
   testID?: string;
 }>;
@@ -589,7 +596,13 @@ export function HappierTextField(props: HappierTextFieldProps) {
       <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
         {props.leading}
       </View>
+      {props.inline}
       {input}
+      {props.trailing === undefined ? null : (
+        <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          {props.trailing}
+        </View>
+      )}
     </View>
   );
 }
@@ -755,8 +768,8 @@ function retainLastSemanticSelections<Value>(
   return retainedInReverseOrder.reverse();
 }
 
-export type HappierSelectPlanInput<Value> = Readonly<{
-  options: readonly HappierSelectOption<Value>[];
+export type HappierSelectPlanInput<Value, Option extends HappierSelectOption<Value> = HappierSelectOption<Value>> = Readonly<{
+  options: readonly Option[];
   value: Value | readonly Value[] | undefined;
   multiple?: boolean;
   maxSelections?: number;
@@ -764,11 +777,11 @@ export type HappierSelectPlanInput<Value> = Readonly<{
   required?: boolean;
   disabled?: boolean;
   isEqual?: (left: Value, right: Value) => boolean;
-  keyForOption?: (option: HappierSelectOption<Value>, index: number) => string;
+  keyForOption?: (option: Option, index: number) => string;
 }>;
 
-export type HappierSelectOptionPlan<Value> = Readonly<{
-  option: HappierSelectOption<Value>;
+export type HappierSelectOptionPlan<Value, Option extends HappierSelectOption<Value> = HappierSelectOption<Value>> = Readonly<{
+  option: Option;
   /** Stable, unique React/menu identity for this option. */
   key: string;
   selected: boolean;
@@ -784,9 +797,9 @@ export type HappierSelectOptionPlan<Value> = Readonly<{
  * renders the plan; it never re-derives which option is selected, disabled or
  * what a press emits.
  */
-export function planHappierSelectOptions<Value>(input: HappierSelectPlanInput<Value>): Readonly<{
+export function planHappierSelectOptions<Value, Option extends HappierSelectOption<Value> = HappierSelectOption<Value>>(input: HappierSelectPlanInput<Value, Option>): Readonly<{
   selected: readonly Value[];
-  options: readonly HappierSelectOptionPlan<Value>[];
+  options: readonly HappierSelectOptionPlan<Value, Option>[];
 }> {
   const isEqual = input.isEqual ?? Object.is;
   const selected = input.multiple
@@ -820,7 +833,7 @@ export function planHappierSelectOptions<Value>(input: HappierSelectPlanInput<Va
     ? undefined
     : Math.max(minimumSelections, declaredMaxSelections);
   const usedKeys = new Set<string>();
-  const options = input.options.map((option, index): HappierSelectOptionPlan<Value> => {
+  const options = input.options.map((option, index): HappierSelectOptionPlan<Value, Option> => {
     const isSelected = selected.some((value) => isEqual(value, option.value));
     const selectionFloorReached = input.multiple
       && isSelected

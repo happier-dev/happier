@@ -18,6 +18,10 @@ export type DetailsPaneProps = Readonly<{
   /** The pane's title in its header band. Omit it when the detail draws its own heading and close control. */
   title?: string;
   subtitle?: string;
+  /** The item's identity mark beside the title (a kind glyph). It stands on its own: no tile, border or fill. */
+  leading?: ReactNode;
+  /** A mark leading the subtitle line (the source's brand mark). */
+  subtitleLeading?: ReactNode;
   /** The detail's actions, beside the pane's close button (icon buttons). */
   actions?: ReactNode;
   /** The pane asks to close: its close or back control, Escape, or a tap outside an overlay pane. */
@@ -88,6 +92,8 @@ export function DetailsPane(props: DetailsPaneProps): ReactElement | null {
           ...(headingRef === undefined ? {} : { headingRef }),
           ...(props.title === undefined ? {} : { title: props.title }),
           ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
+          ...(props.leading === undefined ? {} : { leading: bridge(props.leading) }),
+          ...(props.subtitleLeading === undefined ? {} : { subtitleLeading: bridge(props.subtitleLeading) }),
           ...(props.actions === undefined ? {} : { actions: bridge(props.actions) }),
           onClose: props.onClose,
           children: bridge(props.children),
@@ -122,7 +128,11 @@ function PushedDetail(props: DetailsPaneProps): ReactElement {
     >
       <HappierPageHeader
         title={props.title ?? ''}
-        description={props.subtitle}
+        // A line led by a mark is the item's facts line (the header's meta), its mark before the words.
+        {...(props.subtitleLeading === undefined || props.subtitle === undefined
+          ? { description: props.subtitle }
+          : { meta: [{ key: 'subtitle', text: props.subtitle, icon: props.subtitleLeading }] })}
+        {...(props.leading === undefined ? {} : { leading: props.leading })}
         actions={props.actions}
         renderBack={(style) => <View style={style}><IconButton
           icon={<Icon name="back" tone="secondary" />}

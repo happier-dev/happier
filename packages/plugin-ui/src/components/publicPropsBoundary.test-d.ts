@@ -1,7 +1,7 @@
 import type { ButtonProps, IconButtonProps } from './Button.js';
 import { usePluginUiFocusTarget } from '../index.js';
 import type {
-  CollectionProps, CollectionAnatomy, DetailsPaneProps, StepProps, TabsProps, TabsItemProps,
+  CollectionProps, CollectionAnatomy, CollectionSingleChoice, ListSingleChoiceCapabilityProps, DetailsPaneProps, StepProps, TabsProps, TabsItemProps,
   PluginTranslationValues, PluginUiFocusTarget,
   CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest,
 } from '../index.js';
@@ -53,7 +53,9 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
-  | 'boardContent' | 'destination' | 'wrapItem' | 'glyph' | 'title' | 'where' | 'reason' | 'signal' | 'agent' | 'age'
+  | 'boardContent' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'where' | 'byline'
+  | 'reason' | 'signal'
+  | 'agent' | 'age'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
   | 'testID' | 'columnTitles'
 >>;
@@ -65,7 +67,7 @@ type _VirtualizerRequestHasNoNativeRefOrSelectionWriter = Assert<
 type _CollectionVirtualizerIsPublic = Assert<IsEqual<CollectionProps<unknown>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _VirtualizedListConsumesSameAdapter = Assert<IsEqual<Extract<ListProps<unknown>, { items: readonly unknown[] }>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _AuthorDetailsPaneKeysAreCurated = Assert<IsEqual<keyof DetailsPaneProps,
-  'open' | 'title' | 'subtitle' | 'actions' | 'onClose' | 'children' | 'testID'
+  'open' | 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'children' | 'testID'
 >>;
 type _AuthorStepKeysAreCurated = Assert<IsEqual<keyof StepProps,
   'marker' | 'title' | 'titleKey' | 'trailing' | 'children' | 'testID'
@@ -74,7 +76,7 @@ type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
   'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'children'
 >>;
 type _AuthorTabsItemKeysAreCurated = Assert<IsEqual<keyof TabsItemProps,
-  'value' | 'title' | 'icon' | 'badge' | 'disabled' | 'retention' | 'children'
+  'value' | 'title' | 'icon' | 'badge' | 'badgeTone' | 'disabled' | 'retention' | 'children'
 >>;
 
 type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
@@ -422,6 +424,27 @@ const authorControlledListSelection: ListSelectionProps = {
   selectedKey: null,
   onSelectedKeyChange: () => undefined,
 };
+
+const authorCollectionChoice: CollectionSingleChoice<AuthorReview> = {
+  value: null,
+  onValueChange: () => undefined,
+  isItemSelectable: (review) => review.id !== 'unavailable',
+  unavailableReason: (review) => review.id === 'unavailable' ? 'Unavailable' : null,
+};
+const authorListChoice: ListSingleChoiceCapabilityProps<AuthorReview> = authorCollectionChoice;
+const authorSingleChoice: ListSelectionProps<AuthorReview> = { single: authorListChoice };
+type _SingleChoiceCannotAlsoOpenOnSelection = Assert<(
+  Readonly<{ single: ListSingleChoiceCapabilityProps; selectedKey: string; onSelectedKeyChange: (key: string) => void }> extends
+    ListSelectionProps ? false : true
+)>;
+type _SingleChoiceCannotAlsoOwnMultipleSelection = Assert<(
+  Readonly<{ single: ListSingleChoiceCapabilityProps; multiple: ListMultiSelectionCapabilityProps }> extends
+    ListSelectionProps ? false : true
+)>;
+type _CollectionChoiceCannotAlsoOwnMultipleSelection = Assert<(
+  Readonly<{ single: CollectionSingleChoice<AuthorReview>; multiple: { store: ListMultiSelectionCapabilityProps['store'] } }> extends
+    NonNullable<CollectionProps<AuthorReview>['selection']> ? false : true
+)>;
 
 const authorControlledList: ListProps<AuthorReview> = {
   accessibilityLabel: 'Review queue',

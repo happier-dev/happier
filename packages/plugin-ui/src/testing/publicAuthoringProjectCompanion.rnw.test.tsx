@@ -11,10 +11,60 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderSurface } from '../../../plugin-sdk/examples/public-authoring/ui/reviewPanel.native.tsx';
 import { publicAuthoringDefinition } from '../../../plugin-sdk/examples/public-authoring/definition.ts';
 import { repositoryInputTypes, repositoryResources, repositoryInputTypeRef } from '../../../plugin-sdk/examples/public-authoring/inputTypes.ts';
+import { renderExternalAuthoringSemanticSurface } from '../../fixtures/external-authoring/src/semanticSurface.tsx';
 
 const REVIEW_STATUS_DIGEST = `sha256:${'a'.repeat(64)}`;
 
 describe('public authoring Project Companion activity surface', () => {
+  it.each(['opened', 'client_unavailable'] as const)('presents the external authoring Action outcome %s without requesting Send', async (outcome) => {
+    const calls: Array<Readonly<{ action: unknown; input: unknown }>> = [];
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'external-authoring-open', mountNonce: 'external-authoring-open-mount' },
+      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
+      surface: renderExternalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      // Actions leave the external author's process. Keep the public SDK transport and surface real.
+      handlers: { executeAction: async ({ action, input }) => {
+        calls.push({ action, input });
+        return outcome === 'opened'
+          ? { kind: 'opened', draftId: 'external-editable-draft', destination: 'newSession' }
+          : { kind: 'unavailable', reason: 'client_unavailable' };
+      } },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Open an editable authoring draft' }));
+      await expect(fixture.findByRole('status', { name: outcome === 'opened'
+        ? 'Draft opened; review and Send in Happier'
+        : 'Draft unavailable; nothing sent' })).resolves.toBeDefined();
+      expect(calls).toEqual([{ action: 'session.authoring.open', input: {
+        seed: { prompt: 'Help me update this review integration.' },
+      } }]);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('mounts the external author’s controlled choice and retains it through local widget disclosure', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-m2-source', mountNonce: 'fixture-m2-source-mount' },
+      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
+      surface: renderExternalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture({ locale: 'en-GB' }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async () => null },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('radio', { name: 'Choose Terminal review' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Collapse review choices' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Expand review choices' }));
+      await expect(fixture.getByRole('radio', {
+        name: 'Choose Terminal review', state: { checked: true },
+      })).resolves.toBeDefined();
+      await expect(fixture.getByText('Neutral owners review-root 480,360')).resolves.toBeDefined();
+      // The public controlled frame renders the author's own content and controls (70s3).
+      await expect(fixture.getByText('Framed review preview')).resolves.toBeDefined();
+      await expect(fixture.getByText('Review preview controls')).resolves.toBeDefined();
+    } finally { await fixture.dispose(); }
+  });
   it('invokes the declared native picker through the real UI host settlement boundary and cancels without a value', async () => {
     const renderer = publicAuthoringDefinition.ui?.renderers?.find(renderer => renderer.id === 'review-native');
     if (!renderer) throw new Error('Expected the declared native picker renderer');

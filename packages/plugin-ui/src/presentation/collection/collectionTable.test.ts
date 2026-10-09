@@ -151,17 +151,52 @@ describe('the shared-element travel', () => {
   ];
 
   it('anchors the opened row: it keeps its screen y and every other visible row travels from its table place', () => {
+    // b's table top is 34 + 2 × 42 = 118 and its list top 34 + 2 × 62 = 158.
+    const aligned = [
+      { key: 'g', table: 34, list: 34, header: true },
+      { key: 'a', table: 42, list: 62 },
+      { key: 'x', table: 42, list: 62 },
+      { key: 'b', table: 42, list: 62 },
+      { key: 'c', table: 42, list: 62 },
+    ];
     const plan = planHappierCollectionTransitionOffsets({
-      cells, anchorKey: 'b', scroll: { geometry: 'table', offset: 0 }, viewportHeight: 800,
+      cells: aligned, anchorKey: 'b', scroll: { geometry: 'table', offset: 22 }, viewportHeight: 800,
     });
-    // b's table top is 76 and its list top is 96, so the list scrolls 20 to keep it at 76.
-    expect(plan.listScroll).toBe(20);
-    expect(plan.tableScroll).toBe(0);
+    // At table scroll 22, b sits at screen y 96, so the list scrolls 62 to keep it there, which
+    // also puts x's top right below the sticky band (62 + 34 = 96).
+    expect(plan.listScroll).toBe(62);
     expect(plan.offsets.get('b')).toBe(0);
-    // a: table screen y 34, list screen y 34 - 20 = 14, so it starts 20 lower.
-    expect(plan.offsets.get('a')).toBe(20);
-    // c: table screen y 118, list screen y 158 - 20 = 138, so it starts 20 higher.
+    // c: table screen y 160 - 22 = 138, list screen y 220 - 62 = 158, so it starts 20 higher.
     expect(plan.offsets.get('c')).toBe(-20);
+  });
+
+  it('never leaves a row half under the sticky group band: the list snaps to the nearest whole row', () => {
+    const plan = planHappierCollectionTransitionOffsets({
+      cells: cells.map((cell) => (cell.key === 'g' ? { ...cell, header: true } : cell)),
+      anchorKey: 'b',
+      scroll: { geometry: 'table', offset: 0 },
+      viewportHeight: 800,
+    });
+    // Keeping b's screen y exactly (76) would scroll the list 20, leaving a 20 points under the 34-point band.
+    // The nearest whole-row offset is 0: a sits right below the band and b moves 20 down.
+    expect(plan.listScroll).toBe(0);
+    expect(plan.offsets.get('b')).toBe(-20);
+    expect(plan.offsets.get('a')).toBe(0);
+  });
+
+  it('snaps the table it restores the same way on close', () => {
+    const tall = [
+      { key: 'g', table: 34, list: 34, header: true },
+      ...Array.from({ length: 12 }, (_, index) => ({ key: `r${index}`, table: 42, list: 62 })),
+    ];
+    // r6's list top is 34 + 6 × 62 = 406; at list scroll 300 it shows at 106. Its table top is 286, so the exact
+    // table scroll would be 180, putting 180 + 34 = 214 (r4 spans 202–244) under the band edge.
+    const plan = planHappierCollectionTransitionOffsets({
+      cells: tall, anchorKey: 'r6', scroll: { geometry: 'list', offset: 300 }, viewportHeight: 600,
+    });
+    // Whole rows: r4's top under the band (202 - 34 = 168) is 12 away; r5's (244 - 34 = 210) is 30 away.
+    expect(plan.tableScroll).toBe(168);
+    expect(plan.listScroll).toBe(300);
   });
 
   it('restores the table scroll that keeps the open row where the list shows it, on close', () => {

@@ -1,11 +1,12 @@
 import type { ReactElement, ReactNode } from 'react';
 
 import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
-import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
+import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { Icon, type IconName } from './Icon.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 import { useCollectionDetailHeadingBindingInternal } from './Focus.js';
+import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
 
 /** One fact on the page header's meta line ("v2.4.0", "Personal Home", "End-to-end encrypted"). */
 export type PageHeaderMetaFact = Readonly<{
@@ -53,7 +54,10 @@ export type PageHeaderProps = Readonly<{
 export function PageHeader(props: PageHeaderProps): ReactElement {
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();
-  const chrome = useHappierPageChrome();
+  const chrome = useHappierPageChromeInternal();
+  const bridgeSurface = usePluginUiSurfaceBridge();
+  // A Collection detail retains its own semantic heading and controls in the detail body.
+  const hostActions = headingRef === undefined && chrome?.showsTitle === true && chrome.renderNavigationActions !== undefined;
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? props.title;
   const description = resolveAuthorText(translate, props.description, props.descriptionKey);
   const meta = props.meta?.map((fact) => ({
@@ -64,6 +68,7 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
   }));
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef}>
+    {hostActions && props.actions ? chrome.renderNavigationActions?.(bridgeSurface(props.actions)) : null}
     <HappierPageHeader
       title={title}
       titleProminence={props.titleProminence}
@@ -74,7 +79,7 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
       detailsPlacement={props.detailsPlacement}
       compactPresentation={props.compactPresentation}
       meta={meta}
-      actions={props.actions}
+      actions={hostActions ? null : props.actions}
       renderBack={chrome?.renderBack ?? null}
       {...(chrome?.columnMaxWidthPx === undefined ? {} : { columnMaxWidthPx: chrome.columnMaxWidthPx })}
       {...(props.testID === undefined ? {} : { testID: props.testID })}

@@ -14,6 +14,7 @@
 export type HappierWorkMapOpenTarget =
   | Readonly<{ kind: 'session'; sessionId: string }>
   | Readonly<{ kind: 'run'; runId: string }>
+  | Readonly<{ kind: 'action_operation'; serverId: string; operationId: string }>
   | Readonly<{ kind: 'workflow-step'; nodeId: string }>;
 
 /**
@@ -23,6 +24,11 @@ export type HappierWorkMapOpenTarget =
 export type HappierWorkMapNodeDeclaration = Readonly<{
   nodeId: string;
   label: string;
+  /**
+   * A quiet fact read after the name on the same line ("2 lanes"): drawn in the regular face after a
+   * middle dot, and part of the node's accessible name.
+   */
+  labelDetail?: string;
   parentNodeId: string | null;
   open: HappierWorkMapOpenTarget;
 }>;
@@ -136,4 +142,9 @@ export function resolveHappierWorkMapNodePosition<TNode extends HappierWorkMapNo
     total: Math.max(siblings.length, node.ordinal),
     parent,
   };
+}
+
+/** A node's name as one phrase: its label, then its quiet detail when it has one ("Side by side · 2 lanes"). */
+export function formatHappierWorkMapNodeName(node: Readonly<{ label: string; labelDetail?: string }>): string {
+  return node.labelDetail === undefined ? node.label : `${node.label} \u00b7 ${node.labelDetail}`;
 }

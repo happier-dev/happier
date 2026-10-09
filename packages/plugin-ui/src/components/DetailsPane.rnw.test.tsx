@@ -138,6 +138,30 @@ describe('DetailsPane (host details pane binding)', () => {
     }
   });
 
+  it('keeps the identity mark beside the title and the mark leading the line when the detail is pushed', async () => {
+    const view = mountWithPane(
+      <DetailsPane
+        open
+        title="Move cart totals to server-side rounding"
+        subtitle="tidewater/checkout-web #2476 · You opened 42m ago"
+        leading={<RNText testID="kind-mark">k</RNText>}
+        subtitleLeading={<RNText testID="source-mark">s</RNText>}
+        onClose={() => undefined}
+        testID="entry-pane"
+      >
+        <Probe />
+      </DetailsPane>,
+      null,
+    );
+    await flush();
+    const inPage = view.container.querySelector('[data-testid="entry-pane"]')!;
+    expect(inPage.querySelector('[data-testid="kind-mark"]')).not.toBeNull();
+    const sourceMark = inPage.querySelector('[data-testid="source-mark"]');
+    expect(sourceMark).not.toBeNull();
+    expect(inPage.textContent).toContain('tidewater/checkout-web #2476 · You opened 42m ago');
+    view.unmount();
+  });
+
   it('renders nothing while closed', async () => {
     const view = mountWithPane(
       <DetailsPane open={false} title="Entry" onClose={() => undefined} testID="entry-pane"><Probe /></DetailsPane>,

@@ -4,6 +4,7 @@ import {
   readPluginUiTestkitTargetedSurfaceAdmission,
 } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import type { PluginUiActionResultFor } from '@happier-dev/plugin-sdk/ui';
 import { act } from 'react';
 import { describe, expect, it } from 'vitest';
 
@@ -17,6 +18,31 @@ const exactComposerRef = {
 } as const;
 
 describe('external author semantic proof', () => {
+  it('opens authoring through the public host Action boundary with a typed draft acknowledgement', async () => {
+    const calls: Array<Readonly<{ action: unknown; input: unknown }>> = [];
+    const acknowledgement = { kind: 'opened', draftId: 'external-authoring-draft', destination: 'newSession' } as const satisfies PluginUiActionResultFor<'session.authoring.open'>;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'external-authoring-action', mountNonce: 'external-authoring-action-mount' },
+      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
+      surface: renderExternalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        executeAction: async ({ action, input }) => {
+          calls.push({ action, input });
+          return acknowledgement;
+        },
+      },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Open an editable authoring draft' }));
+      expect(calls).toEqual([{ action: 'session.authoring.open', input: {
+        seed: { prompt: 'Help me update this review integration.' },
+      } }]);
+      await expect(fixture.findByRole('status', { name: 'Draft opened; review and Send in Happier' })).resolves.toBeDefined();
+    } finally { await fixture.dispose(); }
+  });
+
   it('mounts an external target child from strict cold admission and retires it across replacement, uninstall, and reinstall', async () => {
     const targetPluginId = 'fixture.physical-copy-target';
     const contributorPluginId = 'fixture.physical-copy-contributor';
@@ -297,6 +323,31 @@ describe('external author semantic proof', () => {
         name: 'Current review',
         state: { selected: false },
       })).resolves.toBeDefined();
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('preserves an external controlled Collection choice across viewer-local widget collapse', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-m2', mountNonce: 'fixture-mount-m2' },
+      authorPlugin: { id: 'example.external-semantic', version: '1.0.0' },
+      surface: renderExternalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture({ locale: 'en-GB' }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async () => null },
+    });
+    try {
+      await fixture.press(await fixture.getByRole('radio', { name: 'Choose Terminal review' }));
+      await expect(fixture.getByRole('radio', {
+        name: 'Choose Terminal review', state: { checked: true },
+      })).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Collapse review choices' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Expand review choices' }));
+      await expect(fixture.getByRole('radio', {
+        name: 'Choose Terminal review', state: { checked: true },
+      })).resolves.toBeDefined();
+      await expect(fixture.getByText('Neutral owners review-root 480,360')).resolves.toBeDefined();
     } finally {
       await fixture.dispose();
     }

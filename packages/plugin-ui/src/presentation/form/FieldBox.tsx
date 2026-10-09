@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+import { HappierChevron } from '../collection/DisclosureChevron.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { happierRaisedEdgeStyle, type HappierRaisedEdge } from '../layout/raisedEdge.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
@@ -118,10 +119,11 @@ export type HappierFieldBoxTriggerProps = Readonly<{
   /** The adapter's chevron (it owns the icon pack). */
   trailing?: ReactNode;
   /**
-   * `content` (default): sized to its choice, within the trigger bounds. `row`: stacked under its
-   * label, the field spans the row (the bounds are for a field beside a label).
+   * `content` (default): sized to its choice, within the trigger bounds. `column`: the shared
+   * page-field width beside a label. `row`: stacked under its label, the field spans the row.
+   * `intrinsic`: toolbar choices omit the configuration-field width floor.
    */
-  span?: 'content' | 'row';
+  span?: 'content' | 'column' | 'row' | 'intrinsic';
 }>;
 
 /**
@@ -137,7 +139,8 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         flexDirection: 'row',
         alignItems: 'center',
         gap: HAPPIER_FIELD_BOX_METRICS.triggerGapPx,
-        minWidth: HAPPIER_FIELD_BOX_METRICS.triggerMinWidthPx,
+        minWidth: span === 'intrinsic' ? 0 : HAPPIER_FIELD_BOX_METRICS.triggerMinWidthPx,
+        ...(span === 'column' ? { width: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx } : {}),
         ...(span === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
         backgroundColor: colors.backgroundColor,
@@ -151,16 +154,14 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
 }
 
 /**
- * A portable chevron for adapters without an icon pack of their own (a plugin
- * surface's icon vocabulary has no caret): two strokes drawn from a rotated
- * corner, pointing down when closed and up when open.
+ * A field box's trailing chevron for adapters without an icon pack of their own (a plugin surface's icon
+ * vocabulary has no caret): the shared drawn chevron, pointing down when closed and up when open.
  */
 export function HappierFieldBoxChevron({ open, color, size = 16 }: Readonly<{
   open: boolean;
   color: string;
   size?: number;
 }>) {
-  const arm = Math.round(size * 0.4);
   return (
     <View
       aria-hidden
@@ -168,20 +169,8 @@ export function HappierFieldBoxChevron({ open, color, size = 16 }: Readonly<{
       accessibilityElementsHidden
       style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
     >
-      <View
-        style={{
-          width: arm,
-          height: arm,
-          borderRightWidth: 1.5,
-          borderBottomWidth: 1.5,
-          borderColor: color,
-          // The corner points down; offset by a quarter arm so the drawn stroke sits optically centred.
-          transform: [
-            { translateY: open ? arm / 4 : -arm / 4 },
-            { rotate: open ? '-135deg' : '45deg' },
-          ],
-        }}
-      />
+      {/* The stroke corner keeps its 0.4-of-the-box arm: the chevron's arm is half its glyph size. */}
+      <HappierChevron direction={open ? 'up' : 'down'} color={color} size={Math.round(size * 0.8)} />
     </View>
   );
 }
@@ -256,7 +245,15 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
   return (
     <View
       style={[
-        { minWidth: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx, flexShrink: 1, gap: HAPPIER_FIELD_TEXT_METRICS.errorGapPx },
+        {
+          // Prefer the field column in an intrinsic inline slot, but span a bounded stacked slot
+          // even when it is narrower than that column. A hard numeric minimum defeats shrinking.
+          width: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx,
+          minWidth: '100%',
+          maxWidth: '100%',
+          flexShrink: 1,
+          gap: HAPPIER_FIELD_TEXT_METRICS.errorGapPx,
+        },
         props.style,
       ]}
     >

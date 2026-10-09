@@ -27,6 +27,7 @@ import { HappierScrollArea } from '../layout/Layout.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
+import type { HappierTone } from '../semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 
 /** A tab's pointer height (lab `.tabs .tb`); a native touch platform's floor still wins. */
@@ -46,6 +47,8 @@ export type HappierTabDescriptor = Readonly<{
   title: string;
   icon?: ReactNode;
   badge?: string;
+  /** The badge's tone; quiet (`secondary`) unless the count is itself a state ("2 failing"). */
+  badgeTone?: HappierTone;
   disabled?: boolean;
   retention?: HappierTabRetention;
   children?: ReactNode;
@@ -432,7 +435,7 @@ export function HappierTabs(props: Readonly<{
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
                   {tab.icon}
                   <HappierText variant="label" tone={isSelected ? 'accent' : 'secondary'}>{tab.title}</HappierText>
-                  {tab.badge ? <HappierText variant="caption" tone="secondary">{tab.badge}</HappierText> : null}
+                  {tab.badge ? <HappierText variant="caption" tone={tab.badgeTone ?? 'secondary'} tabularNumbers>{tab.badge}</HappierText> : null}
                 </View>
               </HappierPressable>
             );

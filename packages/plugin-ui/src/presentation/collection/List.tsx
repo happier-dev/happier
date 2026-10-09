@@ -101,7 +101,7 @@ export type HappierListSectionProps = Readonly<{
    * technology still receives the header role, which has no such composition
    * constraint.
    */
-  virtualizedCollectionRole?: 'list' | 'listbox' | 'grid';
+  virtualizedCollectionRole?: 'list' | 'listbox' | 'grid' | 'radiogroup' | 'group';
   /** @internal One-based row position for a virtualized grid section header. */
   accessibilityRowIndex?: number;
   /** @internal Total row count for a virtualized grid section header. */
@@ -381,7 +381,7 @@ export function HappierListSection({
     }
     return (
       <View
-        role={virtualizedCollectionRole === 'listbox' ? 'group' : 'listitem'}
+        role={virtualizedCollectionRole === 'list' ? 'listitem' : 'group'}
         aria-label={title}
         accessibilityRole="header"
         accessibilityLabel={title}

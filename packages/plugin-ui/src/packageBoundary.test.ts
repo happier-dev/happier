@@ -252,6 +252,7 @@ describe('author package boundary', () => {
     // contributes only the RNW semantic mount adapter through this narrow
     // public entry; it must not reopen a raw renderer-tree contract.
     expect(packageJson.exports).toHaveProperty('./testing', {
+      'happier-source': './src/testing/index.ts',
       types: './dist/testing/index.d.ts',
       default: './dist/testing/index.js',
     });

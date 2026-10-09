@@ -159,8 +159,8 @@ type ListSelectionBaseProps<Item> = Readonly<{
    */
   isItemDisabled?: (item: Item, index: number) => boolean;
   /**
-   * Observes the logical focus cursor, which is not the selection: keyboard
-   * traversal moves focus alone, pointer/touch activation moves both, and a
+   * Observes the logical focus cursor, which is not the selection: navigation
+   * traversal moves focus alone, explicit single-choice traversal chooses too, and a
    * background refresh moves neither. This List owns the movement — only it can
    * see the rows its virtualizer has not mounted — so an author who needs to
    * know where the reader is reads it here rather than keeping a second cursor.
@@ -176,20 +176,14 @@ type ListSelectionBaseProps<Item> = Readonly<{
    * eventual physical focus remain owned by List.
    */
   focusRequest?: Readonly<{ key: string }>;
-  /**
-   * Opt in to keyed MULTI-selection beside the single selected key.
-   *
-   * The two cursors stay independent and neither derives from the other: the
-   * single `selectedKey` remains "which row's detail is open", the multi
-   * selection is "which rows a bulk action will act on", and moving one never
-   * moves the other. That independence is why this is an opt-in capability
-   * rather than a second meaning stuffed into `selectedKey`.
-   *
-   * The List owns the rows the capability sees — its flattened traversal order
-   * and, for retention, every row the author supplied before search narrowed it
-   * — because only the List can see the rows its virtualizer has not mounted.
-   */
-  multiple?: ListMultiSelectionCapabilityProps<Item>;
+}>;
+
+/** A controlled choice, independent of row opening and the logical focus cursor. */
+export type ListSingleChoiceCapabilityProps<Item = unknown> = Readonly<{
+  value: string | null;
+  onValueChange: (key: string) => void;
+  isItemSelectable?: (item: Item, index: number) => boolean;
+  unavailableReason?: (item: Item, index: number) => string | null;
 }>;
 
 export type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
@@ -220,18 +214,31 @@ export type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
   retainedSelectionKeys?: readonly ListMultiSelectionKey[];
 }>;
 
-/** One selected semantic List.Item key, controlled or initially author-owned. */
+/** Navigation selection or an explicit controlled single-choice capability. */
 export type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (
   | Readonly<{
-      selectedKey: string | null;
-      defaultSelectedKey?: never;
-      onSelectedKeyChange: (key: string) => void;
-    }>
-  | Readonly<{
+      single: ListSingleChoiceCapabilityProps<Item>;
+      multiple?: never;
       selectedKey?: never;
-      defaultSelectedKey?: string | null;
-      onSelectedKeyChange?: (key: string) => void;
+      defaultSelectedKey?: never;
+      onSelectedKeyChange?: never;
     }>
+  | (Readonly<{
+      single?: never;
+      /** Bulk choice stays independent of the row whose detail is open. */
+      multiple?: ListMultiSelectionCapabilityProps<Item>;
+    }> & (
+      | Readonly<{
+          selectedKey: string | null;
+          defaultSelectedKey?: never;
+          onSelectedKeyChange: (key: string) => void;
+        }>
+      | Readonly<{
+          selectedKey?: never;
+          defaultSelectedKey?: string | null;
+          onSelectedKeyChange?: (key: string) => void;
+        }>
+    ))
 );
 
 /** The current selected row exposed to an optional virtualized List header. */
@@ -525,6 +532,7 @@ export type ListItemProps = ItemProps;
 type ListItemSelectionDisposition = 'open' | 'handled';
 
 export type ListAccessibilityPattern = 'listbox' | 'grid';
+type ListRowAccessibilityPattern = ListAccessibilityPattern | 'radiogroup';
 
 export type ListItemSelectionContextValue = Readonly<{
   itemKey: string;
@@ -536,7 +544,8 @@ export type ListItemSelectionContextValue = Readonly<{
   positionInSet: number;
   setSize: number;
   roving: HappierRovingCollectionItem;
-  accessibilityPattern: ListAccessibilityPattern;
+  accessibilityPattern: ListRowAccessibilityPattern;
+  unavailableReason?: string | null;
   /** Grid rows use collection-wide ARIA/native positions; listbox rows use set positions. */
   rowIndex: number;
   rowCount: number;
@@ -574,7 +583,8 @@ type VirtualizedListRowProps<Item> = Readonly<{
   onFocus: (key: string) => void;
   onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
-  accessibilityPattern: ListAccessibilityPattern;
+  accessibilityPattern: ListRowAccessibilityPattern;
+  unavailableReason?: string | null;
 }>;
 
 /**
@@ -601,6 +611,7 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
             register: (target) => props.registerTarget(props.itemKey, target),
           },
           accessibilityPattern: props.accessibilityPattern,
+          unavailableReason: props.unavailableReason,
           rowIndex: props.accessibilityRowIndex,
           rowCount: props.accessibilityPattern === 'grid' ? props.collectionSize : props.setSize,
         }
@@ -854,7 +865,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const [uncontrolledSelectedKey, setUncontrolledSelectedKey] = useState<string | null>(
     props.selection?.defaultSelectedKey ?? null,
   );
-  const controlledSelectedKey = props.selection?.selectedKey;
+  const singleChoice = props.selection?.single;
+  const singleChoiceRef = useRef(singleChoice);
+  singleChoiceRef.current = singleChoice;
+  const controlledSelectedKey = singleChoice === undefined ? props.selection?.selectedKey : singleChoice.value;
   const selectedKey = controlledSelectedKey === undefined ? uncontrolledSelectedKey : controlledSelectedKey;
   const selectionIsControlled = controlledSelectedKey !== undefined;
   const selectionEnabled = props.selection !== undefined;
@@ -884,7 +898,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const requestSelection = (key: string) => {
     if (key === selectedKey) return;
     if (!selectionIsControlled) setUncontrolledSelectedKey(key);
-    props.selection?.onSelectedKeyChange?.(key);
+    if (singleChoice !== undefined) singleChoice.onValueChange(key);
+    else props.selection?.onSelectedKeyChange?.(key);
   };
   const requestSelectionRef = useRef(requestSelection);
   requestSelectionRef.current = requestSelection;
@@ -914,6 +929,11 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     event?: HappierGestureResponderEvent,
   ): ListItemSelectionDisposition => {
     rowFocusRequest.abandon();
+    if (singleChoiceRef.current !== undefined) {
+      requestFocusRef.current(key);
+      requestSelectionRef.current(key);
+      return 'handled';
+    }
     return activateListItem({ key, event, store: multiStoreRef.current,
       focus: requestFocusRef.current, open: requestSelectionRef.current });
   }, [rowFocusRequest]);
@@ -926,6 +946,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const isItemDisabled = props.selection?.isItemDisabled;
+  const isSingleItemSelectable = singleChoice?.isItemSelectable;
   const isItemActivatable = props.selection?.isItemActivatable;
   const activatableRows = useMemo(
     () => rows.map((row) => isItemActivatable?.(row.item, row.index) !== false),
@@ -934,9 +955,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const rovingEntries = useMemo<readonly HappierRovingEntry[]>(
     () => rows.map((row, rowIndex) => ({
       disabled: isItemDisabled?.(row.item, row.index) === true
+        || isSingleItemSelectable?.(row.item, row.index) === false
         || activatableRows[rowIndex] === false,
     })),
-    [activatableRows, isItemDisabled, rows],
+    [activatableRows, isItemDisabled, isSingleItemSelectable, rows],
   );
   // A range extension also respects bulk eligibility. Its traversal otherwise
   // shares the primary-action cursor, which already excludes action-only rows;
@@ -957,7 +979,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // collection's current choice, so Tab still returns to something meaningful.
   const tabStopIndex = collectionControl?.focus === undefined ? resolveHappierRovingTabStop({
     entries: rovingEntries,
-    selectedIndex: focusedIndex >= 0 ? focusedIndex : selectedIndex,
+    selectedIndex: focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true ? focusedIndex : selectedIndex,
   }) : rowIndexByKey.get(collectionControl.focus.tabStopKey ?? '') ?? -1;
   const tabStopIndexRef = useRef(tabStopIndex);
   tabStopIndexRef.current = tabStopIndex;
@@ -1122,13 +1144,13 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     collectionControl?.focus?.onRequestHandled?.(authorFocusRequest);
   }, [authorFocusRequest, rovingEntries]);
   const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
-    const currentRowIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
+    const currentRowIndex = focusedIndex >= 0 && rovingEntries[focusedIndex]?.disabled !== true ? focusedIndex : fromIndex;
     const controlledNavigation = collectionControl?.focus;
     if (controlledNavigation !== undefined) {
       const from = rows[currentRowIndex]?.key;
       if (from === undefined) return false;
-      if (controlledNavigation.onKey(key, from, event)) return true;
-      return collectionControl?.onRowKey?.(key, from) === true;
+      if (controlledNavigation.onKey?.(key, from, event)) return true;
+      if (singleChoice === undefined) return collectionControl?.onRowKey?.(key, from) === true;
     }
     const multiStoreForKey = multiStoreRef.current;
     if (multiStoreForKey !== null) {
@@ -1178,7 +1200,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // Activation stays with the shared row pressable. This owner claims only
     // collection navigation, so Space and Enter still select through the
     // author's row action rather than through a second activation path.
-    if (key === ' ' || key === 'Spacebar') return false;
+    if ((key === ' ' || key === 'Spacebar') && singleChoice === undefined) return false;
     // Logical focus, not the row the key event happened to reach, is where the
     // reader is. While a reveal is in flight the requested row has not mounted,
     // so the keydown still arrives at the previous row's element; navigating
@@ -1189,15 +1211,15 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       currentIndex,
       key,
       rtl,
-      listNavigationKeys: true,
+      listNavigationKeys: singleChoice === undefined,
     });
-    if (next === null || next === currentIndex) return false;
+    if (next === null || (next === currentIndex && singleChoice === undefined)) return false;
     const nextRow = rows[next];
     if (nextRow === undefined) return false;
     const nextKey = nextRow.key;
-    // Selection is deliberately untouched: arrow and j/k movement is a reading
-    // gesture, and committing a selection per keypress would make every step
-    // through the list act on the rest of the surface.
+    if (singleChoice !== undefined) requestSelectionRef.current(nextKey);
+    // Navigation rows move focus alone; the explicit radio capability chooses
+    // as it moves. Both use the same physical reveal and keyed focus lifecycle.
     requestFocusRef.current(nextKey);
     requestRowFocus(nextKey, next);
     return true;
@@ -1242,10 +1264,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     </View>
   ) : undefined;
   const renderItem = props.renderItem;
-  const accessibilityPattern = selectionEnabled ? props.accessibilityPattern ?? 'listbox' : 'listbox';
-  const collectionRole = selectionEnabled
-    ? accessibilityPattern === 'grid' ? 'grid' : 'listbox'
-    : 'list';
+  const accessibilityPattern = singleChoice !== undefined ? 'radiogroup' : selectionEnabled ? props.accessibilityPattern ?? 'listbox' : 'listbox';
+  const collectionRole = collectionControl?.collectionRole ?? (selectionEnabled
+    ? accessibilityPattern
+    : 'list');
   // One row projection for both arms. `rowIndex` is the collection-wide
   // navigation position; `index` and `setSize` stay unit-local, which is what a
   // reader hears and what the author's callbacks already receive.
@@ -1272,14 +1294,15 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         renderItem={renderItem}
         selectionEnabled={selectionEnabled}
         multiSelectable={multiStore !== null && multiRovingEntries[input.rowIndex]?.disabled === false}
-        activatable={activatableRows[input.rowIndex] !== false}
+        activatable={singleChoice === undefined ? activatableRows[input.rowIndex] !== false : rovingEntries[input.rowIndex]?.disabled === false}
+        unavailableReason={singleChoice?.unavailableReason?.(input.item, input.index)}
         // With the capability mounted, `aria-selected` is the multi-selection —
         // the standard meaning in a multi-selectable listbox. The single key
         // stays the open detail and keeps owning the tab stop.
         selected={multiStore === null
           ? selectedKeyRef.current === itemKey
           : multiSelectedKeysRef.current.has(itemKey)}
-        open={selectedKeyRef.current === itemKey}
+        open={singleChoice === undefined && selectedKeyRef.current === itemKey}
         isTabStop={selectionEnabled && tabStopIndexRef.current === input.rowIndex}
         onSelect={selectItem}
         onFocus={observeFocus}
@@ -1288,7 +1311,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         accessibilityPattern={accessibilityPattern}
       />
     );
-  }, [accessibilityPattern, activatableRows, keyForItem, multiRovingEntries, multiStore, observeFocus, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
+  }, [accessibilityPattern, activatableRows, keyForItem, multiRovingEntries, multiStore, observeFocus, onRovingKey, registerTarget, renderItem, rovingEntries, selectItem, selectionEnabled, singleChoice?.unavailableReason]);
 
   const flatSetSize = visibleItems?.length ?? 0;
   const renderFlatRow = useCallback(({ item, index }: Readonly<{ item: Item; index: number }>) => (
@@ -1388,7 +1411,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // collection element, scrolling with the page around it (no reveal is needed: every row is on the page).
   const collection = pageScroll ? (
     <View
-      accessibilityRole={selectionEnabled ? undefined : 'list'}
+      accessibilityRole={collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
       role={collectionRole}
       aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
@@ -1429,7 +1452,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       : (item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index)),
     renderItem: renderVirtualizedItem,
     onHandle: onVirtualizerHandle,
-    accessibilityRole: selectionEnabled ? undefined : 'list',
+    accessibilityRole: collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list',
     role: collectionRole,
     rowCount: collectionRole === 'grid' ? collectionRowCount : undefined,
     multiSelectable: collectionMultiSelectable,
@@ -1548,6 +1571,7 @@ function renderListItem(
           open={input.open}
           onOpenChange={input.onOpenChange}
           trigger={input.trigger}
+          triggerIcon="more"
           triggerAccessibilityLabel={input.triggerAccessibilityLabel}
           testID={input.testID}
           disabled={input.disabled}
@@ -1724,16 +1748,17 @@ function ListItemRow(props: ListItemProps): ReactElement {
     // A listbox has options rather than sibling action cells. Preserve a
     // structural disabled option there; a grid can render a stated row with no
     // invented primary control at all.
-    : selection.accessibilityPattern === 'listbox'
+    : selection.accessibilityPattern !== 'grid'
       ? () => undefined
       : undefined;
   return renderListItem({
     ...gridResolvedProps,
     selected: selection.selected,
-    ...(selection.accessibilityPattern === 'listbox' && !selection.activatable
+    ...(selection.accessibilityPattern !== 'grid' && !selection.activatable
       ? { disabled: true }
       : {}),
-    accessibilityRole: selection.accessibilityPattern === 'grid' ? 'button' : 'option',
+    accessibilityRole: selection.accessibilityPattern === 'grid' ? 'button' : selection.accessibilityPattern === 'radiogroup' ? 'radio' : 'option',
+    ...(selection.unavailableReason ? { accessibilityHint: selection.unavailableReason } : {}),
     accessibilityPositionInSet: selection.accessibilityPattern === 'grid' ? undefined : selection.positionInSet,
     accessibilitySetSize: selection.accessibilityPattern === 'grid' ? undefined : selection.setSize,
     accessibilityRowIndex: selection.accessibilityPattern === 'grid' ? selection.rowIndex + 1 : undefined,

@@ -21,6 +21,10 @@ import {
   useOptionalHappierUiTypography,
 } from '../environment/context.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HAPPIER_RADIUS_V1 } from '../environment/radius.js';
+import { HappierStatusDot } from '../presentation/status/StatusDot.js';
+import { PluginUiIconGlyph, type IconName } from './Icon.js';
+import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
 import type { HappierTypeRole } from '../environment/types.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
@@ -50,14 +54,16 @@ import { HappierDisclosure } from '../presentation/collection/Disclosure.js';
 import { resolveHappierListDetailGeometry } from '../presentation/collection/listDetailGeometry.js';
 import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
-import { HAPPIER_MOTION_V1 } from '../presentation/interaction/motion.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { HappierSkeletonBlock } from '../presentation/feedback/Skeleton.js';
-import { List, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSectionData } from './List.js';
+import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
+import { resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
+import { HappierRadioMark } from '../presentation/form/RadioMark.js';
+import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import { ListCollectionControlContext, type ListCollectionControl } from './listCollectionControl.js';
-import { ListCollectionHeader, useListCollectionSearch } from './listCollectionHeader.js';
+import { CollectionKeyCap, ListCollectionHeader, useListCollectionSearch, type ListCollectionSearchToken } from './listCollectionHeader.js';
 import { ListMultiSelectionProvider } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
 import { DetailsPane, useDetailsPaneAvailable, useDetailsPaneHostInstalled } from './DetailsPane.js';
@@ -100,9 +106,24 @@ export type CollectionAnatomy<Item> = Readonly<{
   /** A core destination owner may decorate the shared row/card without replacing its anatomy or activation. */
   wrapItem?: (item: Item, content: ReactNode) => ReactNode;
   glyph: (item: Item) => ReactNode;
+  /**
+   * A small mark pinned to the glyph's lower corner in the list (the agent working on the item), on a plate
+   * ringed in its tone. The table says the same in its Agent column, so the table draws no badge.
+   */
+  glyphBadge?: (item: Item) => CollectionGlyphBadge | null;
   title: (item: Item) => string;
-  /** Where the item lives ("payments-api #2481"). */
+  /**
+   * The item's short designation ("#2481", "!88"), quiet after the title in the table's Entry cell. The list
+   * says it in its `byline` instead.
+   */
+  titleSuffix?: (item: Item) => string | null;
+  /** Where the item lives ("payments-api"): the table's Where column. */
   where?: (item: Item) => ReactNode;
+  /**
+   * The list row's second line, where there is room for who as well as where ("payments-api #2481 · Mara
+   * Oduya"). Defaults to `where`.
+   */
+  byline?: (item: Item) => ReactNode;
   /** The one loud fact. */
   reason?: (item: Item) => ReactNode;
   signal?: (item: Item) => ReactNode;
@@ -132,6 +153,14 @@ export type CollectionAnatomy<Item> = Readonly<{
   /** Column titles for the table header, one per slot the anatomy declares. */
   columnTitles: Readonly<{ title: string; where?: string; reason?: string; signal?: string; agent?: string; age?: string }>;
 }>;
+
+/**
+ * The glyph's corner mark: an icon, live dot, or contributed mark drawn at the supplied owner slot size; `tone` inks the mark and rings its
+ * plate (none: the quiet border). The Collection draws and sizes it, so every badge in a list is one size.
+ */
+export type CollectionGlyphBadge = Readonly<
+  { icon: IconName; tone?: HappierTone } | { live: true; tone?: HappierTone } | { mark: (pixelSize: number) => ReactNode; tone?: HappierTone }
+>;
 
 /** A group header's one action. */
 export type CollectionGroupAction = Readonly<{ label: string; onPress: () => void }>;
@@ -164,12 +193,27 @@ export type CollectionRowActions = Readonly<{
     }>
 );
 
-/** The selected item's identity and actions, rendered by the host's details header. */
-export type CollectionDetailHeader = Readonly<{ title: string; subtitle?: string; actions?: ReactNode }>;
+/**
+ * The selected item's identity and actions, rendered by the host's details header: its title, the line under it,
+ * the item's own mark beside the title (no tile) and a mark leading the line (where it comes from).
+ */
+export type CollectionDetailHeader = Readonly<{
+  title: string;
+  subtitle?: string;
+  leading?: ReactNode;
+  subtitleLeading?: ReactNode;
+  actions?: ReactNode;
+}>;
 
 export type CollectionDetailRenderContext = Readonly<{
   /** The host already draws the identity band; the detail keeps only its body facts. */
   headerHosted: boolean;
+}>;
+
+/** Controlled local choice; changing it never opens the model's detail. */
+export type CollectionSingleChoice<Item> = Omit<ListSingleChoiceCapabilityProps<Item>, 'isItemSelectable' | 'unavailableReason'> & Readonly<{
+  isItemSelectable?: (item: Item) => boolean;
+  unavailableReason?: (item: Item) => string | null;
 }>;
 
 export type CollectionProps<Item> = Readonly<{
@@ -225,19 +269,22 @@ export type CollectionProps<Item> = Readonly<{
     onFocusedKeyChange?: (key: HappierCollectionKey) => void;
     focusRequest?: Readonly<{ key: string }>;
     isItemActivatable?: (item: Item) => boolean;
-    multiple?: Readonly<{
+  }> & (
+    | Readonly<{ single: CollectionSingleChoice<Item>; multiple?: never }>
+    | Readonly<{ single?: never; multiple?: Readonly<{
       store: ListMultiSelectionCapabilityProps['store'];
       isItemSelectable?: (item: Item) => boolean;
       retainedSelectionKeys?: readonly string[];
-    }>;
-  }>;
-  /** The List's search field; the model owns what matches. */
+    }> }>
+  );
+  /** The List's search field; the model owns what matches. `tokens` are the narrowings in force, removable. */
   search?: Readonly<{
     label: string;
     value: string;
     onValueChange: (value: string) => void;
     onComposingValueChange?: (value: string | null) => void;
     placeholder?: string;
+    tokens?: readonly ListCollectionSearchToken[];
     testID?: string;
   }>;
   empty?: ReactNode;
@@ -274,6 +321,11 @@ const TABLE = Object.freeze({
   paddingY: 10,
   headerHeight: 32,
   footerHeight: 34,
+  /** The glyph's corner badge: its plate, how far it hangs past the glyph, and the surface ring cutting it out. */
+  glyphBadge: 15,
+  glyphBadgeMark: 10,
+  glyphBadgeOverhang: 6,
+  glyphBadgeCutout: 1.5,
 });
 
 const SLOT_COLUMNS = Object.freeze({
@@ -324,6 +376,7 @@ type CollectionStage<Item> = Readonly<{
    * take two lines and rows size to them. Beside a detail rows keep the exact height the travel plans with.
    */
   wrapTitles: boolean;
+  pageSections: boolean;
   useRowActions: ((item: Item) => CollectionRowActions) | undefined;
   expandable: boolean;
   /** On a page section's sheet: the rows that draw the sheet's hairline below them (every row but a group's last). */
@@ -485,6 +538,23 @@ const skeletonRowStyle: HappierPortableStyle = {
   borderBottomWidth: 1,
 };
 const flexCellStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
+const glyphWithBadgeStyle: HappierPortableStyle = { position: 'relative' };
+const glyphBadgeRingStyle: HappierPortableStyle = {
+  position: 'absolute',
+  right: -TABLE.glyphBadgeOverhang - TABLE.glyphBadgeCutout,
+  bottom: -TABLE.glyphBadgeOverhang - TABLE.glyphBadgeCutout,
+  padding: TABLE.glyphBadgeCutout,
+  borderRadius: HAPPIER_RADIUS_V1.sm + TABLE.glyphBadgeCutout,
+};
+const glyphBadgePlateStyle: HappierPortableStyle = {
+  width: TABLE.glyphBadge,
+  height: TABLE.glyphBadge,
+  borderRadius: HAPPIER_RADIUS_V1.sm,
+  borderWidth: 1,
+  alignItems: 'center',
+  justifyContent: 'center',
+  overflow: 'hidden',
+};
 const listRowContentStyle: HappierPortableStyle = {
   flexDirection: 'row',
   gap: TABLE.gap,
@@ -511,12 +581,15 @@ function cellStyle(column: ResolvedColumn<unknown>): HappierPortableStyle {
 }
 
 /** Plain text a slot returned is drawn as quiet secondary text; an element is the caller's own. */
-function SlotContent(props: Readonly<{ value: ReactNode; tone?: 'secondary' | 'muted' }>): ReactElement | null {
+function SlotContent(props: Readonly<{ value: ReactNode; tone?: 'secondary' | 'muted'; tabular?: boolean }>): ReactElement | null {
   const value = props.value;
   if (value === null || value === undefined || value === false) return null;
   if (typeof value === 'string' || typeof value === 'number') {
+    // Tabular figures only where a column of figures must align (Age, numbers); in words ("payments-api") they
+    // widen the hyphen and the digits of a designation.
+    const tabular = props.tabular === true || typeof value === 'number';
     return (
-      <HappierText variant="body" tone={props.tone ?? 'secondary'} numberOfLines={1} tabularNumbers style={cellTextStyle}>
+      <HappierText variant="body" tone={props.tone ?? 'secondary'} numberOfLines={1} tabularNumbers={tabular} style={cellTextStyle}>
         {String(value)}
       </HappierText>
     );
@@ -539,19 +612,44 @@ function TableCells<Item>(props: Readonly<{
       {props.columns.map((column) => (
         <View key={column.key} style={cellStyle(column as ResolvedColumn<unknown>)}>
           {item === null ? null : column.render === null ? (
-            props.withTitle ? (
-              <HappierText variant="label" tone="neutral" numberOfLines={1} style={titleTextStyle}>
-                {anatomy.title(item)}
-              </HappierText>
-            ) : null
-          ) : <SlotContent value={column.render(item)} />}
+            props.withTitle ? <TableTitle item={item} anatomy={anatomy} /> : null
+          ) : <SlotContent value={column.render(item)} tabular={column.key === 'age'} />}
         </View>
       ))}
     </View>
   );
 }
 
+/** The table's Entry cell: the title, then its designation quietly after it (lab `.tt` + `.nb`). */
+function TableTitle<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatomy<Item> }>): ReactElement {
+  const { item, anatomy } = props;
+  const suffix = anatomy.titleSuffix?.(item) ?? null;
+  const title = (
+    <HappierText variant="label" tone="neutral" numberOfLines={1} style={titleTextStyle}>
+      {anatomy.title(item)}
+    </HappierText>
+  );
+  if (suffix === null) return title;
+  return (
+    <View style={titleWithSuffixStyle}>
+      {title}
+      <HappierText
+        variant="body"
+        tone="muted"
+        numberOfLines={1}
+        tabularNumbers
+        style={titleSuffixStyle}
+        {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:title-suffix` })}
+      >
+        {suffix}
+      </HappierText>
+    </View>
+  );
+}
+
 const titleTextStyle: HappierPortableStyle = { flexShrink: 1 };
+const titleWithSuffixStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 6, minWidth: 0 };
+const titleSuffixStyle: HappierPortableStyle = { flexShrink: 0 };
 
 function ListCells<Item>(props: Readonly<{
   item: Item;
@@ -561,14 +659,26 @@ function ListCells<Item>(props: Readonly<{
   AnimatedView: ReturnType<typeof useMotionDriver>['AnimatedView'];
   /** The resting phone list: a title may take a second line and the row grows to it (no travel to plan). */
   wrapTitle: boolean;
+  pageSection: boolean;
 }>): ReactElement {
   const { item, anatomy, AnimatedView } = props;
   const age = anatomy.age?.(item) ?? null;
-  const where = anatomy.where?.(item);
+  const where = anatomy.byline === undefined ? anatomy.where?.(item) : anatomy.byline(item);
   const reason = anatomy.reason?.(item);
+  const badge = anatomy.glyphBadge?.(item) ?? null;
   return (
-    <View style={[listRowContentStyle, props.wrapTitle ? { minHeight: props.height } : { height: props.height }]}>
-      <View style={glyphStyle}>{anatomy.glyph(item)}</View>
+    <View style={[listRowContentStyle,
+      // The sheet and row each consume one hairline of the page's optical inset.
+      props.pageSection ? { paddingLeft: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 2 } : null,
+      props.wrapTitle ? { minHeight: props.height } : { height: props.height }]}>
+      <View style={[glyphStyle, { justifyContent: 'flex-start' }]}>
+        {badge === null ? anatomy.glyph(item) : (
+          <View style={glyphWithBadgeStyle}>
+            {anatomy.glyph(item)}
+            <GlyphBadgePlate badge={badge} {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:glyph-badge` })} />
+          </View>
+        )}
+      </View>
       <View style={[flexCellStyle, { gap: 4 }]}>
         <View style={props.wrapTitle ? wrappedTitleLineStyle : lineStyle}>
           <HappierText variant="label" tone="neutral" numberOfLines={props.wrapTitle ? 2 : 1} style={[titleTextStyle, flexCellStyle]}>
@@ -582,6 +692,29 @@ function ListCells<Item>(props: Readonly<{
           <View style={[flexCellStyle, lineStyle]}><SlotContent value={where} /></View>
           <SlotContent value={reason} />
         </AnimatedView>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The glyph's corner plate: a ring of the row surface cuts it out of the glyph, and its own edge takes the
+ * badge's tone. The ring and the plate are concentric.
+ */
+function GlyphBadgePlate(props: Readonly<{ badge: CollectionGlyphBadge; testID?: string }>): ReactElement {
+  const theme = useHappierUiTheme();
+  const tone = props.badge.tone;
+  return (
+    <View aria-hidden testID={props.testID} style={[glyphBadgeRingStyle, { backgroundColor: theme.colors.surface }]}>
+      <View
+        style={[glyphBadgePlateStyle, {
+          backgroundColor: theme.colors.surface,
+          borderColor: tone === undefined ? theme.colors.border : theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]],
+        }]}
+      >
+        {'mark' in props.badge ? props.badge.mark(TABLE.glyphBadgeMark) : 'live' in props.badge
+          ? <HappierStatusDot color={tone === undefined ? theme.colors.secondaryText : theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]]} isPulsing />
+          : <PluginUiIconGlyph name={props.badge.icon} size={TABLE.glyphBadgeMark} tone={tone ?? 'secondary'} />}
       </View>
     </View>
   );
@@ -614,7 +747,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       onPress={() => { toggle(itemKey); }}
       style={() => chevronStyle}
     >
-      <View style={[caretStyle, reducedMotionPeek ? null : caretTransitionStyle, { borderColor: theme.colors.mutedText, transform: [{ translateY: expanded ? 2 : -2 }, { rotate: expanded ? '225deg' : '45deg' }] }]} />
+      <HappierChevron direction={expanded ? 'up' : 'down'} color={theme.colors.mutedText} size={PEEK_CHEVRON_SIZE} reducedMotion={reducedMotionPeek} />
     </HappierPressable>
   ) : null;
   // One accessory cell in every geometry, even when it is empty beside a detail: a row whose cells come and go
@@ -636,6 +769,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
         secondLine={{ value: progress, tracks: travel === null ? NO_TRACKS : HAPPIER_COLLECTION_TRANSITION_TRACKS.secondLine }}
         AnimatedView={AnimatedView}
         wrapTitle={stage.wrapTitles}
+        pageSection={stage.pageSections}
       />
       {travel === null ? null : (
         // The table's other columns, fading where they stood while the rows travel.
@@ -691,20 +825,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
   );
 }
 
-/** The chevron turns with the peek at the base step (web), so it reads as one motion with the reveal. */
-const caretTransitionStyle = {
-  transitionProperty: 'transform',
-  transitionDuration: `${HAPPIER_MOTION_V1.baseMs}ms`,
-  transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
-} as HappierPortableStyle;
-
-/** The peek chevron, drawn: two strokes of a rotated box, pointing down closed and up open. */
-const caretStyle: HappierPortableStyle = {
-  width: 7,
-  height: 7,
-  borderRightWidth: 1.5,
-  borderBottomWidth: 1.5,
-};
+/** The peek chevron (the shared drawn chevron) turns with the peek at the base step, pointing down closed and up open. */
+const PEEK_CHEVRON_SIZE = 14;
 
 const chevronStyle: HappierPortableStyle = {
   width: TABLE.chevronWidth,
@@ -805,9 +927,24 @@ function sectionCellKey(key: string): string {
   return `collection-section:${key}`;
 }
 
-export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
-  const { model, anatomy } = props;
+function CollectionChoiceMark(): ReactElement {
+  const selection = useContext(ListItemSelectionContext);
   const theme = useHappierUiTheme();
+  return <HappierRadioMark selected={selection?.selected === true} disabled={selection?.activatable === false} theme={theme} />;
+}
+
+export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
+  const { model } = props;
+  const singleChoice = props.selection?.single;
+  const theme = useHappierUiTheme();
+  // A single choice leads each row with the one choice mark (lab `.fm-table`'s radio column) in the glyph
+  // column; the row itself owns the radio role, its checked state and the keyboard.
+  const anatomy = useMemo<CollectionAnatomy<Item>>(() => singleChoice === undefined ? props.anatomy : {
+    ...props.anatomy,
+    destination: undefined,
+    glyph: () => <CollectionChoiceMark />,
+    reason: (item) => singleChoice.unavailableReason?.(item) ?? props.anatomy.reason?.(item),
+  }, [props.anatomy, singleChoice?.unavailableReason, singleChoice === undefined]);
   const translate = usePluginTranslation();
   const accessibility = useHappierUiAccessibility();
   const platform = useOptionalHappierUiPlatform();
@@ -825,10 +962,17 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
 
   // ---- measured geometry: the split owner's pure rule, never a device label ----
   const [size, setSize] = useState<Readonly<{ width: number; height: number }> | null>(null);
+  const [pageViewportHeight, setPageViewportHeight] = useState<number | null>(null);
+  const onPageViewportLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    setPageViewportHeight(event.nativeEvent.layout.height);
+  }, []);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setSize((current) => (current !== null && current.width === width && current.height === height ? current : { width, height }));
   }, []);
+  // The page stage grows with its rows. Loading placeholders fill the bounded viewport,
+  // never that content height (which would grow the placeholders on every layout).
+  const viewportHeight = pageScroll ? pageViewportHeight : size?.height ?? null;
   const geometry = useMemo(() => size === null ? null : resolveHappierListDetailGeometry({
     availableWidth: size.width,
     minListWidth: props.minListWidth,
@@ -999,7 +1143,9 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   cellsRef.current = useMemo(() => {
     const cells: HappierCollectionTransitionCell[] = [];
     for (const section of sections) {
-      if (grouped) cells.push({ key: sectionCellKey(section.key), table: metrics.groupHeader, list: metrics.groupHeader });
+      if (grouped) {
+        cells.push({ key: sectionCellKey(section.key), table: metrics.groupHeader, list: metrics.groupHeader, header: true });
+      }
       for (const cell of section.data) {
         cells.push(cell.kind === 'item'
           ? { key: cell.key, table: metrics.tableRow, list: metrics.listRow }
@@ -1047,19 +1193,23 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     expanded,
     toggleExpanded: model.actions.toggleExpanded,
     wrapTitles,
+    pageSections,
     useRowActions: props.useRowActions,
     expandable,
     dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, columns, composition, dividedKeys, expandable, expanded, metrics, model.actions.toggleExpanded, wrapTitles, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
+  }), [anatomy, columns, composition, dividedKeys, expandable, expanded, metrics, model.actions.toggleExpanded, wrapTitles, pageSections, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
     ?? (model.selectionStore === null ? undefined : { store: model.selectionStore });
+  if (singleChoice !== undefined && authorMultiple !== undefined) {
+    throw new Error('Collection single choice and multiple selection are mutually exclusive');
+  }
   const multipleStore = authorMultiple?.store ?? null;
   const navigationKeys = useMemo(() => model.sections.flatMap(section => section.items)
-    .filter(item => props.selection?.isItemActivatable?.(item) !== false).map(model.keyOf), [model.keyOf, model.sections, props.selection?.isItemActivatable]);
+    .filter(item => props.selection?.isItemActivatable?.(item) !== false && singleChoice?.isItemSelectable?.(item) !== false).map(model.keyOf), [model.keyOf, model.sections, props.selection?.isItemActivatable, singleChoice?.isItemSelectable]);
   const selectableKeys = useMemo(() => model.sections.flatMap(section => section.items)
     .filter(item => authorMultiple?.isItemSelectable?.(item) !== false).map(model.keyOf), [authorMultiple?.isItemSelectable, model.keyOf, model.sections]);
   const eligibleKeys = useMemo(() => {
@@ -1071,18 +1221,23 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     // Retention preserves hidden rows, never overrides a present row's exclusion.
     multipleStore?.setVisibleRows({ visibleOrderedKeys: selectableKeys, eligibleKeys });
   }, [eligibleKeys, multipleStore, selectableKeys]);
-  const tabStopKey = model.focusKey !== null && navigationKeys.includes(model.focusKey) ? model.focusKey
-    : openKey !== null && navigationKeys.includes(openKey) ? openKey : navigationKeys[0] ?? null;
+  const selectedKey = singleChoice === undefined ? openKey : singleChoice.value;
+  const tabStopIndex = resolveHappierRovingTabStop({
+    entries: navigationKeys.map(() => ({ disabled: false })),
+    selectedIndex: model.focusKey !== null && navigationKeys.includes(model.focusKey)
+      ? navigationKeys.indexOf(model.focusKey) : navigationKeys.indexOf(selectedKey ?? ''),
+  });
+  const tabStopKey = tabStopIndex === null ? null : navigationKeys[tabStopIndex] ?? null;
   const toggleExpanded = model.actions.toggleExpanded;
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
     hideChrome: true,
     focus: { key: model.focusKey, tabStopKey, request: model.focusRequest,
       onRequestHandled: model.actions.consumeFocusRequest,
-      onKey: (key, from, event) => model.actions.navigate({ key, from, event, presentation,
-        store: multipleStore, eligibleKeys: navigationKeys }) },
+      ...(singleChoice === undefined ? { onKey: (key: string, from: string, event: unknown) => model.actions.navigate({ key, from, event, presentation,
+        store: multipleStore, eligibleKeys: navigationKeys }) } : {}) },
     onRowKey: (key, itemKey) => {
-      if ((key === ' ' || key === 'Spacebar') && expandable) {
+      if (singleChoice === undefined && (key === ' ' || key === 'Spacebar') && expandable) {
         toggleExpanded(itemKey);
         return true;
       }
@@ -1096,6 +1251,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         justifyContent: 'flex-end' as const,
         paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
         paddingBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
+        // A page-list's group label shares its rows' leading mark edge. Grid headings
+        // retain their own card-column anatomy below.
         paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
       },
       pageSheet: { colors: palette },
@@ -1132,7 +1289,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {header}
       </driver.AnimatedView>
     ),
-  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, pageSections, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
+  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, pageSections, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
@@ -1184,6 +1341,16 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const isItemSelectable = useCallback(
     (cell: CollectionCell<Item>) => cell.kind === 'item' && (authorSelectable?.(cell.item) ?? true),
     [authorSelectable],
+  );
+  const authorSingleSelectable = singleChoice?.isItemSelectable;
+  const isSingleItemSelectable = useCallback(
+    (cell: CollectionCell<Item>) => cell.kind === 'item' && authorSingleSelectable?.(cell.item) !== false,
+    [authorSingleSelectable],
+  );
+  const authorUnavailableReason = singleChoice?.unavailableReason;
+  const unavailableReason = useCallback(
+    (cell: CollectionCell<Item>) => cell.kind === 'item' ? authorUnavailableReason?.(cell.item) ?? null : null,
+    [authorUnavailableReason],
   );
 
   // ---- the chrome: column header, keyboard hints, the window-honesty line ----
@@ -1253,8 +1420,6 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const continuations = model.window.kind === 'partial' ? model.window.continuations : [];
   const statement = props.windowStatement ?? (model.window.kind === 'unavailable' ? model.window.reason : undefined);
   const windowLine = statement === undefined ? undefined : typeof statement === 'string' ? [statement] : statement;
-  // A key cap is a bordered control face (lab `.kbd`): the outline and field of the host's controls.
-  const keyPalette = palette ?? resolveHappierUiPalette(theme);
   const footerLine = hints === null && windowLine === undefined && continuations.length === 0 ? null : (
     <View style={[footerStyle, { borderTopColor: theme.colors.divider }]} testID={props.testID === undefined ? undefined : `${props.testID}:footer`}>
       {hints === null ? null : (
@@ -1267,11 +1432,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         >
           {hints.map((hint) => (
             <View key={hint.join(' ')} style={hintStyle}>
-              {hint.slice(0, -1).map((key) => (
-                <View key={key} style={[kbdStyle, { borderColor: keyPalette.controlBorder, backgroundColor: keyPalette.fieldBackground }]}>
-                  <HappierText variant="caption" tone="muted">{key}</HappierText>
-                </View>
-              ))}
+              {hint.slice(0, -1).map((key) => <CollectionKeyCap key={key} label={key} />)}
               <HappierText variant="caption" tone="muted">{hint[hint.length - 1]}</HappierText>
             </View>
           ))}
@@ -1335,7 +1496,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     ? (composition === 'table' ? HAPPIER_COLLECTION_REDUCED_MOTION_TRACKS.out : HAPPIER_COLLECTION_REDUCED_MOTION_TRACKS.in)
     : NO_TRACKS;
 
-  const listSelection = {
+  const listSelection: ListSelectionProps<CollectionCell<Item>> = singleChoice === undefined ? {
     selectedKey: openKey,
     onSelectedKeyChange,
     onFocusedKeyChange,
@@ -1347,18 +1508,34 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         ...(authorMultiple.retainedSelectionKeys === undefined ? {} : { retainedSelectionKeys: authorMultiple.retainedSelectionKeys }),
       },
     }),
+  } : {
+    single: {
+      ...singleChoice,
+      isItemSelectable: isSingleItemSelectable,
+      unavailableReason,
+    },
+    onFocusedKeyChange,
+    isItemActivatable,
   };
+  const cardSelection: CollectionProps<Item>['selection'] = singleChoice === undefined ? {
+    onFocusedKeyChange: props.selection?.onFocusedKeyChange,
+    focusRequest: props.selection?.focusRequest,
+    isItemActivatable: props.selection?.isItemActivatable,
+    multiple: authorMultiple,
+  } : props.selection;
 
   return (
     <CollectionVirtualizerContext.Provider value={props.virtualizer}>
     <ListMultiSelectionProvider store={multipleStore}>
     <HappierCollectionLayoutContext.Provider value={layoutState}>
-      <View ref={rootRef} testID={props.testID} style={rootStyle}>
+      <View ref={rootRef} testID={props.testID} style={rootStyle} onLayout={pageScroll ? onPageViewportLayout : undefined}>
         {/* A page-sized collection scrolls the page's own header and footer with its items. */}
         {pageScroll ? null : props.header}
         <PageScroller enabled={pageScroll} viewport={viewport} request={viewportScrollRequest}>
         {pageScroll ? props.header : null}
-        <View testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout} style={pageScroll ? pageStageStyle : rootStyle}>
+        <View testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
+          style={[pageScroll ? pageStageStyle : rootStyle,
+            pageSections ? { marginHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx } : null]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}
@@ -1374,7 +1551,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                 <CollectionSkeletonRows
                   rowHeight={metrics.listRow}
                   twoLines
-                  viewportHeight={size?.height ?? null}
+                  viewportHeight={viewportHeight}
                   {...(props.testID === undefined ? {} : { testID: props.testID })}
                 />
               ) : cards ? (
@@ -1385,15 +1562,15 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     anatomy={anatomy}
                     accessibilityLabel={props.accessibilityLabel}
                     width={size?.width ?? null}
-                    height={size?.height ?? null}
+                    height={viewportHeight}
                     narrow={geometry === null || geometry.mode !== 'split'}
                     boardLayout={props.boardLayout}
-                    selectedKey={openKey}
+                    selectedKey={selectedKey}
                     focusRequest={model.focusRequest}
                     onFocusedKeyChange={onFocusedKeyChange}
                     tabStopKey={tabStopKey}
                     eligibleKeys={navigationKeys}
-                    selection={{ ...props.selection, ...(authorMultiple === undefined ? {} : { multiple: authorMultiple }) }}
+                    selection={cardSelection}
                     useRowActions={props.useRowActions}
                     {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
                     {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
@@ -1422,13 +1599,13 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                       <CollectionSkeletonRows
                         rowHeight={rowGeometry === 'table' ? metrics.tableRow : metrics.listRow}
                         twoLines={rowGeometry === 'list'}
-                        viewportHeight={size?.height ?? null}
+                        viewportHeight={viewportHeight}
                         {...(props.testID === undefined ? {} : { testID: props.testID })}
                       />
                     ) : props.empty}
-                    footer={props.footer === undefined && footerLine === null ? undefined : (
+                    footer={(pageSections || props.footer === undefined) && footerLine === null ? undefined : (
                       <>
-                        {props.footer}
+                        {pageSections ? null : props.footer}
                         {footerLine}
                       </>
                     )}
@@ -1454,6 +1631,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
             </driver.AnimatedView>
           </driver.AnimatedView>
         </View>
+        {/* Page sections in a caller's footer own their insets, just like its header. */}
+        {pageSections ? props.footer : null}
         </PageScroller>
         {pane ? (
           // The page's app details pane: the same detail, beside the page with the pane's own motion, width and
@@ -1518,4 +1697,3 @@ const footerStyle: HappierPortableStyle = {
   borderTopWidth: 1,
 };
 const hintStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 };
-const kbdStyle: HappierPortableStyle = { minWidth: 18, paddingHorizontal: 4, borderWidth: 1, borderRadius: 5, alignItems: 'center' };

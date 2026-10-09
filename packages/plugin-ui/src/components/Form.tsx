@@ -29,7 +29,8 @@ import {
   writeHappierActionInputPath,
 } from '../presentation/form/actionInputFields.js';
 import { HappierInputField } from '../presentation/form/InputField.js';
-import { HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
+import { HAPPIER_SEGMENTED_METRICS, HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
+import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import {
   resolveHappierFieldKeyboardType,
   useHappierFieldValueDraft,
@@ -64,6 +65,8 @@ type FormOption = Readonly<{
   value: FormOptionValue;
   label: string;
   description?: string;
+  /** A segmented option's leading icon ("List" with its rows); decorative, the label names the option. */
+  icon?: IconName;
   disabled?: boolean;
   accessibilityLabel?: string;
   testID?: string;
@@ -404,6 +407,16 @@ function SelectMenu(props: SelectProps & Readonly<{ appearance: 'menu' | 'field'
     : dropdown;
 }
 
+/** A segment's leading icon: the label's own slot, in the label's own ink, so an icon never makes a segment taller. */
+function segmentLeading(icon: IconName | undefined, selected: boolean): Readonly<{ leading?: ReactElement }> {
+  if (icon === undefined) return {};
+  return {
+    leading: (
+      <PluginUiIconGlyph name={icon} size={HAPPIER_SEGMENTED_METRICS.labelSlotPx.default} tone={selected ? 'neutral' : 'secondary'} />
+    ),
+  };
+}
+
 /** A single choice among a few short labels, drawn as a segmented control. */
 function SelectSegmented(props: SelectProps): ReactElement {
   if (props.multiple) {
@@ -412,6 +425,10 @@ function SelectSegmented(props: SelectProps): ReactElement {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const plan = planFormSelect(props);
+  // The plan carries the shared option shape; a segment's icon is read back from the author's own option.
+  const iconByKey = new Map(props.options.flatMap((option) => (
+    option.icon === undefined ? [] : [[actionInputOptionValueKey(option.value), option.icon] as const]
+  )));
   return (
     <HappierSegmentedChoice
       accessibilityLabel={props.label}
@@ -420,6 +437,7 @@ function SelectSegmented(props: SelectProps): ReactElement {
         label: entry.option.label,
         selected: entry.selected,
         disabled: entry.disabled,
+        ...segmentLeading(iconByKey.get(entry.key), entry.selected),
         ...(entry.option.accessibilityLabel === undefined ? {} : { accessibilityLabel: entry.option.accessibilityLabel }),
         ...(entry.option.testID === undefined ? {} : { testID: entry.option.testID }),
       }))}

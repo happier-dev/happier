@@ -107,6 +107,21 @@ describe('foundation presentation families', () => {
     mount.unmount();
   });
 
+  it('leads a badge with its icon, drawn before the words and hidden from assistive technology', () => {
+    const mount = mountFoundation(
+      <Badge value="Review requested" tone="warning" variant="tinted" icon="review" testID="reason" />,
+    );
+    const badge = mount.container.querySelector<HTMLElement>('[data-testid="reason"]')!;
+    const icon = badge.querySelector<HTMLElement>('[data-testid="reason:icon"]');
+    expect(icon).not.toBeNull();
+    expect(icon!.getAttribute('aria-hidden')).toBe('true');
+    expect(badge.textContent).toBe('Review requested');
+    // The icon precedes the words in reading order.
+    const words = [...badge.querySelectorAll('[dir="auto"]')].find((node) => node.textContent === 'Review requested')!;
+    expect(icon!.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    mount.unmount();
+  });
+
   it('steps heading levels down the ramp and renders the same-realm host type roles', () => {
     const typography = {
       heading: { fontSize: 22, lineHeight: 28, fontWeight: '700', fontFamily: 'HostDisplay', letterSpacing: -0.4 },

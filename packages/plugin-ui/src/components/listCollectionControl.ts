@@ -19,11 +19,13 @@ export type ListCollectionControl = Readonly<{
     tabStopKey: string | null;
     request: Readonly<{ key: string }> | null;
     onRequestHandled?: (request: Readonly<{ key: string }>) => void;
-    onKey(key: string, itemKey: string, event: unknown): boolean;
+    onKey?(key: string, itemKey: string, event: unknown): boolean;
   }>;
   /** A column must not narrow the shared selection inventory to its own mounted rows. */
   ownsSelectionRows?: boolean;
   hideChrome?: boolean;
+  /** Board columns are groups inside the Collection's one radio group. */
+  collectionRole?: 'group';
   /** The scroll offset as the scroller reports it, and one scroll request (a new object is a new request). */
   scroll?: Readonly<{
     offsetRef: MutableRefObject<number>;

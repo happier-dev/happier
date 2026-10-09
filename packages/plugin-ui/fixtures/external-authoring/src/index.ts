@@ -109,6 +109,25 @@ export function readExternalAuthoringAcceptedMessageLocalIds(): readonly string[
 export const externalAuthoringPlugin = definePlugin({
   id: 'fixture.external-authoring',
   version: '0.1.0',
+  resources: {
+    'review-options': {
+      source: 'dynamic', kind: 'config', scope: 'global', contentType: 'application/json',
+      runtime: {
+        read: () => JSON.stringify([{ value: { reviewId: 'current' }, label: 'Current review' }]),
+        observe: () => ({ dispose() {} }),
+      },
+    },
+  },
+  inputTypes: {
+    review: {
+      title: 'Review', semantic: 'external-review',
+      valueSchema: {
+        type: 'object', properties: { reviewId: { type: 'string', minLength: 1 } },
+        required: ['reviewId'], additionalProperties: false,
+      },
+      options: { resource: 'review-options' },
+    },
+  },
   ui: {
     renderers: [{
       id: 'external-authoring-composer-renderer',

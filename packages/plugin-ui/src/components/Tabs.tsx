@@ -7,6 +7,7 @@ import {
   type HappierTabRetention,
 } from '../presentation/navigation/Tabs.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import type { TextTone } from './Text.js';
 
 /** The enclosing panel's current active interval. See {@link useTabPanelActivity}. */
 export type TabPanelActivity = HappierTabPanelActivity;
@@ -29,6 +30,8 @@ export type TabsItemProps = Readonly<{
   /** Decorative or independently-labelled leading content for the tab trigger. */
   icon?: ReactNode;
   badge?: string;
+  /** The badge's tone: quiet by default; a count that is itself a state ("2 failing") takes that state's tone. */
+  badgeTone?: TextTone;
   disabled?: boolean;
   /**
    * Whether leaving this tab keeps its panel mounted.

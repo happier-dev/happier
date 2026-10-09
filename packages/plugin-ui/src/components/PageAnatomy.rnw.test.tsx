@@ -62,6 +62,24 @@ function textOf(element: Element | null | undefined): string {
 }
 
 describe('plugin page anatomy through the shared page owners', () => {
+  it('lets an explicit radio-group name override its visible title', () => {
+    const mount = mountPage(
+      <ItemGroup title="Use" accessibilityRole="radiogroup" accessibilityLabel="Checkout preparation">
+        <List.Item title="A fresh clone" accessibilityRole="radio" onPress={() => undefined} />
+      </ItemGroup>,
+    );
+    expect(mount.container.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe('Checkout preparation');
+    mount.unmount();
+  });
+
+  it('rejects a radio group with neither a title nor an explicit name', () => {
+    expect(() => mountPage(
+      <ItemGroup accessibilityRole="radiogroup">
+        <List.Item title="A fresh clone" accessibilityRole="radio" onPress={() => undefined} />
+      </ItemGroup>,
+    )).toThrow(/accessible name/i);
+  });
+
   it('draws a titled ItemGroup as a page section: heading and description above one sheet, hairlines between rows only', () => {
     const mount = mountPage(
       <ItemGroup title="Sync" description="How often the plugin checks for new issues." testID="section">

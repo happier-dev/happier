@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
-import { HappierText } from '../text/Text.js';
+import { HappierText, useHappierTextPresentation } from '../text/Text.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackPlacement } from './pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 
@@ -13,6 +13,8 @@ export type HappierPageHeaderMetaFact = Readonly<{
   text: string;
   /** A small glyph before the text, already themed by the caller (a lock for encryption). */
   icon?: ReactNode;
+  /** The fact is an address, path or id: drawn in the mono face. */
+  mono?: boolean;
   testID?: string;
 }>;
 
@@ -53,6 +55,15 @@ export type HappierPageHeaderProps = Readonly<{
   leading?: ReactNode;
   /** At most one primary page action plus context controls (e.g. a machine chip). */
   actions?: ReactNode;
+  /** Prefer the title row, but wrap controls beneath rather than squeeze the title. */
+  actionsLayout?: 'wrap' | 'inline';
+  /**
+   * A status line under the actions ("Unsaved changes · Save · Ready"). It is the actions' own row:
+   * as wide as the actions above it, wrapping within them and ending on their edge, so its changing
+   * words never take width from the title. The slot reserves two normal text
+   * lines so a one-to-two-line readout does not move the document beneath it.
+   */
+  status?: ReactNode;
   /** The surrounding navigation's back control, when there is one. */
   renderBack?: HappierPageHeaderBackRender | null;
   /**
@@ -75,6 +86,8 @@ export type HappierPageHeaderTextRender = (input: Readonly<{
   text: string;
   /** The page title: announced as the page's heading. */
   header: boolean;
+  /** A meta fact that is an address, path or id: the host's mono face. */
+  mono?: boolean;
 }>) => ReactNode;
 
 /** Package-private binding from the public PageHeader adapter; not an author physical-ref prop. */
@@ -93,7 +106,11 @@ function useDefaultPageTextRender(): HappierPageHeaderTextRender {
         ref={input.header ? headingRef : undefined}
         tabIndex={input.header && headingRef ? -1 : undefined}
         accessibilityRole={input.header ? 'header' : undefined}
-        style={[resolveHappierPageTextStyle(input.role, typography), color === undefined ? null : { color }]}
+        style={[
+          resolveHappierPageTextStyle(input.role, typography),
+          input.mono && theme?.typography.code.fontFamily ? { fontFamily: theme.typography.code.fontFamily } : null,
+          color === undefined ? null : { color },
+        ]}
       >
         {input.text}
       </HappierText>
@@ -123,6 +140,7 @@ function renderPageText(
  */
 export function HappierPageHeader(props: HappierPageHeaderProps) {
   const defaultRenderText = useDefaultPageTextRender();
+  const { metricScale } = useHappierTextPresentation({});
   const renderText = props.renderText ?? defaultRenderText;
   const showTitle = props.showTitle !== false;
   const renderBack = props.renderBack ?? null;
@@ -135,10 +153,11 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     setPaneWidthPx((current) => (current === widthPx ? current : widthPx));
   }, []);
 
-  if (!showTitle && !props.description && !props.actions && !props.details && !props.meta) return null;
+  if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !props.meta) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
   const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  const inlineActions = !centered && props.actionsLayout === 'inline';
   const backPlacement = showsBack ? resolveHappierPageBackPlacement({ paneWidthPx, columnMaxWidthPx }) : null;
 
   // In the gutter the arrow is outside the flow, anchored to what sits on the
@@ -187,7 +206,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
       >
         <View
           testID={props.testID ? `${props.testID}-title-row` : undefined}
-          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: 'center', columnGap: 14, rowGap: 12 }}
+          // Inline actions (and the status line under them) hang from the title's top edge, so a status
+          // that wraps to another line never re-centres, and so moves, the identity beside it.
+          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: 14, rowGap: 12 }}
         >
           {renderBack && backPlacement === 'title-row'
             // On the title-row fallback the back control is centred on the
@@ -203,7 +224,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
               {gutterBack}
             </View>
           ) : null}
-          <View style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: centered ? 'auto' : 200, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}) }}>
+          <View style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}) }}>
             {props.leading ? null : gutterBack}
             {title && props.titleAccessory ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -234,7 +255,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                   // The separator closes the fact before it, so a wrapped line never starts with "·".
                   <View key={fact.key} testID={fact.testID} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {fact.icon ?? null}
-                    {renderText({ role: 'meta', text: fact.text, header: false })}
+                    {renderText({ role: 'meta', text: fact.text, header: false, ...(fact.mono ? { mono: true } : {}) })}
                     {index < (props.meta?.length ?? 0) - 1 ? (
                       <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
                         {renderText({ role: 'meta', text: '·', header: false })}
@@ -245,9 +266,35 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
               </View>
             ) : null}
           </View>
-          {props.actions ? (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : 'flex-start', gap: 8, flexShrink: 1, maxWidth: '100%' }}>
-              {props.actions}
+          {props.actions || props.status ? (
+            <View
+              style={{
+                flexShrink: inlineActions ? 0 : 1,
+                maxWidth: '100%',
+                alignItems: centered ? 'center' : inlineActions ? 'flex-end' : 'stretch',
+                rowGap: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx,
+                // Trailing actions keep the trailing edge: wrapped beneath a title that needs its width,
+                // they end on the content's right edge instead of starting a new line on the left.
+                ...(inlineActions ? { marginLeft: 'auto' as const } : null),
+              }}
+            >
+              {props.actions ? (
+                <View style={{ flexDirection: 'row', flexWrap: inlineActions ? 'nowrap' : 'wrap', alignItems: 'center', justifyContent: centered ? 'center' : 'flex-start', gap: 8, maxWidth: '100%' }}>
+                  {props.actions}
+                </View>
+              ) : null}
+              {props.status ? (
+                // Zero intrinsic width, then the actions' width: the status wraps under them and never
+                // widens the group the title shares its row with.
+                <View style={[
+                  props.actions ? { width: 0, minWidth: '100%', alignItems: 'flex-end' } : { alignItems: 'flex-end' },
+                  // Reserve the normal two-line readout before its words change.
+                  // Longer/scaled content can still grow instead of being clipped.
+                  { minHeight: HAPPIER_PAGE_TEXT.meta.lineHeight * metricScale * 2 + HAPPIER_PAGE_METRICS.pageHeaderLineGapPx },
+                ]}>
+                  {props.status}
+                </View>
+              ) : null}
             </View>
           ) : null}
         </View>

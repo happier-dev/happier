@@ -45,6 +45,14 @@ export type HappierDisclosureHeaderRender =
   | ReactNode
   | ((state: HappierDisclosureHeaderState) => ReactNode);
 
+/** Local controlled presentation; no layout, input or Resource authority is implied. */
+export type HappierControlledDisclosure = Readonly<{
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+  expandLabel: string;
+  collapseLabel: string;
+}>;
+
 /** One disclosure's animated values, created by the host driver. */
 export type HappierDisclosureMotion = Readonly<{
   setHeight: (value: number) => void;
@@ -73,6 +81,11 @@ export type HappierDisclosureProps<Motion extends HappierDisclosureMotion = Happ
   onExpandedChange: (next: boolean) => void;
   header: HappierDisclosureHeaderRender;
   children?: ReactNode;
+  /** Retain stateful domain content while collapsed; activity remains its owner's decision. */
+  keepMounted?: boolean;
+  /** Container sizing supplied by a composed frame, not by the disclosure algorithm. */
+  style?: HappierStyleProp;
+  bodyStyle?: HappierStyleProp;
   reorderHandle?: ReactNode;
   /** The inter-item hairline below this item; a group passes `false` for its last row. */
   showDivider?: boolean;
@@ -266,7 +279,7 @@ function HappierDisclosureImpl<Motion extends HappierDisclosureMotion>(props: Ha
 
   // One wrapper, so a group that injects row position and dividers sees exactly one row slot.
   return (
-    <View testID={testID}>
+    <View testID={testID} style={props.style}>
       {reorderHandle != null ? (
         <View style={headerRowStyle}>
           <View style={reorderHandleStyle}>{reorderHandle}</View>
@@ -276,17 +289,20 @@ function HappierDisclosureImpl<Motion extends HappierDisclosureMotion>(props: Ha
         headerNode
       )}
 
-      {bodyMounted ? (
+      {bodyMounted || props.keepMounted ? (
+        <View aria-hidden={!expanded} accessibilityElementsHidden={!expanded} importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'}
+          style={[props.bodyStyle, !expanded && !bodyMounted ? { display: 'none' } : null]}>
         <Body
           motion={motion}
           pinned={heightPinned}
-          style={bodyClipStyle}
+          style={[bodyClipStyle, props.bodyStyle]}
           {...(testID ? { testID: `${testID}:body` } : {})}
         >
-          <View onLayout={handleBodyLayout}>
+          <View onLayout={handleBodyLayout} style={props.bodyStyle}>
             {children}
           </View>
         </Body>
+        </View>
       ) : null}
 
       {showDivider ? (

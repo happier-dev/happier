@@ -230,13 +230,19 @@ export function resolveHappierCollectionTransitionPhase(progress: number): Reado
   };
 }
 
-/** One virtualized cell (a group header or a row) and its exact height in each geometry. */
-export type HappierCollectionTransitionCell = Readonly<{ key: string; table: number; list: number }>;
+/**
+ * One virtualized cell (a group header or a row) and its exact height in each geometry. `header` marks a group
+ * header, which stays pinned over its group's rows while they scroll.
+ */
+export type HappierCollectionTransitionCell = Readonly<{ key: string; table: number; list: number; header?: boolean }>;
 
 export type HappierCollectionTransitionPlan = Readonly<{
   /** The table's scroll offset: the current one on open, the one to restore on close. */
   tableScroll: number;
-  /** The list's scroll offset that keeps the anchored row at the same screen y. */
+  /**
+   * The list's scroll offset that keeps the anchored row at the same screen y, moved to the nearest offset where
+   * the first row below the pinned group header is whole (the row moves by less than one row height).
+   */
   listScroll: number;
   /**
    * For each cell visible in either geometry: how far its table place is below its list place on screen, which
@@ -249,7 +255,7 @@ export type HappierCollectionTransitionPlan = Readonly<{
  * The shared-element move between the table and the list beside a detail. Heights are exact per geometry, so
  * every place is arithmetic over the cells above it and nothing waits for a layout pass. Given the scroll of the
  * geometry being left, it answers the other geometry's scroll (the anchored row keeps its screen y, never above
- * the top) and each visible cell's starting offset.
+ * the top, and no row is left half under the pinned group header) and each visible cell's starting offset.
  */
 export function planHappierCollectionTransitionOffsets(input: Readonly<{
   cells: readonly HappierCollectionTransitionCell[];
@@ -269,12 +275,12 @@ export function planHappierCollectionTransitionOffsets(input: Readonly<{
   const anchorScreenY = anchor === undefined
     ? 0
     : (input.scroll.geometry === 'table' ? anchor.table : anchor.list) - input.scroll.offset;
-  const tableScroll = input.scroll.geometry === 'table'
-    ? input.scroll.offset
-    : Math.max(0, anchor === undefined ? 0 : anchor.table - anchorScreenY);
-  const listScroll = input.scroll.geometry === 'list'
-    ? input.scroll.offset
-    : Math.max(0, anchor === undefined ? 0 : anchor.list - anchorScreenY);
+  const arrive = (geometry: 'table' | 'list'): number => {
+    const exact = Math.max(0, anchor === undefined ? 0 : (geometry === 'table' ? anchor.table : anchor.list) - anchorScreenY);
+    return anchor === undefined ? exact : snapBelowPinnedHeader(input.cells, geometry, exact, input.anchorKey);
+  };
+  const tableScroll = input.scroll.geometry === 'table' ? input.scroll.offset : arrive('table');
+  const listScroll = input.scroll.geometry === 'list' ? input.scroll.offset : arrive('list');
   const offsets = new Map<HappierCollectionKey, number>();
   for (const [key, place] of tops) {
     const tableY = place.table - tableScroll;
@@ -284,4 +290,44 @@ export function planHappierCollectionTransitionOffsets(input: Readonly<{
     if (visible) offsets.set(key, tableY - listY);
   }
   return { tableScroll, listScroll, offsets };
+}
+
+/**
+ * The scroll offset nearest `exact` at which the first cell below the pinned group header starts whole: either
+ * that cell's top or the next cell's top meets the header's bottom edge. With no groups the edge is the top of
+ * the viewport. The anchored row never ends under the header.
+ */
+function snapBelowPinnedHeader(
+  cells: readonly HappierCollectionTransitionCell[],
+  geometry: 'table' | 'list',
+  exact: number,
+  anchorKey: HappierCollectionKey,
+): number {
+  // The pinned header at a scroll offset is the last header that starts at or above it.
+  let top = 0;
+  let pinned = 0;
+  let anchorTop: number | null = null;
+  const places: Array<Readonly<{ top: number; height: number; pinned: number; header: boolean }>> = [];
+  for (const cell of cells) {
+    const height = geometry === 'table' ? cell.table : cell.list;
+    if (cell.header === true) pinned = height;
+    if (cell.key === anchorKey) anchorTop = top;
+    places.push({ top, height, pinned: cell.header === true ? 0 : pinned, header: cell.header === true });
+    top += height;
+  }
+  if (anchorTop === null) return exact;
+  // The cell under the header's edge at the exact offset.
+  for (const place of places) {
+    const edge = exact + place.pinned;
+    if (edge < place.top || edge >= place.top + place.height) continue;
+    if (edge === place.top || place.height === 0) return exact;
+    // A header partly scrolled away: rest it at its own place, so its first row starts right below it.
+    if (place.header) return place.top;
+    const up = Math.max(0, place.top - place.pinned);
+    const down = place.top + place.height - place.pinned;
+    // Scrolling further down must not slide the anchored row under the header.
+    const downKeepsAnchor = anchorTop - down >= place.pinned;
+    return downKeepsAnchor && down - exact < exact - up ? down : up;
+  }
+  return exact;
 }

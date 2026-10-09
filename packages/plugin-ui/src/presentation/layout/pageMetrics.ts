@@ -56,15 +56,15 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   compactRowMinHeightPx: 40,
   /**
    * Below this measured width a row's wide control (segmented choice, visual
-   * tiles, a field) — and a section's action — moves under the label. It is the
+   * tiles, a field) — and a section's adaptive action — moves under the label. It is the
    * width at which a ~200px label column and a ~280px control column still fit
    * side by side with their gutters; narrower, the label would wrap word by word.
    */
   rowStackBelowWidthPx: 520,
   /**
    * The narrowest a section title and description may get beside the section's
-   * action (the label column above). A compact action ("Cancel", "Add") leaves
-   * more than this on a phone, so it stays on the title's line.
+   * action (the label column above). By default, a compact action ("Cancel", "Add")
+   * that leaves more than this on a phone stays on the title's line.
    */
   sectionTextMinWidthPx: 200,
   /** Between the back arrow in the gutter and the content's left edge. */
@@ -96,18 +96,20 @@ export function resolveHappierPageBackPlacement(input: Readonly<{
 }
 
 /**
- * Whether a section's action drops beneath its title and description: when,
- * beside the measured action, the text would get narrower than
- * `sectionTextMinWidthPx`. Until the action is measured it follows the row rule
- * (`isHappierPageRowNarrow`), so the first paint is never squeezed.
+ * Whether a section's action drops beneath its title and description. Every
+ * action preserves `sectionTextMinWidthPx`; adaptive actions also follow the
+ * existing narrow page-control rule. Until the action is measured it follows
+ * that rule too, so the first measured paint is never squeezed.
  */
 export function isHappierSectionActionStacked(input: Readonly<{
   headerWidthPx: number | null;
   actionWidthPx: number | null;
+  actionLayout?: 'inline' | 'adaptive';
   gapPx: number;
 }>): boolean {
   const { headerWidthPx, actionWidthPx } = input;
   if (typeof headerWidthPx !== 'number' || !Number.isFinite(headerWidthPx) || headerWidthPx <= 0) return false;
+  if (input.actionLayout === 'adaptive' && isHappierPageRowNarrow(headerWidthPx)) return true;
   if (typeof actionWidthPx !== 'number' || !Number.isFinite(actionWidthPx) || actionWidthPx <= 0) {
     return isHappierPageRowNarrow(headerWidthPx);
   }

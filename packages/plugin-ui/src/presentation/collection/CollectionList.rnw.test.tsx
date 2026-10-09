@@ -54,6 +54,18 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it('omits the heading for a list its surface already names, keeping its search', () => {
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionList host={host} search={{ value: '', onChangeText: () => {}, placeholder: 'Search sources' }}>
+        <Text>row</Text>
+      </HappierCollectionList>,
+    );
+    expect(mount.container.querySelector('[data-testid="text-title"]')).toBeNull();
+    expect(mount.container.querySelector('[role="heading"]')).toBeNull();
+    expect(mount.container.querySelector('[data-testid="search"]')).not.toBeNull();
+    mount.unmount();
+  });
+
   it('lets rows that own their scrolling replace the host scroller', () => {
     const mount = mountThroughReactNativeWeb(
       <HappierCollectionList host={host} title="Teams" scrollContent={<ScrollView testID="virtualized" />} />,

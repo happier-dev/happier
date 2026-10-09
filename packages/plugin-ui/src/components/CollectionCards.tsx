@@ -19,6 +19,7 @@ import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import type { HappierFocusable, HappierPortableStyle, HappierStyleProp } from '../presentation/portableTypes.js';
 import { HappierText } from '../presentation/text/Text.js';
+import { HAPPIER_WORK_STATUS_SEMANTIC_TONE } from '../presentation/work/workStatus.js';
 import { resolveHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
 import { scaleTextStyleMetrics } from '../presentation/text/textStyleScale.js';
 import type { CollectionAnatomy, CollectionGroupAction, CollectionProps } from './Collection.js';
@@ -218,6 +219,10 @@ function BoardColumn<Item>(props: Readonly<{
   const translate = usePluginTranslation();
   const keyOf = model.keyOf;
   const open = model.actions.open;
+  const single = props.selection?.single;
+  const choose = useCallback((key: string) => {
+    if (single !== undefined && key !== single.value) single.onValueChange(key);
+  }, [single?.value, single?.onValueChange]);
   const { viewport, scrollRequest } = useHappierCollectionViewport(model, 'board', props.columnKey);
   const observeFocus = useCallback((key: string) => props.onFocusedKeyChange(key, viewport), [props.onFocusedKeyChange, viewport]);
   const selected = selectedKey !== null && section.items.some((item) => keyOf(item) === selectedKey) ? selectedKey : null;
@@ -226,20 +231,22 @@ function BoardColumn<Item>(props: Readonly<{
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
     hideChrome: true,
+    ...(single === undefined ? {} : { collectionRole: 'group' as const }),
     pageScroll: props.pageScroll,
     scroll: { offsetRef: viewport.offsetRef, request: scrollRequest },
     focus: { key: model.focusKey, tabStopKey: props.tabStopKey, request: model.focusRequest,
       onRequestHandled: model.actions.consumeFocusRequest,
       onKey: (key, from, event) => model.actions.navigate({ key, from, event, presentation: 'board',
-        store: props.selection?.multiple?.store, eligibleKeys: props.eligibleKeys }) },
-  }), [model, props.eligibleKeys, props.pageScroll, props.selection?.multiple?.store, props.tabStopKey, scrollRequest, viewport]);
+        store: props.selection?.multiple?.store, eligibleKeys: props.eligibleKeys,
+        ...(single === undefined ? {} : { onValueChange: choose }) }) },
+  }), [choose, model, props.eligibleKeys, props.pageScroll, props.selection?.multiple?.store, props.tabStopKey, scrollRequest, single === undefined, viewport]);
   const group = section.group;
   return (
     <View style={props.style} testID={props.testID}>
       {!props.showHeader || group === null || group.title === '' ? null : (
         <View style={columnHeaderStyle}>
           <View style={lineStyle}>
-            <HappierText variant="label" tone="neutral" numberOfLines={1} style={[titleStyle, { flexShrink: section.items.length === 0 ? 0 : 1 }]}>{group.title}</HappierText>
+            <HappierText variant="label" tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[section.items.length > 0 ? group.tone ?? 'neutral' : 'neutral']} numberOfLines={1} style={[titleStyle, { flexShrink: 1 }]}>{group.title}</HappierText>
             <HappierText variant="caption" tone="muted" tabularNumbers>{String(section.items.length)}</HappierText>
           </View>
           {group.description === undefined ? null : (
@@ -248,7 +255,7 @@ function BoardColumn<Item>(props: Readonly<{
         </View>
       )}
       {section.items.length === 0 ? (
-        <HappierText variant="caption" tone="muted" style={{ paddingHorizontal: GUTTER }}>
+        <HappierText variant="caption" tone="muted" style={{ paddingHorizontal: CARD.boardCardInsetX }}>
           {translate('happier.plugin-ui.collection.board.empty', 'None')}
         </HappierText>
       ) : null}
@@ -262,13 +269,14 @@ function BoardColumn<Item>(props: Readonly<{
             items={section.items}
             keyForItem={keyOf}
             renderItem={renderItem}
-            selection={{
-              ...props.selection,
+            selection={single === undefined ? {
+              isItemActivatable: props.selection?.isItemActivatable,
+              multiple: props.selection?.multiple,
               selectedKey: selected,
               onSelectedKeyChange: open,
               onFocusedKeyChange: observeFocus,
               ...(props.focusRequest === undefined ? {} : { focusRequest: props.focusRequest }),
-            }}
+            } : { single, isItemActivatable: props.selection?.isItemActivatable, onFocusedKeyChange: observeFocus }}
           />
         </ListCollectionControlContext.Provider>
       </View>
@@ -288,9 +296,8 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
   const stackedScroll = useRef<ScrollView | null>(null);
   const horizontalScroll = useRef<ScrollView | null>(null);
   const minColumn = CARD.boardColumnMinWidth * textScale;
-  // Explicit columns are the domain's wide composition: share the measured pane instead of forcing
-  // fixed card-width tracks. The responsive board retains its minimum-width/pager behavior.
-  const fits = props.boardLayout === 'columns' || props.width === null || sections.length * minColumn <= props.width;
+  // Empty and populated buckets keep the same track; arrivals never resize their neighbours.
+  const fits = props.width === null || sections.length * minColumn + 2 * (GUTTER - CARD.boardCardInsetX) <= props.width;
   useLayoutEffect(() => {
     horizontalScroll.current?.scrollTo({ x: boardViewport.horizontalOffsetRef.current, animated: false });
     stackedScroll.current?.scrollTo({ y: boardViewport.offsetRef.current, animated: false });
@@ -337,7 +344,8 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
     );
   };
 
-  if (stacked) return <ScrollView ref={stackedScroll} style={fillStyle} contentContainerStyle={{ gap: CARD.gap, padding: CARD.padding }}
+  if (stacked) return <ScrollView ref={stackedScroll} style={fillStyle} contentContainerStyle={{ gap: CARD.gap,
+    paddingVertical: CARD.padding, paddingHorizontal: GUTTER - CARD.boardCardInsetX }}
     scrollEventThrottle={16} onScroll={event => { boardViewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>
     {sections.map((section, index) => columnFor(section, index, {}, true))}
   </ScrollView>;
@@ -377,7 +385,7 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
   }
 
   const columns = sections.map((section, index) => columnFor(section, index, [
-    section.items.length === 0 ? { flexGrow: 0, flexShrink: 0 } : fits ? fillStyle : { width: minColumn },
+    { width: minColumn, flexShrink: 0 },
   ], true));
   return fits ? (
     <View style={boardRowStyle}>{columns}</View>
@@ -468,6 +476,8 @@ function GridCardView<Item>(props: Readonly<{
   activatable: boolean;
   selectable: boolean;
   multipleStore: ListMultiSelectionStore | null;
+  singleChoice: boolean;
+  unavailableReason?: string | null;
   useRowActions?: CollectionProps<Item>['useRowActions'];
   rowIndex: number;
   register: (key: string, target: HappierFocusable | null) => void;
@@ -488,6 +498,11 @@ function GridCardView<Item>(props: Readonly<{
   const actions = props.useRowActions?.(item) ?? {};
   const { activatable, selectable } = props;
   const select = (event?: import('../presentation/portableTypes.js').HappierGestureResponderEvent): 'handled' | 'open' => {
+    if (props.singleChoice) {
+      onFocus(itemKey);
+      props.onOpen(itemKey);
+      return 'handled';
+    }
     return activateListItem({ key: itemKey, event, store: props.multipleStore,
       focus: onFocus, open: props.onOpen });
   };
@@ -520,11 +535,9 @@ function GridCardView<Item>(props: Readonly<{
           )}
         </View>
         )}
-        {/* The footer's place: the status on the left; the action's room is kept on the right. */}
+        {/* Keep the footer's place in the body's target; its two columns are composed beside that target below. */}
         {!geometry.footer ? null : (
-          <View style={[lineStyle, { height: CARD.footerHeight }]}>
-            <View style={[lineStyle, shrinkStyle]}><Slot value={status} /></View>
-          </View>
+          <View style={{ height: CARD.footerHeight }} />
         )}
       </View>
     </List.Item>
@@ -540,7 +553,8 @@ function GridCardView<Item>(props: Readonly<{
         roving: { isTabStop: props.tabStop, register: target => register(itemKey, target),
           onFocus: () => onFocus(itemKey),
           onKeyDown: (key, event) => onKey(key, itemKey, event) },
-        accessibilityPattern: 'grid', rowIndex: props.rowIndex, rowCount: props.count,
+        accessibilityPattern: props.singleChoice ? 'radiogroup' : 'grid', unavailableReason: props.unavailableReason,
+        rowIndex: props.rowIndex, rowCount: props.count,
       }}>
         {renderCollectionItemDestination(host, anatomy, item, row)}
       </ListItemSelectionContext.Provider>
@@ -560,9 +574,13 @@ function GridCardView<Item>(props: Readonly<{
           {anatomy.preview?.(item)}
         </View>
       )}
-      {!hasAction ? null : (
-        // Its own target beside the card's, never inside it: pressing it acts and never opens the item.
-        <View style={gridActionStyle}>{action}</View>
+      {!geometry.footer ? null : (
+        // The action has its own target beside the body's, never inside it. Both columns share the available
+        // width: a long status shrinks before the action, rather than running underneath an overlaid control.
+        <View pointerEvents="box-none" style={gridFooterStyle}>
+          <View pointerEvents="none" style={[shrinkStyle, { justifyContent: 'center' }]}><Slot value={status} /></View>
+          {!hasAction ? null : <View style={gridActionStyle}>{action}</View>}
+        </View>
       )}
       {props.selected ? <SelectedRing color={palette.selection} {...(testID === undefined ? {} : { testID: `${testID}:selected` })} /> : null}
     </View>
@@ -596,6 +614,15 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
     else { targets.current.set(key, target); physicalRequest.consume(key, target); }
   }, [physicalRequest]);
   const authorFocus = props.onFocusedKeyChange;
+  const single = props.selection?.single;
+  const singleRef = useRef(single);
+  singleRef.current = single;
+  const openRow = model.actions.open;
+  const chooseOrOpen = useCallback((key: string) => {
+    const choice = singleRef.current;
+    if (choice === undefined) openRow(key);
+    else if (choice.value !== key) choice.onValueChange(key);
+  }, [openRow]);
   const onFocus = useCallback((key: string) => {
     physicalRequest.abandon();
     authorFocus(key);
@@ -603,7 +630,8 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   const onKey = useCallback((key: string, from: string, event: unknown): boolean => model.actions.navigate({
     key, from, event, presentation: 'grid', columns: geometry.columns,
     store: props.selection?.multiple?.store, eligibleKeys: props.eligibleKeys,
-  }), [geometry.columns, model.actions, props.eligibleKeys, props.selection?.multiple?.store]);
+    ...(single === undefined ? {} : { onValueChange: chooseOrOpen }),
+  }), [chooseOrOpen, geometry.columns, model.actions, props.eligibleKeys, props.selection?.multiple?.store, single === undefined]);
   const focusRequest = props.focusRequest ?? model.focusRequest;
   useEffect(() => {
     if (focusRequest === null) return;
@@ -629,7 +657,7 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
       rows[rows.length - 1]!.push(index);
     }
     return (
-      <GridScroller pageScroll={props.pageScroll === true} viewport={viewport} request={scrollRequest} accessibilityLabel={props.accessibilityLabel}>
+      <GridScroller singleChoice={single !== undefined} pageScroll={props.pageScroll === true} viewport={viewport} request={scrollRequest} accessibilityLabel={props.accessibilityLabel}>
         {rows.map((row, rowIndex) => (
           <View key={rowIndex} style={gridRowStyle}>
             {row.map((index) => (
@@ -650,9 +678,8 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   if (keys.length === 0 && props.empty !== undefined) return <View style={props.pageScroll === true ? null : fillStyle}>{props.empty}</View>;
 
   const selectedKey = props.selectedKey;
-  const open = model.actions.open;
   return (
-    <GridScroller pageScroll={props.pageScroll === true} viewport={viewport} request={scrollRequest} accessibilityLabel={props.accessibilityLabel}>
+    <GridScroller singleChoice={single !== undefined} pageScroll={props.pageScroll === true} viewport={viewport} request={scrollRequest} accessibilityLabel={props.accessibilityLabel}>
       {inner === null ? null : model.sections.map((section, sectionIndex) => {
         const group = section.group;
         const shelf = group !== null && group.title !== '';
@@ -701,14 +728,16 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                       anatomy={anatomy}
                       geometry={geometry}
                       count={keys.length}
-                      activatable={props.selection?.isItemActivatable?.(item) !== false}
+                      activatable={props.selection?.isItemActivatable?.(item) !== false && single?.isItemSelectable?.(item) !== false}
                       selectable={props.selection?.multiple !== undefined && props.selection.multiple.isItemSelectable?.(item) !== false}
                       multipleStore={props.selection?.multiple?.store ?? null}
+                      singleChoice={single !== undefined}
+                      unavailableReason={single?.unavailableReason?.(item)}
                       useRowActions={props.useRowActions}
                       rowIndex={rowIndices.get(key)!}
                       selected={key === selectedKey}
                       tabStop={key === tabStopKey}
-                      onOpen={open}
+                      onOpen={chooseOrOpen}
                       onFocus={onFocus}
                       onKey={onKey}
                       register={register}
@@ -725,12 +754,12 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
 }
 
 /** The grid's own scroller, or, where the grid scrolls with its page, just its content box. */
-function GridScroller(props: Readonly<{ pageScroll: boolean; viewport: HappierCollectionViewport; request: Readonly<{ offset: number }>; accessibilityLabel: string; children?: ReactNode }>): ReactElement {
+function GridScroller(props: Readonly<{ singleChoice?: boolean; pageScroll: boolean; viewport: HappierCollectionViewport; request: Readonly<{ offset: number }>; accessibilityLabel: string; children?: ReactNode }>): ReactElement {
   const scroll = useRef<ScrollView | null>(null);
   useLayoutEffect(() => {
     if (!props.pageScroll) scroll.current?.scrollTo({ y: props.request.offset, animated: false });
   }, [props.pageScroll, props.request]);
-  const content = <View role="grid" accessibilityLabel={props.accessibilityLabel} style={gridContentStyle}>{props.children}</View>;
+  const content = <View role={props.singleChoice ? 'radiogroup' : 'grid'} accessibilityLabel={props.accessibilityLabel} style={gridContentStyle}>{props.children}</View>;
   return props.pageScroll ? content
     : <ScrollView ref={scroll} style={fillStyle} scrollEventThrottle={16}
         onScroll={event => { props.viewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>{content}</ScrollView>;
@@ -760,7 +789,10 @@ export function CollectionGroupActionButton(props: Readonly<{
 
 
 export function CollectionCards<Item>(props: CollectionCardsProps<Item>): ReactElement {
-  return props.presentation === 'board' ? <CollectionBoard {...props} /> : <CollectionGrid {...props} />;
+  return props.presentation === 'board' ? <View role={props.selection?.single === undefined ? undefined : 'radiogroup'}
+    accessibilityLabel={props.selection?.single === undefined ? undefined : props.accessibilityLabel} style={fillStyle}>
+    <CollectionBoard {...props} />
+  </View> : <CollectionGrid {...props} />;
 }
 
 const fillStyle: HappierPortableStyle = { flex: 1, minWidth: 0, minHeight: 0 };
@@ -777,14 +809,14 @@ const ringStyle: HappierPortableStyle = {
   borderWidth: 2,
   borderRadius: RADIUS + 1,
 };
-const boardRowStyle: HappierPortableStyle = { flex: 1, flexDirection: 'row', minWidth: 0, minHeight: 0 };
-const boardRowScrollStyle: HappierPortableStyle = { flexGrow: 1, flexDirection: 'row' };
+const boardRowStyle: HappierPortableStyle = { flex: 1, flexDirection: 'row', minWidth: 0, minHeight: 0, paddingHorizontal: GUTTER - CARD.boardCardInsetX };
+const boardRowScrollStyle: HappierPortableStyle = { flexGrow: 1, flexDirection: 'row', paddingHorizontal: GUTTER - CARD.boardCardInsetX };
 const boardListContentStyle: HappierPortableStyle = { gap: 0, paddingBottom: CARD.padding };
 const boardItemStyle: HappierPortableStyle = { paddingHorizontal: CARD.boardCardInsetX, paddingVertical: CARD.boardCardInsetY };
 const boardCardStyle: HappierPortableStyle = { borderWidth: 1, borderRadius: RADIUS, overflow: 'visible' };
 const boardCardBodyStyle: HappierPortableStyle = { gap: 6, paddingHorizontal: 12, paddingTop: 11, paddingBottom: 12 };
 const agentStripStyle: HappierPortableStyle = { borderTopWidth: 1, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center' };
-const columnHeaderStyle: HappierPortableStyle = { gap: 2, paddingHorizontal: GUTTER, paddingTop: 14, paddingBottom: 10 };
+const columnHeaderStyle: HappierPortableStyle = { gap: 2, paddingHorizontal: CARD.boardCardInsetX, paddingTop: 14, paddingBottom: 10 };
 const pagerStyle: HappierPortableStyle = { paddingHorizontal: GUTTER, paddingVertical: 10 };
 const gridContentStyle: HappierPortableStyle = { padding: GUTTER, gap: HAPPIER_PAGE_METRICS.sectionGapPx };
 const shelfStyle: HappierPortableStyle = { gap: GUTTER };
@@ -799,10 +831,15 @@ const gridPreviewStyle: HappierPortableStyle = {
   overflow: 'hidden',
   borderBottomWidth: 1,
 };
-const gridActionStyle: HappierPortableStyle = {
+const gridFooterStyle: HappierPortableStyle = {
+  ...lineStyle,
   position: 'absolute',
+  left: CARD.padding + 1,
   right: CARD.padding + 1,
   bottom: CARD.padding + 1,
   height: CARD.footerHeight,
+};
+const gridActionStyle: HappierPortableStyle = {
+  flexShrink: 0,
   justifyContent: 'center',
 };

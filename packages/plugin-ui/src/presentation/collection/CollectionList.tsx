@@ -61,7 +61,11 @@ export type HappierCollectionListFilters = Readonly<{
 export type HappierCollectionListProps = Readonly<{
   host: HappierCollectionListHost;
   testID?: string;
-  title: string;
+  /**
+   * The list's heading. A list that is the body of a titled surface (a dialog's chooser pane) omits
+   * it: the surface already names it, and its search starts at the header's place.
+   */
+  title?: string;
   /** Quiet, tabular count beside the title; omitted while unknown. */
   count?: number | null;
   /** The add control ("+", or a menu when there is more than one way to add). */
@@ -200,6 +204,7 @@ const headerStyle: ViewStyle = {
 };
 const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 };
 const searchStyle: HappierPortableStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
+const untitledSearchStyle: HappierPortableStyle = { ...searchStyle, marginTop: M.headerPaddingTop };
 const filtersStyle: ViewStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
 const scrollerStyle: HappierPortableStyle = { paddingTop: 0 };
 const footerStyle: ViewStyle = { height: 16 };
@@ -238,21 +243,23 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   return (
     <HappierCollectionListRowContext.Provider value>
     <View testID={props.testID} style={[railStyle, host.surfaceStyle]}>
-      <View style={headerStyle}>
-        <View style={headingStyle}>
-          <Text role="title" accessibilityRole="header">{props.title}</Text>
-          {props.count !== undefined && props.count !== null ? (
-            <Text role="count">{props.count}</Text>
-          ) : null}
+      {props.title !== undefined ? (
+        <View style={headerStyle}>
+          <View style={headingStyle}>
+            <Text role="title" accessibilityRole="header">{props.title}</Text>
+            {props.count !== undefined && props.count !== null ? (
+              <Text role="count">{props.count}</Text>
+            ) : null}
+          </View>
+          {props.headerAction}
         </View>
-        {props.headerAction}
-      </View>
+      ) : null}
       {props.search ? (
         <SearchField
           value={props.search.value}
           onChangeText={props.search.onChangeText}
           placeholder={props.search.placeholder}
-          style={searchStyle}
+          style={props.title !== undefined ? searchStyle : untitledSearchStyle}
           {...(props.search.testID === undefined ? {} : { testID: props.search.testID })}
         />
       ) : null}

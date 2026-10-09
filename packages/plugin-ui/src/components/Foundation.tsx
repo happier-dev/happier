@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 
 import {
+  isHappierBannerUrgent,
   HappierBadge,
   HappierBanner,
   HappierDivider,
@@ -20,7 +21,9 @@ import {
 } from './Focus.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
-import { Icon } from './Icon.js';
+import { Icon, PluginUiIconGlyph, type IconName } from './Icon.js';
+import { useHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
+import { resolveHappierIconSize } from '../presentation/content/Icon.js';
 
 type AuthorText = Readonly<{ value?: string; valueKey?: string; fallback?: string }>;
 
@@ -71,6 +74,9 @@ export function Divider(props: DividerProps): ReactElement {
   );
 }
 
+/** A badge in a column sizes to its words rather than stretching to the column. */
+const BADGE_SELF_ALIGNMENT = { alignSelf: 'flex-start' } as const;
+
 export type BadgeProps = AuthorText & Readonly<{
   tone?: HappierTone;
   /**
@@ -79,14 +85,18 @@ export type BadgeProps = AuthorText & Readonly<{
    * ("Review requested"); a neutral tint stays on the elevated surface.
    */
   variant?: 'outlined' | 'tinted';
+  /** A leading icon in the badge's ink ("Review requested" with an eye). Decorative: the words carry the meaning. */
+  icon?: IconName;
   testID?: string;
   children?: ReactNode;
 }>;
 
-export function Badge({ tone = 'neutral', variant = 'outlined', testID, children, ...text }: BadgeProps): ReactElement {
+export function Badge({ tone = 'neutral', variant = 'outlined', icon, testID, children, ...text }: BadgeProps): ReactElement {
   const theme = usePluginTheme();
   const color = theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
   const label = useAuthorText(text);
+  // The icon sits at the words' own line height, so a badge with an icon is exactly as tall as one without.
+  const iconSize = useHappierTypeRoleStyle('caption', theme).lineHeight;
   const tinted = variant === 'tinted';
   // The tint is the tone at the one strength the shared work-state tint uses; a theme colour with no
   // softened form (a custom rgba) keeps the elevated surface rather than guessing a mix.
@@ -99,9 +109,19 @@ export function Badge({ tone = 'neutral', variant = 'outlined', testID, children
       backgroundColor={tint ?? theme.colors.elevatedSurface}
       // A tinted chip keeps the ring's geometry but not its ink: a translucent tint drawn twice at the edge reads as a ring.
       borderColor={tinted ? 'transparent' : tone === 'neutral' ? theme.colors.border : color}
-      radius={tinted ? theme.radii.small : theme.radii.pill}
-      horizontalPadding={theme.spacing.small}
-      verticalPadding={theme.spacing.xsmall}
+      // One status geometry for every badge (HAPPIER_BADGE_METRICS), on the host's small-mark radius step.
+      radius={theme.radii.small}
+      style={BADGE_SELF_ALIGNMENT}
+      {...(icon === undefined ? {} : {
+        leading: (
+          <PluginUiIconGlyph
+            name={icon}
+            size={typeof iconSize === 'number' ? iconSize : resolveHappierIconSize('small')}
+            tone={tone}
+            {...(testID === undefined ? {} : { testID: `${testID}:icon` })}
+          />
+        ),
+      })}
       testID={testID}
     >
       {children ?? label}
@@ -211,7 +231,7 @@ export function Banner({ tone = 'info', title, titleKey, description, descriptio
       title={resolveAuthorText(translate, title, titleKey) ?? title}
       description={resolveAuthorText(translate, description, descriptionKey)}
       tone={tone}
-      icon={<Icon name={tone === 'warning' || tone === 'danger' ? 'warning' : 'info'} tone={tone} />}
+      icon={<Icon name={isHappierBannerUrgent(tone) ? 'warning' : 'info'} tone={tone} />}
       theme={usePluginTheme()}
     />
   );

@@ -27,7 +27,7 @@ export * from './StoredImage.js';
 export * from './Layout.js';
 export {
   List, Item, ItemGroup,
-  type ListSearchProps, type ListMultiSelectionCapabilityProps, type ListSelectionProps,
+  type ListSearchProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSelectionProps,
   type ListHeaderContext, type ListSectionData, type ListProps, type ListSectionProps,
   type ItemProps, type ListItemProps, type ListAccessibilityPattern, type ItemGroupProps,
 } from './List.js';
@@ -66,5 +66,7 @@ export * from './Tabs.js';
 export * from './Text.js';
 export * from './TargetedSurface.js';
 export { WidgetSurface, type WidgetSurfaceProps } from './WidgetSurface.js';
+export { WidgetFrame, type WidgetFrameProps } from './WidgetFrame.js';
+export { Tree, type TreeItem, type TreeProps } from './Tree.js';
 export { DragSource, DropTarget, type DragSourceProps, type DropTargetProps } from './EntityDragDrop.js';
 export { WidgetPresentationProvider, useWidgetPresentation, type WidgetPresentation } from './WidgetPresentation.js';

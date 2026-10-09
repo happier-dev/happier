@@ -4,6 +4,12 @@ import { StyleSheet, View } from 'react-native';
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HappierText } from '../text/Text.js';
+import { HappierDisclosure, type HappierControlledDisclosure, type HappierDisclosureMotionDriver } from '../collection/Disclosure.js';
+import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../collection/collectionMotion.js';
+import { HappierPressable } from '../interaction/Pressable.js';
+import { happierFocusRingStyle } from '../interaction/focusVisible.js';
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+import { HAPPIER_DISCLOSURE_CHEVRON_METRICS, HappierDisclosureChevron } from '../collection/DisclosureChevron.js';
 import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
 import { resolveHappierPageTextStyle } from './pageText.js';
 
@@ -48,6 +54,21 @@ export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   sourceHiddenBelowPx: 300,
 } as const);
 
+/** The caret's box (lab `.wf-cv`): 24pt, extended by the slop to a comfortable target without crowding the mark. */
+const DISCLOSURE_BOX_STYLE = Object.freeze({
+  width: HAPPIER_DISCLOSURE_CHEVRON_METRICS.boxPx,
+  height: HAPPIER_DISCLOSURE_CHEVRON_METRICS.boxPx,
+  borderRadius: HAPPIER_RADIUS_V1.sm,
+  alignItems: 'center',
+  justifyContent: 'center',
+  // Optically, the caret hangs into the inset so the mark and title keep their column.
+  marginLeft: -4,
+  marginRight: -3,
+} as const);
+const DISCLOSURE_HIT_SLOP = 8;
+/** Only an unthemed, unhosted frame (a bare test mount) falls back to a neutral mid-grey caret. */
+const DISCLOSURE_FALLBACK_INK = 'rgb(128, 128, 128)';
+
 /** The frame's one narrowing rule: the source line leaves before the title truncates. */
 export function isHappierWidgetFrameSourceShown(widthPx: number | null): boolean {
   return widthPx === null || widthPx >= HAPPIER_WIDGET_FRAME_METRICS.sourceHiddenBelowPx;
@@ -85,6 +106,16 @@ export type HappierWidgetFrameProps = Readonly<{
   meta?: ReactNode;
   /** The widget's own controls at the end of the header: its ⋯ menu, a move handle. */
   accessory?: ReactNode;
+  /** Viewer-local controlled collapse, independent from header/body actions. */
+  disclosure?: HappierControlledDisclosure;
+  /** The host's existing disclosure driver; unhosted frames reveal immediately. */
+  disclosureMotion?: HappierDisclosureMotionDriver;
+  reducedMotion?: boolean;
+  /**
+   * The disclosure caret's inks: at rest, under hover/focus, and its focus ring. A host without the plugin
+   * environment theme (Happier core) passes its own roles; a plugin surface reads them from its environment.
+   */
+  disclosureColors?: Readonly<{ glyph: string; glyphActive: string; focus: string }>;
   children?: ReactNode;
   /** Style for the body (a fixed or reserved height, full-bleed insets). */
   bodyStyle?: HappierStyleProp;
@@ -148,6 +179,14 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
     setWidthPx((current) => (current === next ? current : next));
   }, []);
   const testID = props.testID ?? 'widget-frame';
+  const environmentTheme = useOptionalHappierUiTheme();
+  const disclosureExpanded = props.disclosure?.collapsed !== true;
+  // The caret is the quietest control in the header; it comes to the text ink under hover or focus.
+  const disclosureColors = props.disclosureColors ?? {
+    glyph: environmentTheme?.colors.secondaryText ?? DISCLOSURE_FALLBACK_INK,
+    glyphActive: environmentTheme?.colors.text ?? DISCLOSURE_FALLBACK_INK,
+    focus: environmentTheme?.colors.focus ?? DISCLOSURE_FALLBACK_INK,
+  };
   const plain = props.frameStyle === 'plain';
   const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
   const renderText = props.renderText ?? renderDefaultFrameText;
@@ -171,7 +210,16 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
         props.fill ? { flexGrow: 1 } : null,
       ]}
     >
-      <View
+      <HappierDisclosure
+        expanded={props.disclosure?.collapsed !== true}
+        onExpandedChange={expanded => props.disclosure?.onCollapsedChange(!expanded)}
+        keepMounted
+        style={{ flexGrow: 1, minWidth: 0 }}
+        bodyStyle={{ flexGrow: 1, minWidth: 0 }}
+        showDivider={false}
+        reducedMotion={props.reducedMotion ?? true}
+        motion={props.disclosureMotion ?? HAPPIER_INSTANT_DISCLOSURE_MOTION}
+        header={<View
         testID={`${testID}.header`}
         style={{
           flexDirection: 'row',
@@ -183,6 +231,24 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           paddingVertical: below ? 8 : 0,
         }}
       >
+        {props.disclosure ? (
+          <HappierPressable
+            testID={`${testID}.disclosure`}
+            onPress={() => props.disclosure?.onCollapsedChange(!props.disclosure.collapsed)}
+            expanded={!props.disclosure.collapsed}
+            accessibilityLabel={props.disclosure.collapsed ? props.disclosure.expandLabel : props.disclosure.collapseLabel}
+            hitSlop={DISCLOSURE_HIT_SLOP}
+            style={(state) => [DISCLOSURE_BOX_STYLE, happierFocusRingStyle({ visible: state.focused, color: disclosureColors.focus })]}
+          >
+            {(state) => (
+              <HappierDisclosureChevron
+                expanded={disclosureExpanded}
+                color={state.hovered || state.focused ? disclosureColors.glyphActive : disclosureColors.glyph}
+                reducedMotion={props.reducedMotion}
+              />
+            )}
+          </HappierPressable>
+        ) : null}
         {props.mark ? (
           <View
             style={{ alignItems: 'center', justifyContent: 'center' }}
@@ -205,7 +271,8 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
         </View>
         {props.meta ? <View style={{ flexShrink: 0 }}>{props.meta}</View> : null}
         {props.accessory ?? null}
-      </View>
+      </View>}
+      >
       <View
         testID={`${testID}.body`}
         style={[
@@ -240,6 +307,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           {props.footer}
         </View>
       ) : null}
+      </HappierDisclosure>
       {props.overlay ?? null}
     </View>
   );

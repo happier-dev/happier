@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { resolveHappierRovingSelection } from './semantics.js';
+import type { HappierWorkStatusTone } from '../work/workStatus.js';
 
 /**
  * The Collection's pure model rules (COLLECTION.md §2). `useHappierCollection` composes them; they
@@ -16,6 +17,8 @@ export function resolveHappierCollectionSpatialFocus(input: Readonly<{
   presentation: 'table' | 'list' | 'board' | 'grid';
   columns?: number;
   eligibleKeys?: ReadonlySet<string>;
+  /** Navigation collections admit j/k; radio choices leave ordinary characters unclaimed. */
+  listNavigationKeys?: boolean;
   rtl: boolean;
 }>): string | null {
   const keys = input.sections.flat();
@@ -41,7 +44,7 @@ export function resolveHappierCollectionSpatialFocus(input: Readonly<{
     }
     const section = input.sections[column]!;
     const next = resolveHappierRovingSelection({ entries: section.map(key => ({ disabled: !enabled(key) })), currentIndex: row,
-      key: input.key, rtl: input.rtl, listNavigationKeys: true });
+      key: input.key, rtl: input.rtl, listNavigationKeys: input.listNavigationKeys !== false });
     return next === null ? null : section[next] ?? input.from;
   }
   if (input.presentation === 'grid' && (input.key === 'ArrowUp' || input.key === 'ArrowDown')) {
@@ -64,7 +67,7 @@ export function resolveHappierCollectionSpatialFocus(input: Readonly<{
     return input.from;
   }
   const next = resolveHappierRovingSelection({ entries: keys.map(key => ({ disabled: !enabled(key) })), currentIndex: index,
-    key: input.key, rtl: input.rtl, listNavigationKeys: true });
+    key: input.key, rtl: input.rtl, listNavigationKeys: input.listNavigationKeys !== false });
   return next === null ? null : keys[next] ?? input.from;
 }
 
@@ -73,6 +76,8 @@ export type HappierCollectionGroup = Readonly<{
   /** The group's visible and semantic name. An empty title groups the rows without a label. */
   title: string;
   description?: string;
+  /** Work groups may announce attention with the same semantic tone as their rows. */
+  tone?: HappierWorkStatusTone;
 }>;
 
 /**

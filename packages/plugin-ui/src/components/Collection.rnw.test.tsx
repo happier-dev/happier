@@ -19,6 +19,7 @@ vi.mock('react-native', async () => {
       renderSectionHeader?(input: Readonly<{ section: unknown }>): React.ReactNode;
       ListFooterComponent?: React.ReactNode;
       role?: string;
+      accessibilityLabel?: string;
       ref?: React.Ref<unknown>;
       onScroll?: (event: { nativeEvent: { contentOffset: { y: number } } }) => void;
     }>) {
@@ -28,7 +29,7 @@ vi.mock('react-native', async () => {
         getScrollResponder: () => ({ scrollTo: (input: Readonly<{ y: number }>) => { scrollCapture.offsets.push(input.y); } }),
       }), []);
       return (
-        <div role={props.role} data-testid="virtualizer">
+        <div role={props.role} aria-label={props.accessibilityLabel} data-testid="virtualizer">
           {props.sections.map((section) => (
             <React.Fragment key={section.key}>
               {props.renderSectionHeader?.({ section })}
@@ -338,6 +339,96 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it.each(['board', 'grid'] as const)('chooses cards in %s without opening their navigation destinations', async (presentation) => {
+    const choices: string[] = [];
+    const destinationRenders: string[] = [];
+    const single = { value: 'a', onValueChange: (key: string) => choices.push(key), isItemSelectable: (item: Entry) => item.id !== 'b' };
+    const view = mount({ presentation, selection: { single },
+      anatomy: { ...anatomy, destination: () => ({ surface: 'example', params: {} }) },
+      renderDestinationRow: (input) => { destinationRenders.push(input.surface); return input.children; },
+    });
+    try {
+      view.measure(1440);
+      expect(view.container.querySelectorAll('[role="radiogroup"]')).toHaveLength(1);
+      expect(view.query('row:c')?.getAttribute('role')).toBe('radio');
+      const character = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
+      act(() => { view.query('row:a')!.focus(); view.query('row:a')!.dispatchEvent(character); });
+      expect(character.defaultPrevented).toBe(false);
+      expect(choices).toEqual([]);
+      act(() => {
+        view.query('row:a')!.focus();
+        view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: presentation === 'board' ? 'ArrowRight' : 'End', bubbles: true, cancelable: true }));
+      });
+      expect(choices).toEqual(['c']);
+      expect(document.activeElement).toBe(view.query('row:c'));
+      await view.update({ selection: { single: { ...single, value: 'c' } } });
+      act(() => { view.query('row:c')!.click(); view.query('row:b')!.click(); });
+      expect(choices).toEqual(['c']);
+      act(() => { view.query('row:c')!.dispatchEvent(new KeyboardEvent('keydown', { key: presentation === 'board' ? 'ArrowLeft' : 'Home', bubbles: true, cancelable: true })); });
+      expect(choices).toEqual(['c', 'a']);
+      expect(view.openChanges).toEqual([]);
+      expect(destinationRenders).toEqual([]);
+      await view.update({ presentation: 'list' });
+      view.measure(320);
+      expect(view.query('row:c')?.getAttribute('aria-checked')).toBe('true');
+      expect(view.query('row:a')?.getAttribute('tabindex')).toBe('0');
+    } finally { view.unmount(); }
+  });
+  it('keeps controlled radio choice distinct from focus, open and responsive composition', async () => {
+    const values: string[] = [];
+    const focused: string[] = [];
+    const single = {
+      value: 'a',
+      onValueChange: (key: string) => { values.push(key); },
+      isItemSelectable: (item: Entry) => item.id !== 'b',
+      unavailableReason: (item: Entry) => item.id === 'b' ? 'Unavailable in this region' : null,
+    };
+    const view = mount({ selection: { single, onFocusedKeyChange: (key) => focused.push(key) } });
+    try {
+      view.measure(1440);
+      const group = view.container.querySelector('[role="radiogroup"]');
+      expect(group?.getAttribute('aria-label')).toBe('PRs & Issues');
+      expect(view.query('row:a')?.getAttribute('aria-checked')).toBe('true');
+      expect(view.query('row:b')?.getAttribute('aria-disabled')).toBe('true');
+      const reasonId = view.query('row:b')?.getAttribute('aria-describedby');
+      expect(reasonId && document.getElementById(reasonId)?.textContent).toBe('Unavailable in this region');
+      expect([...view.container.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([view.query('row:a')]);
+      act(() => {
+        view.query('row:a')!.focus();
+        view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      });
+      expect(values).toEqual(['c']);
+      expect(document.activeElement).toBe(view.query('row:c'));
+      // A controlled callback is a request: the old value stays checked until its owner responds.
+      expect(view.query('row:a')?.getAttribute('aria-checked')).toBe('true');
+      act(() => { view.query('row:c')!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })); });
+      expect(values).toEqual(['c', 'c']);
+      await view.update({ selection: { single: { ...single, value: 'c' }, onFocusedKeyChange: (key) => focused.push(key) } });
+      act(() => {
+        view.query('row:c')!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+        view.query('row:b')!.click();
+        view.query('row:a')!.click();
+      });
+      expect(values).toEqual(['c', 'c', 'a']);
+      expect(view.openChanges).toEqual([]);
+      expect(view.query('peek-content:c')).toBeNull();
+      await view.update({ selection: { single: { ...single, value: 'a' }, onFocusedKeyChange: (key) => focused.push(key) } });
+      const retained = view.query('row:a');
+      view.measure(320);
+      expect(view.query('row:a')).toBe(retained);
+      expect(view.query('row:a')?.getAttribute('aria-checked')).toBe('true');
+      expect([...view.container.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([view.query('row:a')]);
+      expect(focused).toContain('c');
+      expect(view.openChanges).toEqual([]);
+      await view.update({ selection: { single: { ...single, value: 'a', isItemSelectable: (item) => item.id === 'c',
+        unavailableReason: (item) => item.id === 'c' ? null : 'Unavailable in this region' } } });
+      // A refresh may withdraw eligibility, but only the domain owner can repair its value.
+      expect(view.query('row:a')?.getAttribute('aria-checked')).toBe('true');
+      expect(view.query('row:a')?.getAttribute('aria-disabled')).toBe('true');
+      expect([...view.container.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([view.query('row:c')]);
+      expect(values).toEqual(['c', 'c', 'a']);
+    } finally { view.unmount(); }
+  });
   it.each(['model', 'author'] as const)('keeps hidden retained selections but excludes present retained rows with the %s store', async (owner) => {
     let store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
     const selection = () => ({ multiple: { store, isItemSelectable: (item: Entry) => item.id !== 'b', retainedSelectionKeys: ['b', 'hidden'] } });
@@ -722,6 +813,23 @@ describe('detail auto beside the host details pane', () => {
 });
 
 describe('render scope', () => {
+  it.each(['table', 'list', 'board', 'grid'] as const)('keeps unrelated mounted %s rows quiet when the controlled choice changes', async (presentation) => {
+    const renders = new Map<string, number>();
+    const counting: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      title: (entry) => { renders.set(entry.id, (renders.get(entry.id) ?? 0) + 1); return entry.title; },
+    };
+    const single = { value: 'a', onValueChange: () => undefined };
+    const view = mount({ presentation, anatomy: counting, selection: { single } });
+    try {
+      view.measure(1440);
+      renders.clear();
+      await view.update({ selection: { single: { ...single, value: 'b' } } });
+      expect(view.query('row:b')?.getAttribute('aria-checked')).toBe('true');
+      expect(view.query('row:a')?.getAttribute('aria-checked')).toBe('false');
+      expect(renders.get('c') ?? 0).toBe(0);
+    } finally { view.unmount(); }
+  });
   it('re-renders only the rows whose own state changed when the open item and the focus move', async () => {
     const renders = new Map<string, number>();
     const counting: CollectionAnatomy<Entry> = {
@@ -780,6 +888,88 @@ describe('a phone list', () => {
     const title = [...row.querySelectorAll<HTMLElement>('[dir="auto"]')].find((node) => node.textContent === 'Retry idempotent payment intents')!;
     expect(title).toBeDefined();
     expect(getComputedStyle(title).webkitLineClamp ?? title.style.webkitLineClamp).toBe('2');
+    view.unmount();
+  });
+});
+
+describe('the title suffix', () => {
+  it('quietly follows the title with the item\'s designation in the table, and leaves the list title alone', () => {
+    const view = mount({
+      anatomy: { ...anatomy, titleSuffix: (entry) => (entry.id === 'a' ? '#2481' : null) },
+    });
+    view.measure(1440);
+    const suffix = view.query('row:a:title-suffix');
+    expect(suffix?.textContent).toBe('#2481');
+    expect(view.query('row:b:title-suffix')).toBeNull();
+    // On a phone the list's byline carries the designation; the title stays the title.
+    view.measure(360);
+    expect(view.query('row:a:title-suffix')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the search field', () => {
+  it('carries the active filters as removable tokens inside the field, and shows the key that focuses it', async () => {
+    const removed: string[] = [];
+    const view = mount({
+      search: {
+        label: 'Search entries',
+        value: '',
+        onValueChange: () => undefined,
+        testID: 'search',
+        tokens: [
+          { key: 'view', qualifier: 'view', label: 'My work', onRemove: () => { removed.push('view'); } },
+          { key: 'state', qualifier: 'is', label: 'open', onRemove: () => { removed.push('state'); } },
+        ],
+      },
+    });
+    view.measure(1440);
+    const input = view.query('search')!;
+    const well = input.parentElement!;
+    const tokens = [...well.querySelectorAll<HTMLElement>('[role="button"]')];
+    expect(tokens.map((token) => token.getAttribute('aria-label'))).toEqual(['Remove view My work', 'Remove is open']);
+    // Tokens sit before the text, in the field's own well.
+    expect(tokens[1]!.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => { tokens[1]!.click(); });
+    expect(removed).toEqual(['state']);
+    // The field's own focus shortcut, said as a key cap after the text and hidden from assistive technology.
+    const hint = view.query('search:shortcut');
+    expect(hint?.textContent).toBe('/');
+    expect(hint?.closest('[aria-hidden="true"]')).not.toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the list row anatomy', () => {
+  it('renders a contributed brand mark in the glyph badge', () => {
+    const view = mount({
+      anatomy: {
+        ...anatomy,
+        glyphBadge: () => ({ mark: () => <Text testID="agent-logo">Agent logo</Text>, tone: 'attention' }),
+      },
+    });
+    view.measure(360);
+    expect(view.query('row:a:glyph-badge')?.textContent).toContain('Agent logo');
+    view.unmount();
+  });
+
+  it('leads the second line with the byline and badges the glyph in the list, keeping the table to its columns', () => {
+    const view = mount({
+      anatomy: {
+        ...anatomy,
+        byline: (entry) => `${entry.repo} · Mara Oduya`,
+        glyphBadge: (entry) => (entry.id === 'b' ? { icon: 'attention', tone: 'attention' } : null),
+      },
+    });
+    view.measure(1440);
+    // The table's Where column stays the bare place; its Agent column already says what the badge would.
+    expect(view.query('row:a')?.textContent).toContain('payments-api');
+    expect(view.query('row:a')?.textContent).not.toContain('Mara Oduya');
+    expect(view.query('row:b:glyph-badge')).toBeNull();
+    view.measure(360);
+    expect(view.query('row:a')?.textContent).toContain('payments-api · Mara Oduya');
+    expect(visible(view.query('row:b:glyph-badge'))).toBe(true);
+    expect(view.query('row:a:glyph-badge')).toBeNull();
     view.unmount();
   });
 });
@@ -858,10 +1048,14 @@ describe('the table ⇄ split transition', () => {
     // Mid-flight the detail is laid over the list while it slides in; the list is still full width.
     const detail = view.query('collection-detail')!;
     expect(getComputedStyle(detail).position).toBe('absolute');
-    // The opened row is anchored: it never travels. The row after it starts where the table had it.
+    // The opened row is anchored: it keeps its place but for the snap that leaves the row above it whole under
+    // the sticky group band (less than a row), so it travels less than the row after it, which starts where the
+    // table had it.
     motion.step(0.5);
-    expect(view.query('row:b:cell')!.style.transform).toMatch(/translateY\(0px\)|^$/);
-    expect(view.query('row:c:cell')!.style.transform).toMatch(/translateY\(-?[1-9]/);
+    const travel = (key: string) => Math.abs(Number(/translateY\((-?[\d.]+)px\)/.exec(view.query(`row:${key}:cell`)!.style.transform)?.[1] ?? 0));
+    expect(travel('a')).toBe(0);
+    expect(travel('b')).toBeGreaterThan(0);
+    expect(travel('c')).toBeGreaterThan(travel('b'));
 
     // Esc mid-flight re-targets from the presentation value, over the remaining share of the close.
     await view.setOpen(null);
@@ -916,7 +1110,7 @@ function within(container: HTMLElement | null, testID: string): boolean {
 }
 
 describe('board', () => {
-  it('keeps five explicit status columns reachable without empty columns taking card width', () => {
+  it('keeps five status columns on stable tracks with empty buckets still reachable', () => {
     const view = mount({ presentation: 'board', boardLayout: 'columns', detail: 'none', grouping: {
       axis: [
         { key: 'empty-a', title: 'Needs you' },
@@ -929,11 +1123,8 @@ describe('board', () => {
     view.measure(980);
     const columns = ['empty-a', 'empty-b', 'empty-c', 'needs', 'rest'].map(key => view.query(`collection:column:${key}`)!);
     expect(columns.every(column => column !== null)).toBe(true);
-    // Explicit columns share the available width; they must not force five 260px tracks into a 980px pane.
-    expect(columns.map(column => getComputedStyle(column).width)).not.toContain('260px');
+    expect(columns.map(column => getComputedStyle(column).width)).toEqual(Array(5).fill('260px'));
     expect(columns[0]!.textContent).toContain('None');
-    expect(getComputedStyle(columns[0]!).flexGrow).toBe('0');
-    expect(getComputedStyle(columns[3]!).flexGrow).toBe('1');
     expect(view.query('collection:hints')).toBeNull();
     view.unmount();
   });
@@ -1107,6 +1298,34 @@ describe('grid', () => {
     view.unmount();
   });
 
+  it('keeps a long warning and its action in separate footer slots at phone width', () => {
+    actionPresses.length = 0;
+    const warning = 'This plugin needs a repository to watch before it can run on this machine.';
+    const view = mount({ presentation: 'grid', grouped: false, anatomy: {
+      ...described,
+      reason: (entry) => <Text testID={`warning:${entry.id}`} numberOfLines={1}>{warning}</Text>,
+    } });
+    view.measure(390);
+    const status = view.query('warning:a')!;
+    const action = view.query('action:a')!;
+    // The status and action share the actual footer's two columns, rather than an absolutely overlaid
+    // control on full-width status text. Flex layout can shrink the warning without shrinking the action.
+    const statusSlot = status.parentElement!;
+    const actionSlot = action.parentElement!;
+    expect(statusSlot.parentElement).toBe(actionSlot.parentElement);
+    expect(getComputedStyle(statusSlot).flexShrink).toBe('1');
+    expect(getComputedStyle(actionSlot).flexShrink).toBe('0');
+    expect(getComputedStyle(actionSlot.parentElement!).flexDirection).toBe('row');
+    expect(Number.parseFloat(getComputedStyle(actionSlot.parentElement!).gap)).toBeGreaterThan(0);
+    expect(within(view.query('row:a'), 'action:a')).toBe(false);
+    act(() => { action.click(); });
+    expect(actionPresses).toEqual(['a']);
+    expect(view.openChanges).toEqual([]);
+    act(() => { view.query('row:a')!.click(); });
+    expect(view.openChanges).toEqual(['a']);
+    view.unmount();
+  });
+
   it('draws shelves only when the consumer groups', () => {
     const grouped = mount({ presentation: 'grid', anatomy: described });
     grouped.measure(1440);
@@ -1148,6 +1367,18 @@ describe('grid', () => {
     expect(view.queryAll('collection:skeleton-card').length).toBe(0);
     await view.update({ items: [], loading: true });
     expect(view.queryAll('collection:skeleton-card').length).toBe(3);
+    view.unmount();
+  });
+
+  it('fills the page viewport without feeding skeleton content height back into loading geometry', () => {
+    const view = mount({ presentation: 'grid', scroll: 'page', grouped: false, anatomy: described, items: [], loading: true });
+    const viewport = view.query('collection') as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void };
+    act(() => { viewport.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 800 } } }); });
+    view.measure(1440, 800);
+    const count = view.queryAll('collection:skeleton-card').length;
+    expect(count).toBeGreaterThan(4);
+    view.measure(1440, 9000);
+    expect(view.queryAll('collection:skeleton-card')).toHaveLength(count);
     view.unmount();
   });
 
