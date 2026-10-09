@@ -21,6 +21,7 @@ import {
 } from '@/sync/domains/local/services/publicPreview/store';
 
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
+import { Text } from '@/components/ui/text/Text';
 import {
     PaneHeaderSlotProvider,
     PaneHeaderSlotScope,
@@ -28,6 +29,23 @@ import {
 } from '@/components/appShell/panes/paneHeaderSlot';
 
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
+import type { UserProfile } from '@happier-dev/protocol';
+import type { ReactTestInstance } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+
+function collectText(node: ReactTestInstance): string {
+    return node.children.map((child) => typeof child === 'string' ? child : collectText(child)).join(' ');
+}
+
+const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/responsive')>()),
+    useDeviceType: () => deviceState.type,
+}));
+
+function PlacementProbe(): React.ReactElement {
+    return <Text testID="placement-probe">Runs on</Text>;
+}
 
 /** The pane header as the sidebar/cockpit hosts draw it: the title plus what the tab published. */
 function HeaderProbe(): React.ReactElement {
@@ -465,6 +483,73 @@ describe('DetectedLocalServicesPane', () => {
         // launcher revalidates; the refresh is silent.
         expect(screen.findAllByTestId('local-services-pane-refreshing')).toHaveLength(0);
         expect(screen.findByTestId('local-services-pane-row:inventory:openable-row')).toBeTruthy();
+    });
+
+    /**
+     * R2b-11 / plan 22 §2, lab PAGEp: on a phone the list pushes the service's detail (Address,
+     * Runs on, Share, Stop last) instead of growing the row in place; Back returns to the same list.
+     */
+    it('pushes the service detail on a phone and returns to the list on Back', async () => {
+        deviceState.type = 'phone';
+        try {
+            const screen = await renderScreen(
+                <DetectedLocalServicesPane
+                    inventoryState={buildLocalServiceInventoryState({
+                        rows: [buildLocalServiceInventoryRow({ id: 'openable-row', state: 'listening' })],
+                    })}
+                    launcherState={launcherStateWith([openableTarget], 'session-a')}
+                    sessionId="session-a"
+                    onOpenServiceInBrowser={vi.fn()}
+                    renderServicePlacement={() => <PlacementProbe />}
+                    testID="local-services-pane"
+                />,
+            );
+            const rowTestID = 'local-services-pane-row:inventory:openable-row';
+            await expandRow(screen, rowTestID);
+            // No inline growth on a phone: the detail is its own page with the same body.
+            expect(screen.findAllByTestId(`${rowTestID}-expansion`)).toHaveLength(0);
+            expect(screen.findByTestId('local-services-pane-detail')).toBeTruthy();
+            expect(screen.findByTestId('placement-probe')).toBeTruthy();
+            expect(screen.findByTestId('local-services-pane-detail-row-copy-address')).toBeTruthy();
+            expect(screen.findByTestId('local-services-pane-list')?.props.accessibilityElementsHidden).toBe(true);
+
+            await pressTestInstanceAsync(screen.findByTestId('local-services-pane-detail-back'), 'back');
+            expect(screen.findAllByTestId('local-services-pane-detail')).toHaveLength(0);
+            expect(screen.findByTestId('local-services-pane-list')?.props.accessibilityElementsHidden).toBe(false);
+            expect(screen.findByTestId(rowTestID)).toBeTruthy();
+        } finally {
+            deviceState.type = 'tablet';
+        }
+    });
+
+    /** R2a-F13: a teammate's service names who started it from a known profile; the viewer's own does not. */
+    it('names who started a service only when it is someone else the client already knows', async () => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const profile = (id: string, firstName: string) => ({ id, firstName, lastName: null, avatar: null, username: firstName.toLowerCase(),
+            bio: null, badges: [], status: 'friend', publicKey: null }) as unknown as UserProfile;
+        act(() => { getStorage().getState().applyUsers({ 'ana-account': profile('ana-account', 'Ana'), 'viewer-account': profile('viewer-account', 'Me') }); });
+        const managed = (id: string, startedByAccountId: string) => ({
+            id, source: 'managed_service' as const, sourceClass: { kind: 'managed_service' as const, managedServiceId: id },
+            machineId: 'machine-a', title: id, confidence: 'high' as const, state: 'available' as const, serviceState: 'running' as const,
+            actions: ['manage' as const], startedByAccountId,
+        });
+        const screen = await renderScreen(
+            <DetectedLocalServicesPane
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                launcherState={launcherStateWith([managed('docs', 'ana-account'), managed('jobs', 'viewer-account'), managed('api', 'unknown-account')])}
+                machine={MACBOOK_ONLINE}
+                viewerAccountId="viewer-account"
+                testID="local-services-pane"
+            />,
+        );
+        const text = (rowId: string) => {
+            const node = screen.findByTestId(`local-services-pane-row:${rowId}-meta`);
+            return node ? collectText(node) : '';
+        };
+        expect(text('docs')).toContain('Started by Ana on MacBook Pro');
+        expect(text('jobs')).not.toContain('Started by');
+        expect(text('api')).not.toContain('Started by');
+        expect(text('api')).not.toContain('unknown-account');
     });
 
     it('keeps Happier’s own services in one closed group that the header count leaves out', async () => {

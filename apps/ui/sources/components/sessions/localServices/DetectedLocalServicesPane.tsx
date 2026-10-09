@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { useShallow } from 'zustand/react/shallow';
 
 import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
 
@@ -37,6 +38,8 @@ import {
 } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -92,7 +95,44 @@ const stylesheet = StyleSheet.create((theme) => ({
     offlineLine: {
         marginTop: 4,
     },
+    /** The list stays mounted under a pushed detail, so Back returns to the same scroll position. */
+    listHidden: {
+        display: 'none',
+    },
+    detailBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingTop: 4,
+    },
+    /** A pending effect review discloses above what it decides (lab s-scripts Approval motion). */
+    effectReview: {
+        marginHorizontal: 16,
+        marginBottom: 12,
+    },
 }));
+
+/**
+ * Who started each listed service, named by the account name owner from the profiles this client
+ * already holds. The viewer's own services carry no byline, and an Account whose profile is not
+ * known here gets none either: a name is never made from a bare id (R2a-F13).
+ */
+function useServiceStarterNames(rows: readonly ServiceRow[], viewerAccountId: string | null): Readonly<Record<string, string | null>> {
+    const ids = React.useMemo(() => [...new Set(rows
+        .map((row) => row.target.startedByAccountId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0 && id !== viewerAccountId))].sort(),
+    [rows, viewerAccountId]);
+    return getStorage()(useShallow(React.useCallback((state: ReturnType<ReturnType<typeof getStorage>['getState']>) => {
+        const names: Record<string, string | null> = {};
+        for (const id of ids) {
+            const user = state.users[id];
+            names[id] = user ? formatAccountDisplayName({
+                firstName: user.firstName, lastName: user.lastName, username: user.username, avatarUrl: null,
+            }) : null;
+        }
+        return names;
+    }, [ids])));
+}
 
 function sectionTitle(section: ServiceRowSection, machineName: string | null): string {
     switch (section) {
@@ -239,6 +279,10 @@ export function DetectedLocalServicesPane(props: Readonly<{
     presentation?: 'pane' | 'page';
     /** The placement owner's per-row "Runs on" control, hosted in the row's expansion (plan 32). */
     renderServicePlacement?: (row: ServiceRow) => React.ReactNode;
+    /** A Start/Restart waiting on the person's review of its current effect, drawn by the host. */
+    effectReview?: React.ReactNode;
+    /** The Account viewing the surface: its own services carry no "Started by". */
+    viewerAccountId?: string | null;
     publicPreviewCapabilityDisabledReasons?: LocalServiceCapabilityDisabledReasons;
     /** The machine these services run on: its name for the header and sections, and whether it answers. */
     machine?: MachinePresenceSummary | null;
@@ -294,6 +338,12 @@ export function DetectedLocalServicesPane(props: Readonly<{
 
     // One expanded row at a time (lab S signature). A row that leaves the list takes its expansion.
     const [expandedRowId, setExpandedRowId] = React.useState<string | null>(null);
+    // Phone (lab PAGEp): a row pushes its detail instead; a row that leaves the list closes it.
+    const phone = useDeviceType() === 'phone';
+    const [detailRowId, setDetailRowId] = React.useState<string | null>(null);
+    const detailRow = phone && detailRowId ? rows.find((row) => row.id === detailRowId) ?? null : null;
+    const closeDetail = React.useCallback(() => setDetailRowId(null), []);
+    const starterNames = useServiceStarterNames(rows, props.viewerAccountId ?? null);
     // Happier's own listeners: one quiet group, closed until the person asks.
     const [happierOpen, setHappierOpen] = React.useState(false);
     const expandedId = expandedRowId && rows.some((row) => row.id === expandedRowId) ? expandedRowId : null;
@@ -349,12 +399,14 @@ export function DetectedLocalServicesPane(props: Readonly<{
             onCopyServiceUrl={props.onCopyServiceUrl}
             machineName={machineName}
             offline={offline}
+            startedByName={row.target.startedByAccountId ? starterNames[row.target.startedByAccountId] ?? null : null}
             placement={props.renderServicePlacement?.(row)}
             publicPreviewState={props.publicPreviewState}
             publicPreviewActions={props.publicPreviewActions}
             publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
             expanded={expandedId === row.id}
             onExpandedChange={(next) => setExpandedRowId(next ? row.id : null)}
+            onOpenDetail={phone ? () => setDetailRowId(row.id) : undefined}
             animationEnabled={animationEnabled}
             testID={`${testID}-row:${row.id}`}
         />
@@ -363,6 +415,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
         expandedId,
         machineName,
         offline,
+        phone,
+        starterNames,
         props.onCopyServiceUrl,
         props.onForgetDetectedService,
         props.onRestartManagedService,
@@ -378,10 +432,9 @@ export function DetectedLocalServicesPane(props: Readonly<{
     ]);
 
     const page = props.presentation === 'page';
-    const deviceType = useDeviceType();
     const columnMaxWidth = useLayoutMaxWidth();
     // The phone page is titled by its cockpit header and leads straight into the list (lab PAGEp).
-    const pageHeader = page && deviceType !== 'phone' ? (
+    const pageHeader = page && !phone ? (
         <HappierPageHeader
             title=""
             showTitle={false}
@@ -460,84 +513,132 @@ export function DetectedLocalServicesPane(props: Readonly<{
         );
     }
 
+    const effectReview = props.effectReview ? <View style={styles.effectReview}>{props.effectReview}</View> : null;
     return (
-        <ScrollView
-            testID={testID}
-            style={styles.root}
-            contentContainerStyle={styles.scrollContent}
-        >
-            <ConstrainedScreenContent>
-                {pageHeader}
-                {offline ? (
-                    <View style={styles.offlineLine}>
-                        <SurfaceFreshnessLine
-                            testID={`${testID}-offline-line`}
-                            tone="warning"
-                            reason={machineName ? t('localServices.pane.offlineOn', { machine: machineName }) : t('localServices.pane.offline')}
-                            {...(checkAgain ? { action: checkAgain } : {})}
+        <View style={styles.root}>
+            <View
+                testID={`${testID}-list`}
+                accessibilityElementsHidden={detailRow !== null}
+                importantForAccessibility={detailRow ? 'no-hide-descendants' : 'auto'}
+                style={[styles.root, detailRow ? styles.listHidden : null]}
+            >
+                <ScrollView
+                    testID={testID}
+                    style={styles.root}
+                    contentContainerStyle={styles.scrollContent}
+                >
+                    <ConstrainedScreenContent>
+                        {pageHeader}
+                        {offline ? (
+                            <View style={styles.offlineLine}>
+                                <SurfaceFreshnessLine
+                                    testID={`${testID}-offline-line`}
+                                    tone="warning"
+                                    reason={machineName ? t('localServices.pane.offlineOn', { machine: machineName }) : t('localServices.pane.offline')}
+                                    {...(checkAgain ? { action: checkAgain } : {})}
+                                />
+                            </View>
+                        ) : null}
+                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
+                        {props.onChangeScope ? (
+                            <ServicesScopeBar
+                                scope={scope}
+                                onChangeScope={props.onChangeScope}
+                                page={page}
+                                testID={`${testID}-scope-toggle`}
+                            />
+                        ) : null}
+                        {detailRow ? null : effectReview}
+                        {hasRows
+                            ? sections.map((entry) => (
+                                <View key={entry.section} testID={`${testID}-section-${entry.section}`}>
+                                    {entry.section === 'happier' ? (
+                                        <ItemGroup selectableItemCountOverride={1}>
+                                            <ExpandableItem
+                                                expanded={happierOpen}
+                                                onExpandedChange={setHappierOpen}
+                                                header={({ headerProps }) => (
+                                                    <Item
+                                                        {...headerProps}
+                                                        testID={`${testID}-happier-item`}
+                                                        title={t('localServices.pane.happierServices', { count: entry.rows.length })}
+                                                    />
+                                                )}
+                                            >
+                                                {entry.rows.map(renderRow)}
+                                            </ExpandableItem>
+                                        </ItemGroup>
+                                    ) : (
+                                        <ItemGroup
+                                            title={`${sectionTitle(entry.section, machineName)} ${entry.rows.length}`}
+                                            surface="none"
+                                            selectableItemCountOverride={entry.rows.length}
+                                        >
+                                            {entry.rows.map(renderRow)}
+                                        </ItemGroup>
+                                    )}
+                                </View>
+                            ))
+                            : rows.length > 0 ? (
+                                // Only services with nothing to offer were found: the pane is empty (pane-states E).
+                                <SurfaceStateCard
+                                    testID={`${testID}-empty`}
+                                    kind="empty"
+                                    iconName="globe"
+                                    scene="nothingListening"
+                                    title={t('localServices.pane.emptyTitle')}
+                                    reason={t('localServices.pane.emptyReason')}
+                                    {...(checkAgain ? { action: checkAgain } : {})}
+                                />
+                            ) : (
+                                <SurfaceStateCard
+                                    testID={`${testID}-launcher-unavailable`}
+                                    kind="unavailable"
+                                    title={t('common.unavailable')}
+                                    reason={t('localServices.launcher.status.unavailableGeneric')}
+                                />
+                            )}
+                        {props.footer}
+                    </ConstrainedScreenContent>
+                </ScrollView>
+            </View>
+            {detailRow ? (
+                <ScrollView testID={`${testID}-detail`} style={styles.root} contentContainerStyle={styles.scrollContent}>
+                    <View style={styles.detailBar}>
+                        <IconButton
+                            testID={`${testID}-detail-back`}
+                            iconName="arrow-left"
+                            variant="plain"
+                            accessibilityLabel={t('localServices.pane.backToServices')}
+                            tooltip={t('localServices.pane.backToServices')}
+                            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                            animationEnabled={animationEnabled}
+                            onPress={closeDetail}
                         />
                     </View>
-                ) : null}
-                <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
-                {props.onChangeScope ? (
-                    <ServicesScopeBar
-                        scope={scope}
-                        onChangeScope={props.onChangeScope}
-                        page={page}
-                        testID={`${testID}-scope-toggle`}
+                    {effectReview}
+                    <ServiceRowView
+                        row={detailRow}
+                        presentation="detail"
+                        onOpenServiceInBrowser={props.onOpenServiceInBrowser}
+                        onStartLauncherTarget={props.onStartLauncherTarget}
+                        onTerminateDetectedService={props.onTerminateDetectedService}
+                        onForgetDetectedService={props.onForgetDetectedService}
+                        onStopManagedService={props.onStopManagedService}
+                        onRestartManagedService={props.onRestartManagedService}
+                        onCopyServiceUrl={props.onCopyServiceUrl}
+                        machineName={machineName}
+                        offline={offline}
+                        startedByName={detailRow.target.startedByAccountId ? starterNames[detailRow.target.startedByAccountId] ?? null : null}
+                        placement={props.renderServicePlacement?.(detailRow)}
+                        publicPreviewState={props.publicPreviewState}
+                        publicPreviewActions={props.publicPreviewActions}
+                        publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
+                        animationEnabled={animationEnabled}
+                        testID={`${testID}-detail-row`}
                     />
-                ) : null}
-                {hasRows
-                    ? sections.map((entry) => (
-                        <View key={entry.section} testID={`${testID}-section-${entry.section}`}>
-                            {entry.section === 'happier' ? (
-                                <ItemGroup selectableItemCountOverride={1}>
-                                    <ExpandableItem
-                                        expanded={happierOpen}
-                                        onExpandedChange={setHappierOpen}
-                                        header={({ headerProps }) => (
-                                            <Item
-                                                {...headerProps}
-                                                testID={`${testID}-happier-item`}
-                                                title={t('localServices.pane.happierServices', { count: entry.rows.length })}
-                                            />
-                                        )}
-                                    >
-                                        {entry.rows.map(renderRow)}
-                                    </ExpandableItem>
-                                </ItemGroup>
-                            ) : (
-                                <ItemGroup
-                                    title={`${sectionTitle(entry.section, machineName)} ${entry.rows.length}`}
-                                    surface="none"
-                                    selectableItemCountOverride={entry.rows.length}
-                                >
-                                    {entry.rows.map(renderRow)}
-                                </ItemGroup>
-                            )}
-                        </View>
-                    ))
-                    : rows.length > 0 ? (
-                        // Only services with nothing to offer were found: the pane is empty (pane-states E).
-                        <SurfaceStateCard
-                            testID={`${testID}-empty`}
-                            kind="empty"
-                            iconName="globe"
-                            scene="nothingListening"
-                            title={t('localServices.pane.emptyTitle')}
-                            reason={t('localServices.pane.emptyReason')}
-                            {...(checkAgain ? { action: checkAgain } : {})}
-                        />
-                    ) : (
-                        <SurfaceStateCard
-                            testID={`${testID}-launcher-unavailable`}
-                            kind="unavailable"
-                            title={t('common.unavailable')}
-                            reason={t('localServices.launcher.status.unavailableGeneric')}
-                        />
-                    )}
-                {props.footer}
-            </ConstrainedScreenContent>
-        </ScrollView>
+                </ScrollView>
+            ) : null}
+        </View>
     );
 }

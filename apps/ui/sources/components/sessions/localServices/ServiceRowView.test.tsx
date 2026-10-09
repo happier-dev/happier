@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { Text } from '@/components/ui/text/Text';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { IModal } from '@/modal/types';
 import { buildLocalServiceRows, type ServiceRow } from '@/sync/domains/local/services/serviceRow';
@@ -30,6 +31,10 @@ vi.mock('@/utils/ui/clipboard', () => ({
 }));
 
 import { ServiceRowView } from './ServiceRowView';
+
+function PlacementProbe(): React.ReactElement {
+    return <Text testID="placement-probe">Runs on</Text>;
+}
 
 function launchTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): LocalServiceLaunchTarget {
     return {
@@ -378,10 +383,9 @@ describe('ServiceRowView', () => {
         expect(terminateAction(screen)).toBeNull();
     });
 
-    it('confirms before terminating a detected service and cancels cleanly when declined', async () => {
-        const onTerminate = vi.fn();
-        modalSpies.confirm.mockResolvedValueOnce(false);
-
+    /** R2a-F12 / R2b-12: the configurable Action approval is the one consent owner; the row adds none. */
+    it('terminates and stops through their Actions without a second, row-owned confirmation', async () => {
+        const onTerminate = vi.fn(async () => ({ ok: true }));
         const screen = await renderScreen(
             <ServiceRowView
                 row={detectedTerminateRow()}
@@ -392,13 +396,12 @@ describe('ServiceRowView', () => {
             />,
         );
 
-        const action = terminateAction(screen);
         await act(async () => {
-            (action?.onPress as (() => void) | undefined)?.();
+            (terminateAction(screen)?.onPress as (() => void) | undefined)?.();
         });
 
-        expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
-        expect(onTerminate).not.toHaveBeenCalled();
+        expect(modalSpies.confirm).not.toHaveBeenCalled();
+        expect(onTerminate).toHaveBeenCalledOnce();
     });
 
     // The managed stop affordance this suite used to cover is gone: `ServiceRow.managed` was
@@ -614,10 +617,8 @@ describe('ServiceRowView', () => {
         expect(screen.findAllByTestId('row-expansion')).toHaveLength(0);
         expect(rowOverflowActions(screen).map((action) => action.id)).toEqual(['restart', 'stop', 'forget']);
 
-        modalSpies.confirm.mockResolvedValueOnce(false);
         await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'stop')?.onPress as () => void)(); });
-        expect(onStop).not.toHaveBeenCalled();
-        await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'stop')?.onPress as () => void)(); });
+        expect(modalSpies.confirm).not.toHaveBeenCalled();
         expect(onStop).toHaveBeenCalledExactlyOnceWith(target);
         await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'restart')?.onPress as () => void)(); });
         expect(onRestart).toHaveBeenCalledExactlyOnceWith(target);
@@ -629,6 +630,60 @@ describe('ServiceRowView', () => {
             onStartLauncherTarget={vi.fn()} testID="row" />);
         expect(screen.findByTestId('row-status-failed')).toBeTruthy();
         expect(rowOverflowActions(screen).map((action) => action.id)).not.toContain('stop');
+    });
+
+    /**
+     * R2a-F2 / R2b-01: Runs on is reachable from every service row. A never-started declaration and
+     * a live worker with no address grow into their placement; the worker keeps its overflow on the row.
+     */
+    it('grows a never-started declaration into its Runs on without starting anything', async () => {
+        const row = projectRow(projectTarget({ actions: ['start'] }));
+        const onExpandedChange = vi.fn();
+        const onStart = vi.fn();
+        const collapsed = await renderScreen(<ServiceRowView row={row} onStartLauncherTarget={onStart}
+            placement={<PlacementProbe />} expanded={false} onExpandedChange={onExpandedChange} testID="row" />);
+        await pressTestInstanceAsync(collapsed.findByTestId('row-item'), 'row-item');
+        expect(onExpandedChange).toHaveBeenCalledWith(true);
+        expect(onStart).not.toHaveBeenCalled();
+
+        const open = await renderScreen(<ServiceRowView row={row} onStartLauncherTarget={onStart}
+            placement={<PlacementProbe />} expanded onExpandedChange={vi.fn()} testID="row" />);
+        expect(open.findByTestId('row-expansion')).toBeTruthy();
+        expect(open.findByTestId('placement-probe')).toBeTruthy();
+        expect(open.findByTestId('row-start')).toBeTruthy();
+    });
+
+    it('keeps a live no-address worker\'s controls on the row and opens into its Runs on', async () => {
+        const row = projectRow(projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'] }));
+        const screen = await renderScreen(<ServiceRowView row={row} machineName="devbox" onStopManagedService={vi.fn()}
+            onRestartManagedService={vi.fn()} onForgetDetectedService={vi.fn()} placement={<PlacementProbe />}
+            expanded onExpandedChange={vi.fn()} testID="row" />);
+        expect(screen.findByTestId('placement-probe')).toBeTruthy();
+        expect(screen.findAllByTestId('row-copy-address')).toHaveLength(0);
+        // One overflow, on the row itself (lab `jobs`), never repeated inside the expansion.
+        expect(screen.findAllByType(ItemRowActions)).toHaveLength(1);
+        expect(rowOverflowActions(screen).map((action) => action.id)).toEqual(['restart', 'stop', 'forget']);
+    });
+
+    /** R2a-F13: the feed's start time and starter, never a name invented from a bare id. */
+    it('says how long a service has run and who started it when that is someone else', async () => {
+        const startedAtMs = Date.now() - 42 * 60_000;
+        const own = projectRow(projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'],
+            startedAtMs, startedByAccountId: 'viewer-account' }));
+        const ownScreen = await renderScreen(<ServiceRowView row={own} machineName="devbox"
+            startedByName={null} testID="row" />);
+        expect(ownScreen.getTextContent()).toContain('42m ago');
+        expect(ownScreen.getTextContent()).not.toContain('Started by');
+
+        const teammate = projectRow(projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'],
+            startedAtMs, startedByAccountId: 'ana-account' }));
+        const named = await renderScreen(<ServiceRowView row={teammate} machineName="build-01"
+            startedByName="Ana" testID="row" />);
+        expect(named.getTextContent()).toContain('Started by Ana on build-01');
+        const unnamed = await renderScreen(<ServiceRowView row={teammate} machineName="build-01"
+            startedByName={null} testID="row" />);
+        expect(unnamed.getTextContent()).not.toContain('ana-account');
+        expect(unnamed.getTextContent()).toContain('on build-01');
     });
 
     it('labels every status as last known while the machine is offline', async () => {

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { ProjectExecutionChoiceV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ApprovalRequest } from '@happier-dev/protocol';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
@@ -14,6 +15,7 @@ import {
 } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { listReviewedSetupCommands } from '@/components/projects/projectSetup/projectSetupEffectPresentation';
 
 export type ProjectCommandApprovalPresentation =
   | Readonly<{
@@ -29,6 +31,14 @@ export type ProjectCommandApprovalPresentation =
       serverId: string;
       sourceMachineId: string;
       name: string;
+      destination: Destination;
+    }>
+  | Readonly<{
+      /** A declared service's current effect, disclosed by the starter before it launches (plan 22). */
+      kind: 'service';
+      serverId: string;
+      sourceMachineId: string;
+      command: string | null;
       destination: Destination;
     }>;
 type Destination =
@@ -78,6 +88,35 @@ export function readProjectCommandApproval(
     };
   }
   return null;
+}
+
+/**
+ * A declared service's reviewed effect (the starter's safe `reviewedEffect` DTO) as the same facts:
+ * the exact command, where it runs, which files it sees. A worker copy names its concrete target.
+ */
+export function readProjectServiceEffectApproval(input: Readonly<{
+  serverId: string;
+  sourceMachineId: string;
+  reviewedEffect: unknown;
+}>): ProjectCommandApprovalPresentation {
+  const effect = isRecord(input.reviewedEffect) ? input.reviewedEffect : {};
+  const serviceEffect = isRecord(effect.serviceEffect) ? effect.serviceEffect : null;
+  const command = listReviewedSetupCommands({ commands: [effect.command ?? serviceEffect?.command].filter(Boolean) })?.[0] ?? null;
+  const target = isRecord(effect.target) && typeof effect.target.machineId === 'string' ? effect.target.machineId : null;
+  const choice = ProjectExecutionChoiceV1Schema.safeParse(effect.choice);
+  return {
+    kind: 'service',
+    serverId: input.serverId,
+    sourceMachineId: input.sourceMachineId,
+    command,
+    destination: target && target !== input.sourceMachineId
+      ? { kind: 'machine', machineId: target }
+      : readDestination(choice.success ? choice.data : undefined),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readDestination(choice: ProjectExecutionChoiceV1 | undefined): Destination {
@@ -160,21 +199,23 @@ export const ProjectCommandApprovalFacts = React.memo(
     ];
     return (
       <View style={styles.root} testID={props.testID}>
-        <View
-          style={[
-            styles.command,
-            { backgroundColor: theme.colors.surface.inset },
-          ]}
-        >
-          <Text
-            style={[styles.mono, { color: theme.colors.text.primary }]}
-            testID={`${props.testID}.command`}
+        {presentation.kind !== 'service' || presentation.command ? (
+          <View
+            style={[
+              styles.command,
+              { backgroundColor: theme.colors.surface.inset },
+            ]}
           >
-            {presentation.kind === 'exec'
-              ? `$ ${presentation.command}`
-              : presentation.name}
-          </Text>
-        </View>
+            <Text
+              style={[styles.mono, { color: theme.colors.text.primary }]}
+              testID={`${props.testID}.command`}
+            >
+              {presentation.kind === 'script'
+                ? presentation.name
+                : `$ ${presentation.command}`}
+            </Text>
+          </View>
+        ) : null}
         <View style={styles.rows}>
           {rows.map(([key, label, value]) => (
             <View key={key} style={styles.row}>
