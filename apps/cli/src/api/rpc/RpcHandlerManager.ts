@@ -454,6 +454,19 @@ export class RpcHandlerManager {
                 }
             }
 
+            let admittedTargetRouting = workspaceSyncTargetRouting?.success ? workspaceSyncTargetRouting.data : undefined;
+            const admittedWriterTarget = workspaceSyncSourceWriterTargetRouting?.success
+                ? workspaceSyncSourceWriterTargetRouting.data : undefined;
+            if (!admittedTargetRouting && writerTargetInputAuthorizationMatchesRequest
+                && admittedWriterTarget?.source.sourceContext && machineAdmission?.success
+                && this.scopePrefix !== admittedWriterTarget.target.targetMachineId) {
+                // Home has independently admitted D and this installed receiver. Keep the
+                // original caller ceiling; the target owner must still prove D maps to this
+                // physical Machine/root through its current native bind before any effect.
+                admittedTargetRouting = WorkspaceSyncTargetRoutingV1Schema.parse({ ...admittedWriterTarget.target,
+                    targetContext: { ...admittedWriterTarget.source.sourceContext, machineAdmission: machineAdmission.data } });
+            }
+
             if (sourceInputAuthorizationMatchesRequest && parsedInputAuthorization?.success) {
                 // The actual parent has now verified its installation and the original child admission
                 // at Home. Bind the decrypted chosen target before retaining the child's root.
@@ -495,7 +508,7 @@ export class RpcHandlerManager {
                 callerAuthority: request.callerAuthority === 'present_user' ? request.callerAuthority : 'account_automation',
                 ...(sessionActionOrigin?.success ? { sessionActionOrigin: sessionActionOrigin.data } : {}),
                 ...(workspaceSyncSourceRouting?.success ? { workspaceSyncSourceRouting: workspaceSyncSourceRouting.data } : {}),
-                ...(workspaceSyncTargetRouting?.success ? { workspaceSyncTargetRouting: workspaceSyncTargetRouting.data } : {}),
+                ...(admittedTargetRouting ? { workspaceSyncTargetRouting: admittedTargetRouting } : {}),
                 ...(workspaceSyncSourceWriterTargetRouting?.success ? { workspaceSyncSourceWriterTargetRouting: workspaceSyncSourceWriterTargetRouting.data } : {}),
                 ...(callerInputAuthorization ? {
                     callerInputAuthorization,
