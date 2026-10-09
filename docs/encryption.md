@@ -145,7 +145,7 @@ have been transferred, not as a second credential writer.
 
 ### Private Agent, Provider and Connected Account catalogs (0.3 development)
 
-The development contracts define five singleton private catalogs through the
+The development contracts define singleton private catalogs through the
 existing reserved Account-row owner, not arbitrary user KV or Resource grants.
 Their envelope domains are allocated by
 `packages/protocol/src/crypto/accountScopedCipherEnvelope.ts`:
@@ -157,6 +157,8 @@ Their envelope domains are allocated by
 | Connected purposes | `@happier/account/connected-purposes/v1/catalog` | `account_connected_purposes` / 42 |
 | MCP definitions and bindings | `@happier/account/mcp/v1/catalog` | `account_mcp_catalog` / 43 |
 | Configured ACP definitions | `@happier/account/acp/v1/catalog` | `account_acp_catalog` / 44 |
+| Connected personal labels | `@happier/account/connected-presentation/v1/catalog` | `account_connected_presentation_catalog` / 47 |
+| Connected acknowledgements | `@happier/account/connected-acknowledgements/v1/catalog` | `account_connected_acknowledgement_catalog` / 48 |
 
 Plain envelopes are keyless `{t:'plain',v}`. E2EE envelopes use
 `{t:'encrypted',c}` with the exact catalog domain; a different domain or
@@ -167,6 +169,7 @@ records does not move Connected credentials or authentication groups.
 
 The Protocol row contracts live in `providers/connections/connectionRowsV1.ts`,
 `connect/connectedAccountConfigurationRowsV1.ts`,
+`connect/connectedAccountPresentationRowsV1.ts`,
 `mcp/servers/serverRowsV1.ts`, and `acp/catalog/catalogRowsV1.ts`.
 Current writes are strict. Stored readers must preserve recognizable reference
 carriers until the domain owner can establish a complete inventory; safe partial
@@ -174,9 +177,21 @@ display does not authorize runtime, destructive reference changes, source/histor
 cleanup or Account-mode conversion. A retained deletion keeps its revision and
 must not be reseeded from an older Settings root.
 
-The five ciphertext purposes have focused source-level isolation evidence.
+Connected presentation identifies an exact qualified account or group; it never
+rewrites credentials or a group's definition name. Acknowledgements retain exact
+Account or Machine warning scopes and sparse boolean values, including false.
+Stored readers project additive fields away and expose valid neighboring entries
+with diagnostics when a known entry is malformed. That partial display does not
+authorize rewriting the incomplete catalog.
+
+Connected row disclosure belongs to the existing device-local
+`collapsedGroupKeysV1` persistence owner, qualified by Home, Account, service and
+account or group-member identity. Removing its retained Account source requires
+an acknowledged local persistence operation, not an Account-row import claim.
+
+The catalog ciphertext purposes have focused source-level isolation evidence.
 Consumer contraction, complete partial-inventory handling and the composed
-five-domain conversion/live journey are still being integrated. This describes
+catalog conversion/live journey are still being integrated. This describes
 development-source ownership, not released availability or runtime certification.
 
 ### Private prompt catalogs and Role overrides (0.3 development)
