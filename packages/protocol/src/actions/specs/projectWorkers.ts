@@ -143,7 +143,11 @@ export const PROJECT_WORKER_ACTION_SPECS = [...PROJECT_SERVICE_PLACEMENT_ACTION_
   ...(Object.keys(titles) as (keyof typeof titles)[]).map((id): PreNormalizedActionSpec => {
   const read = id.endsWith('.get') || id === 'projects.worker.status';
   return {
-    id, title: titles[id], description: id === 'projects.worker.copy.retire'
+    id, title: titles[id], description: id === 'projects.worker.preferences.get'
+      ? 'Read current worker preferences for this exact Home/checkout. Ready values describe the saved destination, per-script overrides, fallback and explicit ad-hoc opt-in; locked, invalid or unavailable is not disabled or primary. After projects.inspect, use these facts to explain the effective default without overriding a primary-only declaration. Observe an exact Machine with projects.worker.status; for a pool use machines.pools.resolve with purpose finite and this workspace. Reads and saved choices do not accept work or grant Action approval.'
+      : id === 'projects.worker.status'
+      ? 'Read current eligibility, refusal reasons and known or unknown load for an exact Machine without waking it, copying files or accepting work. Use purpose finite for Scripts and pass any reviewed memory demand. Unknown load is not zero, and a full eligible worker queues accepted work. A worker_copy_missing refusal identifies the exact source and target for explicit workspace.sync.relationship.create with purpose worker_clean_copy and a user-chosen target path; after setup require a new explicit Run. Status is advisory, not accepted placement or consent.'
+      : id === 'projects.worker.copy.retire'
       ? 'Retire the reviewed personal copy relationship, optionally removing its separately reviewed root-custodied copy.'
       : read ? 'Read current worker settings or advisory status without waking a Machine or starting work.'
       : 'Change future Project work preferences or admission without cancelling or retargeting accepted work.',
