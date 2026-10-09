@@ -693,6 +693,7 @@ vi.mock('./connectedServices/quotas/ConnectedServiceQuotasCoordinator', () => ({
     unregisterPid: vi.fn(),
     transferPid: vi.fn(),
     scheduleCurrentSourceRefresh: vi.fn(),
+    updateDiscoveredProfiles: vi.fn(() => false),
     probeGroupQuotaSnapshots: vi.fn(async () => {}),
     handleAccountUsageChanged: vi.fn(async () => {}),
     consumeRecoveryCreditForProfile: vi.fn(async () => null),
@@ -1653,6 +1654,7 @@ describe('startDaemon automation wiring (integration)', () => {
         unregisterPid: vi.fn(),
         transferPid: vi.fn(),
         scheduleCurrentSourceRefresh: vi.fn(),
+        updateDiscoveredProfiles: vi.fn(() => false),
       } as unknown as InstanceType<typeof ConnectedServiceQuotasCoordinator>));
 
       const { startDaemon } = await import('./startDaemon');

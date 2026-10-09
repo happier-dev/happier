@@ -11,7 +11,7 @@ import {
   OPENAI_CODEX_OAUTH_TOKEN_URL,
 } from "@happier-dev/agents";
 
-// Antigravity profiles deliberately use the verified native issuer only.
+/** Uses the verified native issuer so saved Antigravity grants remain valid for coding and quota refresh. */
 export function resolveAntigravityOauthConfig(): Readonly<{ clientId: string; clientSecret: string; tokenUrl: string }> {
   return { clientId: AGY_OAUTH_CLIENT_ID, clientSecret: AGY_OAUTH_CLIENT_SECRET, tokenUrl: AGY_OAUTH_TOKEN_URL };
 }

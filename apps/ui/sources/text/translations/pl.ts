@@ -2543,6 +2543,8 @@ export const pl: TranslationStructure = {
         unsupported: "Zaktualizuj Happier na tym komputerze i spróbuj ponownie.",
         projectRequired: "Podaj projekt Google Cloud i spróbuj ponownie.",
         accountIneligible: "To konto Google nie może korzystać z Antigravity. Sprawdź dostęp lub wybierz inne konto.",
+        identityMismatch: "Ten profil należy do innego konta Google. Utwórz inny profil, aby zaimportować to logowanie.",
+        credentialSuperseded: "Ten profil zmienił się podczas importu. Spróbuj zaimportować ponownie.",
         failed: "Nie udało się zaimportować logowania. Sprawdź logowanie na wybranym komputerze i spróbuj ponownie.",
         unknownResult: "Wynik importu jest nieznany. Sprawdź ten profil przed ponowną próbą.",
         reauthorizeTitle: "Zaloguj się, aby uruchomić AGY",

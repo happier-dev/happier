@@ -2309,6 +2309,8 @@ export const en = {
             unsupported: "Update Happier on this machine, then try importing again.",
             projectRequired: "Enter your Google Cloud project, then try again.",
             accountIneligible: "This Google account cannot use Antigravity. Check your access or try another account.",
+            identityMismatch: "This profile belongs to a different Google account. Create another profile to import this login.",
+            credentialSuperseded: "This profile changed during import. Try importing again.",
             failed: "Could not import this login. Check that you are signed in on the selected machine, then retry.",
             unknownResult: "The import result is unknown. Check this profile before trying again.",
             reauthorizeTitle: "Sign in to launch AGY",

@@ -1091,6 +1091,11 @@ jobs:
             sed -i 's/^DEBUG=.*/DEBUG=/' apps/cli/.env.integration-test
           fi
 
+      # Vitest resolves workspace sources, but real child-process tests use the
+      # bundled package exports. Refresh those without rebuilding the CLI dist.
+      - name: Prepare shared CLI runtime dependencies
+        run: yarn workspace @happier-dev/cli build:shared
+
       # The unit harness resolves workspace sources and needs no CLI dist.
       - name: Run unit tests
         id: unit-tests

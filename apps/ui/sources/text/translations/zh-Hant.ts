@@ -1176,6 +1176,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             unsupported: "請更新此機器上的 Happier，然後重新匯入。",
             projectRequired: "請輸入 Google Cloud 專案，然後重試。",
             accountIneligible: "此 Google 帳戶無法使用 Antigravity。請確認使用資格或嘗試其他帳戶。",
+            identityMismatch: "此設定屬於另一個 Google 帳戶。請建立另一個設定以匯入此登入。",
+            credentialSuperseded: "匯入期間此設定已變更。請重新匯入。",
             failed: "無法匯入登入。請確認已在所選機器登入，然後重試。",
             unknownResult: "匯入結果未知。請先檢查此設定，再重試。",
             reauthorizeTitle: "登入以啟動 AGY",

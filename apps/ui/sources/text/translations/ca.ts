@@ -2385,6 +2385,8 @@ export const ca: TranslationStructure = {
             unsupported: "Actualitza Happier en aquesta màquina i torna a provar la importació.",
             projectRequired: "Introdueix el projecte de Google Cloud i torna-ho a provar.",
             accountIneligible: "Aquest compte de Google no pot utilitzar Antigravity. Comprova l’accés o prova un altre compte.",
+            identityMismatch: "Aquest perfil pertany a un altre compte de Google. Crea un altre perfil per importar aquest inici de sessió.",
+            credentialSuperseded: "Aquest perfil ha canviat durant la importació. Torna a provar la importació.",
             failed: "No s’ha pogut importar. Comprova que has iniciat sessió a la màquina seleccionada i torna-ho a provar.",
             unknownResult: "El resultat de la importació és desconegut. Comprova aquest perfil abans de tornar-ho a provar.",
             reauthorizeTitle: "Inicia sessió per executar AGY",

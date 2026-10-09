@@ -2445,6 +2445,8 @@ export const zhHans: TranslationStructure = {
         unsupported: "请更新此机器上的 Happier，然后重试导入。",
         projectRequired: "请输入 Google Cloud 项目，然后重试。",
         accountIneligible: "此 Google 账户无法使用 Antigravity。请检查访问资格或尝试其他账户。",
+        identityMismatch: "此配置属于另一个 Google 账户。请创建另一个配置以导入此登录。",
+        credentialSuperseded: "导入期间此配置已更改。请重新导入。",
         failed: "无法导入登录。请确认已在所选机器上登录，然后重试。",
         unknownResult: "导入结果未知。请先检查此配置，再重试。",
         reauthorizeTitle: "登录以启动 AGY",

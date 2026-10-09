@@ -2308,6 +2308,8 @@ export const de: TranslationStructure = {
             unsupported: "Aktualisiere Happier auf diesem Rechner und versuche den Import erneut.",
             projectRequired: "Gib dein Google-Cloud-Projekt ein und versuche es erneut.",
             accountIneligible: "Dieses Google-Konto kann Antigravity nicht nutzen. Prüfe deinen Zugriff oder wähle ein anderes Konto.",
+            identityMismatch: "Dieses Profil gehört zu einem anderen Google-Konto. Erstelle ein weiteres Profil, um diese Anmeldung zu importieren.",
+            credentialSuperseded: "Dieses Profil wurde während des Imports geändert. Versuche den Import erneut.",
             failed: "Die Anmeldung konnte nicht importiert werden. Prüfe die Anmeldung auf dem gewählten Rechner und versuche es erneut.",
             unknownResult: "Das Ergebnis des Imports ist unbekannt. Prüfe dieses Profil, bevor du es erneut versuchst.",
             reauthorizeTitle: "Anmelden, um AGY zu starten",

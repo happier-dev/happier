@@ -2,6 +2,7 @@ import { logger } from '@/ui/logger';
 import {
   buildRecoveryCreditConsumeIdempotencyKey,
   ConnectedServiceIdSchema,
+  ConnectedServiceQuotaSnapshotV1Schema,
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
   readConnectedServiceCredentialRevisionBoundaryV1,
@@ -3454,29 +3455,49 @@ export class ConnectedServiceQuotasCoordinator {
     });
   }
 
+  /** Enforces the shared deadline; only validated progress from this invocation can survive a fetch timeout. */
   private async runFetcherWithTimeout<TSnapshot>(input: Readonly<{
-    fetcher: Readonly<{ fetch: (params: Readonly<{ record: ConnectedServiceCredentialRecordV1; now: number; signal: AbortSignal }>) => Promise<TSnapshot | null> }>;
+    fetcher: Readonly<{ fetch: (params: Readonly<{
+      record: ConnectedServiceCredentialRecordV1;
+      now: number;
+      signal: AbortSignal;
+      onPartialSnapshot?: (snapshot: TSnapshot) => void;
+    }>) => Promise<TSnapshot | null> }>;
     record: ConnectedServiceCredentialRecordV1;
     now: number;
     signal?: AbortSignal;
+    /** Quota callers opt into deadline fallback; subscriptions keep their complete-result contract. */
+    validatePartialSnapshot?: (snapshot: TSnapshot) => TSnapshot | null;
   }>): Promise<
     | Readonly<{ type: 'timeout' }>
     | Readonly<{ type: 'result'; snapshot: TSnapshot | null }>
   > {
     const controller = new AbortController();
     const timeoutMs = this.fetchTimeoutMs;
-    const abortFromCaller = (): void => controller.abort('quota-probe-deadline');
+    let acceptingPartialSnapshots = true;
+    let partialSnapshot: TSnapshot | null = null;
+    const abortFromCaller = (): void => {
+      acceptingPartialSnapshots = false;
+      controller.abort('quota-probe-deadline');
+    };
     if (input.signal?.aborted) abortFromCaller();
     else input.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const validatePartialSnapshot = input.validatePartialSnapshot;
     const fetchPromise = input.fetcher.fetch({
       record: buildCredentialRecordForQuotaFetcher(input.record),
       now: input.now,
       signal: controller.signal,
+      ...(validatePartialSnapshot ? { onPartialSnapshot: (snapshot: TSnapshot) => {
+        if (!acceptingPartialSnapshots || controller.signal.aborted) return;
+        const validated = validatePartialSnapshot(snapshot);
+        if (validated) partialSnapshot = validated;
+      } } : {}),
     });
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<{ type: 'timeout' }>((resolve) => {
       timeoutHandle = setTimeout(() => {
+        acceptingPartialSnapshots = false;
         try {
           controller.abort('quota-fetch-timeout');
         } catch {
@@ -3503,6 +3524,7 @@ export class ConnectedServiceQuotasCoordinator {
       ...(input.signal ? [callerAbortPromise] : []),
     ]);
 
+    acceptingPartialSnapshots = false;
     if (timeoutHandle) clearTimeout(timeoutHandle);
     timeoutHandle = null;
     input.signal?.removeEventListener('abort', abortFromCaller);
@@ -3516,7 +3538,11 @@ export class ConnectedServiceQuotasCoordinator {
         controller.abort('quota-probe-deadline');
         await fetchPromise.catch(() => null);
       }
-      return raced;
+      // Only our fetch deadline can retain acquired data. A containing probe's cancellation
+      // must remain incomplete, and callbacks after either abort cannot change this result.
+      return !input.signal?.aborted && partialSnapshot !== null
+        ? { type: 'result', snapshot: partialSnapshot }
+        : raced;
     }
     if (raced.type === 'error') throw raced.error;
     return raced;
@@ -3620,6 +3646,12 @@ export class ConnectedServiceQuotasCoordinator {
       record: input.record,
       now: input.now,
       signal: input.signal,
+      validatePartialSnapshot: (snapshot) => {
+        const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
+        return parsed.success && parsed.data.serviceId === input.serviceId && parsed.data.profileId === input.profileId
+          ? parsed.data
+          : null;
+      },
     });
   }
 

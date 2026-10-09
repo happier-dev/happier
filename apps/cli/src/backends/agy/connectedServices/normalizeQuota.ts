@@ -3,6 +3,7 @@ import { isAgyInternalQuotaModel, resolveAgyQuotaPoolForModel, resolveAgyQuotaPo
 import { isRecord, normalizeNonEmptyString } from '@/daemon/connectedServices/quotas/quotaNormalization';
 import { parseProviderTimestampMs } from '@/daemon/connectedServices/quotas/normalization/parseRetryAfterHeader';
 
+/** Converts provider fractions into truthful meters, retaining unknown values rather than implying unused quota. */
 function meter(input: Readonly<{
   id: string; label: string; quota: Record<string, unknown>; modelId?: string;
   scope?: ConnectedServiceQuotaMeterV1['scope']; providerLimitId?: string;
@@ -29,9 +30,9 @@ function meter(input: Readonly<{
   };
 }
 
-/** Live buckets override catalog data, including an explicitly unknown allowance. */
 /**
  * Combines live model readings with catalog labels and explicitly reported shared limits.
+ * Live buckets override catalog data, including an explicitly unknown allowance.
  * Shared five-hour pools replace per-model duplicates; missing summaries retain
  * conservative model-family readings without inventing totals, confidence, or reset times.
  */

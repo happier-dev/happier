@@ -22,6 +22,7 @@ import { importConnectedServiceLogin } from '@/sync/ops/connectedServices/import
 import { invalidateConnectedServiceGroupsRefreshSignal } from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
+/** Reads the first route value so repeated query parameters cannot become a credential source or project. */
 function stringParam(value: unknown): string {
     return typeof value === 'string' ? value.trim() : Array.isArray(value) ? stringParam(value[0]) : '';
 }
@@ -44,6 +45,7 @@ export const ConnectedServiceImportView = React.memo(function ConnectedServiceIm
     const selectedMachine = machines.find((machine) => machine.id === machineId);
     const canImport = Boolean(enabled && selectedMachine && isMachineOnline(selectedMachine) && profileId && sources.includes(source));
 
+    /** Imports through the selected machine and reports recoverable failures without clearing the form. */
     const submit = async () => {
         if (!canImport || busy || !serviceId) return;
         setBusy(true);
@@ -67,7 +69,11 @@ export const ConnectedServiceImportView = React.memo(function ConnectedServiceIm
                         ? t('connectedServices.importAccounts.projectRequired')
                         : result.errorCode === 'account_ineligible'
                             ? t('connectedServices.importAccounts.accountIneligible')
-                        : t('connectedServices.importAccounts.failed'));
+                            : result.errorCode === 'identity_mismatch'
+                                ? t('connectedServices.importAccounts.identityMismatch')
+                                : result.errorCode === 'credential_superseded'
+                                    ? t('connectedServices.importAccounts.credentialSuperseded')
+                                    : t('connectedServices.importAccounts.failed'));
                 return;
             }
             await sync.refreshProfile();

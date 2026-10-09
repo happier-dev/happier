@@ -11,6 +11,7 @@ export function createAgyApiHeaders(accessToken: string): Record<string, string>
   return { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'User-Agent': 'antigravity/acp/agy_acp_server_1.1.1 (aidev_client; host_path=happier; proxy_client=antigravity/sdk)' };
 }
 
+/** Treats non-object provider bodies as absent fields for fail-closed account verification. */
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -33,6 +34,7 @@ export async function resolveAgyOauthAccount(input: Readonly<{
 }>> {
   const fetcher = input.fetcher ?? fetch;
   const headers = createAgyApiHeaders(input.accessToken);
+  /** Performs account and project requests under the same caller cancellation signal. */
   const request = async (url: string, body?: unknown) => {
     input.signal?.throwIfAborted();
     const response = await fetcher(url, { method: body === undefined ? 'GET' : 'POST', headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: input.signal });

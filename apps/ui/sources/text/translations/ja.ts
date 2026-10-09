@@ -2817,6 +2817,8 @@ localTailscale: {
         unsupported: "このマシンの Happier を更新して、再度インポートしてください。",
         projectRequired: "Google Cloud プロジェクトを入力して、再度お試しください。",
         accountIneligible: "この Google アカウントでは Antigravity を利用できません。利用資格を確認するか、別のアカウントをお試しください。",
+        identityMismatch: "このプロフィールは別の Google アカウントに属しています。このログインをインポートするには、別のプロフィールを作成してください。",
+        credentialSuperseded: "インポート中にこのプロフィールが変更されました。再度インポートしてください。",
         failed: "ログインをインポートできませんでした。選択したマシンでログイン済みか確認し、再試行してください。",
         unknownResult: "インポート結果は不明です。再試行する前に、このプロフィールを確認してください。",
         reauthorizeTitle: "AGY を起動するにはログイン",

@@ -34,6 +34,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'connected-services/index', titleKey: 'settings.connectedServices' },
     { name: 'connected-services/[serviceId]', titleKey: 'connectedServices.fallbackName' },
     { name: 'connected-services/group', titleKey: 'connectedServices.detail.groupDetail.routeTitle' },
+    { name: 'connected-services/import', titleKey: 'connectedServices.importAccounts.title' },
     { name: 'connected-services/oauth', titleKey: 'connectedServices.detail.addOauthProfileTitle' },
     { name: 'connected-services/profile', titleKey: 'connectedServices.profile.profileId' },
     { name: 'connected-services/provider-state-sharing', titleKey: 'connectedServices.providerStateSharing.title' },

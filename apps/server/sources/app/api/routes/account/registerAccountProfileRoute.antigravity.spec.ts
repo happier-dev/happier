@@ -18,7 +18,15 @@ vi.mock('@/app/auth/providers/linkedProviders', () => ({ fetchLinkedProvidersFor
 vi.mock('@/app/features/catalog/serverFeatureGate', () => ({ isServerFeatureEnabledForRequest: () => true }));
 
 describe('account profile Antigravity reader negotiation', () => {
-    it.each([undefined, 'application/json', 'application/json; happier-connected-service-antigravity=0'])(
+    it.each([undefined, 'application/json', 'application/json; happier-connected-service-antigravity=0',
+        'text/plain; happier-connected-service-antigravity=1',
+        'application/json; happier-connected-service-antigravity=10',
+        'application/json; note="happier-connected-service-antigravity=1"',
+        'application/json; happier-connected-service-antigravity=1;"',
+        'text/plain; note="application/json; happier-connected-service-antigravity=1',
+        'application/json; happier-connected-service-antigravity=1; q=0',
+        'application/json; happier-connected-service-antigravity=1; happier-connected-service-antigravity=0',
+    ])(
         'preserves released readers with Accept %s', async (accept) => {
             const { registerAccountProfileRoute } = await import('./registerAccountProfileRoute');
             const app = createFakeRouteApp();
@@ -30,12 +38,18 @@ describe('account profile Antigravity reader negotiation', () => {
         },
     );
 
-    it('includes AGY profiles, groups and revisions for an opted-in reader', async () => {
+    it.each([
+        'application/json; happier-connected-service-antigravity=1',
+        'application/json;happier-connected-service-antigravity=1',
+        'APPLICATION/JSON; HAPPIER-CONNECTED-SERVICE-ANTIGRAVITY = 1',
+        'application/json; note="fallback, text/plain; note=ignored"; happier-connected-service-antigravity=1',
+        'text/plain, application/json; charset=utf-8; happier-connected-service-antigravity="1"; q=0.9',
+    ])('includes AGY profiles, groups and revisions for an opted-in reader with Accept %s', async (accept) => {
         const { registerAccountProfileRoute } = await import('./registerAccountProfileRoute');
         const app = createFakeRouteApp();
         registerAccountProfileRoute(app as any);
         const body = AccountProfileSchema.parse(await getRouteHandler(app, 'GET', '/v1/account/profile')({
-            userId: 'account', headers: { accept: 'application/json; happier-connected-service-antigravity=1' },
+            userId: 'account', headers: { accept },
         }, createReplyStub()));
         expect(body.connectedServicesV2.find((entry) => entry.serviceId === 'antigravity')).toEqual(expect.objectContaining({
             profiles: [expect.objectContaining({ profileId: 'default' })],

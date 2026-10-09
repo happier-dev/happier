@@ -218,8 +218,8 @@ describe('agents/registryCore', () => {
             connectRoute: null,
         });
         expect(getAgentCore('agy').uiConnectedService).toEqual({
-            serviceId: null,
-            label: 'Antigravity',
+            serviceId: 'antigravity',
+            label: 'Antigravity (AGY)',
             connectRoute: null,
         });
     });

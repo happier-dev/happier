@@ -6,6 +6,7 @@ import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { CONNECTED_SERVICE_IMPORT_TIMEOUT_MS } from '@happier-dev/protocol';
 import { buildSafeOauthProviderFailureMessage } from '@/cloud/safeOauthProviderError';
 
+/** Narrows untrusted native-login and Google response objects before reading credential fields. */
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
 /**

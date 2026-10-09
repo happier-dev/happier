@@ -80,6 +80,30 @@ describe('ConnectedServiceImportView', () => {
         expect(screen.tree.findByProps({ testID: 'connectedServices.import.submit' }).props.disabled).toBe(false);
     });
 
+    it.each([
+        ['identity_mismatch', 'identityMismatch'],
+        ['credential_superseded', 'credentialSuperseded'],
+    ])('explains recovery for %s and preserves the import form', async (errorCode, messageKey) => {
+        boundary.rpc.mockResolvedValue({ success: false, errorCode, error: 'Machine import rejected' });
+        const screen = await readyScreen();
+        await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.import.source:cli' }));
+        await act(async () => { changeTextTestInstance(screen.tree.findByProps({ testID: 'connectedServices.import.projectInput' }), 'project-one'); });
+        await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.import.submit' }));
+        expect(boundary.alert).toHaveBeenCalledWith('common.error', `connectedServices.importAccounts.${messageKey}`);
+        expect(boundary.refreshProfile).not.toHaveBeenCalled();
+        expect(boundary.replace).not.toHaveBeenCalled();
+        expect(boundary.back).not.toHaveBeenCalled();
+        expect(screen.tree.findByProps({ testID: 'connectedServices.import.projectInput' }).props.value).toBe('project-one');
+        expect(screen.tree.findByProps({ testID: 'connectedServices.import.source:cli' }).props.selected).toBe(true);
+        expect(screen.tree.findByProps({ testID: 'connectedServices.import.submit' }).props.disabled).toBe(false);
+        if (errorCode === 'credential_superseded') {
+            boundary.rpc.mockResolvedValueOnce({ success: true, serviceId: 'antigravity', profileId: 'work', requiresBrowserReauthorization: false });
+            await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'connectedServices.import.submit' }));
+            expect(boundary.refreshProfile).toHaveBeenCalledOnce();
+            expect(boundary.back).toHaveBeenCalledOnce();
+        }
+    });
+
     it.each([false, true])('refreshes the profile and reports an unknown store outcome without repeating the import (refresh fails: %s)', async (refreshFails) => {
         const message = 'The import result is unknown. Refresh the profile before retrying.';
         if (refreshFails) boundary.refreshProfile.mockRejectedValueOnce(new Error('Refresh unavailable'));

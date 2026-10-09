@@ -24,6 +24,8 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
     'connectedServices.detail.prompts.accessTokenPlaceholder',
     'connectedServices.serviceNames.github',
+    // Provider product name, shared across locales.
+    'connectedServices.serviceNames.antigravity',
     'deps.installable.githubCli.title',
     // Product name, shared across locales.
     'deps.installable.difftastic.title',
