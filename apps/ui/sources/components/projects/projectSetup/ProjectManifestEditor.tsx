@@ -9,8 +9,6 @@ import type {
 import type {
   ProjectDefinitionDetectionV1,
   ProjectDefinitionImportCandidateV1,
-  ProjectEnvironmentSelectionV1,
-  ProjectManifestV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -18,18 +16,10 @@ import { showWorkspaceFileEditorComparison } from '@/components/workspaces/files
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import {
-  DropdownMenu,
-  type DropdownMenuItem,
-} from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
 import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -42,7 +32,7 @@ import {
 } from './projectManifestEditorModel';
 import type { ProjectManifestActionClient } from './projectManifestActionClient';
 import { getProjectManifestImportSelection } from './projectManifestImportSelection';
-import { describeProjectCommandSource, describeProjectEnvironment, findProjectInvocation } from './projectScriptPresentation';
+import { ProjectManifestForm } from './ProjectManifestForm';
 import type { ProjectDefinitionInspection } from './useProjectDefinitionInspection';
 import { useProjectManifestEditorSnapshot } from './useProjectManifestEditorSnapshot';
 
@@ -335,347 +325,15 @@ function describeDiagnostic(
   });
 }
 
-function environmentId(selection: ProjectEnvironmentSelectionV1): string {
-  return JSON.stringify(selection);
-}
-
-function describeEnvironment(
-  selection: ProjectEnvironmentSelectionV1,
-): Readonly<{ title: string; subtitle?: string }> {
-  const { title, config } = describeProjectEnvironment(selection);
-  return config ? { title, subtitle: config } : { title };
-}
-
-function formatMemoryDemand(bytes: number): string {
-  return t('projects.scripts.editor.needsAbout', {
-    size: `${Math.max(1, Math.round(bytes / 2 ** 30))} GB`,
-  });
-}
-
-/** The Form view: Environment, Setup, Scripts and Services over the same draft. */
-function ProjectManifestForm(
-  props: Readonly<{
-    model: ProjectManifestEditorModel;
-    manifest: ProjectManifestV1;
-    detection: ProjectDefinitionDetectionV1;
-    importCandidates: readonly ProjectDefinitionImportCandidateV1[];
-    commands: ProjectDefinitionInspection['commands'];
-    tools: ProjectDefinitionInspection['tools'];
-    machineName: string;
-  }>,
-) {
-  const { model, manifest } = props;
-  const previews = { commands: props.commands, importCandidates: props.importCandidates };
-  const { theme } = useUnistyles();
-  const [environmentOpen, setEnvironmentOpen] = React.useState(false);
-  const environment = manifest.environment ?? { kind: 'host' as const };
-  const environmentItems = React.useMemo<DropdownMenuItem[]>(() => {
-    const choices = [
-      { kind: 'host' as const },
-      ...props.detection.environments,
-    ];
-    if (
-      !choices.some(
-        (choice) => environmentId(choice) === environmentId(environment),
-      )
-    )
-      choices.push(environment);
-    return choices.map((choice) => ({
-      id: environmentId(choice),
-      ...describeEnvironment(choice),
-    }));
-  }, [environment, props.detection.environments]);
-  const offers = getProjectManifestImportSelection(
-    props.importCandidates,
-  ).rows.filter((row) => row.enabled);
-  const scripts = Object.entries(manifest.scripts ?? {});
-  const services = Object.entries(manifest.services ?? {});
-  const setup = manifest.workspace?.setup ?? [];
-  const scriptOffers = offers.filter(
-    (row) =>
-      row.candidate.usage === 'script' &&
-      !Object.hasOwn(manifest.scripts ?? {}, row.candidate.source.target),
-  );
-  const setupOffers = offers.filter(
-    (row) =>
-      row.candidate.usage === 'setup' &&
-      !setup.some(
-        (source) =>
-          source.kind === 'native' &&
-          source.file === row.candidate.source.file &&
-          source.target === row.candidate.source.target,
-      ),
-  );
-  const executionTabs = React.useMemo(() => [
-    { id: 'primary' as const, label: t('projects.scripts.editor.thisCheckout') },
-    { id: 'portable' as const, label: t('projects.scripts.anyWorker') },
-  ], []);
-  const otherEnvironments = props.detection.environments.filter(
-    (choice) => environmentId(choice) !== environmentId(environment),
-  );
-  return (
-    <View style={styles.form}>
-      <ItemGroup
-        title={t('projects.scripts.editor.environment')}
-        description={t('projects.scripts.editor.environmentBody')}
-      >
-        <DropdownMenu
-          open={environmentOpen}
-          onOpenChange={setEnvironmentOpen}
-          items={environmentItems}
-          selectedId={environmentId(environment)}
-          onSelect={(id) => {
-            const selection = environmentItems.find((item) => item.id === id)
-              ? (JSON.parse(id) as ProjectEnvironmentSelectionV1)
-              : null;
-            if (selection) model.importEnvironment(selection);
-          }}
-          itemTrigger={{
-            title: t('projects.scripts.editor.toolsFrom'),
-            showSelectedSubtitle: false,
-            subtitle:
-              [
-                describeEnvironment(environment).title,
-                describeEnvironment(environment).subtitle,
-                otherEnvironments.length
-                  ? t('projects.scripts.editor.alsoFound', {
-                      names: otherEnvironments
-                        .map((choice) => describeEnvironment(choice).subtitle ?? describeEnvironment(choice).title)
-                        .join(', '),
-                    })
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(' · ') || undefined,
-          }}
-        />
-        {(props.tools ?? []).map((tool) => (
-          <Item
-            key={`${tool.tool}:${tool.file}`}
-            testID={`project-manifest-editor.tool:${tool.tool}`}
-            mode="info"
-            density="compact"
-            showChevron={false}
-            title={tool.tool}
-            titleAccessory={tool.version ? (
-              <Text
-                testID={`project-manifest-editor.tool:${tool.tool}.version`}
-                style={[styles.toolVersion, { color: theme.colors.text.secondary }]}
-              >
-                {tool.version}
-              </Text>
-            ) : undefined}
-            // The requested version is intent; it is named as such and never shown as installed.
-            subtitle={!tool.version && tool.requestedVersion
-              ? t('projects.scripts.editor.toolRequested', { version: tool.requestedVersion, file: tool.file })
-              : undefined}
-            detail={tool.availability === 'available'
-              ? t('projects.scripts.editor.toolAvailable', { machine: props.machineName })
-              : tool.availability === 'unavailable'
-                ? t('projects.scripts.editor.toolUnavailable', { machine: props.machineName })
-                : t('projects.scripts.editor.toolUnresolved', { machine: props.machineName })}
-          />
-        ))}
-      </ItemGroup>
-      <ItemGroup
-        title={t('projects.scripts.editor.setup')}
-        description={t('projects.scripts.editor.setupBody')}
-      >
-        {setup.map((source, index) => (
-          <Item
-            key={index}
-            testID={`project-manifest-editor.step:${index}`}
-            mode="info"
-            density="compact"
-            showChevron={false}
-            title={t('projects.scripts.setup.step', { n: index + 1 })}
-            rightElement={<CodeChip text={describeProjectCommandSource(source, findProjectInvocation(previews, source)).command ?? describeProjectCommandSource(source).reference} />}
-          />
-        ))}
-        <AddMenu
-          testID="project-manifest-editor.addStep"
-          label={t('projects.scripts.editor.addStep')}
-          presentation="row"
-          items={setupOffers.map((row) => ({
-            id: String(row.index),
-            title: describeProjectCommandSource(row.candidate.source).reference,
-          }))}
-          onSelect={(id) => {
-            const row = setupOffers.find((entry) => String(entry.index) === id);
-            if (row) model.importNative({ usage: 'setup', source: row.candidate.source });
-          }}
-          onWrite={() => model.setMode('raw')}
-        />
-      </ItemGroup>
-      <ItemGroup
-        title={t('projects.scripts.editor.scripts')}
-        description={t('projects.scripts.editor.scriptsBody')}
-        action={
-          <AddMenu
-            testID="project-manifest-editor.addScript"
-            label={t('projects.scripts.editor.addScript')}
-            presentation="action"
-            onWrite={() => model.setMode('raw')}
-            items={scriptOffers.map((row) => ({
-              id: String(row.index),
-              title: row.candidate.source.target,
-              subtitle: describeProjectCommandSource(row.candidate.source)
-                .reference,
-            }))}
-            onSelect={(id) => {
-              const row = scriptOffers.find(
-                (entry) => String(entry.index) === id,
-              );
-              if (row)
-                model.importNative({
-                  usage: 'script',
-                  name: row.candidate.source.target,
-                  source: row.candidate.source,
-                });
-            }}
-          />
-        }
-      >
-        {scripts.length === 0 ? (
-          <Item
-            mode="info"
-            title={t('projects.scripts.editor.noScripts')}
-            showChevron={false}
-          />
-        ) : (
-          scripts.map(([name, declaration]) => (
-            <Item
-              key={name}
-              testID={`project-manifest-editor.script:${name}`}
-              mode="info"
-              showChevron={false}
-              title={name}
-              subtitle={describeProjectCommandSource(declaration.source).reference}
-              subtitleStyle={styles.mono}
-              accessoryLayout="adaptive"
-              rightElementOutsidePressable
-              rightElement={
-                <View style={styles.scriptControls}>
-                  {declaration.memoryDemand ? <CodeChip text={formatMemoryDemand(declaration.memoryDemand.bytes)} sans /> : null}
-                  <SegmentedTabBar
-                    role="radiogroup"
-                    compact
-                    segmentSizing="content"
-                    accessibilityLabel={t('projects.scripts.editor.runsOn', { name })}
-                    testIDPrefix={`project-manifest-editor.script:${name}.execution`}
-                    tabs={executionTabs}
-                    activeTabId={declaration.execution ?? 'primary'}
-                    onSelectTab={(execution) => {
-                      model.edit([{ kind: 'set', path: ['scripts', name, 'execution'], value: execution }]);
-                    }}
-                  />
-                </View>
-              }
-            />
-          ))
-        )}
-      </ItemGroup>
-      {services.length > 0 ? (
-        <ItemGroup
-          title={t('projects.scripts.editor.services')}
-          description={t('projects.scripts.editor.servicesBody')}
-        >
-          {services.map(([name, declaration]) => (
-            <Item
-              key={name}
-              testID={`project-manifest-editor.service:${name}`}
-              mode="info"
-              showChevron={false}
-              icon={
-                <Icon
-                  name="hard-drives"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              }
-              title={name}
-              subtitle={[
-                describeProjectCommandSource(declaration.source).reference,
-                declaration.port
-                  ? t('projects.scripts.editor.port', {
-                      port: declaration.port,
-                    })
-                  : t('projects.scripts.editor.noAddress'),
-              ].join(' · ')}
-            />
-          ))}
-        </ItemGroup>
-      ) : null}
-    </View>
-  );
-}
-
-/**
- * A section's "+ Add": found references edit the draft only and never run anything. With nothing
- * found to add, it opens JSON so a literal command can be written there.
- */
-function AddMenu(
-  props: Readonly<{
-    testID: string;
-    label: string;
-    presentation: 'action' | 'row';
-    items: readonly DropdownMenuItem[];
-    onSelect: (id: string) => void;
-    onWrite: () => void;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const [open, setOpen] = React.useState(false);
-  const render = (onPress: () => void) => props.presentation === 'row' ? (
-    // The plus sits inside the title so the step titles above keep their own alignment (lab).
-    <Item
-      testID={props.testID}
-      density="compact"
-      title={(
-        <View style={styles.addRow}>
-          <Icon name="plus" size={16} color={theme.colors.text.secondary} />
-          <Text style={[styles.addLabel, { color: theme.colors.text.secondary }]}>{props.label}</Text>
-        </View>
-      )}
-      showChevron={false}
-      onPress={onPress}
-    />
-  ) : (
-    <RoundButton size="small" display="secondary" testID={props.testID} title={props.label}
-      leading={<Icon name="plus" size={14} />} onPress={onPress} />
-  );
-  if (props.items.length === 0) return render(props.onWrite);
-  return (
-    <DropdownMenu
-      open={open}
-      onOpenChange={setOpen}
-      items={props.items}
-      onSelect={props.onSelect}
-      trigger={({ toggle }) => render(toggle)}
-    />
-  );
-}
-
-/** A command or size in the shared neutral chip (lab code chips). */
-function CodeChip(props: Readonly<{ text: string; sans?: boolean }>) {
-  return <StatusPill variant="neutral" hideDot label={props.text} labelVariant="phrase" labelStyle={props.sans ? undefined : styles.mono} />;
-}
-
 const styles = StyleSheet.create(() => ({
   editor: { gap: 16 },
   headerNote: { ...Typography.default(), ...happierPageTextMetrics('pageDescription') },
-  addRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  addLabel: { ...Typography.default(), ...happierPageTextMetrics('rowTitle') },
-  scriptControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
   },
-  form: { gap: 8 },
   raw: { minHeight: 420, borderRadius: 14, overflow: 'hidden' },
   mono: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription') },
-  badge: { marginLeft: 8 },
-  toolVersion: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription'), marginLeft: 8 },
 }));
