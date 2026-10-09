@@ -29,7 +29,7 @@ export function defaultNormalizeMcpPathV1(path: string): string {
 function isPathWithinRoot(directory: string, workspaceRoot: string): boolean {
   if (!workspaceRoot) return false;
   if (directory === workspaceRoot) return true;
-  return directory.startsWith(`${workspaceRoot}/`);
+  return directory.startsWith(workspaceRoot.endsWith('/') ? workspaceRoot : `${workspaceRoot}/`);
 }
 
 type BindingScore = Readonly<{

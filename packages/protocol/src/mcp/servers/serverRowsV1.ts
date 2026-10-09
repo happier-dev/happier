@@ -1,41 +1,19 @@
-import { z } from 'zod';
+import { McpServerCatalogV1Schema, StoredMcpServerCatalogContentV1Schema } from "./catalogSchemasV1.js";
+import type { McpServerCatalogV1, McpServerCatalogContentV1, StoredMcpServerCatalogContentV1, McpServerCatalogDiagnosticV1, McpServerCatalogOpenResultV1 } from "./catalogSchemasV1.js";
+export { McpServerCatalogV1Schema, StoredMcpServerCatalogV1Schema, McpServerCatalogContentV1Schema, StoredMcpServerCatalogContentV1Schema, McpServerCatalogMigrationContentV1Schema, McpServerCatalogDiagnosticV1Schema, McpServerCatalogRowFailureV1Schema, McpServerCatalogRowReadResponseV1Schema, McpServerCatalogRowMutationV1Schema, McpServerCatalogRowMutationResponseV1Schema, AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema, AccountEncryptionMigrateMcpServerCatalogResultV1Schema } from "./catalogSchemasV1.js";
+export type { McpServerCatalogV1, McpServerCatalogContentV1, StoredMcpServerCatalogContentV1, McpServerCatalogDiagnosticV1, McpServerCatalogOpenResultV1, McpServerCatalogRowReadResponseV1, McpServerCatalogRowMutationV1, McpServerCatalogRowMutationResponseV1, AccountEncryptionMigrateMcpServerCatalogDirectiveV1, AccountEncryptionMigrateMcpServerCatalogResultV1 } from "./catalogSchemasV1.js";
 import tweetnacl from 'tweetnacl';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { StrictJsonValueSchema, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
 import { isAccountScopedBlobCiphertextForKind } from '../../crypto/accountScopedCipherEnvelope.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
-import { appendSavedSecretReferencePathV1, listSavedSecretReferenceCarrierPathsV1 } from '../../account/settings/savedSecretReferenceV1.js';
-import { McpServerCatalogEntryV1Schema, McpServerBindingV1Schema, refineMcpServerCatalogV1,
-  type McpServerCatalogEntryV1, type McpServerBindingV1, type McpValueRefV1 } from './settingsV1.js';
+import { appendSavedSecretReferencePathV1, listSavedSecretReferenceCarrierPathsV1, parseSavedSecretRefV1 } from '../../account/settings/savedSecretReferenceV1.js';
+import { McpServerCatalogEntryV1Schema, McpServerBindingV1Schema, type McpServerCatalogEntryV1, type McpServerBindingV1, type McpValueRefV1 } from './settingsV1.js';
 
 export const MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 = '@happier/account/mcp/v1/catalog' as const;
 export const MCP_SERVER_CATALOG_ROWS_ROUTE_V1 = '/v1/account/entity-rows/mcp' as const;
 export const MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1 = 'account_mcp_catalog' as const;
-
-export const McpServerCatalogV1Schema = lazyZodSchema(() => z.object({
-  v: z.literal(1), servers: z.array(McpServerCatalogEntryV1Schema), bindings: z.array(McpServerBindingV1Schema),
-}).strict().superRefine(refineMcpServerCatalogV1));
-export type McpServerCatalogV1 = z.infer<typeof McpServerCatalogV1Schema>;
-export const StoredMcpServerCatalogV1Schema = createStoredReadSchema(McpServerCatalogV1Schema);
-export const McpServerCatalogContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
-  z.object({ t: z.literal('plain'), v: McpServerCatalogV1Schema }).strict(),
-  z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
-]));
-export type McpServerCatalogContentV1 = z.infer<typeof McpServerCatalogContentV1Schema>;
-// Preserve the original JSON until the domain opener has diagnosed individual
-// entries and recognizable reference carriers; projecting here loses evidence.
-export const StoredMcpServerCatalogContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
-  z.object({ t: z.literal('plain'), v: z.unknown() }).strict(),
-  z.object({ t: z.literal('encrypted'), c: z.string().min(1) }).strict(),
-]));
-export type StoredMcpServerCatalogContentV1 = z.infer<typeof StoredMcpServerCatalogContentV1Schema>;
-export type McpServerCatalogDiagnosticV1 = Readonly<{ path: string; reason: 'invalid-stored-content' | 'unclassified-reference' }>;
-export const McpServerCatalogDiagnosticV1Schema = lazyZodSchema(() => z.object({
-  path: z.string(), reason: z.enum(['invalid-stored-content', 'unclassified-reference']),
-}).strict());
-export type McpServerCatalogOpenResultV1 = Readonly<{ status: 'opened'; catalog: McpServerCatalogV1 }>
-  | Readonly<{ status: 'partial'; catalog: McpServerCatalogV1; diagnostics: readonly McpServerCatalogDiagnosticV1[] }>
-  | Readonly<{ status: 'unavailable'; reason: 'account-mode-mismatch' | 'encryption-material-unavailable' | 'invalid-stored-content' }>;
 
 export function assertMcpServerCatalogContentForModeV1(content: StoredMcpServerCatalogContentV1, mode: 'plain' | 'e2ee'): void {
   if ((mode === 'plain') !== (content.t === 'plain') || (content.t === 'encrypted'
@@ -48,7 +26,8 @@ const storedServer = createStoredReadSchema(McpServerCatalogEntryV1Schema);
 const storedBinding = createStoredReadSchema(McpServerBindingV1Schema);
 
 /** Malformed independent entries remain diagnostic; they never authorize activation. */
-export function projectStoredMcpServerCatalogV1(value: unknown): McpServerCatalogOpenResultV1 {
+export function projectStoredMcpServerCatalogV1(value: unknown,
+  authority: 'active' | 'retained-source' = 'active'): McpServerCatalogOpenResultV1 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return { status: 'unavailable', reason: 'invalid-stored-content' };
   const raw = value as Record<string, unknown>;
   if (raw.v !== 1 || !Array.isArray(raw.servers) || !Array.isArray(raw.bindings)) return { status: 'unavailable', reason: 'invalid-stored-content' };
@@ -84,6 +63,12 @@ export function projectStoredMcpServerCatalogV1(value: unknown): McpServerCatalo
     } else bindings.push(parsed.data);
   }
   const catalog: McpServerCatalogV1 = { v: 1, servers, bindings };
+  if (authority === 'active') for (const reference of listMcpServerCatalogSavedSecretRefsV1(catalog)) {
+    try {
+      if (parseSavedSecretRefV1(reference.secretId).kind === 'shared_resource') continue;
+    } catch { /* A recognizable but invalid reference cannot authorize runtime or census. */ }
+    diagnostics.push({ path: reference.path, reason: 'unclassified-reference' });
+  }
   const admittedPaths = new Set(listMcpServerCatalogSavedSecretRefsV1(catalog).map(ref => ref.path));
   // Projection changes indices when malformed neighbors are removed. Recognize
   // admitted references in their original positions before comparing carriers.
@@ -103,19 +88,84 @@ export function projectStoredMcpServerCatalogV1(value: unknown): McpServerCatalo
   return diagnostics.length ? { status: 'partial', catalog, diagnostics } : { status: 'opened', catalog };
 }
 
-export function openMcpServerCatalogContentV1(input: Readonly<{
-  mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; content: unknown;
-}>): McpServerCatalogOpenResultV1 {
+export type McpServerCatalogMigrationSourceV1 = Readonly<{ content: StoredMcpServerCatalogContentV1; payload: JsonValue }>;
+type McpServerCatalogOpenInputV1 = Readonly<{
+  mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; content: unknown; admission?: 'migration';
+}>;
+
+export function openMcpServerCatalogContentV1(input: McpServerCatalogOpenInputV1 & Readonly<{ admission: 'migration' }>):
+  Exclude<McpServerCatalogOpenResultV1, { status: 'opened' }> | Readonly<{
+    status: 'opened'; catalog: McpServerCatalogV1; migrationSource: McpServerCatalogMigrationSourceV1;
+  }>;
+export function openMcpServerCatalogContentV1(input: McpServerCatalogOpenInputV1): McpServerCatalogOpenResultV1;
+export function openMcpServerCatalogContentV1(input: McpServerCatalogOpenInputV1): McpServerCatalogOpenResultV1
+  | Readonly<{ status: 'opened'; catalog: McpServerCatalogV1; migrationSource: McpServerCatalogMigrationSourceV1 }> {
   const content = StoredMcpServerCatalogContentV1Schema.safeParse(input.content);
   if (!content.success) return { status: 'unavailable', reason: 'invalid-stored-content' };
   try { assertMcpServerCatalogContentForModeV1(content.data, input.mode); }
   catch { return { status: 'unavailable', reason: 'account-mode-mismatch' }; }
   if (input.mode === 'plain' && input.material !== null) return { status: 'unavailable', reason: 'account-mode-mismatch' };
-  if (content.data.t === 'plain') return projectStoredMcpServerCatalogV1(content.data.v);
-  if (!input.material) return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-  const value = openAccountScopedBlobCiphertext({ kind: MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1,
-    material: input.material, ciphertext: content.data.c })?.value;
-  return projectStoredMcpServerCatalogV1(value);
+  let value: unknown;
+  if (content.data.t === 'plain') value = content.data.v;
+  else {
+    if (!input.material) return { status: 'unavailable', reason: 'encryption-material-unavailable' };
+    value = openAccountScopedBlobCiphertext({ kind: MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1,
+      material: input.material, ciphertext: content.data.c })?.value;
+  }
+  const projection = projectStoredMcpServerCatalogV1(value);
+  if (projection.status === 'unavailable') return projection;
+  const envelopeDiagnostics = listMcpServerCatalogEnvelopeSavedSecretDiagnosticsV1(content.data);
+  if (envelopeDiagnostics.length) return { status: 'partial', catalog: projection.catalog,
+    diagnostics: [...(projection.status === 'partial' ? projection.diagnostics : []), ...envelopeDiagnostics] };
+  if (input.admission !== 'migration' || projection.status !== 'opened') return projection;
+  const payload = StrictJsonValueSchema.safeParse(value);
+  return payload.success ? { ...projection, migrationSource: { content: content.data, payload: payload.data } }
+    : { status: 'unavailable', reason: 'invalid-stored-content' };
+}
+
+/** Envelope metadata is retained, but recognizable references cannot acquire authority through it. */
+export function listMcpServerCatalogEnvelopeSavedSecretDiagnosticsV1(content: StoredMcpServerCatalogContentV1): readonly McpServerCatalogDiagnosticV1[] {
+  return listSavedSecretReferenceCarrierPathsV1(content, { initialPath: 'content' })
+    .filter(path => content.t !== 'plain' || !(path === 'content.v' || path.startsWith('content.v.') || path.startsWith('content.v[')))
+    .map(path => ({ path: path.slice('content.'.length), reason: 'unclassified-reference' as const }));
+}
+
+/** Conversion source and target use the same complete retained-envelope admission. */
+export function parseMcpServerCatalogMigrationContentV1(value: unknown): StoredMcpServerCatalogContentV1 | null {
+  const content = StoredMcpServerCatalogContentV1Schema.safeParse(value);
+  if (!content.success || listMcpServerCatalogEnvelopeSavedSecretDiagnosticsV1(content.data).length) return null;
+  try { assertMcpServerCatalogContentForModeV1(content.data, content.data.t === 'plain' ? 'plain' : 'e2ee'); }
+  catch { return null; }
+  return content.data.t === 'encrypted'
+    || openMcpServerCatalogContentV1({ mode: 'plain', material: null, content: content.data, admission: 'migration' }).status === 'opened'
+    ? content.data : null;
+}
+
+/** Reseal complete original JSON only; the ordinary writer below remains strict. */
+export function sealMcpServerCatalogMigrationContentV1(input: Readonly<{
+  source: McpServerCatalogMigrationSourceV1; mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null;
+  randomBytes?: (length: number) => Uint8Array;
+}>): StoredMcpServerCatalogContentV1 {
+  const source = parseMcpServerCatalogMigrationContentV1(input.source.content);
+  const payload = StrictJsonValueSchema.parse(input.source.payload);
+  if (!source || projectStoredMcpServerCatalogV1(payload).status !== 'opened'
+    || source.t === 'plain' && !sameStrictJsonValue(source.v, payload)) throw new Error('invalid-stored-content');
+  const metadata = Object.fromEntries(Object.entries(source).filter(([key]) => key !== 't' && key !== (source.t === 'plain' ? 'v' : 'c')));
+  if (Object.hasOwn(metadata, input.mode === 'plain' ? 'v' : 'c')) throw new Error('invalid-stored-content');
+  let converted: unknown;
+  if (input.mode === 'plain') {
+    if (input.material !== null) throw new Error('account-mode-mismatch');
+    converted = { ...metadata, t: 'plain', v: payload };
+  } else {
+    if (!input.material) throw new Error('encryption-material-unavailable');
+    converted = { ...metadata, t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+      kind: MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1, material: input.material, payload,
+      randomBytes: input.randomBytes ?? tweetnacl.randomBytes,
+    }) };
+  }
+  const content = parseMcpServerCatalogMigrationContentV1(converted);
+  if (!content) throw new Error('invalid-stored-content');
+  return content;
 }
 
 export function sealMcpServerCatalogContentV1(input: Readonly<{
@@ -131,45 +181,6 @@ export function sealMcpServerCatalogContentV1(input: Readonly<{
   return { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: MCP_SERVER_CATALOG_ACCOUNT_CIPHER_KIND_V1,
     material: input.material, payload: catalog, randomBytes: input.randomBytes ?? tweetnacl.randomBytes }) };
 }
-
-const revision = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
-export const McpServerCatalogRowFailureV1Schema = lazyZodSchema(() => z.object({
-  status: z.enum(['account-not-found', 'account-inconsistent', 'account-mode-mismatch', 'invalid-stored-content', 'invalid-reference']),
-  reason: z.string().optional(),
-}).strict());
-export const McpServerCatalogRowReadResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('present'), revision, content: StoredMcpServerCatalogContentV1Schema }).strict(),
-  z.object({ status: z.literal('absent') }).strict(), z.object({ status: z.literal('deleted'), revision }).strict(),
-  McpServerCatalogRowFailureV1Schema,
-]));
-export type McpServerCatalogRowReadResponseV1 = z.infer<typeof McpServerCatalogRowReadResponseV1Schema>;
-export const McpServerCatalogRowMutationV1Schema = lazyZodSchema(() => z.object({
-  expectedRevision: z.union([revision, z.literal('absent')]), content: McpServerCatalogContentV1Schema.nullable(),
-  sourceSettingsVersion: revision.optional(), referencedSavedSecretIds: z.array(z.string().min(1)).default([]),
-  savedSecretRevisions: z.array(z.object({ resourceId: z.string().min(1), expectedRevision: revision }).strict()).default([]),
-}).strict().superRefine((mutation, context) => {
-  if (mutation.expectedRevision === 'absent' && (mutation.sourceSettingsVersion === undefined || mutation.content === null)) {
-    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'First authority requires captured source currentness' });
-  }
-  if (mutation.sourceSettingsVersion !== undefined && (mutation.expectedRevision !== 'absent' || mutation.content === null)) {
-    context.addIssue({ code: 'custom', path: ['sourceSettingsVersion'], message: 'Source admission initializes authority only' });
-  }
-}));
-export type McpServerCatalogRowMutationV1 = z.infer<typeof McpServerCatalogRowMutationV1Schema>;
-export const McpServerCatalogRowMutationResponseV1Schema = lazyZodSchema(() => z.union([
-  z.object({ status: z.literal('updated'), revision, cursor: revision }).strict(),
-  z.object({ status: z.literal('conflict'), revision: z.number().int().min(-1) }).strict(),
-  z.object({ status: z.literal('settings-conflict'), revision }).strict(), McpServerCatalogRowFailureV1Schema,
-]));
-export type McpServerCatalogRowMutationResponseV1 = z.infer<typeof McpServerCatalogRowMutationResponseV1Schema>;
-export const AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema = lazyZodSchema(() => z.object({
-  expectedRevision: revision, content: McpServerCatalogContentV1Schema.nullable(),
-}).strict());
-export type AccountEncryptionMigrateMcpServerCatalogDirectiveV1 = z.infer<typeof AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema>;
-export const AccountEncryptionMigrateMcpServerCatalogResultV1Schema = lazyZodSchema(() => z.object({
-  revision, content: StoredMcpServerCatalogContentV1Schema.nullable(),
-}).strict());
-export type AccountEncryptionMigrateMcpServerCatalogResultV1 = z.infer<typeof AccountEncryptionMigrateMcpServerCatalogResultV1Schema>;
 
 export function listMcpServerCatalogSavedSecretRefsV1(catalog: McpServerCatalogV1): readonly Readonly<{ path: string; secretId: string }>[] {
   const refs: Array<{ path: string; secretId: string }> = [];

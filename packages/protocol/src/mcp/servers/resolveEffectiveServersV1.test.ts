@@ -4,6 +4,24 @@ import { McpServersSettingsV1Schema } from './settingsV1.js';
 import { resolveEffectiveServersV1 } from './resolveEffectiveServersV1.js';
 
 describe('resolveEffectiveServersV1', () => {
+  it('matches platform root workspaces without admitting a sibling volume or prefix', () => {
+    for (const [workspaceRoot, child, sibling] of [
+      ['C:\\', 'C:\\workspace\\child', 'D:\\workspace\\child'],
+      ['/', '/workspace/child', 'C:\\workspace\\child'],
+      ['\\\\server\\share', '\\\\server\\share\\workspace', '\\\\server\\share-other\\workspace'],
+      ['C:\\work', 'C:\\work\\child', 'C:\\workspace\\child'],
+    ] as const) {
+      const settings = McpServersSettingsV1Schema.parse({ v: 1, strictMode: false,
+        servers: [{ id: 's1', name: 'alpha', transport: 'stdio', stdio: { command: 'server', args: [] },
+          env: {}, createdAt: 0, updatedAt: 0 }],
+        bindings: [{ id: 'workspace', serverId: 's1', enabled: true,
+          target: { t: 'workspace', machineId: 'm1', workspaceRoot }, createdAt: 0, updatedAt: 0 }],
+      });
+      expect(resolveEffectiveServersV1(settings, { machineId: 'm1', directory: child }).serversByName.alpha.enabled).toBe(true);
+      expect(resolveEffectiveServersV1(settings, { machineId: 'm1', directory: sibling }).serversByName.alpha.enabled).toBe(false);
+    }
+  });
+
   it('applies precedence: workspace > machine > allMachines', () => {
     const settings = McpServersSettingsV1Schema.parse({
       v: 1,
@@ -133,4 +151,3 @@ describe('resolveEffectiveServersV1', () => {
     expect(resolved.serversByName.alpha.bindingId).toBeNull();
   });
 });
-

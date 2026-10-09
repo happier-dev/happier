@@ -1,31 +1,14 @@
+import { McpServerCatalogMutationV1Schema, unavailableReasonSchema } from "./catalogSchemasV1.js";
+import type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1 } from "./catalogSchemasV1.js";
+export { McpServerCatalogMutationV1Schema, McpServerCatalogSnapshotV1Schema } from "./catalogSchemasV1.js";
+export type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1, McpServerCatalogSourceCleanupV1 } from "./catalogSchemasV1.js";
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
-import { z } from 'zod';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { projectStoredMcpServerCatalogV1, openMcpServerCatalogContentV1,
-  type McpServerCatalogV1, type McpServerCatalogDiagnosticV1, type McpServerCatalogRowReadResponseV1,
-  type McpServerCatalogRowMutationResponseV1, McpServerCatalogV1Schema, McpServerCatalogDiagnosticV1Schema } from './serverRowsV1.js';
-import { McpServerCatalogEntryV1Schema, McpServerBindingV1Schema, type McpServersSettingsV1 } from './settingsV1.js';
+import { projectStoredMcpServerCatalogV1, openMcpServerCatalogContentV1, type McpServerCatalogV1, type McpServerCatalogRowReadResponseV1, type McpServerCatalogRowMutationResponseV1, McpServerCatalogV1Schema } from './serverRowsV1.js';
+import { type McpServersSettingsV1 } from './settingsV1.js';
 
 export { listMcpServerCatalogSavedSecretRefsV1, rewriteMcpServerCatalogSavedSecretRefsV1,
   remapMcpServerCatalogSavedSecretReferencesV1 } from './serverRowsV1.js';
 
-export const McpServerCatalogMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('server-create'), entry: McpServerCatalogEntryV1Schema,
-    bindings: z.array(McpServerBindingV1Schema).default([]) }).strict(),
-  z.object({ kind: z.literal('server-update'), entry: McpServerCatalogEntryV1Schema,
-    bindings: z.array(McpServerBindingV1Schema).default([]) }).strict(),
-  z.object({ kind: z.literal('server-upsert'), entry: McpServerCatalogEntryV1Schema,
-    bindings: z.array(McpServerBindingV1Schema).default([]) }).strict(),
-  z.object({ kind: z.literal('server-duplicate'), serverId: z.string().min(1),
-    entry: McpServerCatalogEntryV1Schema, bindings: z.array(McpServerBindingV1Schema).default([]) }).strict(),
-  z.object({ kind: z.literal('server-remove'), serverId: z.string().min(1), removeBindings: z.boolean().default(false) }).strict(),
-  z.object({ kind: z.literal('binding-create'), binding: McpServerBindingV1Schema }).strict(),
-  z.object({ kind: z.literal('binding-update'), binding: McpServerBindingV1Schema }).strict(),
-  z.object({ kind: z.literal('binding-upsert'), binding: McpServerBindingV1Schema }).strict(),
-  z.object({ kind: z.literal('binding-remove'), bindingId: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal('binding-enabled'), bindingId: z.string().min(1), enabled: z.boolean() }).strict(),
-]));
-export type McpServerCatalogMutationV1 = z.infer<typeof McpServerCatalogMutationV1Schema>;
 
 /** Definitions and their bindings share one validation and one durable row CAS. */
 export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, rawChange: McpServerCatalogMutationV1): McpServerCatalogV1 {
@@ -71,39 +54,7 @@ export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, raw
   });
 }
 
-export type McpServerCatalogUnavailableReasonV1 = 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch'
-  | 'encryption-material-unavailable' | 'invalid-stored-content' | 'invalid-reference' | 'unauthorized' | 'forbidden'
-  | 'unsupported' | 'unreachable' | 'scope-retired' | 'cancelled' | 'source-version-conflict' | 'authority-not-confirmed';
-export type McpServerCatalogSourceCleanupV1 = Readonly<{ status: 'complete' }> | Readonly<{
-  status: 'cleanup-pending'; reason: 'source-unavailable' | 'source-conflict' | 'history-incomplete' | 'cancelled';
-}>;
-type OpenedCatalog = Readonly<{ catalog: McpServerCatalogV1; revision: number | 'absent'; authority: 'active' | 'inactive';
-  diagnostics: readonly McpServerCatalogDiagnosticV1[]; cleanup?: McpServerCatalogSourceCleanupV1 }>;
-export type McpServerCatalogSnapshotV1 = Readonly<{ status: 'loading' }>
-  | Readonly<{ status: 'unavailable'; reason: McpServerCatalogUnavailableReasonV1 }>
-  | (OpenedCatalog & Readonly<{ status: 'ready' }>) | (OpenedCatalog & Readonly<{ status: 'partial' }>);
 /** The same readiness contract crosses UI, CLI and typed Actions. */
-export const McpServerCatalogSnapshotV1Schema = lazyZodSchema(() => {
-  const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-  const opened = z.object({ catalog: McpServerCatalogV1Schema, revision: z.union([revision, z.literal('absent')]),
-    authority: z.enum(['active', 'inactive']), diagnostics: z.array(McpServerCatalogDiagnosticV1Schema),
-    cleanup: z.discriminatedUnion('status', [
-      z.object({ status: z.literal('complete') }).strict(),
-      z.object({ status: z.literal('cleanup-pending'),
-        reason: z.enum(['source-unavailable', 'source-conflict', 'history-incomplete', 'cancelled']) }).strict(),
-    ]).optional(),
-  }).strict();
-  return z.discriminatedUnion('status', [
-    z.object({ status: z.literal('loading') }).strict(),
-    z.object({ status: z.literal('unavailable'), reason: z.enum([
-      'account-not-found', 'account-inconsistent', 'account-mode-mismatch', 'encryption-material-unavailable',
-      'invalid-stored-content', 'invalid-reference', 'unauthorized', 'forbidden', 'unsupported', 'unreachable',
-      'scope-retired', 'cancelled', 'source-version-conflict', 'authority-not-confirmed',
-    ]) }).strict(),
-    opened.extend({ status: z.literal('ready') }).strict(),
-    opened.extend({ status: z.literal('partial') }).strict(),
-  ]);
-});
 export type McpServerCatalogSourceTransferV1 = Readonly<{
   readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
   initializeCatalog(input: Readonly<{ catalog: McpServerCatalogV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>):
@@ -128,9 +79,33 @@ function retainedSource(raw: Readonly<Record<string, unknown>>) {
   if (root === undefined) return { status: 'opened' as const, catalog: emptyMcpServerCatalogV1(), strictMode: false };
   if (root === null || typeof root !== 'object' || Array.isArray(root)) return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
   const record = root as Record<string, unknown>;
+  if (record.v !== 1) return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
   if (record.strictMode !== undefined && typeof record.strictMode !== 'boolean') return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
-  const opened = projectStoredMcpServerCatalogV1({ ...record, v: record.v ?? 1, servers: record.servers ?? [], bindings: record.bindings ?? [] });
+  const opened = projectStoredMcpServerCatalogV1({ ...record,
+    servers: record.servers === undefined ? [] : record.servers,
+    bindings: record.bindings === undefined ? [] : record.bindings }, 'retained-source');
   return opened.status === 'opened' ? { ...opened, strictMode: record.strictMode === true } : opened;
+}
+
+/** Retain the source root until destination proof; policy belongs to this same document. */
+export function extractRetainedMcpServerCatalogPolicyV1(raw: Readonly<Record<string, unknown>>):
+  Readonly<{ status: 'ready'; raw: Readonly<Record<string, unknown>> }>
+  | Readonly<{ status: 'unavailable'; reason: 'invalid-stored-content' }> {
+  if (raw.mcpServersStrictMode !== undefined && typeof raw.mcpServersStrictMode !== 'boolean') {
+    return { status: 'unavailable', reason: 'invalid-stored-content' };
+  }
+  if (!Object.hasOwn(raw, 'mcpServersSettingsV1')) return { status: 'ready', raw };
+  const source = retainedSource(raw);
+  if (source.status !== 'opened') return { status: 'unavailable', reason: 'invalid-stored-content' };
+  return { status: 'ready', raw: raw.mcpServersStrictMode === undefined
+    ? { ...raw, mcpServersStrictMode: source.strictMode } : raw };
+}
+
+function transportFailureReason(error: unknown, signal?: AbortSignal): McpServerCatalogUnavailableReasonV1 {
+  if (signal?.aborted) return 'cancelled';
+  const reason = error !== null && typeof error === 'object' && 'code' in error
+    ? unavailableReasonSchema.safeParse(error.code) : undefined;
+  return reason?.success ? reason.data : 'unreachable';
 }
 
 async function readDestination(input: LoadInput): Promise<McpServerCatalogSnapshotV1 | Readonly<{ status: 'absent' }>> {
@@ -139,7 +114,7 @@ async function readDestination(input: LoadInput): Promise<McpServerCatalogSnapsh
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
   let row: McpServerCatalogRowReadResponseV1;
   try { row = await input.readRow(); }
-  catch { return { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled' : 'unreachable' }; }
+  catch (error) { return { status: 'unavailable', reason: transportFailureReason(error, input.signal) }; }
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
   if (row.status === 'absent') return row;
   if (row.status === 'deleted') return { status: 'ready', catalog: emptyMcpServerCatalogV1(), revision: row.revision, authority: 'active', diagnostics: [] };
@@ -173,13 +148,12 @@ export async function loadMcpServerCatalogV1(input: LoadInput): Promise<McpServe
     let retained = retainedSource(source.raw);
     if (retained.status === 'unavailable') return retained;
     if (retained.status === 'partial') return { ...retained, status: 'partial', revision: 'absent', authority: 'inactive' };
-    if (source.raw.mcpServersStrictMode !== undefined && typeof source.raw.mcpServersStrictMode !== 'boolean') {
-      return { status: 'unavailable', reason: 'invalid-stored-content' };
-    }
+    const policy = extractRetainedMcpServerCatalogPolicyV1(source.raw);
+    if (policy.status === 'unavailable') return policy;
     if (Object.hasOwn(source.raw, 'mcpServersSettingsV1') && source.raw.mcpServersStrictMode === undefined) {
       if (!transfer.replaceSource) return { status: 'ready', catalog: retained.catalog, authority: 'inactive', revision: 'absent', diagnostics: [] };
       let result: Awaited<ReturnType<NonNullable<McpServerCatalogSourceTransferV1['replaceSource']>>>;
-      try { result = await transfer.replaceSource({ raw: { ...source.raw, mcpServersStrictMode: retained.strictMode }, expectedVersion: source.version }); }
+      try { result = await transfer.replaceSource({ raw: policy.raw, expectedVersion: source.version }); }
       catch { return { status: 'unavailable', reason: input.signal?.aborted ? 'cancelled' : 'unreachable' }; }
       if (result.status !== 'applied') return { status: 'unavailable', reason: result.status === 'conflict' ? 'source-version-conflict' : 'authority-not-confirmed' };
       try { source = await transfer.readSourceSnapshot(); }
@@ -200,10 +174,11 @@ export async function loadMcpServerCatalogV1(input: LoadInput): Promise<McpServe
     if (input.hasPendingCleanup?.()) return catalog;
   }
   if (!transfer.replaceSource) return catalog;
-  if (Object.hasOwn(source.raw, 'mcpServersSettingsV1') && retainedSource(source.raw).status !== 'opened') {
+  const policy = extractRetainedMcpServerCatalogPolicyV1(source.raw);
+  if (policy.status === 'unavailable') {
     return { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'source-unavailable' } };
   }
-  const raw = { ...source.raw };
+  const raw = { ...policy.raw };
   delete raw.mcpServersSettingsV1;
   if (input.signal?.aborted) return { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'cancelled' } };
   if (Object.hasOwn(source.raw, 'mcpServersSettingsV1')) {
@@ -229,5 +204,6 @@ export function readMcpServersFromCatalogSnapshotV1(input: Readonly<{ snapshot: 
   if (snapshot.status === 'loading') return { status: 'unavailable', reason: 'loading' };
   if (snapshot.status === 'unavailable') return snapshot;
   if (snapshot.status === 'partial') return { status: 'unavailable', reason: 'invalid-stored-content' };
+  if (snapshot.authority !== 'active') return { status: 'unavailable', reason: 'authority-not-confirmed' };
   return { status: 'ready', settings: { ...snapshot.catalog, strictMode: input.strictMode } };
 }
