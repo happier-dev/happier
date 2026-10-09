@@ -171,8 +171,10 @@ function buildVoiceBlocks(params: Readonly<{
   const attemptPolicy = [
     ...(language ? [`Reply in ${language}.`] : []),
     ...(welcome?.enabled === true ? [welcome.mode === 'on_first_turn'
-      ? 'On your first reply to the user, start with one short friendly greeting (one sentence). Then continue with your response. A READY warm-up is not a reply to the user. Do not repeat the greeting on later turns.'
-      : welcome.text
+      ? typeof welcome.text === 'string'
+        ? `On your first reply to the user, start with this exact greeting: ${JSON.stringify(welcome.text)} Then continue with your response. A READY warm-up is not a reply to the user. Do not repeat the greeting on later turns.`
+        : 'On your first reply to the user, start with one short friendly greeting (one sentence). Then continue with your response. A READY warm-up is not a reply to the user. Do not repeat the greeting on later turns.'
+      : typeof welcome.text === 'string'
         ? `If a response is requested before the user speaks, say this exact greeting: ${JSON.stringify(welcome.text)} Then wait for the user. Do not repeat this startup greeting when answering a user turn.`
         : 'If a response is requested before the user speaks, give one short friendly greeting and wait for the user. Do not repeat this startup greeting when answering a user turn.'] : []),
   ].join('\n');
@@ -235,6 +237,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
   /** The exact attempt catalog; omission preserves the caller's supplied catalog. */
   availableToolNames?: readonly string[];
   assistantLanguage?: string | null;
+  memoryRecallGuidanceEnabled?: boolean;
   welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }>): string {
   const ctx = params?.initialConversationContextPlaceholder?.trim() ?? '';
@@ -289,7 +292,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
 export function buildVoiceRealtimeAttemptPolicy(params: Readonly<
   NonNullable<Parameters<typeof buildVoiceClientToolAgentPrompt>[0]> & {
     welcome: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
-    /** Literal resolved by the host's translation owner for the reply language. */
+    /** Literal resolved by the host's selected Doc or translation owner. */
     welcomeText?: string;
   }
 >): Readonly<{
@@ -297,11 +300,11 @@ export function buildVoiceRealtimeAttemptPolicy(params: Readonly<
   assistantLanguage: string | null;
   welcome: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }> {
-  const text = params.welcomeText?.trim();
+  const text = params.welcomeText;
   const welcome = Object.freeze({
     enabled: params.welcome.enabled,
     mode: params.welcome.mode,
-    ...(params.welcome.enabled && params.welcome.mode === 'immediate' && text ? { text } : {}),
+    ...(params.welcome.enabled && typeof text === 'string' ? { text } : {}),
   });
   return Object.freeze({
     instructions: buildVoiceClientToolAgentPrompt({ ...params, welcome }),
@@ -319,7 +322,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   memoryRecallGuidanceEnabled?: boolean;
   extraSystemAppendBlocks?: readonly string[];
   assistantLanguage?: string | null;
-  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
+  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }>): string {
   const tag = params?.actionsTag?.trim() || VOICE_ACTIONS_TAG;
   const sessionId = params?.sessionId?.trim() || '';

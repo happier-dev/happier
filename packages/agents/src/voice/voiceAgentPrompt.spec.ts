@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -20,7 +21,23 @@ import {
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
-  it('admits a localized literal only for an immediate realtime welcome in both policy and model instructions', () => {
+  it('uses the admitted memory decision for the existing recall guidance in both realtime builders', () => {
+    const guidance = buildMemoryRecallGuidanceBlockV1('voice');
+    for (const memoryRecallGuidanceEnabled of [true, false]) {
+      const input = { memoryRecallGuidanceEnabled, welcome: { enabled: false, mode: 'immediate' as const } };
+      const prompts = [buildVoiceClientToolAgentPrompt(input), buildVoiceRealtimeAttemptPolicy(input).instructions];
+      for (const prompt of prompts) expect(prompt.includes(guidance)).toBe(memoryRecallGuidanceEnabled);
+    }
+  });
+  it.each(['  Hello exactly as typed.\n\n', ' \n ', ''])('preserves the admitted literal in either welcome mode: %j', text => {
+    for (const mode of ['immediate', 'on_first_turn'] as const) {
+      const policy = buildVoiceRealtimeAttemptPolicy({ welcome: { enabled: true, mode }, welcomeText: text });
+      expect(policy.welcome.text).toBe(text);
+      expect(policy.instructions).toContain(JSON.stringify(text));
+    }
+  });
+
+  it('admits a localized literal only when welcome is enabled in both policy and model instructions', () => {
     const input = {
       availableToolNames: ['readCurrentUiContext'],
       assistantLanguage: 'fr-FR',
@@ -34,15 +51,10 @@ describe('voiceAgentPrompt', () => {
     expect(policy.instructions).toContain('wait for the user');
     expect(buildVoiceRealtimeAttemptPolicy(input).welcome).toEqual(input.welcome);
     expect(buildVoiceRealtimeAttemptPolicy(input).instructions).toBe(buildVoiceClientToolAgentPrompt(input));
-    for (const welcome of [
-      { enabled: false, mode: 'immediate' as const },
-      { enabled: true, mode: 'on_first_turn' as const },
-    ]) {
-      expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).welcome)
-        .toEqual(welcome);
-      expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).instructions)
-        .toBe(buildVoiceClientToolAgentPrompt({ ...input, welcome }));
-    }
+    const welcome = { enabled: false, mode: 'immediate' as const };
+    expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).welcome).toEqual(welcome);
+    expect(buildVoiceRealtimeAttemptPolicy({ ...input, welcome, welcomeText: text }).instructions)
+      .toBe(buildVoiceClientToolAgentPrompt({ ...input, welcome }));
   });
 
   it('composes attempt policy with only admitted tools, language, greeting and user prompt blocks', () => {
