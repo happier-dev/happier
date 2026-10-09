@@ -6,6 +6,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+    AgentsAcpBackendsUpsertOutputV1Schema,
+    applyAcpBackendUpsertV1,
+} from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 
 import {
     createActionApprovalContinuation,
@@ -135,6 +140,35 @@ function failedArtifact(overrides?: Readonly<{
 }
 
 describe('createHomeActionApprovalContinuation', () => {
+    it('delivers an executed ACP receipt when transport omits native optional authoring members', async () => {
+        // The mounted ACP editor explicitly sets auth to undefined for an agent without login.
+        // The Home's JSON Artifact transport omits that optional native object member.
+        const input = { backend: {
+            id: 'custom-agent', name: 'custom-agent', title: 'Custom agent', command: 'custom-agent',
+            args: [], env: {}, auth: undefined,
+        }, expectedRevision: 1 };
+        const mutation = applyAcpBackendUpsertV1({ settings: { v: 2, backends: [] }, backend: input.backend, nowMs: 2 });
+        if (!mutation.ok) throw new Error(mutation.code);
+        const result = { backend: mutation.backend };
+        const artifact = executedArtifact({ actionId: 'agents.acp.backends.upsert', actionArgs: input, result });
+        const terminal = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
+        expect(terminal).toMatchObject({ family: 'built_in', request: { status: 'executed', execution: { ok: true } } });
+        if (terminal?.family !== 'built_in') throw new Error('Invalid stored approval fixture');
+        expect(AgentsAcpBackendsUpsertOutputV1Schema.safeParse(terminal.request.execution?.result).success).toBe(true);
+        expect(terminal.request.actionArgs).toEqual({ backend: {
+            id: 'custom-agent', name: 'custom-agent', title: 'Custom agent', command: 'custom-agent', args: [], env: {},
+        }, expectedRevision: 1 });
+
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        const continuation = createActionApprovalContinuation({
+            artifactId: artifact.id, actionId: 'agents.acp.backends.upsert',
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedInput: input, onSucceeded, onFailed,
+        });
+        expect(await continuation.onExecuted(artifact)).toBe('consumed');
+        expect(onFailed).not.toHaveBeenCalled();
+        expect(onSucceeded).toHaveBeenCalledWith(result);
+    });
     it('delivers an exact immutable Agent terminal receipt and rejects altered origin facts', async () => {
         const terminalActionId = 'machines.terminal.restart' as const;
         const input = { serverId: 'home-1', machineId: 'machine-1', terminalKey: 'requester-owned', cwd: '/accepted',

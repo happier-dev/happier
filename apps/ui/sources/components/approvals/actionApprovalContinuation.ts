@@ -7,6 +7,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ApprovalExecutionOriginV1, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -123,9 +124,15 @@ function canonicalObservedApprovalInput(actionId: ActionId, input: unknown): str
     if (!parsed.success) return null;
     // No `preview`: the same owner then answers with what the host would have
     // recorded for this input, which is what the durable record carries.
-    return canonicalApprovalInputIdentity(
-        resolveApprovalPresentationInput({ actionId, actionArgs: parsed.data }),
-    );
+    try {
+        // Compare the schema-admitted native operand as the Artifact transport records it.
+        // Unsupported carriers still refuse; only optional undefined object members disappear.
+        return canonicalApprovalInputIdentity(projectNativeJsonValueForTransport(
+            resolveApprovalPresentationInput({ actionId, actionArgs: parsed.data }),
+        ));
+    } catch {
+        return null;
+    }
 }
 
 function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonly<{
