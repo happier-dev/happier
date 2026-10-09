@@ -21,6 +21,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { useServerCredentialAccountScopes } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
 import { createSessionListQueryHomeController } from '@/sync/domains/session/listing/sessionListQueryController';
+import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const socketState = vi.hoisted(() => ({
@@ -519,7 +520,7 @@ describe('concurrent session cache telemetry', () => {
         expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase).toBe('ready');
     });
 
-    it('does not let a disposed strict query mark an unfetched Home ordinary list ready', async () => {
+    it('does not let strict-query hydration or disposal mark an unfetched Home ordinary list ready', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
         const localStorageHandle = installLocalStorageMock();
         restoreLocalStorage = localStorageHandle.restore;
@@ -532,17 +533,24 @@ describe('concurrent session cache telemetry', () => {
             if (url.pathname.includes('/encryption')) return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (url.pathname === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
             if (url.pathname === '/v2/sessions/query') {
-                return Response.json({
-                    sessions: [sessionRow('query-only', {
+                return Response.json(SessionListQueryResponseV1Schema.parse({
+                    sessions: [{ ...sessionRow('query-only', {
                         encryptionMode: 'e2ee',
                         dataEncryptionKey: 'unopenable-envelope',
                         metadata: 'encrypted-unopenable-metadata',
-                    })],
+                    }), responsibleAccountId: null, responsibleAccount: null,
+                    viewer: {
+                        readState: { state: 'not_started' },
+                        relevance: { relevant: true, reasons: ['owned_by_me'] },
+                        attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+                        follow: { follows: false, notificationLevel: null },
+                        notification: { level: 'important', source: 'owner' },
+                    } }],
                     nextCursor: null,
                     hasNext: false,
                     attentionNextCursor: null,
                     attentionHasNext: false,
-                });
+                }));
             }
             if (url.pathname === '/v2/sessions') {
                 if (url.origin === secondaryServerUrl) return ordinaryPage.promise;
@@ -593,10 +601,19 @@ describe('concurrent session cache telemetry', () => {
             fetchPage: (page) => cache.fetchConcurrentSessionListQueryPage(secondary.id, page),
         });
         await controller.update({ query, selected: true, online: true, supported: true });
-        controller.dispose();
+        expect(controller.getSnapshot(), JSON.stringify(controller.getSnapshot()))
+            .toMatchObject({ phase: 'ready', appliedSourceKind: 'query' });
+        expect(controller.getSnapshot().addresses.map((address) => address.sessionId)).toEqual(['query-only']);
+        expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['query-only']).toBeDefined();
+        // Observe real query hydration while its request is current. Disposing
+        // first correctly cancels that work and cannot witness a hydration patch.
         await vi.waitFor(() => expect(storage.getState().sessionListRowsByServerId[secondary.id]?.['query-only']?.metadataUnavailable)
             .toBe(true), { timeout: 15_000 });
 
+        expect(cache.readConcurrentOrdinarySessionListLifecycle(secondary.id)).toMatchObject({ hasFetchedSnapshot: false });
+        expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase)
+            .toBe('loading');
+        controller.dispose();
         expect(cache.readConcurrentOrdinarySessionListLifecycle(secondary.id)).toMatchObject({ hasFetchedSnapshot: false });
         expect(storage.getState().concurrentSessionListCacheByServerId[secondary.id]?.listObservation?.phase)
             .toBe('loading');
