@@ -78,15 +78,21 @@ describe('describeProjectAgentGuidance', () => {
   it('presents effective script targets separately from declaration permission and shows current refusal guidance', () => {
     const base = guidance('resolved');
     const destination = { kind: 'machine', machineId: 'worker-b' } as const;
-    const facts: Guidance = { ...base, scripts: base.scripts!.map(script => ({ ...script,
-      resolution: script.name === 'test'
-        ? { status: 'resolved', choice: { kind: 'workers', destination }, provenance: 'script' }
-        : script.resolution })),
+    const preference = { ...createDefaultWorkspaceWorkerPreferenceV1(), enabled: true, allowAdHoc: true,
+      destination, scriptOverrides: { test: 'workers' } } as const;
+    const facts: Guidance = { ...base,
+      workerPreferences: { status: 'ready', preference, revision: 1, provenance: 'saved' },
+      scripts: base.scripts!.map(script => ({ ...script, resolution: resolveProjectExecutionChoiceV1({
+        execution: script.execution, scriptName: script.name, sourceMachineId: base.sourceWorkspace.machineId,
+        preference: { status: 'ready', value: preference },
+      }) })),
+      adHoc: { ...base.adHoc, resolution: resolveProjectExecutionChoiceV1({ execution: 'portable', adHoc: true,
+        preference: { status: 'ready', value: preference } }) },
       destination: { configured: destination, observation: { eligible: false, load: { kind: 'unknown' }, candidate: null,
         explanation: 'not_accepting', lastCleanSyncAtMs: null } } };
     const text = describeProjectAgentGuidance(facts, 'happier');
     expect(text).toContain('worker-b');
-    expect(text).toContain('projectWorkers.defaultSummary');
+    expect(text).toContain('test: projectWorkers.defaultSummary {"destination":"worker-b"}');
     expect(text).toContain('projectWorkers.notAccepting');
     expect(text).toContain('projectWorkers.notAcceptingDetail');
   });
