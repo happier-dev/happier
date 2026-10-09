@@ -72,6 +72,7 @@ import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdF
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { createTemporaryComputerCreatorDependencies } from './creator/temporaryComputerCreatorDependencies';
 import { createRunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
@@ -1050,10 +1051,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         ).composerAttachmentsById;
     }, [currentProjectionInputs?.pluginProjectionV2]);
     const enabledAgentIds = useEnabledAgentIds();
+    const { snapshot: acpCatalog } = useAcpCatalog(temporaryComputerTargetScope);
+    const acpCatalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const resolvedBackendEntries = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog.catalog,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: currentProjectionInputs?.mergedProviderProjectionById ?? null,
@@ -1065,7 +1069,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         currentProjectionInputs?.mergedBackendProjectionById,
         currentProjectionInputs?.mergedProviderProjectionById,
         enabledAgentIds,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
     ]);
     const profilePreferredBackendTarget = React.useMemo(() => {
@@ -3492,6 +3496,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             && selectedTemporaryArtifact !== null
             && temporaryComputerLaunchBlock === null);
     const canCreate = canCreateFromAuthoring
+        && acpCatalogReady
         && temporaryComputerTargetReady
         && (effectiveCurrentAuthoringDraft.executionTarget?.kind === 'temporary_computer'
             || (selectedBackendEntry !== null && isBackendEntrySelectable(selectedBackendEntry)))

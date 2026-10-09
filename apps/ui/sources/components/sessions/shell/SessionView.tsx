@@ -235,6 +235,7 @@ import {
 } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildRolesRailPickerOption } from '@/components/roles/rail/buildRolesRailPickerOption';
 import { useSessionRolesRailParams } from '@/components/roles/session/sessionRole';
@@ -3526,19 +3527,23 @@ function SessionViewLoadedContent({
     // Pending drafts retain semantic values only; availability remains projected
     // by the shared current Composer scope.
     const composerAttachmentAvailabilityEntriesById = composerPluginPresentation.attachmentEntriesById;
-    const sessionAgentCatalogEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
-        enabledAgentIds,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
-        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
-        mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
-        mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
-    }), [
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(sessionRouteServerId);
+    const sessionAgentCatalogEntries = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return [];
+        return getResolvedBackendCatalogEntries({
+            enabledAgentIds,
+            acpCatalogSnapshot: acpCatalog.catalog,
+            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
+            mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
+        });
+    }, [
         daemonMergedProjection.inputs?.discoveredBackendIds,
         daemonMergedProjection.inputs?.mergedBackendProjectionById,
         daemonMergedProjection.inputs?.mergedProviderProjectionById,
         enabledAgentIds,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
     ]);
     const currentSessionAgentCatalogEntry = React.useMemo(() => (

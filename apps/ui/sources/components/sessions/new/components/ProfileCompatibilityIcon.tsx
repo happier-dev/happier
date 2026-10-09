@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { View, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -39,18 +40,19 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
     useUnistyles(); // Subscribe to theme changes for re-render
     const styles = stylesheet;
     const enabledAgentIds = useEnabledAgentIds();
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalog();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const backendEntries = React.useMemo(() => {
         if (Array.isArray(backendEntriesOverride)) {
             return backendEntriesOverride;
         }
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1: acpCatalogSettingsV1 as any,
+            acpCatalogSnapshot: acpCatalog.catalog,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
         });
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);
+    }, [acpCatalog, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);
 
     const glyphs = React.useMemo(() => {
         const items: Array<{ key: string; glyph: string; factor: number }> = [];
