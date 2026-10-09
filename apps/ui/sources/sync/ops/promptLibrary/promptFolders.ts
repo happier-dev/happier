@@ -1,18 +1,14 @@
 import type { PromptFolderEntryV1, PromptFoldersV1 } from '@happier-dev/protocol';
-import { normalizePromptTags as normalizeLibraryTags } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { normalizeArtifactTagsV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
+import { createPromptFolderV1,
+  normalizePromptFolderNameV1, findPromptFolderByNameV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 
 import { randomUUID } from '@/platform/randomUUID';
 
-function normalizeWhitespace(value: string): string {
-  return value.trim().replace(/\s+/g, ' ');
-}
-
-export function normalizePromptFolderName(value: string): string {
-  return normalizeWhitespace(value);
-}
+export const normalizePromptFolderName = normalizePromptFolderNameV1;
 
 export function normalizePromptTags(value: string | readonly string[] | null | undefined): string[] {
-  return normalizeLibraryTags(typeof value === 'string' ? value.split(',') : value);
+  return normalizeArtifactTagsV1(typeof value === 'string' ? value.split(',') : value);
 }
 
 export function formatPromptTags(tags: readonly string[] | null | undefined): string {
@@ -23,19 +19,15 @@ export function findPromptFolderById(
   promptFolders: PromptFoldersV1 | null | undefined,
   folderId: string | null | undefined,
 ): PromptFolderEntryV1 | null {
-  const normalizedId = String(folderId ?? '').trim();
-  if (!normalizedId) return null;
-  return (promptFolders?.folders ?? []).find((folder) => folder.id === normalizedId) ?? null;
+  if (!folderId) return null;
+  return (promptFolders?.folders ?? []).find((folder) => folder.id === folderId) ?? null;
 }
 
 export function findPromptFolderByName(
   promptFolders: PromptFoldersV1 | null | undefined,
   folderName: string | null | undefined,
 ): PromptFolderEntryV1 | null {
-  const normalizedName = normalizePromptFolderName(String(folderName ?? ''));
-  if (!normalizedName) return null;
-  const lookupKey = normalizedName.toLocaleLowerCase();
-  return (promptFolders?.folders ?? []).find((folder) => folder.name.toLocaleLowerCase() === lookupKey) ?? null;
+  return findPromptFolderByNameV1(promptFolders, String(folderName ?? ''));
 }
 
 export function ensurePromptFolderByName(
@@ -62,40 +54,7 @@ export function ensurePromptFolderByName(
     parentId: null,
   };
   return {
-    promptFoldersV1: { v: 1, folders: [...current.folders, created] },
+    promptFoldersV1: createPromptFolderV1(current, created),
     folderId: created.id,
-  };
-}
-
-export function renamePromptFolder(
-  promptFolders: PromptFoldersV1 | null | undefined,
-  folderId: string,
-  nextName: string,
-): PromptFoldersV1 {
-  const current = promptFolders ?? { v: 1, folders: [] };
-  const normalizedId = String(folderId ?? '').trim();
-  const normalizedName = normalizePromptFolderName(nextName);
-  if (!normalizedId || !normalizedName) return current;
-  const duplicate = current.folders.find((folder) => (
-    folder.id !== normalizedId && folder.name.toLocaleLowerCase() === normalizedName.toLocaleLowerCase()
-  ));
-  if (duplicate) return current;
-  return {
-    v: 1,
-    folders: current.folders.map((folder) => (
-      folder.id === normalizedId ? { ...folder, name: normalizedName } : folder
-    )),
-  };
-}
-
-export function removePromptFolder(
-  promptFolders: PromptFoldersV1 | null | undefined,
-  folderId: string,
-): PromptFoldersV1 {
-  const normalizedId = String(folderId ?? '').trim();
-  const current = promptFolders ?? { v: 1, folders: [] };
-  return {
-    v: 1,
-    folders: current.folders.filter((folder) => folder.id !== normalizedId),
   };
 }
