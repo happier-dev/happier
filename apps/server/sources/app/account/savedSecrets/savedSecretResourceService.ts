@@ -2160,7 +2160,6 @@ export async function promoteSavedSecretResourceInTx(
         if (notification) rejectSavedSecretCatalogMutation(await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...notification }));
         return { ok: true, value: receipt };
     }
-    if (parsedNotification?.success && input.nextSettings === null) return { ok: false, error: 'references_invalid' };
     const parsedCensus = SavedSecretReferenceCensusV1Schema.safeParse(input.referenceCensus);
     if (!parsedCensus.success) return { ok: false, error: 'references_invalid' };
     if (!Array.isArray(input.profileMutations)) return { ok: false, error: 'references_invalid' };
@@ -2175,18 +2174,24 @@ export async function promoteSavedSecretResourceInTx(
     const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
     if (fence.status !== 'ready') return { ok: false, error: 'settings_invalid' };
     if (fence.account.currentness.encryptionMode !== parsedCensus.data.accountMode) return { ok: false, error: 'references_conflict' };
-    if (fence.account.settingsVersion !== input.expectedSettingsVersion) {
+    const unchangedSettings = input.nextSettings === null;
+    const existingWithoutSettingsWrite = unchangedSettings
+        ? await tx.savedSecretResource.findUnique({ where: { id: input.resourceId }, select: { id: true } }) : null;
+    if (fence.account.settingsVersion !== input.expectedSettingsVersion || existingWithoutSettingsWrite) {
         // A lost-response retry must prove the exact committed resource,
         // Settings bytes AND complete post-write Profile census. Never create
         // a resource while testing whether a prior attempt committed.
-        const existing = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId }, select: { id: true } });
-        if (!existing || fence.account.settingsVersion !== input.expectedSettingsVersion + 1) throw new SavedSecretResourceTransactionAbort('settings_conflict');
-        const current = await writeAccountSettingsInTx({ tx, accountId: input.accountId,
-            expectedVersion: input.expectedSettingsVersion,
-            expectedProfileTransferRevision: parsedCensus.data.profileTransferRevision ?? 'absent',
-            next: { kind: 'v2', content: input.nextSettings } });
-        if (current.status === 'profile_transfer_mismatch') throw new SavedSecretResourceTransactionAbort('references_conflict');
-        if (current.status !== 'version_mismatch' || !isDeepStrictEqual(current.currentContent, input.nextSettings)) throw new SavedSecretResourceTransactionAbort('settings_conflict');
+        const existing = existingWithoutSettingsWrite
+            ?? await tx.savedSecretResource.findUnique({ where: { id: input.resourceId }, select: { id: true } });
+        if (!existing || fence.account.settingsVersion !== input.expectedSettingsVersion + (unchangedSettings ? 0 : 1)) throw new SavedSecretResourceTransactionAbort('settings_conflict');
+        if (!unchangedSettings) {
+            const current = await writeAccountSettingsInTx({ tx, accountId: input.accountId,
+                expectedVersion: input.expectedSettingsVersion,
+                expectedProfileTransferRevision: parsedCensus.data.profileTransferRevision ?? 'absent',
+                next: { kind: 'v2', content: input.nextSettings } });
+            if (current.status === 'profile_transfer_mismatch') throw new SavedSecretResourceTransactionAbort('references_conflict');
+            if (current.status !== 'version_mismatch' || !isDeepStrictEqual(current.currentContent, input.nextSettings)) throw new SavedSecretResourceTransactionAbort('settings_conflict');
+        }
         const resourcesReceipt = await proveSavedSecretPromotionResourcesInTx(tx, input);
         if (!resourcesReceipt.ok) return resourcesReceipt;
         const changedRows = new Map(input.profileMutations.map(row => [row.id, row]));
@@ -2269,6 +2274,9 @@ export async function promoteSavedSecretResourceInTx(
             expectedRevision: parsedCensus.data.profiles.referenceGuardRevision });
         if (guard.status !== 'updated') throw new SavedSecretResourceTransactionAbort(guard.status === 'conflict' ? 'references_conflict' : 'references_invalid');
     }
+    if (unchangedSettings) return { ok: true, value: { resourceId: input.resourceId, settingsVersion: input.expectedSettingsVersion,
+        ...(notificationChannelRevision === undefined ? {} : { notificationChannelRevision }),
+        ...(remoteHostRevision === undefined ? {} : { remoteHostRevision }) } };
     const settingsWrite = await writeAccountSettingsInTx({
         tx,
         accountId: input.accountId,

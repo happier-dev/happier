@@ -47,6 +47,7 @@ import { sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/conn
 import { readProviderConnectionsRowInTx } from '@/app/account/providers/connectionRows';
 import { readConnectedAccountCatalogRowInTx } from '@/app/account/connectedAccounts/configurationRows';
 import type { SavedSecretCatalogRevisionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
@@ -1003,8 +1004,11 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         })).resolves.toBe(0);
     });
 
-    it('atomically rewrites private Profile bindings and validates the complete lost-response receipt', async () => {
-        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+    it.each(['replace', 'unchanged', 'unchanged-with-notification'] as const)('atomically rewrites private Profile bindings and validates the complete lost-response receipt with %s Settings', async settingsChange => {
+        const unchanged = settingsChange !== 'replace';
+        const withNotification = settingsChange === 'unchanged-with-notification';
+        const originalSettings = { t: 'plain' as const, v: { themePreference: 'dark' } };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify(originalSettings) }, select: { id: true } });
         const resourceId = 'private-row-promotion';
         const ref = formatSharedSavedSecretRefV1(resourceId);
         const record = { v: 1 as const, id: 'private-profile', definition: { kind: 'legacy' as const,
@@ -1013,23 +1017,41 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         await db.userKVStore.createMany({ data: [
             { accountId: owner.id, key: buildProfilePhysicalKey(record.id), version: 3, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: record })) },
             { accountId: owner.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 6, value: null },
+            ...(withNotification ? [{ accountId: owner.id, key: NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, version: 3,
+                value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { v: 1, channels: [] } })) }] : []),
         ] });
+        const notificationContent = { t: 'plain' as const, v: NotificationChannelCatalogRecordV1Schema.parse({ v: 1,
+            channels: [{ v: 1, kind: 'webhook', id: 'signed', url: 'https://notifications.example/webhook', topics: {}, signingSecretRef: ref }] }) };
         const input = { accountId: owner.id, resourceId, displayName: 'Token', kind: 'token' as const, encryptionMode: 'plain' as const,
             storedContent: { t: 'plain' as const, v: { v: 1 as const, name: 'Token', kind: 'token' as const, value: 'private' } },
-            expectedSettingsVersion: 0, nextSettings: { t: 'plain' as const, v: {} },
-            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 6, rows: [{ id: record.id, revision: 3 }] } },
+            expectedSettingsVersion: 0, nextSettings: unchanged ? null : { t: 'plain' as const, v: {} },
+            referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 6, rows: [{ id: record.id, revision: 3 }] },
+                ...(withNotification ? { notificationChannels: { revision: 3, resourceRefs: [] } } : {}) },
+            ...(withNotification ? { notificationChannelMutation: { expectedRevision: 3, content: notificationContent,
+                savedSecretRevisions: [{ resourceRef: ref, revision: 1 }] } } : {}),
             profileMutations: [{ id: record.id, operation: 'update' as const, expectedRevision: 3,
                 content: { t: 'plain' as const, v: { ...record, secretBindings: { TOKEN: ref } } },
                 referencedSavedSecretIds: [ref], savedSecretRevisions: [{ resourceId, expectedRevision: 1 }] }] };
-        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+        const settingsVersion = unchanged ? 0 : 1;
+        const receipt = { resourceId, settingsVersion, ...(withNotification ? { notificationChannelRevision: 4 } : {}) };
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: receipt });
+        const account = await db.account.findUniqueOrThrow({ where: { id: owner.id } });
+        expect(account.settingsVersion).toBe(settingsVersion);
+        expect(openPlainAccountSettingsDbValue({ accountId: owner.id, dbValue: account.settings }))
+            .toEqual(unchanged ? originalSettings : input.nextSettings);
+        if (unchanged) expect(await db.accountSettingsSnapshot.count({ where: { accountId: owner.id } })).toBe(0);
         const committed = await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } });
         expect(committed.find(row => row.key === buildProfilePhysicalKey(record.id))).toMatchObject({ version: 4 });
         expect(committed.find(row => row.key === PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY)).toMatchObject({ version: 7 });
-        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: { resourceId, settingsVersion: 1 } });
+        if (withNotification) expect(committed.find(row => row.key === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1))
+            .toMatchObject({ version: 4, value: new TextEncoder().encode(JSON.stringify(notificationContent)) });
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({ ok: true, value: receipt });
         expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(committed);
         await expect(inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
-            expectedRevision: 1, expectedSettingsVersion: 1, referenceCensus: { accountMode: 'plain', profiles: {
-                referenceGuardRevision: 7, rows: [{ id: record.id, revision: 4 }] } } }))).resolves.toEqual({ ok: false, error: 'resource_in_use' });
+            expectedRevision: 1, expectedSettingsVersion: settingsVersion, referenceCensus: { accountMode: 'plain', profiles: {
+                referenceGuardRevision: 7, rows: [{ id: record.id, revision: 4 }] },
+                ...(withNotification ? { notificationChannels: { revision: 4, resourceRefs: [ref] } } : {}) } })))
+            .resolves.toEqual({ ok: false, error: 'resource_in_use' });
         expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(committed);
     });
 
