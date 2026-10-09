@@ -319,6 +319,23 @@ export function tryDecryptSessionOwnerMetadataView(params: SessionPresentationCo
   return projectSessionOwnerMetadataView(params, tryDecryptSessionMetadata(params));
 }
 
+/** Owner-locality wins; layout-one private fields never fall back to a raw projection. */
+export function readSessionOwnerLocality(params: Readonly<{
+  metadata: Readonly<Record<string, unknown>> | null;
+  rawSession: Readonly<{ metadataLayoutVersion?: unknown; machineId?: unknown; host?: unknown; homeDir?: unknown }>;
+}>): Readonly<{ machineId: string | null; host: string | null; homeDir: string | null }> | null {
+  const { metadata, rawSession } = params;
+  if (!metadata && rawSession.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) return null;
+  const readNonEmptyString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  const field = (key: 'machineId' | 'host' | 'homeDir') => readNonEmptyString(metadata?.[key])
+    ?? (rawSession.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1 ? null : readNonEmptyString(rawSession[key]));
+  return { machineId: field('machineId'), host: field('host'), homeDir: field('homeDir') };
+}
+
 function projectSessionOwnerMetadataView(
   params: SessionPresentationContentInput,
   sharedOrLegacyMetadata: Record<string, unknown> | null,
