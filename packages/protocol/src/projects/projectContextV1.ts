@@ -5,6 +5,10 @@ import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Sche
 import type { PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptArtifactRefV1Schema, type PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
 import { getArtifactUseTargetV1 } from '../artifacts/artifactSharingV1.js';
+import { resolveProjectContextSourceV1 } from './projectListProjectionV1.js';
+import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
+import { ProjectSourcesReadOutputV1Schema, ProjectSourcesUpdateOutputV1Schema,
+  type ProjectSourcesReadInputV1, type ProjectSourcesUpdateInputV1 } from './sources/projectSourceV1.js';
 
 export const ProjectContextTargetV1Schema = lazyZodSchema(() => z.object({
   serverId: ProjectAccountOrganizationKeyV1Schema.shape.serverId,
@@ -151,4 +155,63 @@ export function applyProjectContextIntentV1<Row extends Readonly<{ promptStack?:
     }
   }
   return { ok: true, row: { ...row, promptStack: next }, changed: true };
+}
+
+/** One captured context target for both hosts; existing personal/Source Actions remain the writers. */
+export async function readProjectContextAttachmentTargetV1(deps: Readonly<{
+  readRows(): Promise<Readonly<{ workspaceRefs: readonly WorkspaceRefV1[]; organizations: readonly Readonly<{
+    key: QualifiedProjectKeyV1; revision: number; value: ProjectAccountOrganizationV1;
+  }>[] }>>;
+  readSource(input: ProjectSourcesReadInputV1): Promise<unknown>;
+  updateSource(input: ProjectSourcesUpdateInputV1): Promise<unknown>;
+  updatePersonalContext(input: ProjectContextUpdateInputV1): Promise<ProjectContextUpdateOutputV1>;
+}>, target: QualifiedProjectKeyV1): Promise<Readonly<{
+  entries: readonly PromptStackEntryV1[]; safety: 'safe' | 'danger'; attach(entry: PromptStackEntryV1): Promise<boolean>;
+}>> {
+  const rows = await deps.readRows();
+  const organization = rows.organizations.find(row => row.key.serverId === target.serverId && row.key.projectKey === target.projectKey);
+  const association = resolveProjectContextSourceV1({ projectRef: target, workspaceRefs: rows.workspaceRefs,
+    organizationPresent: !!organization });
+  const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+  if (association.kind === 'unavailable') return refuse('project_context_unavailable');
+  const assertAssociation = async () => {
+    const current = await deps.readRows();
+    const resolved = resolveProjectContextSourceV1({ projectRef: target, workspaceRefs: current.workspaceRefs,
+      organizationPresent: current.organizations.some(row => row.key.serverId === target.serverId && row.key.projectKey === target.projectKey) });
+    if (resolved.kind !== association.kind || (resolved.kind === 'source' && association.kind === 'source' && resolved.sourceId !== association.sourceId)) {
+      refuse('project_context_conflict');
+    }
+  };
+  const qualify = (entries: readonly PromptStackEntryV1[]) => entries.map(entry => ({ ...entry,
+    ref: { ...entry.ref, serverId: entry.ref.serverId ?? target.serverId } }));
+  if (association.kind === 'source') {
+    const result = ProjectSourcesReadOutputV1Schema.safeParse(await deps.readSource({ serverId: target.serverId, sourceId: association.sourceId }));
+    if (!result.success || !result.data.ok || result.data.source.id !== association.sourceId) return refuse('project_context_unavailable');
+    if (!result.data.canManage) return refuse('project_context_access_denied');
+    const source = result.data.source;
+    const entries = (source.attachments ?? []).flatMap(attachment => attachment.purpose === 'context' ? [attachment.entry] : []);
+    return { safety: 'danger', entries: qualify(entries), attach: async entry => {
+      await assertAssociation();
+      const current = ProjectSourcesReadOutputV1Schema.safeParse(await deps.readSource({ serverId: target.serverId, sourceId: source.id }));
+      if (!current.success || !current.data.ok || current.data.source.id !== source.id) return refuse('project_context_unavailable');
+      if (!current.data.canManage) return refuse('project_context_access_denied');
+      if (current.data.source.revision !== source.revision) return false;
+      const written = ProjectSourcesUpdateOutputV1Schema.safeParse(await deps.updateSource({ serverId: target.serverId,
+        sourceId: source.id, expectedRevision: source.revision, patch: { attachment: { kind: 'attach',
+          attachment: { purpose: 'context', entry } } } }));
+      if (!written.success) return refuse('project_context_unavailable');
+      if (!written.data.ok) { if (written.data.error === 'source_conflict') return false; return refuse(written.data.error); }
+      if (written.data.source.id !== source.id) return refuse('project_context_unavailable');
+      return true;
+    } };
+  }
+  return { safety: 'safe', entries: qualify(organization?.value.promptStack ?? []), attach: async entry => {
+    await assertAssociation();
+    const intent = ProjectContextIntentV1Schema.safeParse({ kind: 'attach', entry });
+    if (!intent.success) return refuse('invalid_parameters');
+    const result = await deps.updatePersonalContext({ target, expectedRevision: organization?.revision ?? 'absent',
+      intent: intent.data });
+    if (!result.ok) { if (result.errorCode === 'project_context_conflict' || result.errorCode === 'entry_conflict') return false; return refuse(result.errorCode); }
+    return true;
+  } };
 }

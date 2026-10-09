@@ -59,5 +59,5 @@ export async function resolveSessionProjectPromptStack(input: SessionProjectProm
     shared = (source.data.source.attachments ?? []).flatMap(attachment => attachment.purpose === 'context' ? [attachment.entry] : []);
   }
   input.signal?.throwIfAborted();
-  return [...shared, ...personal].map(entry => ({ ...entry, ref: { ...entry.ref, serverId: entry.ref.serverId ?? serverId } }));
+  return (resolved.ref.source ? shared : personal).map(entry => ({ ...entry, ref: { ...entry.ref, serverId: entry.ref.serverId ?? serverId } }));
 }

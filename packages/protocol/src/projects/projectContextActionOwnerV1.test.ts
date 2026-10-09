@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { updatePersonalProjectContextV1, ProjectContextUpdateInputV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
+import { readProjectContextAttachmentTargetV1, updatePersonalProjectContextV1, ProjectContextUpdateInputV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 import type { ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
+import type { ProjectSourceV1, ProjectSourcesUpdateInputV1 } from './sources/projectSourceV1.js';
 
 function harness() {
   let value: ProjectAccountOrganizationV1 = { hidden: true, pinned: true };
@@ -26,6 +27,58 @@ const request = () => ProjectContextUpdateInputV1Schema.parse({ target: { server
   expectedRevision: 'absent', intent: { kind: 'attach', entry: { id: 'entry', ref: { kind: 'doc', artifactId: 'doc' } } } });
 
 describe('personal Project context Account Action owner', () => {
+  it('captures the personal row CAS and keeps shared attachment admission at the Source boundary', async () => {
+    const target = { serverId: 'home', projectKey: 'project' };
+    const workspace = { id: 'checkout', ...target, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+    const personal = harness();
+    const unusedSource = async (): Promise<never> => { throw new Error('A personal Project must not contact a Source'); };
+    const captured = await readProjectContextAttachmentTargetV1({ readRows: async () => ({ workspaceRefs: [workspace], organizations: [] }),
+      readSource: unusedSource, updateSource: unusedSource,
+      updatePersonalContext: input => updatePersonalProjectContextV1(personal.deps, input),
+    }, target);
+    expect(captured.safety).toBe('safe');
+    const entry = ProjectContextUpdateInputV1Schema.parse(request()).intent;
+    if (entry.kind !== 'attach') throw new Error('Expected attach fixture');
+    await expect(captured.attach(entry.entry)).resolves.toBe(true);
+    await expect(captured.attach({ ...entry.entry, id: 'competing' })).resolves.toBe(false);
+    expect(personal.current()).toMatchObject({ writes: 1, value: { hidden: true, pinned: true, promptStack: [{ id: 'entry' }] } });
+
+    let canManage = true;
+    let source: ProjectSourceV1 = { id: 'source', revision: 3, name: 'Shared', createdByAccountId: 'account', audience: [],
+      repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git', visibility: 'public' }, protocol: 'https' },
+      attachments: [{ purpose: 'dashboard', ref: { kind: 'doc', artifactId: 'dashboard' } }, { purpose: 'context', entry: entry.entry }] };
+    const sourceWrites: ProjectSourcesUpdateInputV1[] = [];
+    // Source reads and writes are HTTP boundaries; context routing and personal semantics stay real.
+    const ports = { readRows: async () => ({ workspaceRefs: [{ ...workspace, source: { sourceId: source.id, revision: 3 } }], organizations: [] }),
+      readSource: async () => ({ ok: true, source, canManage }),
+      updateSource: async (input: ProjectSourcesUpdateInputV1) => {
+        sourceWrites.push(input);
+        if (input.patch.attachment?.kind !== 'attach') throw new Error('Expected semantic Source attachment');
+        source = { ...source, revision: source.revision + 1,
+          attachments: [...(source.attachments ?? []), input.patch.attachment.attachment] };
+        return { ok: true, source, canManage };
+      },
+      updatePersonalContext: async (): Promise<never> => { throw new Error('Shared context must use its Source'); },
+    };
+    const shared = await readProjectContextAttachmentTargetV1(ports, target);
+    expect(shared).toMatchObject({ safety: 'danger', entries: [{ id: 'entry', ref: { serverId: 'home' } }] });
+    await expect(readProjectContextAttachmentTargetV1({ ...ports,
+      readSource: async () => ({ ok: true, source: { ...source, id: 'wrong-source' }, canManage: true }),
+    }, target)).rejects.toMatchObject({ code: 'project_context_unavailable' });
+    await expect(shared.attach({ ...entry.entry, id: 'memory' })).resolves.toBe(true);
+    expect(sourceWrites).toMatchObject([{ expectedRevision: 3, sourceId: 'source', patch: { attachment: {
+      kind: 'attach', attachment: { purpose: 'context', entry: { id: 'memory' } },
+    } } }]);
+    expect(source.attachments).toMatchObject([{ purpose: 'dashboard' }, { purpose: 'context', entry: { id: 'entry' } },
+      { purpose: 'context', entry: { id: 'memory' } }]);
+    await expect(shared.attach(entry.entry)).resolves.toBe(false);
+    expect(sourceWrites).toHaveLength(1);
+    canManage = false;
+    await expect(shared.attach(entry.entry)).rejects.toMatchObject({ code: 'project_context_access_denied' });
+    await expect(readProjectContextAttachmentTargetV1(ports, target)).rejects.toMatchObject({ code: 'project_context_access_denied' });
+    expect(sourceWrites).toHaveLength(1);
+  });
   it('refuses scope retirement before the row write but preserves an already acknowledged effect receipt', async () => {
     let accountId = 'account';
     const before = harness();

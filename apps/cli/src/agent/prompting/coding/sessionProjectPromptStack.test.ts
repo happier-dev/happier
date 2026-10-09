@@ -47,7 +47,7 @@ it('keeps the Source read on the captured Home endpoint when runtime publication
     url: `http://captured-home.invalid/v1/projects/sources/source?serverId=${encodeURIComponent(serverId)}`,
   });
 });
-it('observes current Source context before personal context and qualifies defaults without inheriting a lead Session stack', async () => {
+it('uses only current Source context for a Source-backed Project and retains the personal row without projecting it', async () => {
   const serverId = configuration.activeServerId;
   const workspace = { id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
     projectKey: 'project', source: { sourceId: 'source', revision: 1 } };
@@ -71,9 +71,9 @@ it('observes current Source context before personal context and qualifies defaul
     metadata: { workspaceId: 'checkout', projectId: 'project', path: '/container', work: { promptStack: [entry('lead')] },
       sessionWorkspaceLocationV1: { v: 1, machineId: 'machine', agentPath: '/container', machinePath: '/repo' } } };
   expect(await resolveSessionProjectPromptStack(input)).toMatchObject([
-    { id: 'shared', ref: { serverId } }, { id: 'personal', ref: { serverId } },
+    { id: 'shared', ref: { serverId } },
   ]);
-  expect((await resolveSessionProjectPromptStack(input)).map(value => value.id)).toEqual(['shared-new', 'personal']);
+  expect((await resolveSessionProjectPromptStack(input)).map(value => value.id)).toEqual(['shared-new']);
 });
 it('reads only the exact current Project association and reports unavailable Source rather than omitting its context', async () => {
   const serverId = configuration.activeServerId;

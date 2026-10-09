@@ -1,6 +1,7 @@
 import type { ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from './projectAccountRowsV1.js';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 
 export type ProjectListOrganizationV1 = Readonly<{
   key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>;
@@ -57,4 +58,20 @@ export function projectProjectListV1(input: Readonly<{
   const truncated = items.length < leaves.length || (input.coverage ?? 'complete') !== 'complete';
   return { projectGroups, hiddenProjectGroups, items, truncated,
     coverage: truncated ? input.coverage === 'unknown' ? 'unknown' as const : 'partial' as const : 'complete' as const };
+}
+
+/** Context follows the accepted qualified Project anchor; competing Sources cannot select a writer. */
+export function resolveProjectContextSourceV1(input: Readonly<{
+  projectRef: QualifiedProjectKeyV1; workspaceRefs: readonly WorkspaceRefV1[]; organizationPresent: boolean;
+}>): Readonly<{ kind: 'personal' } | { kind: 'source'; sourceId: string } | { kind: 'unavailable' }> {
+  const target = QualifiedProjectKeyV1Schema.safeParse(input.projectRef);
+  if (!target.success) return { kind: 'unavailable' };
+  const projection = projectProjectListV1({ serverId: target.data.serverId, workspaceRefs: input.workspaceRefs });
+  const group = [...projection.projectGroups, ...projection.hiddenProjectGroups]
+    .find(candidate => candidate.projectKey.projectKey === target.data.projectKey);
+  if (!group && !input.organizationPresent) return { kind: 'unavailable' };
+  const sources = new Set((group?.items ?? []).flatMap(ref => ref.source ? [ref.source.sourceId] : []));
+  if (sources.size > 1) return { kind: 'unavailable' };
+  const sourceId = sources.values().next().value;
+  return sourceId === undefined ? { kind: 'personal' } : { kind: 'source', sourceId };
 }

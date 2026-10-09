@@ -1,9 +1,12 @@
-import type { ActionExecutorContext, MemoryInheritedContextV1, MemorySessionSnapshotV1 } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, MemoryInheritedContextV1, MemorySessionSnapshotV1, MemoryScopeContextV1, MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { resolveWorkspaceRefV1, projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { readPromptLibraryCatalogProjectionInContext, writePromptLibraryRecordAndPublishInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
-import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { createUiProjectContextAction } from './projectContextAction';
+import { readProjectContextAttachmentTargetV1 } from '@happier-dev/protocol/projects/projectContextV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { LazyActionAccountContext } from './actionAccountContext';
@@ -44,7 +47,7 @@ export async function readUiSessionProjectPromptStack(account: LazyActionAccount
     if (!result.ok) return pending('project_source_unavailable');
     shared = (result.source.attachments ?? []).flatMap(attachment => attachment.purpose === 'context' ? [attachment.entry] : []);
   }
-  return [...shared, ...personal].map(entry => ({ ...entry, ref: { ...entry.ref, serverId: entry.ref.serverId ?? account.serverId } }));
+  return (resolved.ref.source ? shared : personal).map(entry => ({ ...entry, ref: { ...entry.ref, serverId: entry.ref.serverId ?? account.serverId } }));
 }
 
 /** Destination selection stays in the shared Action owner; Account attachments use captured coding-row CAS. */
@@ -53,6 +56,13 @@ export async function readUiMemoryInheritedContext(account: LazyActionAccountCon
   account.assertCurrent(); context.signal?.throwIfAborted();
   const projectEntries = await readUiSessionProjectPromptStack(account, snapshot, context);
   return { projectEntries, readAccountContext: async () => {
+    const captured = await readUiMemoryAccountContext(account, context);
+    return { accountEntries: captured.entries, attachAccountMemory: captured.attachMemory };
+  } };
+}
+
+async function readUiMemoryAccountContext(account: LazyActionAccountContext,
+  context: ActionExecutorContext): Promise<MemoryScopeContextV1> {
     account.assertCurrent(); context.signal?.throwIfAborted();
     const projection = await readPromptLibraryCatalogProjectionInContext(account, context.signal);
     const read = readPromptLibraryCatalogRecordV1({ catalog: projection.catalog, key: 'coding', rawSettings: projection.rawSettings });
@@ -61,8 +71,8 @@ export async function readUiMemoryInheritedContext(account: LazyActionAccountCon
       code: read.status === 'unavailable' ? read.reason : 'memory_target_unavailable',
     });
     const record = read.record;
-    return { accountEntries: record.value.entries,
-      attachAccountMemory: async ref => {
+    return { entries: record.value.entries, safety: 'safe',
+      attachMemory: async ref => {
         account.assertCurrent(); context.signal?.throwIfAborted();
         if (record.value.entries.some(entry => entry.id === 'account.memory')) return false;
         const result = await writePromptLibraryRecordAndPublishInContext(account, { record: { ...record,
@@ -73,5 +83,30 @@ export async function readUiMemoryInheritedContext(account: LazyActionAccountCon
         if (result.status !== 'updated') throw Object.assign(new Error(result.status), { code: result.status });
         return true;
       } };
-  } };
+}
+
+/** Both personal and shared context targets consume the single Project attachment owner. */
+export async function readUiMemoryScopeContext(account: LazyActionAccountContext, target: MemoryScopeTargetV1,
+  context: ActionExecutorContext): Promise<MemoryScopeContextV1> {
+  account.assertCurrent(); context.signal?.throwIfAborted();
+  if (target.scope === 'account') return readUiMemoryAccountContext(account, context);
+  if (!areServerProfileIdentifiersEquivalent(target.projectRef.serverId, account.serverId)
+    || !canUsePrivateProjectAccountAction(account, context)) {
+    throw Object.assign(new Error('project_context_access_denied'), { code: 'project_context_access_denied' });
+  }
+  const rows = createUiProjectAccountRowsClient(account);
+  const sources = createProjectSourceActionDeps(account);
+  const updatePersonalContext = createUiProjectContextAction(account);
+  const project = await readProjectContextAttachmentTargetV1({
+    readRows: async () => {
+      const current = await rows.read(context.signal);
+      account.assertCurrent(); context.signal?.throwIfAborted();
+      return current;
+    },
+    readSource: input => sources.projectSourcesRead(input, context),
+    updateSource: input => sources.projectSourcesUpdate(input, context),
+    updatePersonalContext: input => updatePersonalContext(input, context),
+  }, { ...target.projectRef, serverId: account.serverId });
+  return { entries: project.entries, safety: project.safety,
+    attachMemory: ref => project.attach({ id: 'project.memory', ref, enabled: true, placement: 'system_append' }) };
 }
