@@ -6,6 +6,7 @@ import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntry
 import { SavedSecretAccessEditor } from '@/components/secrets/SavedSecretAccessEditor';
 import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';
 import { SecretsSettingsPage } from '@/components/settings/secrets/SecretsSettingsPage';
+import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { Modal } from '@/modal';
@@ -13,6 +14,8 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useSettingsVersion } from '@/sync/store/hooks';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import {
     deleteSavedSecretResource,
     repairCustodiedSavedSecretResourceEnvelopesBestEffort,
@@ -210,77 +213,87 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             : t('secrets.catalog.operationFailed'));
     }, []);
 
-    const removeShared = React.useCallback(async (entry: SavedSecretCatalogEntryV1) => {
-        const parsed = parseSavedSecretCatalogReferenceV1(entry.ref);
-        if (!scope || parsed?.kind !== 'shared_resource' || entry.revision === null) return;
+    const removeSharedResource = React.useCallback(async (resourceId: string, expectedRevision: number, name: string) => {
+        if (!scope) return;
         // Deleting runs the owner reference census, which reads the owner's own
         // current Account Settings; without a known version it cannot run.
         if (settingsVersion === null) return;
         if (sharedMutationPending || approval.approvalPending) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, scope) || !lifetime.isCurrent()) return;
+        const requestedScopeKey = scopeKey;
+        const isCurrent = () => lifetime.isCurrent() && currentScopeKey.current === requestedScopeKey;
         const confirmed = await Modal.confirm(
             t('secrets.prompts.deleteTitle'),
-            t('secrets.prompts.deleteConfirm', { name: entry.name ?? t('secrets.catalog.unavailableName') }),
+            t('secrets.prompts.deleteConfirm', { name }),
             { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
         );
-        if (!confirmed) return;
-        const requestedScopeKey = scopeKey;
+        if (!confirmed || !isCurrent()) return;
         setSharedMutationPending(true);
-        try {
-        const result = await deleteSavedSecretResource({
-            scope, resourceId: parsed.id, expectedRevision: entry.revision,
-            expectedSettingsVersion: settingsVersion, confirmedByPresentUser: true,
-            onApprovalSucceeded: async () => {
-                if (currentScopeKey.current !== requestedScopeKey) return;
-                setSharedMutationPending(false);
-                await catalog.reload();
-            },
-            onApprovalFailed: () => {
-                if (currentScopeKey.current !== requestedScopeKey) return;
-                setSharedMutationPending(false);
-                Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
-            },
-        });
-        if (currentScopeKey.current !== requestedScopeKey) return;
-        setSharedMutationPending(false);
-        if (!result.ok) {
-            if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
-            alertDeleteRefusal(result);
-        } else await catalog.reload();
-        } catch (cause) {
-            if (currentScopeKey.current !== requestedScopeKey) return;
+        const handleFailure = (cause: unknown) => {
+            if (!isCurrent()) return;
             if (isTeamActionApprovalPendingError(cause)) {
                 approval.requestApproval(cause.registration);
                 return;
             }
             setSharedMutationPending(false);
             Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
+        };
+        try {
+            const operation = {
+                scope, resourceId, expectedRevision,
+                expectedSettingsVersion: settingsVersion, confirmedByPresentUser: true,
+                onApprovalSucceeded: async () => {
+                    if (!isCurrent()) return;
+                    setSharedMutationPending(false);
+                    await catalog.reload();
+                },
+                onApprovalFailed: (_code: string, result: Exclude<SavedSecretResourceDeleteResult, Readonly<{ ok: true }>>) => {
+                    void settleResult(result);
+                },
+            } as const;
+            // Immediate replies and Inbox-executed refusals carry the same
+            // owner-decoded result, and retain the original operation operands.
+            const settleResult = async (initialResult: SavedSecretResourceDeleteResult) => {
+                try {
+                    let result = initialResult;
+                    while (!result.ok && result.reason === 'managed_resources_review_required') {
+                        if (!isCurrent()) return;
+                        const dispositions = await reviewManagedResourceRemoval(result.resources);
+                        if (!isCurrent()) return;
+                        if (!dispositions) {
+                            setSharedMutationPending(false);
+                            return;
+                        }
+                        result = await deleteSavedSecretResource({ ...operation, managedResourceDispositions: dispositions });
+                    }
+                    if (!isCurrent()) return;
+                    setSharedMutationPending(false);
+                    if (!result.ok) {
+                        if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
+                        alertDeleteRefusal(result);
+                    } else await catalog.reload();
+                } catch (cause) {
+                    handleFailure(cause);
+                }
+            };
+            await settleResult(await deleteSavedSecretResource(operation));
+        } catch (cause) {
+            handleFailure(cause);
         }
     }, [alertDeleteRefusal, approval, catalog, scope, scopeKey, settingsVersion, sharedMutationPending]);
+
+    const removeShared = React.useCallback(async (entry: SavedSecretCatalogEntryV1) => {
+        const parsed = parseSavedSecretCatalogReferenceV1(entry.ref);
+        if (parsed?.kind !== 'shared_resource' || entry.revision === null) return;
+        await removeSharedResource(parsed.id, entry.revision, entry.name ?? t('secrets.catalog.unavailableName'));
+    }, [removeSharedResource]);
 
     const removeCorruptShared = React.useCallback(async (
         entry: Extract<SavedSecretCatalogCorruptEntryV1, { relationship: 'owner' }>,
     ) => {
-        if (sharedMutationPending || approval.approvalPending) return;
-        const confirmed = await Modal.confirm(
-            t('secrets.prompts.deleteTitle'),
-            t('secrets.prompts.deleteConfirm', { name: t('secrets.catalog.unavailableName') }),
-            { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
-        );
-        if (!confirmed) return;
-        setSharedMutationPending(true);
-        try {
-            const deleted = await catalog.deleteCorruptResource(entry);
-            if (!deleted.ok) alertDeleteRefusal(deleted);
-        } catch (cause) {
-            if (isTeamActionApprovalPendingError(cause)) {
-                approval.requestApproval(cause.registration);
-                return;
-            }
-            Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
-        } finally {
-            setSharedMutationPending(false);
-        }
-    }, [alertDeleteRefusal, approval, catalog, sharedMutationPending]);
+        await removeSharedResource(entry.repair.resourceId, entry.repair.expectedRevision, t('secrets.catalog.unavailableName'));
+    }, [removeSharedResource]);
 
     const openApproval = approvalId && scope ? () => router.push(
         `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`,

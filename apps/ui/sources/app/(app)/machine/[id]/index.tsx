@@ -16,9 +16,12 @@ import {
     useSettingMutable,
     useSettings,
 } from '@/sync/domains/state/storage';
-import { useActiveServerAccountScope, useSettingsVersion } from '@/sync/store/hooks';
-import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import type { Machine, MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
@@ -28,7 +31,6 @@ import {
     machineExecutionRunsList,
     machineClearReplacementFromAccount,
     machineReplaceInAccount,
-    machineRevokeFromAccount,
     machineRevokeWithProviderCleanup,
 } from '@/sync/ops';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
@@ -47,6 +49,11 @@ import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { MachineAgentsSection } from '@/components/machines/agents/MachineAgentsSection';
+import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
+import { ManagedEnrolledMachineSections } from '@/components/settings/machines/managed/ManagedMachineSections';
+import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
+import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
+import { MachineProjectTerminalsSection } from '@/components/machines/MachineProjectTerminalsSection';
 import { AgentSignInPaneHost } from '@/components/machines/agents/AgentSignInPaneHost';
 import { MachineTransferExposureSection } from '@/components/machines/MachineTransferExposureSection';
 import { MachineDirectConnectionSection } from '@/components/settings/connections/DirectConnectionSettings';
@@ -66,7 +73,7 @@ import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { resolveTmuxAvailable } from '@/capabilities/tmuxAvailability';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { hasProviderMachineStateV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { composeProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -192,16 +199,17 @@ export default function MachineDetailScreen() {
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
     const applySettings = useApplySettings();
-    const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
+    const providerCatalog = useProviderCatalog(expectedSettingsScope);
     const activeAccountScope = useActiveServerAccountScope();
     const hasDurableProviderCleanup = useMemo(() => {
         if (!machineId || !machine?.revokedAt) return false;
+        if (providerCatalog?.status !== 'ready' || !providerCatalog.data) return true;
         return hasProviderMachineStateV1(
-            readProviderSettingsFromAccountSettingsV1(settings).settings,
+            composeProviderSettingsV1(providerCatalog.data, {}),
             machineId,
         );
-    }, [machine?.revokedAt, machineId, settings]);
+    }, [machine?.revokedAt, machineId, providerCatalog?.status, providerCatalog?.data]);
     const providerCleanupPending = isProviderCleanupPending || hasDurableProviderCleanup;
     const machineListByServerId = useMachineListByServerId();
     const allMachines = useMemo(() => {
@@ -402,10 +410,7 @@ export default function MachineDetailScreen() {
 
             setIsRevokingMachine(true);
             try {
-                const result = await machineRevokeWithProviderCleanup(machineId, expectedSettingsScope, settingsVersion, {
-                    revoke: machineRevokeFromAccount,
-                    mutateAccountSettingsOnce: sync.mutateAccountSettingsOnce,
-                });
+                const result = await machineRevokeWithProviderCleanup(machineId, expectedSettingsScope);
                 if (!result.ok) {
                     if ('machineRevoked' in result && result.machineRevoked) {
                         setIsProviderCleanupPending(true);
@@ -426,7 +431,7 @@ export default function MachineDetailScreen() {
                 setIsRevokingMachine(false);
             }
         })(), { tag: 'MachineDetailScreen.revokeMachine' });
-    }, [expectedSettingsScope, isRevokingMachine, machine?.revokedAt, machineId, providerCleanupPending, router, settingsVersion]);
+    }, [expectedSettingsScope, isRevokingMachine, machine?.revokedAt, machineId, providerCleanupPending, router]);
 
     const replacementCandidates = useMemo<MachineReplacementPickerCandidate[]>(() => {
         if (!machineId) return [];
@@ -606,8 +611,10 @@ export default function MachineDetailScreen() {
 
     // inline control below
 
+    const [machineWorkRefreshKey, refreshMachineWork] = React.useReducer((value: number) => value + 1, 0);
     /** Reloads everything this page shows about the machine. Both refresh entry points call it. */
     const reloadMachineDetail = async () => {
+        refreshMachineWork();
         await sync.refreshMachines();
         refreshDetectedCapabilities({ bypassCache: true });
         if (canPrefetchMachineDoctorSnapshot && machineDoctorSnapshotPrefetchTargets.length > 0) {
@@ -757,12 +764,16 @@ export default function MachineDetailScreen() {
     const handleStartSession = useCallback(() => {
         const targetServerId = String(machineServerId ?? '').trim();
         if (!machineId || !targetServerId || !activeAccountScope) return;
-        const draftId = seedNewSessionDraftV1({
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, activeAccountScope)) return;
+        seedAndOpenNewSession({
             seed: { placement: { kind: 'exactTarget', serverId: targetServerId, machineId } },
             scope: activeAccountScope,
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => {
+                router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
+            },
         });
-        if (!draftId) return;
-        router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
     }, [activeAccountScope, machineId, machineServerId, router]);
 
     const pastUsedRelativePath = useCallback((session: Session) => {
@@ -985,6 +996,20 @@ export default function MachineDetailScreen() {
                     />
                 ) : null}
 
+                {/* Work from your projects (30s3/31s3): this Machine's finite work policy, your runs and its fresh copies. */}
+                {machineId && machineServerId ? (
+                    <MachineProjectWorkSection serverId={machineServerId} machineId={machineId} machineName={machineName} />
+                ) : null}
+
+                {machineId && activeAccountScope && areServerProfileIdentifiersEquivalent(activeAccountScope.serverId, machineServerId) ? (
+                    <><MachineSharingSection machineId={machineId} machineName={machineName}
+                        scope={activeAccountScope} online={isOnline} />
+                    <MachineWorkSummaryReader machineId={machineId} machineName={machineName}
+                        scope={activeAccountScope} online={isOnline} refreshKey={machineWorkRefreshKey} /></>
+                ) : null}
+
+                {machineId ? <ManagedEnrolledMachineSections enrolledMachineId={machineId} serverId={machineServerId} /> : null}
+
                 {/* Agents first (lab agent-setup M1): what runs here, its sign-in, and setting up more. */}
                 {machineId ? (
                     <MachineAgentsSection
@@ -996,7 +1021,7 @@ export default function MachineDetailScreen() {
 
                 {/* Machine-specific terminal-host override; tmux details remain available below. */}
                 {!!machineId && (
-                    <ItemGroup title={t('settingsSessionPages.runtime.terminalHostTitle')} description={t('settingsSessionPages.runtime.pageDescription')}>
+                <ItemGroup title={t('settingsSessionPages.runtime.terminalSection')} description={t('settingsSessionPages.runtime.pageDescription')}>
                         <Item
                             title={t('machine.tmux.overrideTitle')}
                             subtitle={tmuxOverrideEnabled ? t('machine.tmux.overrideEnabledSubtitle') : t('machine.tmux.overrideDisabledSubtitle')}
@@ -1163,7 +1188,7 @@ export default function MachineDetailScreen() {
                 {/* Execution runs */}
                 {executionRunsState.status !== 'idle' && (
                     <ItemGroup title={t('runs.title')} description={t('machineDetailPage.runsSectionDescription')}>
-                        <Item
+                        {executionRunsState.runs.some((run) => run.status !== 'running') ? <Item
                             title={t('runs.showFinished')}
                             showChevron={false}
                             rightElement={(
@@ -1173,7 +1198,7 @@ export default function MachineDetailScreen() {
                                     disabled={executionRunsState.status === 'loading'}
                                 />
                             )}
-                        />
+                        /> : null}
                         {executionRunsState.status === 'loading' ? (
                             <Item
                                 title={t('common.loading')}
@@ -1363,6 +1388,7 @@ export default function MachineDetailScreen() {
                 )}
 
                 {/* Daemon */}
+                <MachineProjectTerminalsSection machineId={machine.id} serverId={machineServerId} />
                 <ItemGroup title={t('machine.daemon')} description={t('machineDetailPage.daemonSectionDescription')}>
                         <Item
                             title={t('machine.status')}

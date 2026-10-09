@@ -63,6 +63,14 @@ function matchesPattern(pattern: readonly string[], segments: readonly string[])
 const translate = (key: string) => key;
 
 describe('settingsRouteRegistry', () => {
+    it('resolves saved provisioner and preset destinations inside the Machines collection', () => {
+        expect(resolveSettingsNestedRouteName('machines', '/settings/machines/add/custom.compute%3Avm'))
+            .toBe('add/[provisioner]');
+        expect(resolveSettingsNestedRouteName('machines', '/settings/machines/presets/new'))
+            .toBe('presets/new');
+        expect(resolveSettingsNestedRouteName('machines', '/settings/machines/presets/preset-a'))
+            .toBe('presets/[presetId]');
+    });
     it('projects root screen chrome only to routes owned by the actual settings navigator', () => {
         const rootScreens = new Set(listSettingsRootNavigatorScreens());
         const definitions = getSettingsStackScreenDefinitions(translate as never);
@@ -215,7 +223,8 @@ describe('settingsRouteRegistry', () => {
     it('keeps the Machines collection, its machine detail, setup and pool editors in one nested navigator', () => {
         const machines = getSettingsStackScreenDefinitions(translate as never, { navigator: 'machines' });
         expect(machines.map((definition) => definition.name)).toEqual([
-            'index', '[id]', 'add', 'this-computer', 'pools/[poolId]', 'pools/new',
+            'index', '[id]', 'managed/[id]', 'add', 'add/[provisioner]', 'presets/new', 'presets/[presetId]',
+            'this-computer', 'defaults', 'pools/[poolId]', 'pools/new',
         ]);
         expect(machines.find((definition) => definition.name === 'pools/new')?.options.headerTitle).toBe('machinePools.add');
         expect(machines.find((definition) => definition.name === 'pools/[poolId]')?.options.headerTitle).toBe('machinePools.title');
@@ -226,10 +235,13 @@ describe('settingsRouteRegistry', () => {
         expect(resolveSettingsRouteTitleKey('/settings/machines/pools/new')).toBe('machinePools.add');
         expect(resolveSettingsRouteTitleKey('/settings/machines/this-computer')).toBe('settingsMachines.thisComputerTitle');
         expect(resolveSettingsRouteTitleKey('/settings/machines/machine-1')).toBe('settings.machines');
+        expect(resolveSettingsRouteTitleKey('/settings/machines/managed/pending-1')).toBe('settings.machines');
+        expect(resolveSettingsNestedRouteName('machines', '/settings/machines/managed/pending-1')).toBe('managed/[id]');
         // Everything in the collection goes back to the collection; `pools` is not a page of its own.
         expect(resolveSettingsRouteParentPathname('/settings/machines/pools/pool-1')).toBe('/settings/machines');
         expect(resolveSettingsRouteParentPathname('/settings/machines/pools/new')).toBe('/settings/machines');
         expect(resolveSettingsRouteParentPathname('/settings/machines/machine-1')).toBe('/settings/machines');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/managed/pending-1')).toBe('/settings/machines');
     });
 
     it('titles the Homes page with the label the settings catalog and sidebar use', () => {

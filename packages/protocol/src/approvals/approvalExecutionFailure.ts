@@ -1,4 +1,16 @@
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
+import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '../actions/projectActionFamily.js';
+import {
+  ProjectWorkerNoAcceptanceFailureDetailsV1Schema,
+  readProjectWorkerNoAcceptanceFailureV1,
+} from '../actions/projectWorkerRefusal.js';
+import {
+  SavedSecretResourceActionErrorV1Schema,
+  SharedSavedSecretDeleteInputV1Schema,
+} from '../account/settings/savedSecretResourceActionsV1.js';
+import { HomeAccountDeleteInputV1Schema } from '../home/governance/accounts.js';
+import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
   parseSessionBoardActionPortResultV1,
   parseStoredSessionBoardActionFailureV1,
@@ -14,6 +26,42 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  const projectActionId = input.request.actionId;
+  if (projectActionId === 'projects.script.run' || projectActionId === 'projects.compute.exec') {
+    const inputSchema = PROJECT_ACTION_INPUT_SCHEMAS_V1[projectActionId];
+    const args = (storedRead ? createStoredReadSchema(inputSchema) : inputSchema)
+      .safeParse(input.request.actionArgs);
+    if (!args.success || args.data.workspace.serverId !== input.request.executionOriginV1.serverId) return null;
+    const details = (storedRead
+      ? createStoredReadSchema(ProjectWorkerNoAcceptanceFailureDetailsV1Schema)
+      : ProjectWorkerNoAcceptanceFailureDetailsV1Schema).safeParse(input.failure.details);
+    return details.success
+      ? readProjectWorkerNoAcceptanceFailureV1({ ...input.failure, details: details.data })
+      : null;
+  }
+  const removal = input.request.actionId === 'secrets.shared.delete'
+    ? {
+      input: SharedSavedSecretDeleteInputV1Schema,
+      failure: SavedSecretResourceActionErrorV1Schema,
+      code: 'managed_resources_review_required',
+    }
+    : input.request.actionId === 'home.accounts.delete'
+      ? {
+        input: HomeAccountDeleteInputV1Schema,
+        failure: HomeGovernanceErrorV1Schema,
+        code: 'account_erasure_managed_resources_review_required',
+      }
+      : null;
+  if (removal) {
+    if (input.failure.errorCode !== removal.code) return null;
+    const args = (storedRead ? createStoredReadSchema(removal.input) : removal.input)
+      .safeParse(input.request.actionArgs);
+    const details = (storedRead ? createStoredReadSchema(removal.failure) : removal.failure)
+      .safeParse(input.failure.details);
+    return args.success && details.success && details.data.error === removal.code
+      ? { ...input.failure, details: details.data }
+      : null;
+  }
   const actionId = SessionBoardActionIdV1Schema.safeParse(input.request.actionId);
   if (!actionId.success) return null;
   const parsed = (storedRead ? parseStoredSessionBoardActionFailureV1 : parseSessionBoardActionPortResultV1)(

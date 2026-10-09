@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ServerFetch } from '@/sync/http/client';
 
-export type ManagedMachineHttpActionId = 'machines.managed.list' | 'machines.managed.get' | 'machines.managed.cancel';
+export type ManagedMachineHttpActionId = 'machines.managed.list' | 'machines.managed.get' | 'machines.managed.cancel' | 'machines.managed.setup.skip';
 
 export class ManagedMachineActionError extends Error {
     constructor(public readonly status: number, public readonly code: string) {
@@ -13,7 +13,7 @@ export class ManagedMachineActionError extends Error {
     }
 }
 
-/** Public row reads/cancellation only. Native roles require the signed selected-controller owner. */
+/** Public row reads, cancellation and setup skip. Native effects retain their signed target owner. */
 export function createManagedMachineActionClient(params: Readonly<{ request: ServerFetch }>) {
     return Object.freeze({
         async execute<T extends ManagedMachineHttpActionId>(actionId: T, input: ManagedMachineActionInputV1<T>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedMachineActionOutputV1<T>> {

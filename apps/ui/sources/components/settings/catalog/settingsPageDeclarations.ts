@@ -12,6 +12,7 @@ import { SESSION_COMPOSER_SETTINGS } from '@/components/settings/session/session
 import { SESSION_RESUME_SETTINGS } from '@/components/settings/session/sessionResumeSettings';
 import { TRANSCRIPT_ADVANCED_SETTINGS } from '@/components/settings/session/transcriptAdvancedSettings';
 import { MACHINES_ADD_SETTINGS } from '@/components/settings/machines/machinesAddSettings';
+import { MACHINES_DEFAULTS_SETTINGS } from '@/components/settings/machines/machinesDefaultsSettings';
 import { MACHINES_THIS_COMPUTER_SETTINGS } from '@/components/settings/machines/machinesThisComputerSettings';
 import { REMOTE_HOSTS_ACCESS_SETTINGS, REMOTE_HOSTS_SETTINGS } from '@/components/settings/remoteHosts/remoteHostsSettings';
 import { KEYBOARD_SETTINGS } from '@/components/settings/keyboard/keyboardSettings';
@@ -21,10 +22,12 @@ import { LANGUAGE_SETTINGS } from '@/components/settings/language/languageSettin
 import { DESKTOP_SETTINGS } from '@/components/settings/desktop/desktopSettings';
 import { SUB_AGENT_SETTINGS } from '@/components/settings/subAgent/subAgentSettings';
 import { PROFILES_SETTINGS } from '@/components/settings/profiles/profilesSettings';
+import { PROVIDERS_SETTINGS } from '@/components/settings/providers/providersSettings';
 import { DELEGATION_SETTINGS } from '@/components/settings/delegation/delegationSettings';
 import { MCP_ON_MACHINE_SETTINGS, MCP_PREVIEW_SETTINGS } from '@/components/settings/mcpServers/mcpSettings';
 import { PLUGINS_SETTINGS } from '@/components/settings/plugins/pluginsSettings';
 import { PROMPTS_SETTINGS } from '@/components/settings/prompts/promptsSettings';
+import { PROMPTS_CONTEXT_SETTINGS } from '@/components/settings/prompts/context/promptsContextSettings';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
 import { ACTIONS_CREATE_SESSION_SETTINGS } from '@/components/settings/actions/actionsSettings';
 import { EXTERNAL_SESSIONS_SETTINGS } from '@/components/settings/externalSessions/externalSessionsSettings';
@@ -113,6 +116,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     SESSION_COMPOSER_SETTINGS,
     SESSION_RESUME_SETTINGS,
     MACHINES_ADD_SETTINGS,
+    MACHINES_DEFAULTS_SETTINGS,
     MACHINES_THIS_COMPUTER_SETTINGS,
     REMOTE_HOSTS_SETTINGS,
     REMOTE_HOSTS_ACCESS_SETTINGS,
@@ -123,6 +127,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     DESKTOP_SETTINGS,
     SUB_AGENT_SETTINGS,
     PROFILES_SETTINGS,
+    PROVIDERS_SETTINGS,
     DELEGATION_SETTINGS,
     MCP_ON_MACHINE_SETTINGS,
     MCP_PREVIEW_SETTINGS,
@@ -131,6 +136,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     ACTIONS_CREATE_SESSION_SETTINGS,
     EXTERNAL_SESSIONS_SETTINGS,
     PROMPTS_SETTINGS,
+    PROMPTS_CONTEXT_SETTINGS,
     TRANSCRIPT_SETTINGS,
     TRANSCRIPT_ADVANCED_SETTINGS,
     PERMISSIONS_SETTINGS,

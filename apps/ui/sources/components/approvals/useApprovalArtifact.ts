@@ -6,6 +6,7 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import {
+    areServerProfileIdentifiersEquivalent,
     listServerProfiles,
     resolveServerProfileForPortableIdentity,
 } from '@/sync/domains/server/serverProfiles';
@@ -13,6 +14,7 @@ import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountCon
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { sync } from '@/sync/sync';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 function hasCompatibleApprovalArtifact(
     artifact: DecryptedArtifact | null,
@@ -178,6 +180,16 @@ export function useApprovalArtifact(input: Readonly<{ artifactId: string | null;
         if (focused && artifactId && (serverId || (local?.body == null && local?.isDecrypted !== false))) void refresh();
         return () => { pending.current?.abort(); };
     }, [artifactId, focused, headerOnlyLocalUpdatedAt, refresh, serverId]);
+    React.useEffect(() => {
+        if (!focused || !artifactId || !serverId || resolution.kind !== 'bound') return;
+        // A concurrently observed Home intentionally cannot publish its Artifact
+        // into the focused Home's store. Its existing content-free wake instead
+        // invalidates this mounted exact-Home reader through the same fetch owner.
+        return subscribeHomeAccountChange(event => {
+            if (!areServerProfileIdentifiersEquivalent(event.serverId, serverId)) return;
+            void refresh();
+        });
+    }, [artifactId, focused, refresh, resolution, serverId]);
     return {
         artifact,
         isLoading: !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),

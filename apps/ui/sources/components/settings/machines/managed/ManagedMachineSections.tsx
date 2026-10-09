@@ -143,19 +143,23 @@ export function ManagedMachineSections(props: SectionProps) {
     const canMutate = props.current && props.binding?.isCurrent() === true && canManage && pending === null && !moveLoading && !approval.approvalPending;
     const bound = machine.allocation === 'bound' && Boolean(machine.resource);
     const operation = useManagedMachineActionOperation({ serverId: props.serverId, accountId: props.binding?.accountId ?? null,
-        machineId: machine.controller.machineId, managedId: machine.id });
+        homeId: machine.homeId, machineId: machine.controller.machineId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
     const [operationReadRevision, refreshOperation] = React.useReducer(value => value + 1, 0);
     const currentControllerAvailable = requiredController !== null;
     React.useEffect(() => {
         const binding = props.binding;
-        if (!props.current || !binding?.isCurrent() || !currentControllerAvailable) return;
+        if (!props.current || !binding?.isCurrent()) return;
         let current = true;
         const retirement = binding.onRetire(() => { current = false; });
         const shouldContinue = () => current && binding.isCurrent();
-        const scope = { serverId: props.serverId, accountId: binding.accountId, machineId: machine.controller.machineId };
-        void reconcileActionOperationsOnce({ scope, shouldContinue, requireCurrentDomainFacts: true }).catch(() => {
-            if (shouldContinue()) publishActionOperationObservation({ ...scope, observation: 'unavailable' });
-        });
+        const machineIds = [...new Set([...(currentControllerAvailable ? [machine.controller.machineId] : []),
+            ...(machine.enrolledMachineId ? [machine.enrolledMachineId] : [])])];
+        for (const machineId of machineIds) {
+            const scope = { serverId: props.serverId, accountId: binding.accountId, machineId };
+            void reconcileActionOperationsOnce({ scope, shouldContinue, requireCurrentDomainFacts: true }).catch(() => {
+                if (shouldContinue()) publishActionOperationObservation({ ...scope, observation: 'unavailable' });
+            });
+        }
         return () => { current = false; retirement.dispose(); };
     }, [props.binding, props.current, props.serverId, currentControllerAvailable, machine.id,
         machine.controller.machineId, machine.controller.installationId, machine.enrolledMachineId, operationReadRevision]);
@@ -310,7 +314,7 @@ export function ManagedMachineSections(props: SectionProps) {
             }
         }
     };
-    const receipt = buildManagedConfigurationReceipt({ launch: machine.launch,
+    const receipt = buildManagedConfigurationReceipt({ launch: machine.launch, environment: machine.environmentSetup?.environment,
         reviewedFacts: machine.reviewedFacts, providerTitle: t('common.unknown'), mark,
         homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset,
         caption: t('managedMachines.detail.recipeDescription'), controllerName: getMachineDisplayName(controllerMachines?.find(candidate =>

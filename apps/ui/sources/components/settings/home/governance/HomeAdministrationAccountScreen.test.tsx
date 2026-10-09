@@ -28,6 +28,12 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -42,17 +48,22 @@ const modalState = vi.hoisted(() => ({
 }));
 const routerBack = vi.hoisted(() => vi.fn());
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
+const sockets = vi.hoisted(() => new Map<string, import('socket.io-client').Socket>());
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary((socket, url) => { if (url) sockets.set(new URL(url).origin, socket); });
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
     announceAccessibilityMessage,
 }));
 
 installSettingsViewCommonModuleMocks({
-    router: async () => ({
-        useRouter: () => ({ push: vi.fn(), back: routerBack }),
-        useNavigation: () => ({ setOptions: vi.fn() }),
-        useLocalSearchParams: () => ({}),
-    }),
+    storage: async importOriginal => await importOriginal(),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: vi.fn(), back: routerBack }, navigation: { setOptions: vi.fn() } }).module;
+    },
     // The modal is a platform presentation boundary; the confirmation decision
     // it returns is what this surface is being tested against.
     modal: async () => ({
@@ -101,13 +112,16 @@ function disabledAccountRow() {
     });
 }
 
-async function renderAccount(serverId: string, accountId = 'ada') {
+async function renderAccount(serverId: string, accountId = 'ada', observeHomes = false) {
     const { HomeAdministrationAccountScreen } = await import('./HomeAdministrationAccountScreen');
     const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
-    const screen = await renderScreen(
-        <HomeAdministrationAccountScreen serverId={serverId} accountId={accountId} />,
-    );
+    let content = <HomeAdministrationAccountScreen serverId={serverId} accountId={accountId} />;
+    if (observeHomes) {
+        const { ConcurrentSessionCacheRuntime } = await import('@/auth/context/AuthContext');
+        content = <ConcurrentSessionCacheRuntime>{content}</ConcurrentSessionCacheRuntime>;
+    }
+    const screen = await renderScreen(content);
     await waitForHomeGovernance(() => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-account-machines');
     });
@@ -126,11 +140,13 @@ async function renderAccountLookup(serverId: string, accountId = 'ada') {
 async function addAdministeredHome(options?: Readonly<{
     projection?: Parameters<typeof homeGovernanceProjectionFixture>[0];
     detail?: ReturnType<typeof homeAccountDetailFixture>;
+    currentAccount?: boolean;
 }>): Promise<string> {
     const home = await harness.addHome({
         name: 'Home A',
         serverUrl: 'https://home-a.example',
         accountId: 'account-admin',
+        currentAccount: options?.currentAccount,
     });
     harness.answer(home, GOVERNANCE_PATH, {
         body: homeGovernanceProjectionFixture(options?.projection),
@@ -140,6 +156,9 @@ async function addAdministeredHome(options?: Readonly<{
 }
 
 beforeEach(async () => {
+    // A real connection fixture disposes its temporary credential spy. Reclaim
+    // this suite's genuine device-storage/network boundaries for the next case.
+    installHomeGovernanceBoundaries(harness);
     const { resetHomeGovernanceSnapshotsForTests } = await import(
         '@/sync/store/home/governance/homeGovernanceSnapshots'
     );
@@ -155,10 +174,12 @@ beforeEach(async () => {
     modalState.alerts = [];
     routerBack.mockReset();
     announceAccessibilityMessage.mockReset();
+    sockets.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await connection?.dispose(); connection = null;
 });
 
 function lastOwnerCapabilities() {
@@ -391,6 +412,34 @@ describe('HomeAdministrationAccountScreen', () => {
         });
     });
 
+    it.each([
+        { status: 404, error: 'home_account_not_found', state: 'home-account-unavailable' },
+        { status: 403, error: 'home_governance_forbidden', state: 'home-account-forbidden' },
+    ])('withdraws a populated detail after an authoritative $status refresh', async ({ status, error, state }) => {
+        const home = await addAdministeredHome();
+        const screen = await renderAccount(home);
+        harness.answer(home, GET_PATH, { status, body: { error } });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(home));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(state)).not.toBeNull());
+        expect(screen.findByTestId('home-account-machines')).toBeNull();
+        expect(screen.findByTestId('home-account-disable')).toBeNull();
+    });
+
+    it('keeps last-known person detail with a visible refresh error and Retry after a transient failure', async () => {
+        const home = await addAdministeredHome();
+        const screen = await renderAccount(home);
+        harness.answer(home, GET_PATH, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(home));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-account-refresh-error')).not.toBeNull());
+        expect(screen.findByTestId('home-account-machines')).not.toBeNull();
+        harness.answer(home, GET_PATH, { body: homeAccountDetailFixture('ada', { machines: { count: 7 } }) });
+        await screen.pressByTestIdAsync('home-account-refresh-error-action');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-account-refresh-error')).toBeNull());
+        expect(screen.findHostByTestId('home-account-machines')?.findAll((node) => node.children.includes('7')).length).toBeGreaterThan(0);
+    });
+
     it('disables an account through the exact Home after an explicit confirmation', async () => {
         const home = await addAdministeredHome();
         harness.answer(home, DISABLE_PATH, { body: disabledAccountRow() });
@@ -506,6 +555,127 @@ describe('HomeAdministrationAccountScreen', () => {
         await screen.pressByTestIdAsync('home-account-delete');
 
         await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
+    });
+
+    it('requires renewed resource consent and deletes only the same person on the originally captured Home', async () => {
+        const home = await addAdministeredHome();
+        const resources = [createManagedResourceDependencyFixture(7), createManagedResourceDependencyFixture(8)];
+        let attempts = 0;
+        harness.answer(home, DELETE_PATH, { select: () => attempts++ < 2
+            ? { status: 409, body: { error: 'account_erasure_managed_resources_review_required', resources: [resources[attempts - 1]] } }
+            : { body: { status: 'deleted' } } });
+        const screen = await renderAccount(home);
+        // Focusing a different saved Home while reviewing cannot retarget an administrator's captured person.
+        modalState.confirmWith = async () => {
+            if (modalState.confirms.length === 2) await harness.addHome({ name: 'Other', serverUrl: 'https://other-delete.example', accountId: 'other' });
+            return true;
+        };
+        await screen.pressByTestIdAsync('home-account-delete');
+        await waitForHomeGovernance(() => expect(harness.requestsFor(DELETE_PATH).length).toBeGreaterThan(0));
+        await flushHookEffects();
+        expect(modalState.confirms).toHaveLength(3);
+        await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
+        expect(modalState.confirms[1]?.body).toContain('native-1');
+        expect(harness.requestsFor(DELETE_PATH).map(request => ({ serverId: request.serverId, input: request.input }))).toEqual([
+            { serverId: home, input: { accountId: 'ada' } },
+            ...resources.map(resource => ({ serverId: home, input: { accountId: 'ada', managedResourceDispositions: [{
+                managedId: resource.managedId, expectedIntentRevision: resource.intentRevision, expectedAllocation: resource.allocation,
+                expectedResource: resource.resource, expectedNativeOperationRef: resource.nativeOperationRef,
+                expectedRecovery: resource.recovery, responsibility: 'manual',
+            }] } })),
+        ]);
+    });
+
+    it.each(['cancel', 'credential-retired'] as const)('keeps the person and does not retry resource deletion after %s during review', async interruption => {
+        const home = await addAdministeredHome();
+        harness.answer(home, DELETE_PATH, { status: 409, body: { error: 'account_erasure_managed_resources_review_required',
+            resources: [createManagedResourceDependencyFixture()] } });
+        const screen = await renderAccount(home);
+        modalState.confirmWith = async () => {
+            if (modalState.confirms.length === 1) return true;
+            if (interruption === 'cancel') return false;
+            await harness.switchAccount(home, 'different-admin');
+            return true;
+        };
+        await screen.pressByTestIdAsync('home-account-delete');
+        await waitForHomeGovernance(() => expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1));
+        await flushHookEffects();
+        expect(modalState.confirms).toHaveLength(2);
+        expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1);
+        expect(routerBack).not.toHaveBeenCalled();
+        expect(announceAccessibilityMessage).not.toHaveBeenCalled();
+    });
+
+    it('consumes the real Ask-first refusal into resource review and requires normal approval for the reviewed retry', async () => {
+        const home = await addAdministeredHome({ currentAccount: true });
+        const resource = createManagedResourceDependencyFixture();
+        let attempts = 0;
+        harness.answer(home, DELETE_PATH, { select: () => attempts++ === 0
+            ? { status: 409, body: { error: 'account_erasure_managed_resources_review_required', resources: [resource] } }
+            : { body: { status: 'deleted' } } });
+        await harness.requireUiApproval(home, 'home.accounts.delete');
+        const focused = await harness.addHome({ name: 'Focused Home', serverUrl: 'https://focused-delete.example', accountId: 'focused-account', currentAccount: true });
+        for (const serverId of [home, focused]) harness.answer(serverId, '/v1/auth/ping', { body: {} });
+        await harness.selectHomes([home, focused]);
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://focused-delete.example', accountId: 'focused-account',
+            credentials: { token: createAccountTokenForTests('focused-account', { currentAccount: true }) },
+            request: harness.request,
+        });
+        // The restore helper binds a single Home; the real concurrent observation
+        // runtime needs the same HTTP boundary to answer both selected Homes.
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(harness.request);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl => {
+            const record = harness.findByServerUrl(serverUrl);
+            return record?.token ? { token: record.token } : null;
+        });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        storage.getState().activateProfileScope({ serverId: resolveServerProfileScopeIdForIdentifier(focused), accountId: 'focused-account' });
+        const screen = await renderAccount(home, 'ada', true);
+        await waitForHomeGovernance(() => expect(sockets.get('https://home-a.example')?.listeners('update').length).toBeGreaterThan(0));
+        const { subscribeHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const deliverAccountChange = async () => {
+            const socket = sockets.get('https://home-a.example');
+            if (!socket) throw new Error('Expected administered Home observation transport');
+            const observedHomes: string[] = [];
+            const unsubscribe = subscribeHomeAccountChange(event => observedHomes.push(event.serverId));
+            try {
+                await act(async () => { for (const receive of socket.listeners('update')) receive({ body: { t: 'account-change' } }); });
+                expect(observedHomes).toContain(home);
+                expect(observedHomes).not.toContain(focused);
+            } finally { unsubscribe(); }
+        };
+        await screen.pressByTestIdAsync('home-account-delete');
+        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(1));
+        expect(harness.requestsFor(DELETE_PATH)).toEqual([]);
+        const firstApprovalId = harness.artifacts(home).list()[0]!.id;
+        await decideApprovalAsInbox(home, firstApprovalId, 'approve');
+        expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1);
+        const failedArtifactBody = harness.artifacts(home).readPlainBody(firstApprovalId);
+        expect(failedArtifactBody).not.toBeNull();
+        const failedRequest = ApprovalRequestV2Schema.parse(JSON.parse(failedArtifactBody!));
+        expect(failedRequest.status).toBe('failed');
+        expect(readApprovalExecutionFailure(failedRequest)).toMatchObject({
+            errorCode: 'account_erasure_managed_resources_review_required',
+            details: { error: 'account_erasure_managed_resources_review_required', resources: [resource] },
+        });
+        await deliverAccountChange();
+        await flushHookEffects();
+        expect(modalState.confirms).toHaveLength(2);
+        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(2));
+        expect(routerBack).not.toHaveBeenCalled();
+        expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1);
+        await decideApprovalAsInbox(home, harness.artifacts(home).list()[1]!.id, 'approve');
+        await deliverAccountChange();
+        await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
+        expect(harness.requestsFor(DELETE_PATH).map(request => request.input)).toEqual([
+            { accountId: 'ada' }, { accountId: 'ada', managedResourceDispositions: [{ managedId: resource.managedId,
+                expectedIntentRevision: resource.intentRevision, expectedAllocation: resource.allocation,
+                expectedResource: resource.resource, expectedNativeOperationRef: resource.nativeOperationRef,
+                expectedRecovery: resource.recovery, responsibility: 'manual' }] },
+        ]);
     });
 
     it('never claims nothing changed when a dispatched mutation lost its answer', async () => {

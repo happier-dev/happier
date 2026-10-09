@@ -103,6 +103,38 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-b', secret: 'secret-b' });
     });
 
+    it('refuses an old credential removal after a new writer owns the same Home, and preserves idempotent absence', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://guarded-removal.example.test';
+        const original = { token: 'original', secret: 'original-secret' };
+        const replacement = { token: 'replacement', secret: 'replacement-secret' };
+        await expect(TokenStorage.setCredentialsForServerUrl(endpoint, {}, original)).resolves.toBe(true);
+        await expect(TokenStorage.setCredentialsForServerUrl(endpoint, { expectedCredentials: original }, replacement)).resolves.toBe(true);
+        await expect(TokenStorage.removeCredentialsForServerUrl(endpoint, { expectedCredentials: original })).resolves.toBe(false);
+        await expect(TokenStorage.getCredentialsForServerUrl(endpoint)).resolves.toEqual(replacement);
+        await expect(TokenStorage.removeCredentialsForServerUrl(endpoint, { expectedCredentials: replacement })).resolves.toBe(true);
+        await expect(TokenStorage.getCredentialsForServerUrl(endpoint)).resolves.toBeNull();
+        await expect(TokenStorage.removeCredentialsForServerUrl(endpoint, { expectedCredentials: replacement })).resolves.toBe(true);
+    });
+
+    it('retains unreadable credential custody when a guarded removal cannot verify its expected bearer', async () => {
+        const browserStorage = installLocalStorageMock();
+        restoreLocalStorage = browserStorage.restore;
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://unreadable-removal.example.test';
+        const replacement = { token: 'replacement-bearer', secret: 'replacement-secret' };
+        await expect(TokenStorage.setCredentialsForServerUrl(endpoint, {}, replacement)).resolves.toBe(true);
+        const entry = [...browserStorage.store.entries()].find(([key, raw]) => key.includes('auth_credentials') && raw === JSON.stringify(replacement));
+        if (!entry) throw new Error('Expected persisted credential custody');
+        browserStorage.getItemMock.mockImplementation(key => { if (key === entry[0]) throw new Error('Browser storage read refused'); return browserStorage.store.get(key) ?? null; });
+        const removal = await TokenStorage.removeCredentialsForServerUrl(endpoint, { expectedCredentials: { token: 'older-bearer', secret: 'older-secret' } }).catch(() => false);
+        expect(removal).toBe(false);
+        expect(browserStorage.store.get(entry[0])).toBe(entry[1]);
+        browserStorage.getItemMock.mockImplementation(key => browserStorage.store.get(key) ?? null);
+        await expect(TokenStorage.getCredentialsForServerUrl(endpoint)).resolves.toEqual(replacement);
+    });
+
     it('treats localhost and 127.0.0.1 as the same server scope for credentials', async () => {
         restoreLocalStorage = installLocalStorageMock().restore;
 

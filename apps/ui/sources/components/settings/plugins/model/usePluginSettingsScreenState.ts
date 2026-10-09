@@ -25,6 +25,9 @@ import {
 } from '@/sync/ops/machinePluginInstallDecision';
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
+import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import {
     machineMarketplaceIndexQuery,
 } from '@/sync/ops/machineMarketplaceSources';
@@ -62,6 +65,8 @@ import {
     readInstalledPlugins,
     isPluginMutationVisibleAfterRefresh,
     readPluginChangeKind,
+    readPluginManagedResourceRemovalReview,
+    isPluginDisableNoopResult,
     readPluginCreateResult,
     readPluginEditTargetResult,
     readPendingPluginChangeDecision,
@@ -75,6 +80,7 @@ import {
     readPluginInstallationReviewChange,
     readPluginRegistryProfileRequirement,
     resolvePluginReadOnlySnapshotNotice,
+    resolvePluginTruthReadState,
     type DevelopmentPluginEntry,
     projectInstalledPluginLifecycleCapabilities,
     type InstalledPluginEntry,
@@ -115,7 +121,7 @@ export type InstalledPluginActionId =
     | 'forgetTrust';
 
 type ConfirmedPluginChangeAction = 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
-type CommitIntendedPluginChangeAction = 'install' | ConfirmedPluginChangeAction;
+type CommitIntendedPluginChangeAction = 'install' | 'disable' | ConfirmedPluginChangeAction;
 type PluginActionCountsByAuthority = Readonly<Record<string, Readonly<Record<string, number>>>>;
 type DiscoverQueryIntent = Readonly<{
     cursor: string | null;
@@ -157,6 +163,7 @@ function resolvePluginChangeActionLabel(action: CommitIntendedPluginChangeAction
     if (action === 'update') return t('common.update');
     if (action === 'rollback') return t('settingsPlugins.rollback');
     if (action === 'uninstall') return t('settingsPlugins.uninstall');
+    if (action === 'disable') return t('common.disable');
     return t('settingsPlugins.forgetTrust');
 }
 
@@ -181,8 +188,8 @@ export type PluginSettingsScreenState = Readonly<{
     discoverError: string | null;
     /** Draft search text for the aggregate Discover query. */
     discoverSearchText: string;
-    /** The search text the shown Discover results answer (not the draft typed since). */
-    discoverResultsSearchText: string;
+    /** The query the shown results answer; null until a query returns, not an empty result. */
+    discoverResultsSearchText: string | null;
     /** Empties the search and shows every listing again (the "no match" Clear). */
     clearDiscoverSearch: () => void;
     canRefreshDiscover: boolean;
@@ -518,16 +525,13 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const pluginProjectionV2 = daemonOperationsAvailable
         ? daemonMergedProjection.inputs?.pluginProjectionV2 ?? null
         : null;
-    const pluginTruthSettled = executionTarget === null || (
-        machineCapabilities.state.status === 'loaded'
-        && daemonAdministrationAvailable
-        && daemonMergedProjection.phase === 'ready'
-    );
-    // The selection reads online but its live connection is not resolvable yet: checking, not away.
-    const targetResolving = administrationTargetSelection.state.kind === 'online' && executionTarget === null;
-    const installedPluginsRead = (executionTarget === null && !targetResolving) || (
-        machineCapabilities.state.status === 'loaded' && daemonAdministrationAvailable
-    );
+    const { pluginTruthSettled, targetResolving, installedPluginsRead } = resolvePluginTruthReadState({
+        targetOnline: administrationTargetSelection.state.kind === 'online',
+        hasExecutionTarget: executionTarget !== null,
+        capabilitiesLoaded: machineCapabilities.state.status === 'loaded',
+        daemonAdministrationAvailable,
+        projectionPhase: daemonMergedProjection.phase,
+    });
     const registryDiagnostics = projectionInputs?.registryDiagnostics ?? [];
     const currentDiagnostics = React.useMemo(() => [
         ...registryDiagnostics,
@@ -589,7 +593,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         actionLabel: string;
         name: string;
         probe: Readonly<{
-            method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
+            method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust' | 'disable';
             pluginId: string;
             before: InstalledPluginEntry | null;
             targetVersion: string | null;
@@ -959,6 +963,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
 
     const runCatalogAction = React.useCallback((params: PluginMarketplaceActionRequest) => {
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
+        const accountCurrentness = captureActiveServerAccountScopeCurrentness();
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
@@ -1009,13 +1014,15 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             markPluginActionStarted(mutationAuthorityKey, params.pluginId);
             try {
                 const isAuthorityCurrent = () => (
-                    mutationAuthorityKeyRef.current === mutationAuthorityKey
+                    accountCurrentness.isCurrent()
+                    && mutationAuthorityKeyRef.current === mutationAuthorityKey
                     && resolveCurrentExecutionTarget(initialTarget) !== null
                 );
                 const commitAction: CommitIntendedPluginChangeAction | null = params.method === 'install'
                     || params.method === 'update'
                     || params.method === 'rollback'
                     || params.method === 'uninstall'
+                    || params.method === 'disable'
                     || params.method === 'forgetTrust'
                     ? params.method
                     : null;
@@ -1056,7 +1063,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                         },
                     });
                 };
-                const requestChange = () => invokeWithAlerts({
+                const requestChange = (managedResourceDispositions?: readonly ManagedResourceDispositionV1[]) => invokeWithAlerts({
                     machineId: initialTarget.machine.id,
                     serverId: initialTarget.serverId,
                     request: {
@@ -1066,6 +1073,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             pluginId: params.pluginId,
                             ...(params.sourceId ? { sourceId: params.sourceId } : {}),
                             ...(params.policy ? { policy: params.policy } : {}),
+                            ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
                             // The npm package name of the exact listing this
                             // action was raised from. It comes from the entry
                             // this hook already resolved and validated, never
@@ -1086,6 +1094,16 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 });
                 let response = await requestChange();
                 if (!isAuthorityCurrent()) return;
+                while ((params.method === 'disable' || params.method === 'uninstall')
+                    && 'response' in response && response.response.ok) {
+                    const resources = readPluginManagedResourceRemovalReview(response.response.result, params.method, params.pluginId);
+                    if (!resources) break;
+                    const dispositions = await reviewManagedResourceRemoval(resources);
+                    if (!dispositions || !isAuthorityCurrent()) return;
+                    // A renewed daemon census is a new consent question, never a replay of older acknowledgments.
+                    response = await requestChange(dispositions);
+                    if (!isAuthorityCurrent()) return;
+                }
                 // A registry selection the daemon names is answered by the
                 // present user through the existing profile administration,
                 // then the same change is requested again: the daemon either
@@ -1183,11 +1201,17 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
 
                 if (commitAction) {
                     const changeKind = readPluginChangeKind(response.response.result, params.method, params.pluginId);
-                    if (changeKind !== 'committed') {
+                    const disabledNoop = params.method === 'disable'
+                        && isPluginDisableNoopResult(response.response.result, params.pluginId);
+                    if (changeKind !== 'committed' && !disabledNoop) {
                         if (changeKind === 'outcomeUnknown') {
                             await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
                         } else {
                             showMutationFailure(changeKind ?? 'invalid-response');
+                            if (changeKind === 'dataRemovalPartial') {
+                                machineCapabilities.refresh({ bypassCache: true });
+                                refreshPluginTruth();
+                            }
                         }
                         return;
                     }
@@ -1956,7 +1980,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         loadingMoreDiscover,
         discoverError,
         discoverSearchText,
-        discoverResultsSearchText: acquiredDiscoverQuery?.text ?? '',
+        discoverResultsSearchText: acquiredDiscoverQuery?.text ?? null,
         clearDiscoverSearch,
         canRefreshDiscover,
         canRunDiscoverActions,

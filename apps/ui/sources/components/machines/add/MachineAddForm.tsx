@@ -17,8 +17,9 @@ import { Text } from '@/components/ui/text/Text';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
-import type { MachineAddPathId } from './machineAddPaths';
+import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
 import {
     MachineAddFailureNotice,
     MachineAddPaneHeader,
@@ -33,6 +34,10 @@ import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisCompute
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
+import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 export type MachineAddFormLayout = 'page' | 'panel';
@@ -82,7 +87,12 @@ export function MachineAddForm(props: Readonly<{
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>) {
     const { theme } = useUnistyles();
+    const phone = useViewportClass() === 'compact';
     const flow = useMachineAddFlow({ initialPath: props.initialPath });
+    const [mode, setMode] = React.useState<'connect' | 'create'>('connect');
+    const accountScope = useServerCredentialAccountScopeBinding(props.layout === 'page' ? flow.serverId : undefined);
+    const accountSettings = useManagedMachineAccountSettings(accountScope.binding ?? undefined);
+    const canCreate = accountSettings.settings?.managedMachineCreationEnabled === true;
     const arrivedMachineId = flow.arrived?.machineId ?? null;
     const { onArrived } = props;
     const reportedArrivalRef = React.useRef<string | null>(null);
@@ -96,11 +106,20 @@ export function MachineAddForm(props: Readonly<{
         glyph: <Icon name={PATH_ICON[path.id]} size={17} color={theme.colors.text.secondary} />,
         ...describePath(path),
     })), [flow.paths, theme.colors.text.secondary]);
-    const active = flow.path ?? paths[0]?.id ?? null;
+    const active = flow.path ?? resolveMachineAddInitialPath(flow.paths, props.initialPath);
+
+    const modeTabs = props.layout === 'page' && canCreate ? <SegmentedTabBar tabs={[
+        { id: 'connect' as const, label: t('managedMachines.add.connect') },
+        { id: 'create' as const, label: t('managedMachines.add.create') },
+    ]} activeTabId={mode} onSelectTab={setMode} testIDPrefix={`${props.testID}.mode`} /> : null;
+    if (props.layout === 'page' && canCreate && mode === 'create') return <View testID={props.testID} style={styles.page}>
+        {modeTabs}<MachineProvisionerPicker serverId={flow.serverId} />
+    </View>;
 
     if (paths.length === 0 || active === null) {
         return (
             <View testID={`${props.testID}.fromComputer`} style={styles.fallback}>
+                {modeTabs}
                 <Text style={styles.fallbackTitle}>{t('settingsMachines.addFromComputerTitle')}</Text>
                 <Text style={styles.fallbackBody}>{t('settingsMachines.addFromComputerDescription')}</Text>
             </View>
@@ -134,11 +153,13 @@ export function MachineAddForm(props: Readonly<{
 
     return (
         <View testID={props.testID} style={styles.page}>
+            {modeTabs}
             <SelectionTiles<MachineAddPathId>
                 testIdPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('settings.addMachine')}
                 density="compact"
-                minimumColumns={Math.min(3, paths.length)}
+                minimumColumns={phone ? 1 : Math.min(3, paths.length)}
+                maximumColumns={phone ? 1 : undefined}
                 options={paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, icon: PATH_ICON[path.id] }))}
                 value={active}
                 onChange={(next) => { if (next) flow.choosePath(next); }}

@@ -20,6 +20,7 @@ import {
     readPluginChangeKind,
     resolvePluginDaemonOperationsAvailability,
     resolvePluginReadOnlySnapshotNotice,
+    resolvePluginTruthReadState,
     installedPluginVersionLabel,
     partitionInstalledPlugins,
     type DevelopmentPluginEntry,
@@ -106,6 +107,35 @@ const installed: InstalledPluginEntry = {
     },
     diagnostics: [],
 };
+
+describe('selected plugin truth read lifecycle', () => {
+    it('keeps an online target unresolved until its fresh execution target exists', () => {
+        expect(resolvePluginTruthReadState({
+            targetOnline: true,
+            hasExecutionTarget: false,
+            capabilitiesLoaded: false,
+            daemonAdministrationAvailable: false,
+            projectionPhase: 'idle',
+        })).toEqual({ targetResolving: true, installedPluginsRead: false, pluginTruthSettled: false });
+    });
+
+    it('settles no-target truth but keeps a failed enrichment independent of installed inventory', () => {
+        expect(resolvePluginTruthReadState({
+            targetOnline: false,
+            hasExecutionTarget: false,
+            capabilitiesLoaded: false,
+            daemonAdministrationAvailable: false,
+            projectionPhase: 'idle',
+        })).toEqual({ targetResolving: false, installedPluginsRead: true, pluginTruthSettled: true });
+        expect(resolvePluginTruthReadState({
+            targetOnline: true,
+            hasExecutionTarget: true,
+            capabilitiesLoaded: true,
+            daemonAdministrationAvailable: true,
+            projectionPhase: 'error',
+        })).toEqual({ targetResolving: false, installedPluginsRead: true, pluginTruthSettled: false });
+    });
+});
 
 describe('installed plugin lifecycle capabilities', () => {
     it('does not advertise user-managed lifecycle mutations for host-bundled plugins', () => {

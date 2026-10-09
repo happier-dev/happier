@@ -1,11 +1,18 @@
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { StoredContentPublicSharesListResponseV1Schema } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
 import { createWidgetInputActionDepsV1 } from './widgetInputActionDeps';
+import { createUiProjectWorkerActionV1 } from './projectWorkerAction';
+import { createUiProjectContextAction } from './projectContextAction';
+import { readUiMemoryInheritedContext, readUiMemoryScopeContext } from './readUiMemoryInheritedContext';
 import { createWidgetRefreshActionDepsV1 } from './widgetRefreshActionDeps';
 import { createWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionDeps';
 import { executeComposerIngressAction } from './composerIngressActionRuntime';
 import { createWidgetCompanionActionDepsV1 } from './widgetCompanionActionDeps';
 import { readWidgetEntityMovementAdmission } from './widgetEntityMovement';
-import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetInstanceRefV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetActionSurfacePortV1, flattenWidgetLayoutWidgetsV1, type WidgetInstanceRefV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
@@ -19,16 +26,37 @@ import { StoredApprovalRequestSchema, requiresExactDaemonApprovalReplay, type Ap
 import { normalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, type CurrentSessionPresentationActionResultV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createUiProviderActionExecuteV1 } from './providerActionDeps';
+import { isSessionStateFieldActionId } from '@happier-dev/protocol/actions';
+import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
+import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
+import { PROJECT_SOURCE_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/projectSources';
+import { PROJECT_ACTION_INPUT_SCHEMAS_V1, isProjectActionIdV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { MachineWorkSummaryGetInputV1Schema } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
+import { ProjectContextUpdateInputV1Schema } from '@happier-dev/protocol/projects/projectContextV1';
+import { decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
+import { createTerminalUtf8ProjectionDecoder, TERMINAL_OUTPUT_GAP_MARKER } from '@/sync/domains/terminal/stream/runtime';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary, readPromptDocInLibrary, updatePromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
-import { listPromptInvocationsInLibrary, resolvePromptInvocationInLibrary } from '@happier-dev/protocol/prompts/library/promptInvocationActionOperations';
+import { MEMORY_DOCUMENT_ACTION_IDS_V1, MemoryActionInputSchemasV1 } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
+import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext, writePromptLibraryRecordAndPublishInContext,
+  requireUpdatedPromptLibraryMutation, PromptLibraryRowOperationError } from '@/sync/api/account/apiPromptLibraryCatalog';
+import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createLaunchProfilePublisherV1 } from '@happier-dev/protocol/launchProfiles/publishLaunchProfile';
+import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { readProfileCatalogProjectionInContext, writeProfileRecordInContext } from '@/sync/api/account/apiProfileCatalog';
+import { AcpCatalogOperationError, readAcpCatalogInContext, updateAcpCatalogInContext } from '@/sync/api/account/apiAcpCatalog';
 import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { createArtifactAccessActionsV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
-import { createAccountRoleActionExecutorV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { createAccountRoleActionExecutorV1, createRoleArtifactStoreV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { isRoleActionIdV1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
-import { PluginRoleDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/roles';
+import { readUiPluginRoleSources } from '@/sync/ops/roles/roleSources';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -36,18 +64,18 @@ import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
 import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import type { SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions/follow/actions';
-import { loadDaemonMergedProjectionInputs, loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { machineContributionRegistryProjectionDescribe } from '@/sync/ops/machineContributionRegistryProjection';
 import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';
 import { randomUUID } from '@/platform/randomUUID';
 import { executeCurrentUiContextAction, executeCurrentUiContextContributedAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
@@ -74,17 +102,25 @@ import {
   runModelIntentAtAuthoritativeDisposition,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
+import { confirmRequesterAccountCredentialDisclosure, prepareRequesterSessionForSpawn, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { createUiArtifactAction } from './artifactActionDeps';
+import { createUiProfileActionExecuteV1 } from './profileActionDeps';
+import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
+import { createUiRemoteHostActionExecuteV1 } from '@/sync/ops/remoteHosts/remoteHostOperations';
 import { createWidgetCatalogActionDepsV1 } from './widgetCatalogActionDeps';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureMountedWorkspaceAction, invokeWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { invokeSessionCanvasAction } from '@/components/sessions/canvas/sessionSplitCanvasRuntime';
 import { invokeWorkflowConversationBinding } from './workflowAuthoringAction';
+import { openSessionAuthoringDraft } from './sessionAuthoringOpenAction';
 import { invokeSessionListOrganizationAction } from '@/components/sessions/shell/drag/sessionListOrganizationAction';
-import { createSessionOrganizationMutationScopeForAccount } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
+import { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationPin } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sessionTerminalActions';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -93,6 +129,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { createSettingsDeclarationAction, resolveSettingsDeclarationOperationApprovalRequired } from './settingsDeclarationAction';
+import { createSettingsOwnerActionExecutor } from './settingsOwnerActionExecutor';
 import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/automations/apiAutomations';
 import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { createAppShellAction } from './appShellAction';
@@ -101,6 +138,9 @@ import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
 import { executeExternalSessionBrowseAction } from './externalSessionBrowseAction';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import { createUiScmAction } from './scmActionDeps';
+import { createUiFilesystemAction, resolveUiFilesystemTransferCustodyFailure } from './filesystemActionDeps';
+import { createUiProjectDefinitionAction } from './projectDefinitionActionDeps';
+import { createUiProjectAction } from './projectActionDeps';
 import { resolveSettingsHost, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
 import { readSettingsPageGate } from '@/components/settings/catalog/pageCatalog';
 import { executeCommandPaletteAction } from '@/components/appShell/commandPalette/commandPaletteActionRuntime';
@@ -109,11 +149,19 @@ import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/
 import { invokeNextPendingRequest } from '@/activity/source/pendingNavigationRuntime';
 import { executeApiTokenAction, type ApiTokenActionTransport } from './apiTokenActionTransport';
 import { createMachinePoolActionClient, MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
+import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
+import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
+import { executeManagedMachineNativeAction } from '@/sync/api/machines/managedMachineOrigination';
+import { createUiManagedMachineReferenceReader } from './managedMachineReferenceDeps';
+import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
+import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createRunnerActivationClient, RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import type { RunnerActivationCreateRequestV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
+import { writeUiSessionStateField, type UiSessionStateMetadataPreprocess } from '@/sync/state/engine';
+import { admitDeclaredSessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
 import { createMachineConnectionActionDeps } from './machineConnectionActionDeps';
 import {
@@ -160,6 +208,7 @@ import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/reso
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import {
   areServerProfileIdentifiersEquivalent,
+  getServerProfileById,
   resolveServerProfileForPortableIdentity,
   resolveServerProfileScopeIdForIdentifier,
 } from '@/sync/domains/server/serverProfiles';
@@ -177,6 +226,9 @@ import {
 } from '@/voice/tools/actionImpl/sessionRecentMessages';
 import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListRecent';
 import { listProjectsForActions } from './listProjects';
+import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
+import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import {
   listPromptInvocationsForActions,
   resolvePromptInvocationForActions,
@@ -212,7 +264,9 @@ import { createSessionOrganizationResourceAction, isSessionOrganizationResourceA
 import { resolveSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { writeApprovalRequestArtifact } from './approvalArtifactWriter';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
-import { createUiPromptLibraryArtifactStore, uiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { createUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { admitSessionContextIntentV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import type { PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
@@ -431,6 +485,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 }
 
   function buildDefaultActionExecutor(opts?: Readonly<{
+  /** Surface-local custody notification, fired only by the admitted Provider RPC transport. */
+  onProviderRpcDispatched?: () => void;
   /** An explicitly admitted API-token transport; Home owns grants and approvals. */
   apiTokenAction?: ApiTokenActionTransport;
   /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
@@ -445,6 +501,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   isActionEnabled?: NonNullable<ActionExecutorDeps['isActionEnabled']>;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
   sessionSendMessage?: NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+  /** Trusted per-invocation precondition, evaluated on the metadata CAS candidate. */
+  sessionStateMetadataPreprocess?: UiSessionStateMetadataPreprocess;
   /** Mounted host resolver carrying an explicitly complete selected-Home corpus. */
   resolveSessionReference?: NonNullable<ActionExecutorDeps['resolveSessionReference']>;
   /** Current external Agent declaration supplied by a rendered lifecycle control. */
@@ -456,6 +514,9 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
    * surface owns reachability while the executor keeps admission and validation.
    */
   sessionAccessAction?: NonNullable<ActionExecutorDeps['sessionAccessAction']>;
+  machineAccessAction?: NonNullable<ActionExecutorDeps['machineAccessAction']>;
+  machineWorkSummaryGet?: NonNullable<ActionExecutorDeps['machineWorkSummaryGet']>;
+  projectWorkerAction?: NonNullable<ActionExecutorDeps['projectWorkerAction']>;
   /** Local keyholding-host delivery; never enters Action input, approval or result. */
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   /** Optional Session human-discussion family port bound by a mounted surface. */
@@ -470,11 +531,30 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   workflowAction?: NonNullable<ActionExecutorDeps['workflowAction']>;
   /** A mounted WorkBoard binds current UI membership and its existing Account save queue. */
   workBoardArtifacts?: NonNullable<ActionExecutorDeps['workBoardArtifacts']>;
+  /** Host-page defaults remain outside Action input and personal persisted copies. */
+  resolveWidgetAreaPreset?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
+  widgetAreaIsCurrent?: () => boolean;
   }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }): ReturnType<typeof createActionExecutor> & Readonly<{
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
+    readWidgetInputDescriptor(request: Parameters<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>[0]): ReturnType<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>;
   }> {
-  const promptLibraryStore = accountContext ? createUiPromptLibraryArtifactStore(accountContext.workflowArtifacts) : uiPromptLibraryArtifactStore;
-  const runtimeActionExecute = createDefaultRuntimeActionExecutor(opts?.runtimeActions);
+  const promptLibraryStore = accountContext ? createUiPromptLibraryArtifactStore(accountContext.workflowArtifacts, accountContext) : null;
+  const withPromptLibraryStore = <T>(run: (store: PromptLibraryArtifactStore) => Promise<T>, signal?: AbortSignal): Promise<T> =>
+    promptLibraryStore ? run(promptLibraryStore) : withUiPromptLibraryArtifactStore(run, { signal });
+  const capturePromptExternalLinks = async (signal?: AbortSignal) => {
+    if (!accountContext) throw new PromptLibraryRowOperationError('scope-retired');
+    const projection = await readPromptLibraryCatalogProjectionInContext(accountContext, signal);
+    const read = readPromptLibraryCatalogRecordV1({ catalog: projection.catalog, key: 'external-links', rawSettings: projection.rawSettings });
+    if (read.status !== 'ready' || read.record.key !== 'external-links') throw new PromptLibraryRowOperationError(
+      read.status === 'unavailable' ? read.reason : 'invalid-stored-content');
+    return { value: read.record.value, write: async (value: PromptExternalLinksV1) => {
+      requireUpdatedPromptLibraryMutation(await writePromptLibraryRecordAndPublishInContext(accountContext, {
+        record: { key: 'external-links', value }, expectedRevision: read.revision,
+        ...(read.authority === 'inactive' ? { sourceSettingsVersion: projection.sourceSettingsVersion } : {}),
+      }, signal));
+    } };
+  };
+  const runtimeActionExecute = createDefaultRuntimeActionExecutor(opts?.runtimeActions, accountContext?.accountLifetime);
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
@@ -501,45 +581,89 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   const executePluginWebhookAction = createPluginWebhookEndpointHttpActionExecutor(accountContext ? { request: accountContext.request } : undefined);
   const approvalCoordinator = getSharedBlockingApprovalCoordinator();
   const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext) : null;
+  const machineAccessAction = opts?.machineAccessAction ?? capturedFamilyPorts?.machineAccessAction;
   const settingsHost = resolveSettingsHost();
   const accountRoleAction = accountContext ? createAccountRoleActionExecutorV1({
     accountId: accountContext.accountId,
     readRawAccountSettings: accountContext.readRawSettings,
-    mutateAccountSettings: accountContext.mutateRawSettings,
+    mutateAccountRoleOverrides: (mutation, context) => mutatePromptLibraryRoleOverrideInContext(accountContext, mutation, context.signal),
     generateId: randomUUID,
-    artifactStore: {
-      ...accountContext.workflowArtifacts,
-      create: async (input) => {
-        await accountContext.workflowArtifacts.create(input);
-        const created = await accountContext.workflowArtifacts.read(input.artifactId, { signal: input.signal });
-        if (!created) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
-        return { artifactId: created.artifactId, revision: created.revision };
-      },
-    },
-    readPluginRoles: async (signal) => {
-      accountContext.assertCurrent();
-      signal?.throwIfAborted();
-      const machineId = resolveUiAccountActionFallbackMachineId(accountContext);
-      if (!machineId) return [];
-      const entry = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId: accountContext.serverId,
-        accountLifetime: accountContext.accountLifetime, reuseFreshReady: true });
-      accountContext.assertCurrent();
-      signal?.throwIfAborted();
-      // A missing serving daemon withdraws plugin sources, not Account-owned
-      // Artifacts or built-ins; never consume retained failed projections.
-      if (entry?.kind !== 'ready') return [];
-      const projection = entry.inputs.pluginProjectionV2;
-      return Object.values(projection?.familiesById.roles?.entriesById ?? {}).flatMap((source) => {
-        if (!source.pluginId) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
-        if (!projection?.installedPackagesById[source.pluginId]?.occurrenceId) return [];
-        const definition = PluginRoleDeclarationV1Schema.parse(source.definition);
-        const { id: localId, ...role } = definition;
-        return [{ pluginId: source.pluginId, localId, role }];
-      });
-    },
+    artifactStore: createRoleArtifactStoreV1(accountContext.workflowArtifacts),
+    readPluginRoles: signal => readUiPluginRoleSources(accountContext, signal),
   }) : null;
 
   const deps: ActionExecutorDeps = {
+    buildApprovalPreview: async ({ actionId, input, context, defaultPreview }) => {
+      if (actionId !== 'session.spawn_new' || !accountContext || !machineAccessAction) return defaultPreview;
+      const parsed = SessionSpawnNewInputV2Schema.safeParse(input);
+      if (!parsed.success || !areServerProfileIdentifiersEquivalent(parsed.data.executionTarget.serverId, accountContext.serverId)) return defaultPreview;
+      const machineId = parsed.data.executionTarget.machineId;
+      const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
+        input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
+      accountContext.assertCurrent();
+      const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId, access });
+      return disposition.kind === 'requester' ? { ...defaultPreview, requesterCredentialDisclosure: disposition.disclosure,
+        summary: [t('machineRequester.fullSignIn', { machine: machineId }),
+          t('machineRequester.osVisibility', { owner: disposition.disclosure.custodian.displayName
+            || disposition.disclosure.custodian.accountId, machine: machineId })].join('\n\n') } : defaultPreview;
+    },
+    ...(promptLibraryStore?.organization ? { artifactFolders: promptLibraryStore.organization } : {}),
+    ...(accountContext && promptLibraryStore ? { memoryLibrary: {
+      serverId: accountContext.serverId, store: promptLibraryStore, randomId: randomUUID,
+      isSameServerId: serverId => areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId),
+      readExposure: async (artifactId, context) => {
+        accountContext.assertCurrent();
+        if (!deps.artifactAccessAction || !deps.artifactAction) throw Object.assign(new Error('memory_exposure_unavailable'), { code: 'memory_exposure_unavailable' });
+        const grants = ArtifactAccessGrantsListResponseV1Schema.parse(await deps.artifactAccessAction({
+          actionId: 'artifact.access.grants.list', input: { artifactId }, context, signal: context.signal }));
+        const publicShares = grants.access === 'owner' ? StoredContentPublicSharesListResponseV1Schema.parse(await deps.artifactAction({
+          actionId: 'artifact.public_link.list', input: { artifactId }, context, signal: context.signal })) : null;
+        accountContext.assertCurrent();
+        return { grants, publicShares };
+      },
+      readSession: async (ref, context) => {
+        accountContext.assertCurrent(); context.signal?.throwIfAborted();
+        const { session } = await runWithServerRequestAuthorityForServerAccountScope({
+          scope: accountContext.accountLifetime.scope, activeRequest: accountContext.request,
+        }, authority => readSessionSnapshotForAuthority({ authority, sessionId: ref.sessionId, isCurrent: accountContext.accountLifetime.isCurrent }));
+        accountContext.assertCurrent(); context.signal?.throwIfAborted();
+        const metadata = readSessionOwnerMetadataView(session);
+        if (!metadata) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
+        return { metadata, revision: session.metadataVersion };
+      },
+      readInheritedContext: (snapshot, context) => readUiMemoryInheritedContext(accountContext, snapshot, context),
+      readScopeContext: (target, context) => readUiMemoryScopeContext(accountContext, target, context),
+      readArtifactHeaders: async (refs, context) => {
+        accountContext.assertCurrent();
+        if ((accountContext.credentialAuthorityKind === 'api_token' || context.externalActionCredential
+          || context.externalActionExecutionAuthorization)
+          && refs.some(ref => ref.serverId && !areServerProfileIdentifiersEquivalent(ref.serverId, accountContext.serverId))) {
+          throw Object.assign(new Error('server_target_mismatch'), { code: 'server_target_mismatch' });
+        }
+        return withUiPromptLibraryArtifactReader(reader => Promise.all(refs.map(async ref =>
+          (await reader.readArtifactHeader(ref))?.header ?? null)), {
+          serverId: accountContext.serverId, accountContext, signal: context.signal,
+        });
+      },
+    } } : {}),
+    filesystemActionExecute: createUiFilesystemAction(accountContext ?? undefined),
+    currentSessionPresentationApply: async ({ input, context, signal }) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const sessionId = context.defaultSessionId?.trim();
+      if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+      accountContext.assertCurrent();
+      const result = await sessionRpcWithServerScope<CurrentSessionPresentationActionResultV1 | ActionExecuteFailure, typeof input>({
+        serverId: accountContext.serverId,
+        sessionId,
+        method: CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD,
+        payload: input,
+        // The existing presentation service owns the command's ACK budget.
+        timeoutMs: null,
+        ...(signal ? { signal } : {}),
+      });
+      accountContext.assertResultCurrent(getActionSpec('session.presentation.apply').sideEffectClass);
+      return result;
+    },
     roleActionExecute: async (args) => {
       if (!accountContext || !accountRoleAction) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       accountContext.assertCurrent();
@@ -571,6 +695,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     appUpdateAction: executeAppUpdateAction,
     hostExternalSessionAction: executeExternalSessionBrowseAction,
     settingsDeclarationAction: createSettingsDeclarationAction({
+      serverId: accountContext?.serverId,
       host: settingsHost,
       tauriDesktop: settingsHosts.tauriDesktop(settingsHost),
       readPageGate: readSettingsPageGate,
@@ -588,7 +713,27 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         return true;
       },
       mutationServices: { readAgentCatalog: createVoiceAgentSettingsCatalogReader(accountContext ?? null),
-        readScmDiffSummaryCatalog: createScmDiffSummarySettingsCatalogReader(accountContext ?? null) },
+        ...(accountContext ? { readConnectedAccountPurposes: async (signal?: AbortSignal) => {
+          const { readAdmittedConnectedAccountCatalogInContext } = await import('@/sync/api/account/apiConnectedAccountCatalog');
+          const snapshot = await readAdmittedConnectedAccountCatalogInContext(accountContext, 'purposes', signal);
+          accountContext.assertCurrent();
+          return snapshot.status === 'ready' && snapshot.record.key === 'purposes' ? snapshot.record.value : null;
+        } } : {}),
+        readScmDiffSummaryCatalog: createScmDiffSummarySettingsCatalogReader(accountContext ?? null),
+        ...(accountContext ? { executeSettingsOwnerAction: createSettingsOwnerActionExecutor(
+            request => executor.execute(request.actionId, request.input, request.context), accountContext,
+          ) } : {}),
+        ...(accountContext ? { purgeAccountSettingsHistory: async (versions: readonly number[], signal?: AbortSignal) => {
+          signal?.throwIfAborted(); accountContext.assertCurrent();
+          const { purgeAccountSettingsHistoryVersions } = await import('@/sync/engine/settings/accountSettingsHistoryRestore');
+          return accountContext.runPrepared(() => purgeAccountSettingsHistoryVersions({
+            credentials: accountContext.credentials, settingsScope: accountContext.accountLifetime.scope, versions, signal,
+            requestContext: { request: accountContext.request, isCurrent: () => {
+              try { accountContext.assertCurrent(); signal?.throwIfAborted(); return true; } catch { return false; }
+            } },
+          }), 'danger');
+        } } : {}),
+      },
       isFeatureEnabled: async (featureId) => {
         const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId });
         const settings = accountContext ? await accountContext.readSettings() : storage.getState().settings;
@@ -618,9 +763,33 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     }) } : {}),
     ...(accountContext ? { launchProfilePublish: async (input, context) => {
       context?.signal?.throwIfAborted();
+      let capturedRow: Readonly<{ record: ProfileRecordV1; revision: number }> | null = null;
       return await createLaunchProfilePublisherV1({
-        readSettings: accountContext.readRawSettings,
-        mutateSettings: accountContext.mutateRawSettings,
+        profileStore: {
+          read: async (profileId, signal) => {
+            accountContext.assertCurrent();
+            const { catalog } = await readProfileCatalogProjectionInContext(accountContext, signal);
+            accountContext.assertCurrent();
+            if (catalog.status !== 'ready' || catalog.source !== 'destination') {
+              throw Object.assign(new Error('profile_catalog_unavailable'), { code: 'profile_catalog_unavailable' });
+            }
+            capturedRow = catalog.records.find(row => row.record.id === profileId) ?? null;
+            return capturedRow;
+          },
+          updateDefinition: async ({ profileId, expectedRevision, artifactId }, signal) => {
+            accountContext.assertCurrent();
+            if (!capturedRow || capturedRow.record.id !== profileId || capturedRow.revision !== expectedRevision) {
+              throw Object.assign(new Error('profile_revision_conflict'), { code: 'profile_revision_conflict' });
+            }
+            const result = await writeProfileRecordInContext(accountContext, {
+              record: { ...capturedRow.record, definition: { kind: 'artifact', artifactId } },
+              expectedRevision, operation: 'update',
+            }, signal);
+            if (result.status !== 'updated') {
+              throw Object.assign(new Error(`profile_row_${result.status}`), { code: `profile_row_${result.status}` });
+            }
+          },
+        },
         artifactStore: { read: (artifactId, signal) => accountContext.workflowArtifacts.read(artifactId, { signal }),
           create: async ({ header, body, signal, savedBy }) => {
             const created = await accountContext.createArtifactDocument({ header, body, signal,
@@ -632,6 +801,12 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     } } : {}),
     ...(accountContext ? createUiNotificationActionDeps({ account: accountContext }) : {}),
     ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued }) } : {}),
+    ...(accountContext ? {
+      profileActionExecute: createUiProfileActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
+      mcpServerAction: createUiMcpServerActionExecuteV1(accountContext),
+      providerActionExecute: createUiProviderActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
+    } : {}),
+    ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext) } : {}),
     ...(accountContext ? { artifactAccessAction: createArtifactAccessActionsV1({
       read: accountContext.workflowArtifacts.read,
       transport: accountContext.artifactAccessGrants,
@@ -712,13 +887,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         accountContext.assertCurrent();
         const { readWidgetActionCandidatesV1, canReadActiveWidgetCatalogV1 } = await import('./widgetCatalogActionDeps');
         const needsInstalledCatalog = canReadActiveWidgetCatalogV1(accountContext)
-          || layout?.instances.some(instance => instance.definition.kind === 'installed') === true;
+          || (layout && flattenWidgetLayoutWidgetsV1(layout.items).some(({ instance }) => instance.definition.kind === 'installed')) === true;
         const candidates = needsInstalledCatalog ? await readWidgetActionCandidatesV1({
           serverId: accountContext.serverId, accountId: accountContext.accountId, owner: { kind: 'home' },
         }, accountContext, signal) : [];
         accountContext.assertCurrent();
         if ('ok' in candidates) throw Object.assign(new Error(candidates.error), { code: candidates.errorCode });
-        const referenced = new Set(layout?.instances.flatMap(instance => instance.definition.kind === 'artifact' ? [instance.definition.artifactId] : []) ?? []);
+        const referenced = new Set(layout ? flattenWidgetLayoutWidgetsV1(layout.items).flatMap(({ instance }) => instance.definition.kind === 'artifact' ? [instance.definition.artifactId] : []) : []);
         if (referenced.size === 0) return candidates;
         const definitions = await widgetDefinitionDeps.widgetDefinitionArtifacts?.list(signal) ?? [];
         accountContext.assertCurrent();
@@ -826,7 +1001,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     runtimeActionExecute: async (args) => {
       const featureId = getActionRequiredServerFeatureId(args.actionId);
       if (featureId === 'browser.automation') {
-        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId });
+        const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext?.serverId ?? args.context.serverId ?? undefined });
         accountContext?.assertCurrent();
         throwIfAborted(args.context.signal);
         const settings = accountContext
@@ -875,6 +1050,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       } });
     },
     uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
+    sessionAuthoringOpen: openSessionAuthoringDraft,
     invokeContributedAction: (request) => executeCurrentUiContextContributedAction(request, { execute: executor.execute, context: request.context }),
     uiFindAction: executeFindAction,
     uiPromptPickerOpen: executePromptPickerOpenAction,
@@ -902,7 +1078,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     accountPluginDataEraseAction: async ({ input, signal }) => await executeAccountPluginDataEraseAction(
       input,
-      signal ? { signal } : undefined,
+      { ...(signal ? { signal } : {}), ...(accountContext ? { accountContext } : {}) },
     ),
     accountSessionsSignOutEverywhereAction: async ({ input, signal }) => await signOutEverywhere(
       input,
@@ -977,10 +1153,67 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         mutationScope: createSessionOrganizationMutationScopeForAccount(accountContext),
       });
     },
+    sessionOrganizationPinSet: async ({ sessionId, request, serverId, signal }) => {
+      if (!accountContext) return { ok: false, errorCode: 'action_account_scope_unavailable', error: 'action_account_scope_unavailable' };
+      if (!serverId || !areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId)) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      signal?.throwIfAborted();
+      try {
+        return await writeSessionOrganizationPin({
+          scope: createSessionOrganizationMutationScopeForAccount(accountContext),
+          sessionId,
+          ...request,
+        });
+      } catch (error) {
+        if (error instanceof HappyError && error.code === 'session_not_bot') {
+          return { ok: false, errorCode: error.code, error: error.message };
+        }
+        throw error;
+      }
+    },
     composerIngress: executeComposerIngressAction,
     listReorder: executeListReorderAction,
     todoSessionLink: executeTodoSessionLinkAction,
     sessionTerminalAction: invokeSessionTerminalAction,
+    actionOperationAction: async ({ actionId, input, signal }) => {
+      try {
+        return await executeActionOperationActionV1({
+          actionId, input, ...(signal ? { signal } : {}),
+          transport: async request => await machineRpcWithServerScope({
+            ...request,
+            ...(actionId === 'action.operations.get' && 'waitForTerminal' in input && input.waitForTerminal
+              ? { operationTimeoutMs: null } : {}),
+          }),
+          openOutput: async address => {
+            signal?.throwIfAborted();
+            accountContext?.assertCurrent();
+            const { openActionOperationDetail } = await import('@/components/inbox/actionOperations/openActionOperationDetail');
+            signal?.throwIfAborted();
+            accountContext?.assertCurrent();
+            openActionOperationDetail({ serverId: address.serverId, operationId: address.operationId });
+          },
+          copyOutput: async output => {
+            signal?.throwIfAborted();
+            accountContext?.assertCurrent();
+            const decoder = createTerminalUtf8ProjectionDecoder();
+            let text = '';
+            for (const frame of output.frames) {
+              if (frame.t === 'gap') {
+                decoder.reset();
+                text += TERMINAL_OUTPUT_GAP_MARKER;
+              } else if (frame.t === 'bytes') text += decoder.decode(decodeTerminalStreamBytesFrame(frame));
+            }
+            text += decoder.flush();
+            if (!await setClipboardStringSafe(text)) return { ok: false, errorCode: 'clipboard_unavailable', error: 'clipboard_unavailable' };
+            return undefined;
+          },
+        });
+      } catch (error) {
+        if (isActionAccountScopeChangedError(error)) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        throw error;
+      }
+    },
     sessionOpen: async ({ sessionId, serverId, approvedNewDirectoryCreation, tabId, destination, signal }) => {
       const comparison = destination ? scmReviewComparisonOfSource(destination.comparison, destination.comparisonId) : null;
       if (destination && !comparison) return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_selector_unavailable' };
@@ -1156,6 +1389,19 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         },
       }),
 
+    sessionPendingWithdraw: async ({ sessionId, localId, serverId, targetExecutionRunId }) => {
+      accountContext?.assertCurrent();
+      if (accountContext && serverId !== undefined
+          && !areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId)) {
+        throw new Error('action_account_scope_changed');
+      }
+      return { outcome: await sync.withdrawPendingMessage(sessionId, localId, {
+        serverId: accountContext?.serverId ?? serverId,
+        ...(accountContext ? { accountLifetime: accountContext.accountLifetime } : {}),
+        ...(targetExecutionRunId ? { targetExecutionRunId } : {}),
+      }) };
+    },
+
     sessionPendingInputInterruptAndRun: async ({ sessionId, localId, expectedStateAtMs, serverId }) =>
       await sessionRpcWithServerScope({
         sessionId,
@@ -1251,7 +1497,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       // imports into is derived by the source daemon from the owner metadata it
       // loads itself, before the operation claim and before any stop or export,
       // so a cold or unprojected client view must not refuse a valid handoff.
-      const sourceMachineId = resolveSessionMachineId(sid, serverId);
+      const sourceMachineId = resolveSessionMachineId(sid, serverId ?? undefined);
 
       return await startSessionHandoffOp({
         sessionId: sid,
@@ -1272,7 +1518,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
 
     sessionSpawnNew: async ({
-      context: _context,
+      context,
       sessionCreationTag: _sessionCreationTag,
       legacyMetadataLabel: _legacyMetadataLabel,
       actionCaller: _actionCaller,
@@ -1308,13 +1554,49 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       }
       const supportsOrigin = !machine?.revokedAt && !machine?.replacedByMachineId
         && supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionSpawnPlacementOrigin');
+      if (machine?.isShared && !accountContext) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+      let requesterBootstrap: Awaited<ReturnType<typeof prepareRequesterSessionForSpawn>> | undefined;
+      if (accountContext) {
+        accountContext.assertCurrent();
+        if (accountContext.serverId !== serverId) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+        if (!machineAccessAction) return { type: 'error' as const, code: 'target_unavailable' as const, retryable: true as const };
+        const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
+          input: { serverId, machineId: input.executionTarget.machineId }, context, ...(signal ? { signal } : {}) });
+        accountContext.assertCurrent();
+        let disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+          machineId: input.executionTarget.machineId, access });
+        if (disposition.kind === 'refused') return disposition.result;
+        const freshHumanRequester = !opts?.admittedClientActionId
+          && ((context.surface === 'ui' && context.authority === 'present_user')
+            || (context.surface === 'voice' && accountContext.credentialAuthorityKind === 'account'));
+        if (disposition.kind === 'requester' && freshHumanRequester
+          && !context.rpcSessionAuthorization && !context.externalActionExecutionAuthorization && !context.externalActionCredential
+          && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+          const custodian = disposition.disclosure.custodian;
+          const accepted = await confirmRequesterAccountCredentialDisclosure({ accountContext,
+            machineId: input.executionTarget.machineId, custodian, ...(signal ? { signal } : {}) });
+          if (!accepted) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+          const currentAccess = await machineAccessAction({ actionId: 'machines.access.grants.list',
+            input: { serverId, machineId: input.executionTarget.machineId }, context, ...(signal ? { signal } : {}) });
+          accountContext.assertCurrent();
+          disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+            machineId: input.executionTarget.machineId, access: currentAccess });
+          if (disposition.kind === 'refused') return disposition.result;
+          if (disposition.kind === 'requester' && disposition.disclosure.custodian.accountId !== custodian.accountId) {
+            return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+          }
+        }
+        if (disposition.kind === 'requester') requesterBootstrap = await prepareRequesterSessionForSpawn({ accountContext });
+      }
+      accountContext?.assertCurrent();
       return await dispatchSessionSpawnNewWithReportsToPreparation({
         payload: placementOrigin && supportsOrigin ? { ...exactInput, placementOrigin } : exactInput,
+        ...(requesterBootstrap ? { requesterBootstrap } : {}),
         signal,
       });
     },
 
-    approvalRequestApprovedReplay: async ({ artifactId, request, signal }) => {
+    approvalRequestApprovedReplay: async ({ artifactId, request, context, requestId, signal }) => {
       if (!requiresExactDaemonApprovalReplay(request)) return null;
       const replayRoute = resolveApprovalReplayRoute(request);
       const machineId = request.v === 2 ? request.executionOriginV1.machineId?.trim() ?? '' : '';
@@ -1325,6 +1607,22 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           error: 'approval_origin_unavailable',
         };
       }
+      if (accountContext && request.v === 2 && !context.externalActionCredential
+        && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
+        && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+        if (!requestId || context.surface !== 'ui' || context.authority !== 'present_user'
+          || !isApprovalExecutionOriginCurrentForAccountContext({ origin: request.executionOriginV1,
+            accountServerId: accountContext.serverId, accountId: accountContext.accountId })) {
+          return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+        }
+        const execution = await executeOriginalAccountMachineAction({ account: accountContext,
+          actionId: 'approval.request.decide', requestId, machineId, foreignTargetOnly: true,
+          input: { artifactId, decision: 'approve', serverId: accountContext.serverId,
+            serverIdentityId: replayRoute.serverIdentityId, originServerId: replayRoute.originServerId },
+          ...(signal ? { signal } : {}) });
+        accountContext.assertResultCurrent(getActionSpec('approval.request.decide').sideEffectClass);
+        if (execution) return execution;
+      }
       return await replayApprovedApprovalRequestAtExactDaemon({
         artifactId,
         executionTarget: { ...replayRoute, machineId },
@@ -1333,20 +1631,117 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
-    projectsList: async (args) => await listProjectsForActions(args),
-    promptInvocationsList: async (args) => accountContext
-      ? listPromptInvocationsInLibrary({ invocations: (await accountContext.readRawSettings()).promptInvocationsV1, request: args })
-      : listPromptInvocationsForActions(args),
-    promptInvocationResolve: async (args) => accountContext
-      ? resolvePromptInvocationInLibrary({ invocations: (await accountContext.readRawSettings()).promptInvocationsV1,
-        store: promptLibraryStore, request: args, sessionId: args.sessionId ?? null, signal: args.signal })
-      : resolvePromptInvocationForActions(args),
+    projectDefinitionAction: createUiProjectDefinitionAction(accountContext),
+    projectAction: createUiProjectAction(accountContext),
+    projectsContextUpdate: createUiProjectContextAction(accountContext),
+    projectsWorkspaceUpdate: async (input, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      return createUiProjectAccountRowsClient(accountContext).updateWorkspace({ ...input, signal: context?.signal }, context);
+    },
+    projectsWorkspaceForget: async (input, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      return createUiProjectAccountRowsClient(accountContext).forgetWorkspace({ ...input, signal: context?.signal }, context);
+    },
+    projectsList: async (args, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      if (!canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_account_access_denied', error: 'project_account_access_denied' };
+      if (accountContext && args.serverId !== undefined && args.serverId !== accountContext.serverId) {
+        return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      }
+      const rows = await createUiProjectAccountRowsClient(accountContext).read(context?.signal);
+      return listProjectsForActions(args, rows);
+    },
+    projectsVisibilitySet: async (input, context) => {
+      if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_visibility_access_denied' };
+      return setProjectVisibilityV1({
+        accountScope: () => {
+          try { accountContext.assertCurrent(); return { serverId: accountContext.serverId, accountId: accountContext.accountId }; }
+          catch { return null; }
+        }, mutateOrganization: createUiProjectAccountRowsClient(accountContext).mutateOrganization,
+      }, input, context);
+    },
+    projectsOpen: async (input, context) => {
+      accountContext?.assertCurrent();
+      if (accountContext && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+        && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+        if (!areServerProfileIdentifiersEquivalent(accountContext.serverId, input.serverId)
+          || context.surface !== 'ui' || context.authority !== 'present_user'
+          || !context.actionRequestId || !canUsePrivateProjectAccountAction(accountContext, context)) {
+          return { kind: 'refused', code: 'admission_unavailable' };
+        }
+        const execution = await executeOriginalAccountMachineAction({ account: accountContext, actionId: 'projects.open',
+          input: { ...input, serverId: accountContext.serverId }, machineId: input.machineId,
+          requestId: context.actionRequestId, foreignTargetOnly: true, ...(context.signal ? { signal: context.signal } : {}) });
+        accountContext.assertResultCurrent(getActionSpec('projects.open').sideEffectClass);
+        if (execution) {
+          if (!execution.ok) return execution;
+          const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+          if (approval.success && approval.data.actionId === 'projects.open') return approval.data;
+          return OpenProjectResultV1Schema.parse(execution.result);
+        }
+      }
+      try { return OpenProjectResultV1Schema.parse(await machineRpcWithServerScope({
+        serverId: input.serverId,
+        machineId: input.machineId,
+        accountId: accountContext?.accountId,
+        method: RPC_METHODS.PROJECTS_OPEN,
+        payload: input,
+        signal: context.signal,
+        operationTimeoutMs: null,
+      })); } catch (error) {
+        if (readRpcRequestDisposition(error) === 'notSent') return { kind: 'refused', code: 'machine_unreachable' };
+        throw error;
+      }
+    },
+    ...(accountContext ? createProjectSourceActionDeps(accountContext) : {}),
+    promptInvocationsList: async (args) => {
+      if (!accountContext) return listPromptInvocationsForActions(args);
+      const projection = await readPromptLibraryCatalogProjectionInContext(accountContext);
+      const source = readPromptLibraryCatalogRecordV1({ ...projection, key: 'invocations' });
+      return listPromptInvocationsForActions(args, { invocations: source.status === 'ready' ? source.record.value : null,
+        assertCurrent: accountContext.assertCurrent });
+    },
+    promptInvocationResolve: async (args) => {
+      if (!accountContext) return resolvePromptInvocationForActions(args);
+      const projection = await readPromptLibraryCatalogProjectionInContext(accountContext, args.signal);
+      const source = readPromptLibraryCatalogRecordV1({ ...projection, key: 'invocations' });
+      return withUiPromptLibraryArtifactReader((reader) => resolvePromptInvocationForActions(args, {
+        invocations: source.status === 'ready' ? source.record.value : null,
+        store: createUiPromptLibraryArtifactStore(accountContext.workflowArtifacts), readArtifact: reader.readArtifact,
+        assertCurrent: accountContext.assertCurrent,
+      }), { accountContext, signal: args.signal });
+    },
     spawnProfilesList: async (args) => listSpawnProfilesForActions(args, accountContext
       ? projectUiAiLaunchProfileSnapshot(await accountContext.readLaunchProfileSnapshot((await accountContext.readRawSettings()).profiles)) : undefined),
-    machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
-    ...createMachineConnectionActionDeps(),
+    machinesList: async ({ serverId, limit }) => await listMachinesForVoiceTool({ serverId, limit }),
+    ...createMachineConnectionActionDeps({ ...(accountContext ? { account: accountContext } : {}) }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
-    reviewEnginesList: async ({ sessionId, includeDisabled, scope }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled, scope }),
+    readAccountAcpCatalog: async ({ signal }) => {
+      if (!accountContext) return { status: 'unavailable', reason: 'unauthorized' };
+      const { catalog } = await readAcpCatalogInContext(accountContext, signal);
+      accountContext.assertCurrent();
+      return catalog;
+    },
+    updateAccountAcpCatalogSettings: async (input) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      try {
+        await updateAcpCatalogInContext(accountContext, input);
+        return { ok: true };
+      } catch (error) {
+        const code = error instanceof AcpCatalogOperationError ? error.code : 'acp_catalog_unavailable';
+        return { ok: false, errorCode: code, error: code,
+          ...(error instanceof AcpCatalogOperationError && (code === 'conflict' || code === 'settings-conflict')
+            && error.cause !== undefined ? { details: error.cause } : {}) };
+      }
+    },
+    reviewEnginesList: async ({ sessionId, includeDisabled, scope }) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
+      const preferences = settingsParse(await accountContext.readRawSettings());
+      const { catalog } = await readAcpCatalogInContext(accountContext);
+      accountContext.assertCurrent();
+      return listReviewEnginesForVoiceTool({ sessionId, includeDisabled, scope, serverId: accountContext.serverId,
+        acpCatalogSnapshot: catalog, backendEnabledByTargetKey: preferences.backendEnabledByTargetKey ?? null });
+    },
     reviewCommentAction: async ({ actionId, input, signal }) => signal
       ? await executeReviewCommentAction(actionId, input, { signal })
       : await executeReviewCommentAction(actionId, input),
@@ -1363,6 +1758,12 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     ...(opts?.sessionAccessAction ?? capturedFamilyPorts?.sessionAccessAction
       ? { sessionAccessAction: opts?.sessionAccessAction ?? capturedFamilyPorts!.sessionAccessAction }
       : {}),
+    ...(opts?.machineWorkSummaryGet ?? capturedFamilyPorts?.machineWorkSummaryGet
+      ? { machineWorkSummaryGet: opts?.machineWorkSummaryGet ?? capturedFamilyPorts!.machineWorkSummaryGet }
+      : {}),
+    ...(machineAccessAction
+      ? { machineAccessAction }
+      : {}),
     ...(opts?.sessionDiscussionAction ?? capturedFamilyPorts?.sessionDiscussionAction
       ? { sessionDiscussionAction: opts?.sessionDiscussionAction ?? capturedFamilyPorts!.sessionDiscussionAction }
       : {}),
@@ -1370,6 +1771,51 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       ? { homeDomainAction: opts?.homeDomainAction ?? capturedFamilyPorts!.homeDomainAction }
       : {}),
     ...(opts?.workspaceSyncConflictResolve ? { workspaceSyncConflictResolve: opts.workspaceSyncConflictResolve } : {}),
+    ...(accountContext ? { managedMachineReferences: createUiManagedMachineReferenceReader(accountContext) } : {}),
+    managedMachineAction: async (args) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      accountContext.assertCurrent();
+      if (args.actionId !== 'machines.managed.list' && args.actionId !== 'machines.managed.get' && args.actionId !== 'machines.managed.cancel'
+        && args.actionId !== 'machines.managed.setup.skip') {
+        try {
+          const execution = await executeManagedMachineNativeAction({ account: accountContext, ...args });
+          return execution.ok ? execution.result : execution;
+        } catch (error) {
+          if (error instanceof ManagedMachineActionError) return { ok: false, errorCode: error.code, error: error.code };
+          throw error;
+        }
+      }
+      const input = ManagedMachineActionInputSchemasV1[args.actionId].parse(args.input);
+      if (!accountContext.serverIdentityId) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      if (input.homeId !== accountContext.serverIdentityId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      try {
+        const result = await createManagedMachineActionClient({ request: accountContext.request }).execute(args.actionId, input, { signal: args.signal });
+        accountContext.assertCurrent();
+        return result;
+      } catch (error) {
+        if (error instanceof ManagedMachineActionError) return { ok: false, errorCode: error.code, error: error.code };
+        throw error;
+      }
+    },
+    machinePresetAction: async (args) => {
+      if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      accountContext.assertCurrent();
+      // The local profile routes requests; only its stable Home identity qualifies recipes.
+      if (!accountContext.serverIdentityId) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${args.actionId}` };
+      if (args.input.homeId !== accountContext.serverIdentityId) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      try {
+        return await createMachinePresetActionClient({ request: accountContext.request }).execute(args.actionId, args.input, {
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+      } catch (error) {
+        if (error instanceof MachinePresetActionError) {
+          return { ok: false, errorCode: [404, 405, 501].includes(error.status) ? 'unsupported_action' : 'machine_preset_request_failed', error: error.message };
+        }
+        throw error;
+      }
+    },
     // Personal Machine Pools use the same captured Account/Home transport, feature decision,
     // enablement and approval lifetime as every other immediate scoped Action.
     machinePoolAction: async (args) => {
@@ -1433,7 +1879,12 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     agentsBackendsList: async (args) => {
       const { includeDisabled, limit, machineId } = args as AgentsBackendsListArgs;
-      return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });
+      if (!accountContext) throw new AcpCatalogOperationError('not_authenticated');
+      const preferences = settingsParse(await accountContext.readRawSettings());
+      const { catalog } = await readAcpCatalogInContext(accountContext);
+      accountContext.assertCurrent();
+      return listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId, serverId: accountContext.serverId,
+        acpCatalogSnapshot: catalog, backendEnabledByTargetKey: preferences.backendEnabledByTargetKey ?? null });
     },
     workspaceFilesSearch: async ({ machineId, ...request }, context) => {
       const result = await machineWorkspaceFileSearch(machineId, request, {
@@ -1448,11 +1899,17 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return result;
     },
     machinesAgentsList: async (args, context) => {
-      const inputs = await loadDaemonMergedProjectionInputs({ machineId: args.machineId, serverId: args.serverId });
-      if (!inputs?.pluginProjectionV2) {
+      const roster = await machineContributionRegistryProjectionDescribe(args.machineId, {
+        serverId: args.serverId,
+        selection: 'agents',
+        signal: context.signal,
+        accountLifetime: accountContext?.accountLifetime,
+      });
+      if (!roster.supported) {
         return { ok: false, errorCode: 'machine_agent_inventory_unavailable', error: 'machine_agent_inventory_unavailable' };
       }
-      const agents = buildMachineAgentInventoryDescriptors(inputs).filter(({ agentId }) => !args.agentId || args.agentId === agentId);
+      const agents = buildMachineAgentInventoryDescriptors({ pluginProjectionV2: roster.projection })
+        .filter(({ agentId }) => !args.agentId || args.agentId === agentId);
       if (agents.length === 0) return { items: [] };
       try {
         const response = await machineRpcWithServerScope({
@@ -1524,34 +1981,51 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return { updated: true };
     },
 
-    sessionTitleSet: async ({ sessionId, title, serverId }) => {
+    sessionStateFieldSet: async (write) => {
+      const { sessionId, fieldId, value, actionId, context, serverId } = write;
       const sid = String(sessionId ?? '').trim();
-      const normalizedTitle = String(title ?? '').trim();
-      if (!sid || !normalizedTitle) {
+      if (!sid) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       }
-
       const updatedAt = Date.now();
-      try {
-        await publishDisplayTitleToMetadata({
-          sessionId: sid,
-          title: normalizedTitle,
-          updatedAt,
-          updateSessionMetadataWithRetry: async (targetSessionId, updater) => {
-            await sync.patchSessionMetadataWithRetry(
-              targetSessionId,
-              updater,
-              { serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null },
-            );
-          },
-        });
-      } catch (error) {
-        const err = new Error(error instanceof Error ? error.message : 'action_failed');
-        (err as Error & { code?: string }).code = 'action_failed';
-        throw err;
+      context.signal?.throwIfAborted();
+      if (fieldId === 'intent.voicePreference' && value !== null) {
+        const entry = createDefaultVoiceProviderRegistry().get(value.providerContributionId);
+        if (!entry?.declaration || !entry.providerSettings) return { ok: false, errorCode: 'override_unsupported', error: 'override_unsupported' };
+        const admitted = admitDeclaredSessionVoicePreferenceV1({ providerContributionId: entry.providerId,
+          declaration: entry.declaration, providerConfig: entry.providerSettings.defaultConfig, preference: value });
+        if (admitted.kind === 'unavailable') return { ok: false, errorCode: admitted.reason, error: admitted.reason };
       }
-
-      return { ok: true, sessionId: sid, title: normalizedTitle, updatedAt };
+      if (fieldId === 'intent.context') {
+        await withUiPromptLibraryArtifactReader(reader => admitSessionContextIntentV1(value, reader.readArtifactHeader), {
+          serverId, signal: context.signal,
+        });
+        context.signal?.throwIfAborted();
+      }
+      const result = await writeUiSessionStateField({
+        sessionId: sid, fieldId,
+        value: fieldId === 'display.title' ? { title: String(value), updatedAt } : value,
+        metadataReason: `ui-${actionId}`,
+        ...(opts?.sessionStateMetadataPreprocess ? { metadataPreprocess: opts.sessionStateMetadataPreprocess } : {}),
+        updateSessionMetadataWithRetry: async (targetSessionId, updater) => {
+          context.signal?.throwIfAborted();
+          let committedRevision: number | undefined;
+          await sync.patchSessionMetadataWithRetry(targetSessionId, (metadata) => {
+            context.signal?.throwIfAborted();
+            return updater(metadata);
+          }, { serverId: serverId ?? null,
+            ...(accountContext ? { accountLifetime: accountContext.accountLifetime } : {}),
+            onMetadataCommitted: (revision) => { committedRevision = revision; },
+            ...('expectedMetadataRevision' in write ? { expectedMetadataRevision: write.expectedMetadataRevision } : {}) });
+          if (committedRevision === undefined) throw new Error('Session metadata acknowledgement is unavailable');
+          return { version: committedRevision };
+        },
+      });
+      if (!result.ok) return { ok: false, errorCode: result.reason, error: result.reason };
+      return { ok: true, sessionId: sid, ...(fieldId === 'display.title' ? { title: value, updatedAt }
+        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'intent.memoryEnabled' ? { enabled: value }
+        : fieldId === 'intent.voicePreference' ? { preference: value }
+        : fieldId === 'intent.context' ? { updated: true } : { showToolCalls: value }), version: result.version };
     },
 
     sessionPermissionRespond: async ({ sessionId, requestId, turnId, decision, serverId, mode, reason, answers, allowedTools, updatedPermissions, execPolicyAmendment }) => {
@@ -1910,15 +2384,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         accountId: accountLifetime.scope.accountId,
       });
       try {
-        const result = MemorySearchResultV1Schema.parse(await machineRpcWithServerScope({
+        const result = await searchDaemonMemory({
+          ...query,
           machineId,
           serverId: exactServerId,
           accountId: accountLifetime.scope.accountId,
-          preferScoped: true,
-          method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
-          payload: query,
           ...(signal ? { signal } : {}),
-        }));
+        });
         if (!result.ok) return result;
         return await authorizeMemorySearchResult({
           result,
@@ -2092,60 +2564,80 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       return { ...decision, request: StoredApprovalRequestSchema.parse(decision.request) };
     },
 
-    promptDocGet: async (args) => readPromptDocInLibrary({ store: promptLibraryStore, ...args }),
-    promptDocCreate: async ({ signal, ...request }) => createPromptDocInLibrary({ store: promptLibraryStore, request, signal }),
-    promptDocFavoriteSet: async ({ signal, ...request }) => setPromptDocFavorite({ store: promptLibraryStore, request, signal }),
-    promptsLibraryList: async ({ signal, ...request }) => listPromptLibrary({ store: promptLibraryStore, request, signal }),
-    promptDocUpdate: async ({ signal, ...request }) => updatePromptDocInLibrary({ store: promptLibraryStore, request, signal }),
+    promptDocGet: async (args) => withPromptLibraryStore((store) => readPromptDocInLibrary({ store, ...args }), args.signal),
+    promptDocCreate: async ({ signal, ...request }) => withPromptLibraryStore((store) => createPromptDocInLibrary({ store, request, signal }), signal),
+    promptDocFavoriteSet: async ({ signal, ...request }) => withPromptLibraryStore((store) => setPromptDocFavorite({ store, request, signal }), signal),
+    promptsLibraryList: async ({ signal, ...request }) => withPromptLibraryStore((store) => listPromptLibrary({ store, request, signal }), signal),
+    promptDocUpdate: async ({ signal, ...request }) => withPromptLibraryStore((store) => updatePromptDocInLibrary({ store, request, signal }), signal),
 
     promptBundleUpdate: async ({ artifactId, title, skillMarkdown, folderId, tags }) => {
-      await updateSkillPromptBundle({ artifactId, title, skillMarkdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) });
+      await withPromptLibraryStore((store) => updateSkillPromptBundle({ artifactId, title, skillMarkdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) }, store));
       return { ok: true, artifactId };
     },
 
-    promptAssetExport: async ({ artifactId, machineId, assetTypeId, scope, serverId, directory, targetPath, targetName, installMode }) => {
-      const expectedSettingsScope = storage.getState().settingsScope ?? null;
-      const result = await writePromptLibraryArtifactToExternalAsset({
+    promptAssetExport: async ({ artifactId, machineId, assetTypeId, scope, serverId, directory, targetPath, targetName, installMode, signal }) => {
+      const libraryServerIdentityId = accountContext?.serverIdentityId;
+      const machineServerIdentityId = getServerProfileById(serverId ?? accountContext?.serverId ?? '')?.serverIdentityId;
+      if (!libraryServerIdentityId || !machineServerIdentityId) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      const links = await capturePromptExternalLinks(signal);
+      const result = await withPromptLibraryStore((store) => writePromptLibraryArtifactToExternalAsset({
         artifactId,
         machineId,
+        machineTarget: { serverIdentityId: machineServerIdentityId, machineId },
+        libraryServerIdentityId,
         assetTypeId,
         scope,
         serverId,
         workspacePath: directory ?? null,
         targetInput: targetPath ?? targetName ?? '',
         installMode,
-        promptExternalLinks: storage.getState().settings.promptExternalLinksV1,
+        promptExternalLinks: links.value,
         previewOnly: false,
-      });
+      }, store), signal);
       if (!result.ok || !result.nextPromptExternalLinks) {
         return { ok: false, errorCode: result.ok ? 'invalid_parameters' : (result.errorCode ?? 'invalid_parameters'), error: result.ok ? 'invalid_parameters' : result.error };
       }
-      sync.applySettings({ promptExternalLinksV1: result.nextPromptExternalLinks }, {
-        expectedSettingsScope,
-        source: 'ui',
-      });
+      try {
+        await links.write(result.nextPromptExternalLinks);
+      } catch (error) {
+        if (!(error instanceof PromptLibraryRowOperationError)) throw error;
+        return { ok: false, errorCode: error.code, error: error.code, details: { artifactId, exported: true } };
+      }
       return { ok: true, artifactId, exported: true };
     },
 
-    promptRegistryInstall: async ({ machineId, sourceId, itemId, configuredSources, serverId, installTarget }) => {
-      const expectedSettingsScope = storage.getState().settingsScope ?? null;
-      const result = await installPromptRegistryItem({
+    promptRegistryInstall: async ({ machineId, sourceId, itemId, configuredSources, serverId, installTarget, signal }) => {
+      const libraryServerIdentityId = accountContext?.serverIdentityId;
+      const machineServerIdentityId = getServerProfileById(serverId ?? accountContext?.serverId ?? '')?.serverIdentityId;
+      if (!libraryServerIdentityId || !machineServerIdentityId) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      const links = await capturePromptExternalLinks(signal);
+      const result = await withPromptLibraryStore((store) => installPromptRegistryItem({
         machineId,
+        machineTarget: { serverIdentityId: machineServerIdentityId, machineId },
+        libraryServerIdentityId,
         sourceId,
         itemId,
         configuredSources,
         serverId,
-        promptExternalLinks: storage.getState().settings.promptExternalLinksV1,
+        promptExternalLinks: links.value,
+        ...(signal ? { signal } : {}),
         ...(installTarget ? { installTarget } : {}),
-      });
+      }, store), signal);
       if (!result.ok) {
-        return { ok: false, errorCode: 'invalid_parameters', error: result.error, ...(result.artifactId ? { artifactId: result.artifactId } : {}) };
+        return { ok: false, errorCode: result.errorCode ?? 'invalid_parameters', error: result.error,
+          ...(result.artifactId ? { artifactId: result.artifactId } : {}),
+          ...(result.exported === true ? { details: { exported: true, response: result.response,
+            ...(result.artifactId ? { artifactId: result.artifactId } : {}) } } : {}) };
       }
       if (result.nextPromptExternalLinks) {
-        sync.applySettings({ promptExternalLinksV1: result.nextPromptExternalLinks }, {
-          expectedSettingsScope,
-          source: 'ui',
-        });
+        try {
+          await links.write(result.nextPromptExternalLinks);
+        } catch (error) {
+          if (!(error instanceof PromptLibraryRowOperationError)) throw error;
+          return { ok: false, errorCode: error.code, error: error.code,
+            details: { ...(result.artifactId ? { artifactId: result.artifactId } : {}), exported: result.exported,
+              ...(result.response ? { response: result.response } : {}) } };
+        }
       }
       return { ok: true, artifactId: result.artifactId, exported: result.exported };
     },
@@ -2154,12 +2646,15 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   };
 
   const companionDeps = accountContext ? createWidgetCompanionActionDepsV1(accountContext) : {};
-  const areaDeps = createWidgetAreaActionDepsV1(accountContext);
-  const widgetSurfaceDeps = { ...deps, widgetSurfaceActions: { ...deps.widgetSurfaceActions, ...companionDeps.widgetSurfaceActions, ...areaDeps.widgetSurfaceActions } };
+  const areaDeps = createWidgetAreaActionDepsV1(accountContext, opts?.resolveWidgetAreaPreset, opts?.widgetAreaIsCurrent);
+  const widgetSurfaceDeps = { ...deps, ...areaDeps, widgetSurfaceActions: { ...deps.widgetSurfaceActions, ...companionDeps.widgetSurfaceActions, ...areaDeps.widgetSurfaceActions } };
   const widgetDefinitionDeps = { ...widgetSurfaceDeps, ...createWidgetDefinitionActionDepsV1(accountContext, widgetSurfaceDeps) };
   const widgetHostDeps = { ...widgetDefinitionDeps, ...createWidgetCatalogActionDepsV1(accountContext, widgetDefinitionDeps) };
   const widgetInputDeps = { ...widgetHostDeps, ...createWidgetInputActionDepsV1(accountContext, widgetHostDeps) };
-  const executor = createActionExecutor({ ...widgetInputDeps, ...createWidgetRefreshActionDepsV1(accountContext, widgetInputDeps) });
+  const executor = createActionExecutor({ ...widgetInputDeps, ...createWidgetRefreshActionDepsV1(accountContext, widgetInputDeps),
+    ...(opts?.projectWorkerAction ? { projectWorkerAction: opts.projectWorkerAction }
+      : accountContext ? { projectWorkerAction: createUiProjectWorkerActionV1(accountContext) } : {}),
+  });
 
   // Surface attribution is owned by the host that constructs the executor, mirroring
   // `apps/cli/src/session/actions/createCliActionExecutor.ts` (`?? 'cli'`). This factory is the
@@ -2179,8 +2674,10 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       && typeof input.creationKey === 'string' ? input.creationKey.trim() : undefined;
     return {
       ...(context ?? {}),
+      actionsSettings: resolveActionsSettingsSnapshot(),
       surface,
       authority,
+      ...(accountContext ? { managedMachineCreationEnabled: accountContext.settings.managedMachineCreationEnabled } : {}),
       ...(opts?.admittedClientActionId ? { bypassApprovals: actionId === opts.admittedClientActionId } : {}),
       ...(surface === 'ui' && (credential === 'account' || credential === 'terminal')
         ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
@@ -2189,6 +2686,23 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   };
 
   return {
+    // A genuine present-user native invocation has one installed Action policy
+    // and approval owner. Do not create a second local Ask before its relay.
+    executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext) => {
+      if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const resolvedContext = resolveContext(context, input, actionId);
+      const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, resolvedContext);
+      if (preferenceFailure) return preferenceFailure;
+      return await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
+        context: resolvedContext, ...(context?.signal ? { signal: context.signal } : {}) });
+    },
+    readWidgetInputDescriptor: async request => {
+      const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
+      if (!port || !widgetInputDeps.readWidgetInputDescriptor) return null;
+      const current = await port.read(request.ref.surface, request.context, request.signal);
+      if ('ok' in current || !current.instances.some(row => row.instance.id === request.ref.instanceId && sameStrictJsonValue(row.instance, request.instance))) return null;
+      return widgetInputDeps.readWidgetInputDescriptor(request);
+    },
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
     prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context, input, actionId)),
@@ -2205,7 +2719,7 @@ type DefaultActionExecutor = Omit<ReturnType<typeof createActionExecutor>, 'exec
   execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['execute']>;
   prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
 }>;
-type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId'> & Readonly<{
+type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential'> & Readonly<{
   serverId: string;
   signal?: AbortSignal;
   /** Synchronously consumes a failure only while this captured Account is still current. */
@@ -2216,6 +2730,13 @@ export function isActionAccountScopeChangedError(error: unknown): boolean {
   return error instanceof Error
     && 'code' in error
     && error.code === 'action_account_scope_changed';
+}
+
+function assertExpectedActionAccount(account: Pick<LazyActionAccountContext, 'accountId'>, context?: Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential'>): void {
+  if ((context?.expectedAccountId !== undefined && account.accountId !== context.expectedAccountId)
+    || (context?.externalActionCredential && account.accountId !== context.externalActionCredential.accountId)) {
+    throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+  }
 }
 
 /**
@@ -2230,6 +2751,8 @@ export function isActionAccountScopeChangedError(error: unknown): boolean {
  */
 function createCapturedScopeFamilyPorts(account: LazyActionAccountContext): Readonly<{
   sessionAccessAction: NonNullable<ActionExecutorDeps['sessionAccessAction']>;
+  machineAccessAction: NonNullable<ActionExecutorDeps['machineAccessAction']>;
+  machineWorkSummaryGet: NonNullable<ActionExecutorDeps['machineWorkSummaryGet']>;
   sessionDiscussionAction: NonNullable<ActionExecutorDeps['sessionDiscussionAction']>;
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
 }> {
@@ -2255,6 +2778,26 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext): Read
   const homeDomainAction = createHomeDomainActionExecutorForScope(scope);
   const organizationResourceAction = createSessionOrganizationResourceAction(account);
   return {
+    machineWorkSummaryGet: async ({ input, signal }) => {
+      account.assertCurrent();
+      if (input.serverId !== account.serverId) return { ok: false as const, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      const result = await machineRpcWithServerScope({ serverId: account.serverId, accountId: account.accountId,
+        machineId: input.machineId, method: RPC_METHODS.MACHINES_WORK_SUMMARY_GET, payload: input, preferScoped: true,
+        ...(signal ? { signal } : {}) });
+      account.assertCurrent();
+      return result;
+    },
+    machineAccessAction: async (args) => {
+      account.assertCurrent();
+      const { executeMachineAccessHttpAction, MachineAccessApiError } = await import('@/sync/api/machines/machineAccessApi');
+      try {
+        return await executeMachineAccessHttpAction({ scope, isCurrent, actionId: args.actionId, input: args.input,
+          ...(args.signal ? { signal: args.signal } : {}) });
+      } catch (error) {
+        if (error instanceof MachineAccessApiError) return { ok: false as const, errorCode: error.code, error: error.code };
+        throw error;
+      }
+    },
     homeDomainAction: async (args) => {
       account.assertCurrent();
       if (isSessionOrganizationResourceAction(args.actionId)) return await organizationResourceAction(args);
@@ -2317,9 +2860,7 @@ export async function withDefaultActionExecuteContext<TResult>(
   const account = await captureLazyActionAccountContext(context.serverId, context.signal);
   try {
     try {
-      if (context.expectedAccountId !== undefined && account.accountId !== context.expectedAccountId) {
-        throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-      }
+      assertExpectedActionAccount(account, context);
       const settings = await account.readSettings();
       account.assertCurrent();
       context.signal?.throwIfAborted();
@@ -2347,18 +2888,74 @@ export async function withDefaultActionExecuteContext<TResult>(
 
 /** Read-only drag admission borrows the complete Action dependency composition and exact Account lifetime. */
 export async function readDefaultWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, signal?: AbortSignal, widgetAreaContext?: ActionExecutorContext['widgetAreaContext']) {
-  return withDefaultActionExecuteContext(undefined, { serverId: surface.serverId, expectedAccountId: surface.accountId, signal },
+  // The destination Account owns the layout, not necessarily the signed-in editor.
+  // Capture the real invoking Account through the same Action context as execution.
+  return withDefaultActionExecuteContext(undefined, { serverId: surface.serverId, signal },
     executor => executor.readWidgetMovementAdmission(ref, surface, { surface: 'ui', serverId: surface.serverId, signal, ...(widgetAreaContext ? { widgetAreaContext } : {}) }));
+}
+
+/** Sharing reviews reuse the admitted input descriptor with the same complete host composition. */
+export async function readDefaultWidgetShareInputDescriptorV1(input: Readonly<{
+  ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; scope: Readonly<{ serverId: string; accountId: string }>; signal?: AbortSignal;
+}>) {
+  return withDefaultActionExecuteContext(undefined, { ...input.scope, expectedAccountId: input.scope.accountId, signal: input.signal },
+    executor => executor.readWidgetInputDescriptor({ ref: input.ref, instance: input.instance, admission: 'configuration',
+      context: { surface: 'ui', serverId: input.scope.serverId, signal: input.signal }, signal: input.signal }));
+}
+
+// A qualified Account Action selects its input Home on every surface. Only
+// unqualified UI actions fall back to the currently focused Home.
+export function resolveDefaultActionInvocationServerId(actionId: ActionId, input: unknown, context?: UiActionExecutorContext): string | undefined {
+    if (context?.serverId) return context.serverId;
+    if (isProjectActionIdV1(actionId) && actionId !== 'projects.trust.list' && actionId !== 'projects.trust.revoke') {
+      const qualified = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
+      if (qualified.success) return qualified.data.workspace.serverId;
+    }
+    if (isSessionStateFieldActionId(actionId)) {
+      const qualified = getActionSpec(actionId).inputSchema.safeParse(input);
+      const target = qualified.success ? qualified.data : null;
+      if (target && typeof target === 'object' && 'serverId' in target && typeof target.serverId === 'string') return target.serverId;
+    }
+    if (actionId === 'session.spawn_new') {
+      const qualified = SessionSpawnNewInputV2Schema.safeParse(input);
+      if (qualified.success) return qualified.data.executionTarget.serverId;
+    }
+    if (actionId === 'machines.work.summary.get') {
+      const qualified = MachineWorkSummaryGetInputV1Schema.safeParse(input);
+      if (qualified.success) return qualified.data.serverId;
+    }
+    const memoryAction = MEMORY_DOCUMENT_ACTION_IDS_V1.find(id => id === actionId);
+    if (memoryAction) {
+      const qualified = MemoryActionInputSchemasV1[memoryAction].safeParse(input);
+      if (qualified.success) {
+        const target = qualified.data;
+        const serverId = 'ref' in target ? target.ref.serverId
+          : 'sessionRef' in target ? target.sessionRef.serverId
+            : 'scope' in target ? target.scope === 'project' ? target.projectRef.serverId : undefined : target.serverId;
+        if (serverId) return serverId;
+      }
+    }
+    const operationAction = ActionOperationActionIdV1Schema.safeParse(actionId);
+    if (operationAction.success) {
+      const qualified = ActionOperationActionInputSchemasV1[operationAction.data].safeParse(input);
+      if (qualified.success) return qualified.data.serverId;
+    }
+    const sourceAction = PROJECT_SOURCE_ACTION_SPECS_V1.find(spec => spec.id === actionId);
+    if (sourceAction) {
+      const qualified = sourceAction.inputSchema.safeParse(input);
+      if (qualified.success) return qualified.data.serverId;
+    }
+    if (actionId === 'projects.context.update') {
+      const qualified = ProjectContextUpdateInputV1Schema.safeParse(input);
+      if (qualified.success) return qualified.data.target.serverId;
+    }
+    return (isRoleActionIdV1(actionId) || (context?.surface ?? 'ui') === 'ui')
+      ? getActiveServerAccountScope()?.serverId : undefined;
 }
 
 export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions): DefaultActionExecutor {
   let unscoped: ReturnType<typeof createActionExecutor> | undefined;
   const ordinary = () => unscoped ?? (unscoped = buildDefaultActionExecutor(opts));
-  // Capture an implicit UI Home at invocation, then use the same credential
-  // lifetime as explicitly scoped callers. Other surfaces retain their existing targeting.
-  const resolveInvocationServerId = (actionId: ActionId, context?: UiActionExecutorContext) => context?.serverId
-    ?? ((isRoleActionIdV1(actionId) || (context?.surface ?? 'ui') === 'ui')
-      ? getActiveServerAccountScope()?.serverId : undefined);
   const apiTokenTransport = async (): Promise<ApiTokenActionTransport | null> => {
     if (opts?.apiTokenAction) return opts.apiTokenAction;
     if (getCurrentAuth()?.credentialAuthorityKind !== 'api_token') return null;
@@ -2369,21 +2966,36 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
   const accountScopeFailure = (error: unknown) => isActionAccountScopeChangedError(error)
     ? { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }
     : null;
+  const nativeAction = (actionId: ActionId): ManagedMachineActionIdV1 | null => {
+    // An admitted replay retains its existing strict approval custody. Ordinary
+    // relay ingress cannot consume a local Artifact's bypass proof.
+    if (opts?.admittedClientActionId) return null;
+    const parsed = ManagedMachineActionIdV1Schema.safeParse(actionId);
+    return parsed.success && parsed.data !== 'machines.managed.list'
+      && parsed.data !== 'machines.managed.get' && parsed.data !== 'machines.managed.cancel'
+      && parsed.data !== 'machines.managed.setup.skip'
+      && parsed.data !== 'machines.managed.references.get' ? parsed.data : null;
+  };
   return {
     execute: async (actionId, input, context) => {
+      const custodyFailure = resolveUiFilesystemTransferCustodyFailure(actionId, input);
+      if (custodyFailure) return custodyFailure;
       const api = await apiTokenTransport();
       if (api) return await executeApiTokenAction(api, actionId, input, context);
-      const serverId = resolveInvocationServerId(actionId, context);
+      const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
       if (!serverId) return await ordinary().execute(actionId, input, context);
       try {
-        return await withDefaultActionExecuteContext(opts, { ...context, serverId }, async (executor, account) => (
-          await executor.execute(actionId, input, {
+        return await withDefaultActionExecuteContext(opts, { ...context, serverId }, async (executor, account) => {
+          const capturedContext = {
             ...context,
             serverId,
             ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
             runtimeAccountId: account.accountId,
-          })
-        ), actionId);
+          };
+          const native = nativeAction(actionId);
+          return native ? await executor.executeNativeManagedAction(native, input, capturedContext)
+            : await executor.execute(actionId, input, capturedContext);
+        }, actionId);
       } catch (error) {
         const failure = accountScopeFailure(error);
         if (failure) return failure;
@@ -2391,24 +3003,33 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       }
     },
     prepare: async (actionId, input, context) => {
+      const custodyFailure = resolveUiFilesystemTransferCustodyFailure(actionId, input);
+      if (custodyFailure) return { kind: 'settled', result: custodyFailure };
       const api = await apiTokenTransport();
       if (api) return { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, context) } };
-      const serverId = resolveInvocationServerId(actionId, context);
+      const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
       if (!serverId) return await ordinary().prepare(actionId, input, context);
       const account = await captureLazyActionAccountContext(serverId, context?.signal);
       try {
-        if (context?.expectedAccountId !== undefined && account.accountId !== context.expectedAccountId) {
-          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-        }
+        assertExpectedActionAccount(account, context);
         const settings = await account.readSettings();
         account.assertCurrent();
         context?.signal?.throwIfAborted();
-        const prepared = await buildDefaultActionExecutor(opts, { ...account, settings }).prepare(actionId, input, {
+        const executor = buildDefaultActionExecutor(opts, { ...account, settings });
+        const capturedContext = {
           ...context,
           serverId,
           ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
           runtimeAccountId: account.accountId,
+        };
+        const native = nativeAction(actionId);
+        const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, {
+          managedMachineCreationEnabled: settings.managedMachineCreationEnabled,
         });
+        const prepared = native
+          ? preferenceFailure ? { kind: 'settled' as const, result: preferenceFailure }
+            : { kind: 'ready' as const, invocation: { run: async () => await executor.executeNativeManagedAction(native, input, capturedContext) } }
+          : await executor.prepare(actionId, input, capturedContext);
         account.assertCurrent();
         account.dispose();
         if (prepared.kind === 'settled') return prepared;

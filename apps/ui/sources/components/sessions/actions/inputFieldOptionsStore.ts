@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import type { ActionFieldOption } from './ActionInputFields';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type InputFieldOptionsState = Readonly<{
     options: readonly ActionFieldOption[];
@@ -15,12 +16,14 @@ export type InputOptionsRead = Readonly<{
     key: string;
     input: Record<string, unknown>;
     context: Omit<ActionExecutorContext, 'surface' | 'signal'>;
+    accountLifetime?: ServerAccountScopeLifetime | null;
 }>;
 type ReadEntry = {
     state: InputFieldOptionsState;
     controller: AbortController;
     listeners: Set<() => void>;
     refreshKey?: string;
+    retirement?: Readonly<{ dispose(): void }>;
 };
 
 // Card paint and its transcript height projection share the same demanded read.
@@ -31,6 +34,7 @@ function load(read: InputOptionsRead, entry: ReadEntry): void {
     const controller = entry.controller;
     void callWorkflowAction({
         actionId: 'action.options.resolve', input: read.input, context: read.context, signal: controller.signal,
+        ...(read.accountLifetime === undefined ? {} : { accountLifetime: read.accountLifetime }),
         parseResult: (value) => getActionSpec('action.options.resolve').outputSchema!.parse(value) as PublicActionResultById['action.options.resolve'],
     }).then((result) => {
         if (controller.signal.aborted) return;
@@ -55,6 +59,12 @@ export function subscribeInputFieldOptions(read: InputOptionsRead, listener: () 
     if (!entry) {
         entry = { state: INPUT_OPTIONS_LOADING, controller: new AbortController(), listeners: new Set(), refreshKey };
         reads.set(read.key, entry);
+        const boundEntry = entry;
+        entry.retirement = read.accountLifetime?.onRetire(() => {
+            boundEntry.controller.abort();
+            boundEntry.state = { status: 'failed', options: EMPTY_INPUT_OPTIONS, errorCode: 'action_account_scope_changed' };
+            boundEntry.listeners.forEach(listener => listener());
+        });
         load(read, entry);
     }
     entry.listeners.add(listener);
@@ -63,6 +73,7 @@ export function subscribeInputFieldOptions(read: InputOptionsRead, listener: () 
         subscribedEntry.listeners.delete(listener);
         if (subscribedEntry.listeners.size === 0) {
             subscribedEntry.controller.abort();
+            subscribedEntry.retirement?.dispose();
             reads.delete(read.key);
         }
     };

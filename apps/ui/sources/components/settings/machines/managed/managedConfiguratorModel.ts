@@ -13,11 +13,14 @@ import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/
 import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
 
 export type ManagedConfiguratorDraft = Readonly<{
     provisioner: MachineProvisionersListResultV1['provisioners'][number];
     controller: ManagedControllerV1; name: string;
     credentials?: ValidatedLaunchSnapshotV1['credentials'];
+    /** Future setup belongs to the preset revision, never native provisioner choices. */
+    environment?: MachineEnvironmentV1;
     /** Explicit editable values may be temporarily invalid; only the declared options schema admits a probe. */
     optionsSelectors?: Readonly<Record<string, unknown>>;
     choices: MachineProvisionerOptionsResultV1['choices'];
@@ -64,7 +67,7 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
     const complete = independentDimensions.every(key => !draft.choices.some(candidate => candidate.nativeFacts?.[key]) || !!selection[key]);
     return { ...draft, dimensionSelection: complete && choice ? undefined : selection, selected: complete && choice ? choice : null };
 }
-export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
+export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'environment' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
     return { ...input, choices: [], selected: null, optionStatus: 'loading',
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
 }
@@ -124,11 +127,13 @@ export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft): Manag
         billing: draft.provisioner.descriptor.billing, retentionCapabilities: draft.provisioner.descriptor.retention,
         prerequisites: draft.check?.prerequisites ?? [], localResources: draft.check?.localResources,
         prices: selected.prices,
-        nativeFacts: selected.nativeFacts, machineOverride: draft.override, preset: draft.preset, categoryPreferences: draft.categoryPreferences });
+        nativeFacts: selected.nativeFacts, machineOverride: draft.override, preset: draft.preset, environment: draft.environment,
+        categoryPreferences: draft.categoryPreferences });
 }
 export function managedConfiguratorAcquireInput(draft: ManagedConfiguratorDraft, homeId: string): ManagedAcquireInputV1 | null {
     const facts = managedConfiguratorFacts(draft);
     if (!facts || facts.optionStatus !== 'current' || draft.check?.available === false) return null;
+    const { environment: _environment, ...oneOffFacts } = facts;
     return ManagedAcquireInputV1Schema.parse({ selection: { kind: 'one-off', homeId, launch: facts.launch,
-        controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage }, reviewedFacts: facts });
+        controller: facts.controller, retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage }, reviewedFacts: oneOffFacts });
 }

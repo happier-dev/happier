@@ -14,6 +14,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import type { MachineEnvironmentV1 } from '@happier-dev/protocol/machines/managed/machineEnvironmentV1';
 
 import {
   ManagedMachineKeepControl,
@@ -46,6 +47,8 @@ export type ManagedReceiptModel = Readonly<{
   onRename?: () => void;
   facts: readonly ManagedReceiptFact[];
   cost: ManagedReceiptCost;
+  /** The exact reviewed recipe; rendering is owned by the shared Environment section. */
+  environment?: MachineEnvironmentV1;
   keep?: Omit<
     ManagedMachineKeepControlProps,
     'presentation' | 'testID' | 'showLabel'

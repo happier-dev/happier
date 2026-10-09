@@ -7,9 +7,11 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flattenTestStyle, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { createDeferred } from '@/dev/testkit';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { PopoverPortalTargetContextProvider } from '@/components/ui/popover/PopoverPortalTarget';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
     type PluginContributionIdentityV1,
@@ -363,8 +365,9 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:pool:fallback')).toBeTruthy();
     });
 
-    it('renames the account in place: the pencil opens a small popover under the name, and Save writes the new name', async () => {
-        const onRename = vi.fn();
+    it('keeps the rename draft until the write is acknowledged and retains it after failure', async () => {
+        const receipt = createDeferred<boolean>();
+        const onRename = vi.fn(() => receipt.promise);
         const onReconnect = vi.fn();
         const screen = await renderDetail({
             status: 'needs_reauth',
@@ -376,8 +379,14 @@ describe('QualifiedAccountDetailView', () => {
         await screen.pressByTestIdAsync('qualified-account-detail:action:edit-label');
         await act(async () => screen.changeTextByTestId('qualified-account-detail:rename:input', '  Team · Acme  '));
         expect(screen.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('  Team · Acme  ');
-        await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+        await act(async () => { screen.pressByTestId('qualified-account-detail:rename:save'); });
         expect(onRename).toHaveBeenCalledWith('Team · Acme');
+        expect(screen.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('  Team · Acme  ');
+        await act(async () => { receipt.resolve(false); await receipt.promise; });
+        expect(screen.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('  Team · Acme  ');
+        onRename.mockImplementation(async () => true);
+        await screen.pressByTestIdAsync('qualified-account-detail:rename:save');
+        expect(screen.findHostByTestId('qualified-account-detail:rename:input')).toBeNull();
 
         screen.pressByTestId('qualified-account-detail:action:reconnect');
         expect(onReconnect).toHaveBeenCalledTimes(1);
@@ -473,11 +482,14 @@ describe('QualifiedAccountDetailView', () => {
     it('never offers a removal that would fail: while a pool uses the account, the way out of the pool comes first', async () => {
         const onDisconnect = vi.fn();
         const onOpenPool = vi.fn();
-        const pooled = await renderDetail({
+        const props = {
             groups: [makeGroup({ groupId: 'work-pool', displayName: 'Work pool', memberAccountIds: ['work'] })],
             onOpenPool,
             onDisconnect,
-        });
+            labelsByKey: { [connectedEntitySubjectKeyV1({ kind: 'group', service: SERVICE, groupId: 'work-pool' })]: 'Personal work pool' },
+        };
+        const pooled = await renderDetail(props);
+        expect(rowTitleOf(pooled.root, 'qualified-account-detail:action:leave-pool:work-pool')).toContain('Personal work pool');
 
         const remove = pooled.findAll((node) => node.props?.testID === 'qualified-account-detail:action:disconnect'
             && typeof node.props?.onPress === 'function')[0];

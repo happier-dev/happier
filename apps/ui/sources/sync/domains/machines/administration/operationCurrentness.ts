@@ -8,6 +8,7 @@ export function sameMachineAdministrationExecutionTarget(
     return left.target.serverIdentityId === right.target.serverIdentityId
         && left.machine.id === right.machine.id
         && left.serverId === right.serverId
+        && (left.machine.installationId ?? null) === (right.machine.installationId ?? null)
         && left.machine.daemonStateVersion === right.machine.daemonStateVersion
         && left.selectionRevision === right.selectionRevision;
 }

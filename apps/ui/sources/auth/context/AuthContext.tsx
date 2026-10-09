@@ -6,6 +6,8 @@ import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage'
 import { loadLocalSettings } from '@/sync/domains/state/persistence';
 import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { parseToken } from '@/utils/auth/parseToken';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { trackLogout } from '@/track';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -42,6 +44,9 @@ export type AuthCredentialLifecycleResult =
 type AuthLogoutOptions = Readonly<{
     beforeMutation?: () => void | Promise<void>;
     scope?: 'focused-home' | 'all-credentials';
+    /** Retain the original Home during confirmed-erasure local cleanup recovery. */
+    target?: HomeCredentialTarget;
+    expectedCredentials?: AuthCredentials;
 }>;
 
 /** The exact Home a credential belongs to: endpoint URL plus stable identity. */
@@ -272,10 +277,22 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     const logout = React.useCallback(async (
         options?: AuthLogoutOptions,
     ): Promise<AuthCredentialLifecycleResult> => {
-        const activeServer = getActiveServerSnapshot();
+        const logoutTarget = options?.target;
+        const activeServer = logoutTarget ?? getActiveServerSnapshot();
         const activeServerId = String(activeServer.serverId ?? '').trim();
         const activeServerUrl = String(activeServer.serverUrl ?? '').trim();
-        const forgottenScope = getActiveServerAccountScope();
+        if (options?.target && (!options.expectedCredentials || options.scope === 'all-credentials')) {
+            throw new Error('Targeted logout requires the original Home credentials');
+        }
+        const targetProfile = logoutTarget
+            ? listServerProfiles().find(profile => isSameServerTarget(logoutTarget, {
+                serverId: resolveServerProfileScopeId(profile), serverUrl: profile.serverUrl,
+            })) : null;
+        const forgottenScope = options?.target && options.expectedCredentials
+            ? createServerAccountScope(targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId,
+                parseToken(options.expectedCredentials.token))
+            : getActiveServerAccountScope();
+        if (options?.target && !forgottenScope) throw new Error('Original Home Account scope is unavailable');
         // PA-CUSTODY1 guards the credential this logout destroys: a focused logout
         // removes only the active Home's credential, so only that Home's retained
         // first-key custody blocks it; forgetting every credential (or a logout
@@ -342,14 +359,14 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             return { kind: 'completed' };
         }
 
-        let activeCredentials: AuthCredentials | null = credentials;
-        if (activeServerUrl) {
+        let activeCredentials: AuthCredentials | null = options?.expectedCredentials ?? (options?.target ? null : credentials);
+        if (activeServerUrl && !logoutTarget) {
             try {
                 activeCredentials = await TokenStorage.getCredentialsForServerUrl(activeServerUrl, {
                     serverId: activeServerId || undefined,
-                }) ?? credentials;
+                }) ?? activeCredentials;
             } catch {
-                activeCredentials = credentials;
+                // Keep the captured target's bearer, never the later focused Home's.
             }
         }
         const activeProfile = activeServerUrl && activeCredentials
@@ -377,15 +394,17 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (activeServerUrl) {
             const removed = await TokenStorage.removeCredentialsForServerUrl(activeServerUrl, {
                 serverId: activeServerId || undefined,
+                ...(options?.expectedCredentials ? { expectedCredentials: options.expectedCredentials } : {}),
             });
             if (!removed) {
                 throw new Error('Failed to remove active Home credentials');
             }
         }
+        const focusedCredentials = getCurrentAuth()?.credentials;
         const shouldClearFocusedAuth = (
             (!activeServerId && !activeServerUrl)
             || isSameServerTarget(activeServer, getActiveServerSnapshot())
-        );
+        ) && (!options?.expectedCredentials || !focusedCredentials || focusedCredentials.token === options.expectedCredentials.token);
         if (shouldClearFocusedAuth) {
             loginSyncServerKeyRef.current = null;
             setCredentials(null);

@@ -12,8 +12,11 @@ import {
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
+import { createPlainProjectAccountRowListFixture } from '../fixtures/projectAccountRows';
 import { createArtifactStoreBoundary, type ArtifactStoreBoundary } from './artifactStoreBoundary';
 
 /**
@@ -36,7 +39,7 @@ export type HomeDomainAnswer = Readonly<{
      * One path serving several reads told apart by their body (the active and the archived Team
      * list): return the answer for this request, or `undefined` for this answer's own fields.
      */
-    select?: (input: unknown) => HomeDomainAnswer | undefined;
+    select?: (input: unknown) => HomeDomainAnswer | undefined | Promise<HomeDomainAnswer | undefined>;
     status?: number;
     /** Sent as the JSON body. Omit for an empty body. */
     body?: unknown;
@@ -104,6 +107,8 @@ export type AddHomeOptions = Readonly<{
      * about encryption sets `e2ee` and supplies that material itself.
      */
     accountEncryptionMode?: 'plain' | 'e2ee';
+    /** Current signed ordinary-Account claims for native Action ingress; omitted remains legacy. */
+    currentAccount?: boolean;
 }>;
 
 const ACCOUNT_ENCRYPTION_PATH = '/v1/account/encryption';
@@ -124,6 +129,8 @@ type HomeRecord = {
 export type HomeGovernanceHarness = Readonly<{
     /** Every request that reached the network boundary, in order. */
     requests: RecordedHomeRequest[];
+    /** Genuine HTTP boundary, leaving the request and admission owners real. */
+    request(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     /** Saves a Home on this device and returns the id every path is keyed by. */
     addHome(options: AddHomeOptions): Promise<string>;
     /**
@@ -185,8 +192,10 @@ function base64Url(value: string): string {
  * decoder runs on this, so a token this device cannot read fails here the same
  * way a malformed one fails in the app.
  */
-export function createAccountTokenForTests(accountId: string): string {
-    return `e30.${base64Url(JSON.stringify({ sub: accountId }))}.signature`;
+export function createAccountTokenForTests(accountId: string, options?: Readonly<{ currentAccount?: boolean }>): string {
+    return `e30.${base64Url(JSON.stringify({ sub: accountId, ...(options?.currentAccount ? {
+        provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'account', authority: 'present_user' }), tokenEpoch: 0,
+    } : {}) }))}.signature`;
 }
 
 export function createHomeGovernanceHarness(): HomeGovernanceHarness {
@@ -199,6 +208,12 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
     let harness: HomeGovernanceHarness;
     harness = Object.freeze({
         requests,
+        request: async (input: string | URL | Request, init?: RequestInit) => {
+            const url = input instanceof Request ? input.url : String(input);
+            const authorization = new Headers(init?.headers).get('Authorization');
+            return await answerForEndpoint(harness, new URL(url).origin, url, init,
+                authorization?.startsWith('Bearer ') ? authorization.slice(7) : null);
+        },
         async addHome(options: AddHomeOptions): Promise<string> {
             const profile = options.publicServerUrl === undefined && options.serverIdentityId === undefined
                 ? await upsertServerProfile({ serverUrl: options.serverUrl, name: options.name })
@@ -221,7 +236,7 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 serverId,
                 serverUrl: storedServerUrl,
                 accountId,
-                token: accountId === null ? null : createAccountTokenForTests(accountId),
+                token: accountId === null ? null : createAccountTokenForTests(accountId, { currentAccount: options.currentAccount }),
                 answers: new Map(),
                 artifacts: createArtifactStoreBoundary({
                     ownerAccountId: () => record.accountId,
@@ -242,6 +257,9 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             });
             record.answers.set(ACCOUNT_SETTINGS_V2_PATH, { body: { content: null, version: 0 } });
             record.answers.set(`GET ${AUTHORING_MEMORY_ROUTE_V1}`, { body: AuthoringMemoryListResponseV1Schema.parse({ rows: [] }) });
+            if ((options.accountEncryptionMode ?? 'plain') === 'plain') {
+                record.answers.set(`POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture() });
+            }
 
             const features = createRootLayoutFeaturesResponse();
             if (options.teamsEnabled !== undefined
@@ -432,13 +450,13 @@ function requireHarness(): HomeGovernanceHarness {
  * matter which transport a path arrives on.
  */
 async function answerForEndpoint(
+    current: HomeGovernanceHarness,
     serverUrl: string,
     url: string,
     init: RequestInit | undefined,
     token: string | null,
 ): Promise<Response> {
     const body = init?.body;
-    const current = requireHarness();
     const record = current.findByServerUrl(serverUrl);
     const path = url.startsWith(serverUrl) ? url.slice(serverUrl.length) : url;
 
@@ -458,7 +476,7 @@ async function answerForEndpoint(
 
     const method = (init?.method ?? 'GET').toUpperCase();
     const pathAnswer = record?.answers.get(`${method} ${path}`) ?? record?.answers.get(path);
-    const answer = pathAnswer?.select?.(input) ?? pathAnswer;
+    const answer = await pathAnswer?.select?.(input) ?? pathAnswer;
     if (!answer) {
         const artifactResponse = record?.artifacts.handle(path, init);
         if (artifactResponse) return await artifactResponse;
@@ -523,6 +541,7 @@ export function installHomeGovernanceBoundaries(harness: HomeGovernanceHarness):
             serverFetch: async (path: string, init?: RequestInit) => {
                 const active = getActiveServerSnapshot();
                 return await answerForEndpoint(
+                    requireHarness(),
                     active.serverUrl,
                     path,
                     init,
@@ -539,6 +558,7 @@ export function installHomeGovernanceBoundaries(harness: HomeGovernanceHarness):
             ) => {
                 options?.onIssued?.();
                 return answerForEndpoint(
+                    requireHarness(),
                     params.endpointUrl,
                     path,
                     init,
@@ -558,6 +578,7 @@ export function installHomeGovernanceBoundaries(harness: HomeGovernanceHarness):
         }) => {
             params.onIssued?.();
             return answerForEndpoint(
+                requireHarness(),
                 params.serverUrl,
                 params.url,
                 params.init,

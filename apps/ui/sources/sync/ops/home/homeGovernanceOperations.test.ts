@@ -10,6 +10,8 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
+import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 
 /**
  * The Home operation wrappers, through the path they actually take.
@@ -56,6 +58,21 @@ afterEach(() => {
 });
 
 describe('home governance mutations', () => {
+    it('forwards the exact explicitly reviewed manual responsibility without replacing the Home or account operand', async () => {
+        const home = await addHome();
+        harness.answer(home, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });
+        harness.answer(home, '/v1/home/accounts/delete', { body: { status: 'deleted' } });
+        const resource = createManagedResourceDependencyFixture();
+        const managedResourceDispositions = [{ managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
+            expectedAllocation: resource.allocation, expectedResource: resource.resource, expectedNativeOperationRef: resource.nativeOperationRef,
+            expectedRecovery: resource.recovery, responsibility: 'manual' }] as const;
+        const { deleteHomeAccount } = await operations();
+        await expect(deleteHomeAccount({ scope: { serverId: home, accountId: 'account-admin' }, accountId: 'ada',
+            managedResourceDispositions })).resolves.toEqual({ kind: 'succeeded' });
+        expect(harness.requestsFor('/v1/home/accounts/delete')[0]).toMatchObject({ serverId: home,
+            input: { accountId: 'ada', managedResourceDispositions } });
+    });
+
     it('keeps a deferred approval distinct from a committed Home mutation', async () => {
         const { classifyHomeGovernanceActionOutcome } = await operations();
 

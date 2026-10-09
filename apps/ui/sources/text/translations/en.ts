@@ -705,8 +705,8 @@ const mcpServersUxTranslationExtension = {
   mcpServersScopeAllMachines: 'All machines',
   mcpServersScopeMachine: 'Machine',
   mcpServersScopeWorkspace: 'Workspace',
-  mcpServersScopeProviderProject: 'Provider project config',
-  mcpServersScopeProviderUser: 'Provider user config',
+  mcpServersScopeProviderProject: 'Agent project config',
+  mcpServersScopeProviderUser: 'Agent user config',
   mcpServersScopeBuiltIn: 'Built-in',
   mcpServersStatusActive: 'Active',
   mcpServersStatusAvailable: 'Available',
@@ -879,7 +879,7 @@ const agentAuthenticationTranslationExtension = {
       'Open a terminal to refresh this CLI login on the machine.',
     checkNowTitle: 'Check now',
     checkNowSubtitle: 'Refresh machine-local authentication details.',
-    terminalTitle: 'Provider login terminal',
+    terminalTitle: 'Agent login terminal',
     methods: {
       apiKeyEnv: 'API key from environment',
       authTokenEnv: 'Auth token from environment',
@@ -1619,6 +1619,12 @@ const enApprovals = {
       submitRefused: "The credential was entered, but the submit control was refused.",
       submitUnknown: "The credential was entered, but submit could not be confirmed. It will not be retried.",
       targetChanged: "The target changed. Review it again before entering a credential.",
+      nothingEntered: "Nothing was entered.",
+      savedUnavailable: "That Saved Secret can’t be used right now.",
+      savedUnavailableBody: "It was removed or its account is locked. Type it once, or choose another.",
+      unknownBody: "Check the screen; a new entry is a new request.",
+      fieldUnsupported: "This field can’t be filled securely here yet.",
+      fieldUnsupportedBody: "Happier can’t confirm the exact field on this screen, so nothing was entered. Type it there yourself.",
       privacy: "The model never has to read or store this credential. An agent with shell access as the same operating-system user could still obtain it.",
     },
   title: 'Approval',
@@ -1702,6 +1708,7 @@ const enMemoryContext = {
     pastSessions: 'Past sessions',
     noResults: ({ query }: { query: string }) => `Nothing about “${query}” yet.`,
     searchUnavailable: 'Search needs a machine with memory search turned on.',
+    documentSearchUnavailable: 'Memory document search is unavailable here.',
     searchHint: 'One search over what is remembered, what is no longer loaded, and past sessions.',
     accessPrivate: 'Only you can see it',
     accessShared: 'Shared',
@@ -4686,10 +4693,9 @@ const enConnectedServices = {
     errors: {
       groupGenerationConflict:
         'The account group changed before the switch completed. Refresh the account list and try again.',
-      providerStateSharingRequired:
-        'Provider state sharing must be enabled before this account selection can be used.',
+      providerStateSharingRequired: "Agent state sharing must be enabled before this account selection can be used.",
       providerStateSharingUnavailable:
-        'Provider state sharing settings could not be checked on this machine. Refresh the daemon connection and try again.',
+        'Agent state sharing settings could not be checked on this machine. Refresh the daemon connection and try again.',
       profileDisconnected:
         'The selected connected account needs to be re-authenticated before it can be used.',
       profileMissing:
@@ -4775,6 +4781,8 @@ const enConnectedServices = {
       'This account already has the maximum number of connected accounts. Disconnect one you no longer need and try again.',
     invalidGroup:
       'This account group is invalid. Review its settings and try again.',
+    quotaRefreshFailed: 'Couldn’t refresh usage.',
+    quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} Try again after ${time}.`,
     requestFailedWithStatus: ({ status }: { status: number }) =>
       `The connected-service request failed (${status}). Refresh and try again.`,
     generic: 'The change didn’t finish. Refresh and try again.',
@@ -4928,33 +4936,33 @@ const enConnectedServices = {
     notConnected: 'not connected',
   },
   providerStateSharing: {
-    title: 'Provider state sharing',
+    title: 'Agent state sharing',
     footer:
-      'Connected-service authentication stays isolated. Configuration and session state can be shared only where the provider supports it safely.',
-    configTitle: 'Share provider configuration',
+      'Connected-service authentication stays isolated. Configuration and session state can be shared only where the agent supports it safely.',
+    configTitle: 'Share agent configuration',
     agentConfigTitle: ({ agent }: { agent: string }) =>
       `${agent} configuration sharing`,
     configLinkedTitle: 'Link live configuration',
     configLinkedSubtitle:
-      'Use links where supported so connected-service sessions read your current provider configuration.',
+      'Use links where supported so connected-service sessions read your current agent configuration.',
     configCopiedTitle: 'Copy configuration snapshot',
     configCopiedSubtitle:
-      'Copy provider configuration whenever authentication is materialized.',
+      'Copy agent configuration whenever authentication is materialized.',
     configIsolatedTitle: 'Keep configuration isolated',
     configIsolatedSubtitle:
-      'Do not share native provider configuration with connected-service homes.',
-    stateTitle: 'Share provider sessions and state',
+      'Do not share native agent configuration with connected-service homes.',
+    stateTitle: 'Share agent sessions and state',
     agentStateTitle: ({ agent }: { agent: string }) =>
       `${agent} session and state sharing`,
     stateEnabledSubtitle:
-      'Allow supported providers to resume the same sessions across native and connected-service authentication.',
+      'Allow supported agents to resume the same sessions across native and connected-service authentication.',
     stateDisabledSubtitle:
-      'Keep provider sessions and local state separate unless a provider-specific flow enables sharing.',
-    sharedStatePrivacyTitle: 'Share provider state',
+      'Keep agent sessions and local state separate unless an agent-specific flow enables sharing.',
+    sharedStatePrivacyTitle: 'Share agent state',
     sharedStatePrivacyBody: ({ agent }: { agent: string }) =>
-      `${agent} may read local provider session files from connected-service homes. Only enable this for accounts you are comfortable linking.`,
+      `${agent} may read local agent session files from connected-service homes. Only enable this for accounts you are comfortable linking.`,
     unavailable: {
-      notImplemented: 'Sharing is not available for this provider yet.',
+      notImplemented: 'Sharing is not available for this agent yet.',
       dynamicDiagnosticsRequired:
         'Sharing needs a runtime availability check before it can be enabled.',
     },
@@ -6571,7 +6579,7 @@ const enSettingsProviders = {
   local: {
     title: 'On this machine',
     footer:
-      'Local model servers found on this machine. Models run privately on your hardware.',
+      'Services found on this machine. Where models run depends on the service.',
     detected: 'Detected',
     possible: 'Possible service',
     detectedAtPort: ({ port }: { port: string }) => `Detected · Port ${port}`,
@@ -6886,6 +6894,8 @@ const enSettingsProviders = {
   },
   errors: {
     secretMissingTitle: 'API key needed',
+    runCredentialRequiredTitle: 'Choose a credential for this Run',
+    runCredentialRequiredDescription: 'This Run cannot inherit the Session’s direct credential. Select a Team credential for the Run.',
     secretMissingDescription:
       'Choose a Saved Secret before enabling this provider.',
     notEnabledOnMachineTitle: 'Not enabled on this machine',
@@ -9631,8 +9641,6 @@ const enSession = {
       newAgentConversation: 'New agent conversation',
       launchExecutionRunsAdvanced: 'Advanced…',
       launchClaudeTeamsTitle: 'Launch Claude teams',
-      launchClaudeTeamsSubtitle:
-        'Create a team or spawn a teammate with structured Claude team commands.',
       teamIdLabel: 'Team ID',
       teamIdPlaceholder: 'team-id',
       teamDescriptionPlaceholder: 'What is this team responsible for?',
@@ -10936,9 +10944,9 @@ const enAgentInput = {
   },
   dropToAttach: 'Drop to attach files',
   providerUsage: {
-    title: 'Provider usage',
+    title: 'Usage',
     accessibilityLabel: ({ value }: { value: string }) =>
-      `Provider usage: ${value}`,
+      `Usage: ${value}`,
     remaining: ({ percent }: { percent: string }) => `${percent} left`,
     remainingWithReset: ({
       percent,
@@ -10977,6 +10985,7 @@ const enAgentInput = {
     }) => `${title}: ${prefix}…${suffix}`,
   },
   permissionMode: {
+    nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides the approval preset. Clear the Mode override to use the permission setting.`,
     title: 'PERMISSION MODE',
     effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
     default: 'Default',
@@ -12329,10 +12338,20 @@ const enLocalServices = {
     publicLinkTitle: 'Public link',
     publicLinkScanHint: 'Scan it to open it on your phone.',
     purpose: 'Long-running services for this checkout: open them, share them, choose where they run.',
+    backToServices: 'Back to services',
+  },
+  effectReview: {
+    startTitle: ({ service }: { service: string }) => `Start ${service}?`,
+    restartTitle: ({ service }: { service: string }) => `Restart ${service}?`,
+    subtitle: 'Review what runs and where. Happier asks again if it changes.',
+    start: 'Start',
+    notNow: 'Not now',
   },
   row: {
     onMachine: ({ machine }: { machine: string }) => `on ${machine}`,
     startingOn: ({ machine }: { machine: string }) => `Starting on ${machine}…`,
+    startedBy: ({ name }: { name: string }) => `Started by ${name}`,
+    startedByOn: ({ name, machine }: { name: string; machine: string }) => `Started by ${name} on ${machine}`,
     waitingAddress: 'Started. Waiting for an address.',
     noAddress: 'No address',
     notStarted: 'not started',
@@ -12498,13 +12517,7 @@ const enLocalServices = {
     terminatePidOnlyConfidence:
       'Terminate confidence: PID-only identity; confirmation required',
     copyAddressA11y: 'Copy service address',
-    terminateConfirmTitle: 'Terminate service?',
-    terminateConfirmMessage: ({ service }: { service: string }) =>
-      `Terminate ${service}? Use this only when you are sure this is the right process.`,
     terminateConfirmCta: 'Terminate',
-    stopConfirmTitle: 'Stop service?',
-    stopConfirmMessage: ({ service }: { service: string }) =>
-      `Stop ${service}? The service will no longer be reachable until it starts again.`,
     stopConfirmCta: 'Stop',
     restartTitle: 'Restart',
     openA11y: ({ service }: { service: string }) => `Open ${service}`,
@@ -13891,9 +13904,9 @@ const enSettingsSession = {
       'Enter-to-send, message history, composer appearance, and busy-agent sending behavior.',
   },
   providerLimits: {
-    title: 'Provider limits and usage',
+    title: 'Limits and usage',
     entrySubtitle:
-      'Usage-limit recovery and the provider usage gauge shown beside the composer.',
+      'Usage-limit recovery and the usage gauge shown beside the composer.',
   },
   resume: {
     title: 'Resume and handoff',
@@ -14012,15 +14025,15 @@ const enSettingsSession = {
     customResumePromptPlaceholder: 'Continue from where you left off.',
   },
   providerUsageGauge: {
-    title: 'Provider usage',
+    title: 'Usage',
     footer:
       'Choose composer gauges for all accounts. Gauges respect each pool’s selected usage limits. Account favorites add extra gauges for the active account.',
-    visibilityTitle: 'Show provider usage gauge',
+    visibilityTitle: 'Show usage gauge',
     labelsTitle: 'Show labels',
     labelsSubtitle: 'Name the context and usage gauges beside the composer.',
     visibilityEnabledSubtitle:
-      'Show remaining provider quota next to the composer when available.',
-    visibilityHiddenSubtitle: 'Hide provider quota from the composer.',
+      'Show remaining quota next to the composer when available.',
+    visibilityHiddenSubtitle: 'Hide quota from the composer.',
     windowTitle: 'Gauge windows',
     windowMostConstrainedTitle: 'Most constrained',
     windowMostConstrainedSubtitle:
@@ -14033,9 +14046,9 @@ const enSettingsSession = {
     windowSessionSubtitle:
       'Show short quota windows, such as a five-hour allowance.',
     windowPrimaryTitle: 'Primary',
-    windowPrimarySubtitle: 'Prefer the provider primary quota window.',
+    windowPrimarySubtitle: 'Prefer the primary quota window.',
     windowSecondaryTitle: 'Secondary',
-    windowSecondarySubtitle: 'Prefer the provider secondary quota window.',
+    windowSecondarySubtitle: 'Prefer the secondary quota window.',
   },
   thinking: {
     title: 'Thinking',
@@ -15803,17 +15816,17 @@ const enSettingsVoice = {
         modeTitle: 'Resumability',
         replayTitle: 'Replay',
         replaySubtitle: 'Resume by replaying recent messages.',
-        providerResumeTitle: 'Provider resume',
+        providerResumeTitle: 'Agent resume',
         providerResumeSubtitle:
-          'Resume using provider session state (when supported).',
+          'Resume using agent session state (when supported).',
         disabledVoiceAgent: 'Requires Happier Voice Agent.',
         disabledDaemonBackend: 'Requires Daemon backend.',
         disabledAgentNoProviderResume:
-          'Selected agent does not support provider resume.',
+          'Selected agent does not support agent resume.',
       },
       providerResumeFallback: {
         title: 'Fallback to replay',
-        subtitle: 'If provider resume fails, fall back to replay.',
+        subtitle: 'If agent resume fails, fall back to replay.',
       },
       replayRecentMessagesPromptBody:
         'How many recent messages to include (1–100).',
@@ -18139,9 +18152,9 @@ const enMessage = {
     `Waiting for agent quota to reset at ${time}`,
   agentQuotaRecovered: 'Agent quota recovered',
   connectedServiceRuntimeAuthRecoveryRecovered:
-    'Provider authentication recovered',
+    'Agent authentication recovered',
   connectedServiceRuntimeAuthRecoveryCancelled:
-    'Provider authentication recovery cancelled',
+    'Agent authentication recovery cancelled',
   unknownTime: 'unknown time',
 };
 
@@ -19230,6 +19243,15 @@ const enProjects = {
       consequenceThisTime: "Runs setup now. Next time, Happier asks again.",
       consequenceUntilChanged: "Covers this project on any machine, including a teammate’s shared machine, until a command, the tools or the project file change. Teammates approve for themselves.",
       readySince: ({ time }: { time: string }) => `Ready for these inputs since ${time}`,
+      provenanceAtBranch: ({ commit, branch }: { commit: string; branch: string }) => `at ${commit} on ${branch}`,
+      provenanceAt: ({ commit }: { commit: string }) => `at ${commit}`,
+      provenanceModified: "changed since that commit",
+      provenanceUntracked: "not committed yet",
+      provenanceAbsent: "file not found",
+      provenanceUnknown: "commit state unknown",
+      provenanceNotRepository: "not in a repository",
+      stop: "Stop",
+      openOutput: "Open output",
     },
     target: {
       automatic: "Choose automatically",
@@ -19276,10 +19298,32 @@ const enProjects = {
       port: ({ port }: { port: number }) => `port ${port}`,
       noAddress: "no address",
       runsOn: ({ name }: { name: string }) => `Where ${name} runs`,
+      devcontainer: "Devcontainer",
+      devcontainerNone: "None",
+      devcontainerNoneDetail: "Agents and scripts start in this checkout",
+      name: "Name",
+      command: "Command",
+      commandPlaceholder: "Command to run",
+      source: "Source",
+      needsAboutField: "Needs about",
+      needsAboutHint: "Optional. Only used to refuse a machine that is too small.",
+      portField: "Port",
+      add: "Add",
+      addService: "Add a service",
+      noServices: "No services yet",
+      nameTaken: ({ name }: { name: string }) => `${name} is already used in the project file`,
+      found: "Found in this repository",
+      foundBody: "Choose what the project file refers to. Their commands stay in their own files.",
+      foundUnavailable: ({ machine }: { machine: string }) => `Its tool isn’t installed on ${machine}`,
+      foundAmbiguous: "Another file declares the same name",
+      usageSetup: "Setup step",
+      usageScript: "Script",
+      usageService: "Service",
     },
     output: {
       title: "Output",
       ranOn: "Runs on",
+      openInTerminal: "Open in terminal",
       purpose: {
         setup: "Setup",
         teardown: "Teardown",
@@ -20455,6 +20499,7 @@ const enOnboardingJourney = {
 };
 
 export const en: TranslationStructure = {
+  sessions: { workspace: { noFolder: 'No folder' } },
   ...machineSharing,
   ...managedMachines,
   ...projectWorkers,
@@ -21104,6 +21149,7 @@ type EnglishNamespaces10 = TranslationOverlay<
     readonly server: typeof enServer;
     readonly sessionTags: typeof enSessionTags;
     readonly sessionsList: typeof enSessionsList;
+    readonly sessions: { readonly workspace: { readonly noFolder: string } };
     readonly directSessions: typeof enDirectSessions;
     readonly sessionInfo: typeof enSessionInfo;
     readonly workspacePresentation: typeof enWorkspacePresentation;

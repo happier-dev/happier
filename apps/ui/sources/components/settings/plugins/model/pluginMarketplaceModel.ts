@@ -15,10 +15,31 @@ import {
     type MarketplaceRegistryProfileRequirementV1,
     type PluginUpdatePolicyV1,
 } from '@happier-dev/protocol/marketplace';
+import {
+    ManagedResourceDependencyV1Schema,
+    type ManagedResourceDependencyV1,
+} from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 
 export const MARKETPLACE_CAPABILITY_ID = 'tool.plugins' as CapabilityId;
+
+/** Installed inventory and enriched detail share the selected target's read lifecycle. */
+export function resolvePluginTruthReadState(params: Readonly<{
+    targetOnline: boolean;
+    hasExecutionTarget: boolean;
+    capabilitiesLoaded: boolean;
+    daemonAdministrationAvailable: boolean;
+    projectionPhase: DaemonMergedProjectionPhase;
+}>): Readonly<{ targetResolving: boolean; installedPluginsRead: boolean; pluginTruthSettled: boolean }> {
+    const targetResolving = params.targetOnline && !params.hasExecutionTarget;
+    const installedPluginsRead = (!params.hasExecutionTarget && !targetResolving)
+        || (params.capabilitiesLoaded && params.daemonAdministrationAvailable);
+    const pluginTruthSettled = (!params.hasExecutionTarget && !targetResolving) || (
+        params.capabilitiesLoaded && params.daemonAdministrationAvailable && params.projectionPhase === 'ready'
+    );
+    return { targetResolving, installedPluginsRead, pluginTruthSettled };
+}
 
 /**
  * The two primary product tasks the Plugins home answers in place.
@@ -218,7 +239,7 @@ export function resolvePluginReadOnlySnapshotNotice(params: Readonly<{
 }
 
 export function isPluginMutationVisibleAfterRefresh(params: Readonly<{
-    method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
+    method: 'install' | 'update' | 'rollback' | 'uninstall' | 'forgetTrust' | 'disable';
     pluginId: string;
     before: InstalledPluginEntry | null;
     after: InstalledPluginEntry | null;
@@ -226,6 +247,9 @@ export function isPluginMutationVisibleAfterRefresh(params: Readonly<{
 }>): boolean {
     if (params.method === 'uninstall') {
         return params.after === null;
+    }
+    if (params.method === 'disable') {
+        return params.after?.pluginId === params.pluginId && params.after.enabled === false;
     }
     if (params.method === 'forgetTrust') {
         return params.after?.source.trustPolicy === 'untrusted' && params.after.enabled === false;
@@ -510,8 +534,30 @@ export function readPluginChangeKind(
         || value.action !== action
         || value.pluginId !== expectedPluginId
         || !isRecord(value.change)
+        || ('pluginId' in value.change && value.change.pluginId !== expectedPluginId)
     ) return null;
     return readNonEmptyString(value.change.kind);
+}
+
+/** Only the daemon's exact, strict recovery census can become a removal acknowledgment. */
+export function readPluginManagedResourceRemovalReview(
+    value: unknown,
+    action: 'disable' | 'uninstall',
+    expectedPluginId: string,
+): readonly ManagedResourceDependencyV1[] | null {
+    if (readPluginChangeKind(value, action, expectedPluginId) !== 'managedResourcesReviewRequired'
+        || !isRecord(value) || !isRecord(value.change)
+        || value.change.pluginId !== expectedPluginId
+        || !hasOnlyKeys(value.change, ['kind', 'pluginId', 'resources'])) return null;
+    const parsed = ManagedResourceDependencyV1Schema.array().safeParse(value.change.resources);
+    return parsed.success ? parsed.data : null;
+}
+
+/** The canonical capability owner returns its current disabled entry when no change was needed. */
+export function isPluginDisableNoopResult(value: unknown, expectedPluginId: string): boolean {
+    return isRecord(value) && value.action === 'disable' && value.pluginId === expectedPluginId
+        && value.change === null && isRecord(value.entry)
+        && value.entry.pluginId === expectedPluginId && value.entry.enabled === false;
 }
 
 type MarketplaceCapabilitySnapshot = Readonly<{

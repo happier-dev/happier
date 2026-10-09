@@ -14,7 +14,6 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Modal } from '@/modal';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { t } from '@/text';
 import { type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -66,7 +65,8 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     /** ★ "Default for <agent>": the per-agent default menu (never a per-service default). */
     agentDefaults?: Readonly<{
         choices: readonly AgentDefaultChoice[];
-        setDefault: (agentId: string, makeDefault: boolean) => void;
+        setDefault: (agentId: string, makeDefault: boolean) => void | Promise<void>;
+        disabledReason?: string;
     }> | null;
     /**
      * Every callback below gates its affordance: an absent callback removes the
@@ -75,7 +75,7 @@ export type QualifiedAccountDetailViewProps = Readonly<{
      */
     onOpenPool?: (groupId: string) => void;
     /** Rename in place (lab D2): the name people gave the account, and the writer of a new one. */
-    rename?: Readonly<{ currentLabel: string; onRename: (label: string) => void }>;
+    rename?: Readonly<{ currentLabel: string; onRename: (label: string) => void | boolean | Promise<void | boolean> }>;
     /** Starts the canonical Team credential offer journey for this source. */
     onShareWithTeam?: () => void;
     sharedWithTeamsAdministration?: React.ReactNode;
@@ -137,9 +137,9 @@ function isMemberOf(
  * Presentational: identity, memberships and permissions all arrive as props so
  * the screen has one wiring owner and stays renderable from a test or a
  * preview. The only local state is the in-flight disconnect guard, which keeps
- * a second press from stacking confirmation dialogs.
+ * a second press from stacking shared Action invocations.
  *
- * The account's NAME (header title, disconnect confirmation) arrives from the
+ * The account's NAME (header title and identity) arrives from the
  * canonical qualified-target presenter, shared with Provider, pool and Voice
  * paths. This view therefore never re-ranks labels or invents an id fallback.
  *
@@ -195,26 +195,11 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
         if (!onDisconnect || disconnectPending) return;
         setDisconnectPending(true);
         try {
-            const confirmed = await Modal.confirm(
-                t('modals.disconnect'),
-                t('connectedServices.detail.disconnectConfirmBody', {
-                    service: serviceLabel,
-                    // Irreversible: name every identity the user could recognise
-                    // this account by, not just the one shown in the header.
-                    profileId: presentation.accessibilityLabel,
-                }),
-                {
-                    confirmText: t('modals.disconnect'),
-                    cancelText: t('common.cancel'),
-                    destructive: true,
-                },
-            );
-            if (!confirmed) return;
             await onDisconnect();
         } finally {
             setDisconnectPending(false);
         }
-    }, [disconnectPending, onDisconnect, presentation.accessibilityLabel, serviceLabel]);
+    }, [disconnectPending, onDisconnect]);
 
     return (
         <ItemList testID={testID} pageColumn="wide" onLayout={(event) => {
@@ -247,9 +232,8 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             anchorRef={compact ? identityAnchorRef : renameAnchorRef}
                             currentLabel={rename.currentLabel}
                             serviceLabel={serviceLabel}
-                            onSave={(label) => {
-                                setRenameOpen(false);
-                                rename.onRename(label);
+                            onSave={async (label) => {
+                                if (await rename.onRename(label) !== false) setRenameOpen(false);
                             }}
                             onRequestClose={() => setRenameOpen(false)}
                         />
@@ -289,11 +273,12 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     </View>
                 )}
                 actions={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {props.agentDefaults && props.agentDefaults.choices.length > 0 ? (
+                    {props.agentDefaults ? (
                     <AgentDefaultMenuButton
                         testID={`${testID}:default-for`}
                         choices={props.agentDefaults.choices}
                         onChange={props.agentDefaults.setDefault}
+                        disabledReason={props.agentDefaults.disabledReason}
                     />
                     ) : null}
                     {props.onRefresh && status !== 'needs_reauth' ? compact
@@ -320,7 +305,6 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     compactActionPlacement="full-width"
                     testID={`${testID}:signed-out-banner`}
                     title={t('connectedServicesSettings.detailSignedOutTitle', { service: serviceLabel })}
-                    description={t(compact ? 'connectedServicesCollection.signedOutConsequence' : 'connectedServicesSettings.detailSignedOutBody')}
                     action={onReconnect ? {
                         label: t('connectedServicesSettings.signInAgain'),
                         display: 'default',
@@ -330,7 +314,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 />
             ) : null}
             {props.usageSection ?? null}
-            {compact && providerAccount ? <ItemGroup title={t('connectedServices.profile.providerAccountId')}><Item title={t('connectedServices.profile.providerAccountId')} subtitle={<ConnectedAccountIdentityText value={providerAccount} style={stylesheet.mono} />} showChevron={false} mode="info" /></ItemGroup> : null}
+            {compact && providerAccount ? <ItemGroup title={t('connectedServices.profile.providerAccountId')}><Item title={t('connectedServices.profile.providerAccountId')} subtitle={<ConnectedAccountIdentityText value={providerAccount} style={[stylesheet.factText, stylesheet.mono]} />} showChevron={false} mode="info" /></ItemGroup> : null}
             {props.usedBySection ?? null}
             {showPools ? (
                 <ItemGroup title={t('connectedServices.profile.poolsGroupTitle')}>

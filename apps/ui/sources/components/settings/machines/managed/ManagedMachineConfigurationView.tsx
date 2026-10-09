@@ -147,7 +147,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     React.useEffect(() => {
         if (!preset || !provisioner) return;
         setDraft(current => current ?? { ...createManagedConfiguratorDraft({ provisioner, controller: catalogController ?? preset.controller, name: preset.recipe.name,
-            credentials: preset.recipe.credentials,
+            credentials: preset.recipe.credentials, environment: preset.environment,
             preset: { id: preset.id, revision: preset.revision, name: preset.name, retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } }),
             selected: { id: `preset:${preset.id}`, title: preset.name, launch: preset.recipe.choices } });
     }, [preset, provisioner, catalogController]);
@@ -295,12 +295,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const result = props.presetOnly && preset ? await presetClient.execute('machines.presets.update', {
             homeId: catalog.homeId, id: preset.id, expectedRevision: preset.revision,
             patch: { name: facts.launch.name, recipe: facts.launch, controller: facts.controller,
+                environment: draft?.environment ?? null,
                 retention: draft?.override?.retention ?? draft?.preset?.retention ?? null,
                 wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage ?? null,
                 simultaneousLimit: limit ? { maximum: limit } : null },
         }, callbacks) : await presetClient.execute('machines.presets.create', {
             homeId: catalog.homeId, id: randomUUID(), name: facts.launch.name, recipe: facts.launch,
             owner: teamId ? { kind: 'team', teamId } : { kind: 'account', accountId: activeBinding.accountId }, controller: facts.controller,
+            ...(draft?.environment !== undefined ? { environment: draft.environment } : {}),
             ...(draft?.override?.retention ?? draft?.preset?.retention ? { retention: draft?.override?.retention ?? draft?.preset?.retention } : {}),
             ...((draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage) !== undefined
                 ? { wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage } : {}),

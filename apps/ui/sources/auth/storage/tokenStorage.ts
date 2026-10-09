@@ -2782,7 +2782,20 @@ export async function removeHomeCredentialsUnderMutationAuthority(
     const targetKeys = uniqueStrings([keys.primary, ...keys.legacy]);
     const removed = await serializeCredentialScopeOperations(
         targetKeys,
-        async () => await removeCredentialKeysAtomically(targetKeys),
+        async () => {
+            if (options.expectedCredentials) {
+                let raws: (string | null)[];
+                try { raws = await Promise.all(targetKeys.map(key => readCredentialRawByKey(key, 'surface'))); }
+                catch { return false; }
+                const currentCredentials = raws.map(parseCredentialsRaw).find((value): value is AuthCredentials => value !== null) ?? null;
+                // An absent credential is already removed. Changed or unreadable bytes
+                // are not custody the original caller is authorized to discard.
+                if (currentCredentials
+                    ? !areCredentialsEqual(currentCredentials, options.expectedCredentials)
+                    : raws.some(raw => raw !== null)) return false;
+            }
+            return await removeCredentialKeysAtomically(targetKeys);
+        },
         authority,
     );
     if (!removed) return false;

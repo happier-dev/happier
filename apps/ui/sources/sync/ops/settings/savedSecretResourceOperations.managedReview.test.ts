@@ -13,12 +13,16 @@ import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/accou
 import { SharedSavedSecretDeleteInputV1Schema, SavedSecretReferenceCensusV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRowsListResponseV1Schema, ProfileReferenceGuardReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { readProfileCatalog } from '@/sync/api/account/apiProfileCatalog';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
 import { createSavedSecretResource, deleteSavedSecretResource, updateSavedSecretResource, promotePersonalSavedSecretResource } from './savedSecretResourceOperations';
-import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
@@ -48,6 +52,14 @@ installDisconnectedServerSocketBoundary();
 beforeAll(loadSyncSingletonForTests);
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 afterEach(async () => { await connection?.dispose(); connection = null; resetTeamActionClientForTests(); });
+
+const emptyReferenceCatalogRows = new Map<string, unknown>([
+    [MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema.parse({ status: 'absent' })],
+    [ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' })],
+    [PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema.parse({ status: 'absent' })],
+    [`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`, ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'absent' })],
+    [`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'absent' })],
+]);
 
 describe('Saved Secret native responsibility review through its real delete owner', () => {
     it('creates on a captured keyless Plain Account while the focused Account is E2EE', async () => {
@@ -170,6 +182,8 @@ describe('Saved Secret native responsibility review through its real delete owne
                 nextCursor: null, referenceGuardRevision: 3, transferControl: { status: 'absent' }, diagnostics: [] });
             if (url.pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (url.pathname === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (url.pathname === REMOTE_HOST_ROWS_ROUTE_V1) return Response.json(RemoteHostCatalogRowReadResponseV1Schema.parse({ status: 'absent' }));
+            if (emptyReferenceCatalogRows.has(url.pathname)) return Response.json(emptyReferenceCatalogRows.get(url.pathname));
             if (url.pathname === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: operation === 'approved-promotion' && !approved ? [] : [{
                 resourceId, encryptionMode: approved ? 'e2ee' : 'plain',
                 storedContent: approved ? sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
@@ -286,6 +300,8 @@ describe('Saved Secret native responsibility review through its real delete owne
                 if (url.pathname === PROFILE_ROWS_ROUTE_V1) return Response.json(profileRows);
                 if (url.pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json(profileGuard);
                 if (url.pathname === PROFILE_TRANSFER_ROUTE_V1) return Response.json(transfer);
+                if (url.pathname === REMOTE_HOST_ROWS_ROUTE_V1) return Response.json(RemoteHostCatalogRowReadResponseV1Schema.parse({ status: 'absent' }));
+                if (emptyReferenceCatalogRows.has(url.pathname)) return Response.json(emptyReferenceCatalogRows.get(url.pathname));
                 if (url.pathname === '/v2/account/settings') {
                     if (init?.method === 'POST') settingsWrites.push(JSON.parse(String(init.body)));
                     return Response.json({ content: { t: 'plain', v: { actionsSettingsV1 } }, version: 4 });
@@ -315,6 +331,8 @@ describe('Saved Secret native responsibility review through its real delete owne
             tombstones: [{ id: 'retired-profile-a', revision: 7 }] });
         if (profiles.status !== 'ready') throw new Error('The real Profile reference inventory must be readable');
         const referenceCensus = SavedSecretReferenceCensusV1Schema.parse({ accountMode: 'plain',
+            remoteHosts: { revision: 'absent', resourceRefs: [] },
+            catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent', connectedPurposes: 'absent' },
             profileTransferRevision: profiles.controlRevision, profiles: {
                 referenceGuardRevision: profiles.referenceGuardRevision,
                 rows: [...profiles.records.map(({ record, revision }) => ({ id: record.id, revision })),
@@ -334,12 +352,7 @@ describe('Saved Secret native responsibility review through its real delete owne
         const input = { scope, resourceId: 'secret-a', expectedRevision: 2, expectedSettingsVersion: 4,
             ...(phase === 'manual-retry' ? { managedResourceDispositions: dispositions } : {}) };
         const result = await deleteSavedSecretResource(input);
-        // A failed fixture never dispatched the deletion. Expose the real
-        // shared front door's typed refusal in that case only; do not replay
-        // an operation that already crossed its HTTP effect boundary.
-        const admission = deletes.length === 0 ? await scopedHomeActionExecutor(scope)('secrets.shared.delete', expectedActionInput,
-            { surface: 'ui', authority: 'present_user', serverId: scope.serverId }) : undefined;
-        const evidence = JSON.stringify({ result, admission, requests });
+        const evidence = JSON.stringify({ result, requests });
         expect(deletes, evidence).toHaveLength(1);
         expect(result, evidence).toEqual(phase === 'review'
             ? { ok: false, reason: 'managed_resources_review_required', resources: [resource] } : { ok: true });

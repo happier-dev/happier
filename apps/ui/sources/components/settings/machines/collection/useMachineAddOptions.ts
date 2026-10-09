@@ -8,7 +8,7 @@ import { t } from '@/text';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { MACHINES_ADD_ROUTE } from './machineCollectionModel';
 
-export type MachineAddOptionId = 'machine' | 'pool';
+export type MachineAddOptionId = 'machine' | 'pool' | 'preset';
 
 export type MachineAddOption = Readonly<{
     id: MachineAddOptionId;
@@ -34,6 +34,7 @@ export function useMachineAddOptions(groups: readonly ActiveSelectionMachineGrou
         .map((projection) => projection!.serverId)
         .join('\u0000');
     const canAddMachine = paths.length > 0;
+    const presetServerIdsKey = groups.filter(group => group.status !== 'signedOut').map(group => group.serverId).join('\u0000');
 
     return React.useMemo(() => {
         const options: MachineAddOption[] = [];
@@ -47,6 +48,11 @@ export function useMachineAddOptions(groups: readonly ActiveSelectionMachineGrou
                 inCollection: true,
             });
         }
+        const presetServerIds = presetServerIdsKey ? presetServerIdsKey.split('\u0000') : [];
+        if (presetServerIds.length > 0) options.push({ id: 'preset', title: t('machinePresets.newPreset'),
+            subtitle: t('machinePresets.empty'), icon: 'stack',
+            href: presetServerIds.length === 1 ? `/settings/machines/presets/new?serverId=${encodeURIComponent(presetServerIds[0]!)}`
+                : '/settings/machines/presets/new', inCollection: true });
         const serverIds = poolServerIdsKey ? poolServerIdsKey.split('\u0000') : [];
         if (serverIds.length > 0) {
             options.push({
@@ -62,5 +68,5 @@ export function useMachineAddOptions(groups: readonly ActiveSelectionMachineGrou
             });
         }
         return options;
-    }, [canAddMachine, poolServerIdsKey]);
+    }, [canAddMachine, poolServerIdsKey, presetServerIdsKey]);
 }

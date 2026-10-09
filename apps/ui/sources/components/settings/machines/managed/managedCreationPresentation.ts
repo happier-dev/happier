@@ -4,6 +4,17 @@ import { describeManagedLifecycleState, type ManagedLifecycleState } from './man
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+/** Setup is observed on the admitted row; Join alone cannot complete this stage. */
+export function managedCreationSetup(machine: ManagedMachineV1) {
+    const setup = machine.environmentSetup;
+    if (!setup || !machine.enrolledMachineId) return null;
+    const canRecover = setup.state === 'failed' && machine.creationState === 'active'
+        && machine.allocation === 'bound' && Boolean(machine.resource) && !machine.cleanup;
+    const recoveryActions: readonly ('retrySetup' | 'continueWithoutSetup' | 'delete')[] = canRecover
+        ? ['retrySetup', 'continueWithoutSetup', 'delete'] : [];
+    return { ...setup, recoveryActions };
+}
+
 /** Allocation/enrollment facts are independent from the install task's observed stages. */
 export function managedCreationState(machine: ManagedMachineV1): ManagedLifecycleState {
     if (machine.allocation === 'confirmed-absent') return { kind: 'absent' };
@@ -46,6 +57,14 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
 export function currentManagedCreationOperation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null): ActionOperationProjection | null {
     if (!operation) return null;
     const snapshot = operation.snapshot;
+    if (snapshot.domainRef?.kind === 'machineEnvironment') {
+        const reference = snapshot.domainRef;
+        const scopeMatches = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === machine.enrolledMachineId
+            || (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
+                && snapshot.scope.machineId === machine.controller.machineId;
+        return scopeMatches && reference.serverId === machine.homeId && reference.machineId === machine.enrolledMachineId
+            && reference.managedId === machine.id && sameStrictJsonValue(reference.preset, machine.preset) ? operation : null;
+    }
     if (snapshot.scope.machineId !== machine.controller.machineId
         || snapshot.domainRef?.kind !== 'managedMachine' || snapshot.domainRef.id !== machine.id) return null;
     const reference = snapshot.domainRef;

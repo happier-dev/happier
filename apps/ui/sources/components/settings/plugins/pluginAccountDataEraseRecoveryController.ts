@@ -2,6 +2,7 @@ import { PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseAction
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Modal, type IModal } from '@/modal';
+import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -124,48 +125,58 @@ export function createPluginAccountDataEraseRecoveryController(
             );
             if (!confirmed || !isCurrent(controller)) return;
 
-            let actionResult: ActionExecuteResult;
-            try {
-                actionResult = await dependencies.execute(
-                    'account.plugins.data.erase',
-                    input.data,
-                    {
-                        surface: 'ui',
-                        actionCaller: { kind: 'host' },
-                        signal: controller.signal,
-                    },
-                );
-            } catch {
-                if (isCurrent(controller)) {
+            let actionInput = input.data;
+            while (isCurrent(controller)) {
+                let actionResult: ActionExecuteResult;
+                try {
+                    actionResult = await dependencies.execute(
+                        'account.plugins.data.erase',
+                        actionInput,
+                        {
+                            surface: 'ui',
+                            actionCaller: { kind: 'host' },
+                            signal: controller.signal,
+                        },
+                    );
+                } catch {
+                    if (isCurrent(controller)) {
+                        dependencies.modal.alert(
+                            t('settingsPlugins.accountDataErase.unavailableTitle'),
+                            t('settingsPlugins.accountDataErase.unavailableBody'),
+                        );
+                    }
+                    return;
+                }
+                if (!isCurrent(controller)) return;
+
+                const output = parseCompletedOutput(actionResult);
+                if (!output) {
                     dependencies.modal.alert(
                         t('settingsPlugins.accountDataErase.unavailableTitle'),
                         t('settingsPlugins.accountDataErase.unavailableBody'),
                     );
+                    return;
                 }
-                return;
-            }
-            if (!isCurrent(controller)) return;
+                if (output.status === 'reviewRequired') {
+                    const dispositions = await reviewManagedResourceRemoval(output.resources, dependencies.modal);
+                    if (!dispositions || !isCurrent(controller)) return;
+                    actionInput = { ...input.data, managedResourceDispositions: dispositions };
+                    continue;
+                }
+                if (output.status === 'completed') {
+                    const settingsChanged = output.settings.status === 'completed' && output.settings.changed;
+                    const dataChanged = output.data.status === 'completed' && output.data.changed;
+                    dependencies.modal.alert(
+                        t('settingsPlugins.accountDataErase.completedTitle'),
+                        completedMessage(settingsChanged || dataChanged),
+                    );
+                    return;
+                }
 
-            const output = parseCompletedOutput(actionResult);
-            if (!output) {
-                dependencies.modal.alert(
-                    t('settingsPlugins.accountDataErase.unavailableTitle'),
-                    t('settingsPlugins.accountDataErase.unavailableBody'),
-                );
+                const prompt = incompletePrompt(output);
+                dependencies.modal.alert(prompt.title, prompt.body);
                 return;
             }
-            if (output.status === 'completed') {
-                const settingsChanged = output.settings.status === 'completed' && output.settings.changed;
-                const dataChanged = output.data.status === 'completed' && output.data.changed;
-                dependencies.modal.alert(
-                    t('settingsPlugins.accountDataErase.completedTitle'),
-                    completedMessage(settingsChanged || dataChanged),
-                );
-                return;
-            }
-
-            const prompt = incompletePrompt(output);
-            dependencies.modal.alert(prompt.title, prompt.body);
         } finally {
             retirement.dispose();
             if (activeController === controller) activeController = null;

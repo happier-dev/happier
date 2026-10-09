@@ -4,6 +4,7 @@ import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { ResolveSessionActionFieldOptions, InputFieldOptionsContext } from './sessionActionFieldOptions';
 import {
     EMPTY_INPUT_OPTIONS, INPUT_OPTIONS_LOADING, readInputFieldOptionsState, subscribeInputFieldOptions,
@@ -29,15 +30,18 @@ export function useInputFieldOptions(params: Readonly<{
     serverId?: string | null;
     /** Inventory facts invalidate choices; they never implement a source locally. */
     refreshKey?: string;
+    /** Explicit routed Account custody; null is unavailable, never ambient fallback. */
+    accountLifetime?: ServerCredentialAccountScopeBinding | null;
 }>) {
     const scope = useActiveServerAccountScope();
+    const accountScope = params.accountLifetime === undefined ? scope : params.accountLifetime?.scope;
     // Pin the same incumbent Account relay for the options read and the picker mount.
     // A later transport fallback must not give a field machine-B choices beside machine-A's type.
-    const optionServerId = params.serverId ?? scope?.serverId;
+    const optionServerId = params.serverId ?? accountScope?.serverId;
     const machineId = params.machineId ?? (!params.sessionId && optionServerId
         && params.requests.some((request) => request.field.inputType !== undefined)
         ? resolveUiAccountActionFallbackMachineId({ serverId: optionServerId }) : null);
-    const signature = JSON.stringify([scope?.accountId, optionServerId, machineId,
+    const signature = JSON.stringify([accountScope?.accountId, params.accountLifetime?.revision, optionServerId, machineId,
         params.sessionId, params.requests.map((request) => ({ ...request,
             draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer) }))]);
     const { reads, keys, defaultContexts } = React.useMemo(() => {
@@ -53,19 +57,19 @@ export function useInputFieldOptions(params: Readonly<{
                     ...(machineId ? { machineId } : {}),
                     ...(params.sessionId ? { sessionId: params.sessionId } : {}) },
             };
-            const serverId = params.serverId ?? scope?.serverId;
+            const serverId = params.serverId ?? accountScope?.serverId;
             const context = { ...(serverId ? { serverId } : {}),
                 ...(machineId ? { externalActionTarget: { kind: 'machine' as const, machineId } } : {}),
-                ...(scope?.accountId ? { runtimeAccountId: scope.accountId } : {}),
+                ...(accountScope?.accountId ? { runtimeAccountId: accountScope.accountId } : {}),
                 ...(params.sessionId ? { defaultSessionId: params.sessionId } : {}) };
-            const key = JSON.stringify([input, context]);
-            reads.set(key, { key, input, context });
+            const key = JSON.stringify([input, context, params.accountLifetime?.revision]);
+            reads.set(key, { key, input, context, ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }) });
             keys.set(fieldKey(request.field, request), key);
             defaultContexts.set(JSON.stringify([request.field.path, request.field.optionsSourceId, request.field.inputType]), request);
         }
         return { reads: [...reads.values()], keys, defaultContexts };
     }, [signature]);
-    const activeReads = params.enabled ? reads : NO_READS;
+    const activeReads = params.enabled && (params.accountLifetime === undefined || params.accountLifetime?.isCurrent()) ? reads : NO_READS;
     const refreshKey = React.useRef(params.refreshKey);
     refreshKey.current = params.refreshKey;
     const subscribe = React.useCallback((listener: () => void) => {
@@ -96,7 +100,7 @@ export function useInputFieldOptions(params: Readonly<{
     const resolveOptions: ResolveSessionActionFieldOptions = React.useMemo(() => Object.assign(
         (field: Parameters<ResolveSessionActionFieldOptions>[0], context?: InputFieldOptionsContext) => state({ ...field, path: field.path ?? '' }, context).options,
         { state, retry, pickerContext: { machineId, sessionId: params.sessionId,
-            serverId: params.serverId ?? scope?.serverId, contextKey: JSON.stringify([signature, snapshot]) } },
+            serverId: params.serverId ?? accountScope?.serverId, contextKey: JSON.stringify([signature, snapshot]) } },
     ), [state, retry, signature, snapshot]);
     return { resolveOptions, state, retry, snapshot };
 }

@@ -2,6 +2,7 @@ import { TokenStorage, subscribeHomeCredentialMutations } from '@/auth/storage/t
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { artifactKindHasSharedWidgetInputsV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
 import type { ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -10,6 +11,7 @@ import type { ArtifactPublicLinkKeyholdingResourceV1, WorkflowDefinitionArtifact
 import type { getActionSpec } from '@happier-dev/protocol';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -49,6 +51,13 @@ const artifactAccessProjectionSchema = ArtifactAccessRecipientCensusResponseV1Sc
 type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; signal?: AbortSignal }>;
 type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 }>;
 type ActionEffectClass = ReturnType<typeof getActionSpec>['sideEffectClass'];
+type RawSettingsMutationOptions = Readonly<{
+    signal?: AbortSignal;
+    expectedProfileTransferRevision?: number | 'absent';
+    expectedSettingsVersion?: number;
+    rebaseOnConflict?: boolean;
+    observeOutcome?: boolean;
+}>;
 const isEffectResult = (effectClass: ActionEffectClass) => effectClass === 'write' || effectClass === 'external' || effectClass === 'danger';
 
 function requireArtifactAccessProjection(artifact: DecryptedArtifact) {
@@ -59,8 +68,8 @@ function requireArtifactAccessProjection(artifact: DecryptedArtifact) {
 
 /**
  * Bind a shared Action invocation to the requested Home and Account, without reading the Account's
- * encryption mode. The mode (`Account.encryptionMode`, the authority) and the keys it implies are
- * resolved once, on first use, by `resolveAccountEncryption()`: every operation here that depends on
+ * encryption mode. The mode (`Account.encryptionMode`, the authority) is resolved once, on first use,
+ * by `resolveAccountMode()`. `resolveAccountEncryption()` additionally resolves its keys: every operation here that depends on
  * them (settings baseline, artifacts) awaits it first, so a failed mode read fails that operation
  * closed. Actions that never touch encrypted content (Account Security, Machine Pools) skip the extra
  * round-trip and key derivation.
@@ -87,12 +96,19 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             list: artifactUnavailable, set: artifactUnavailable, remove: artifactUnavailable,
         };
         return {
-            serverId: embed.serverId, serverIdentityId: undefined, accountId: embed.accountId,
+            // The embed producer publishes its captured scope.endpointUrl as serverId.
+            serverId: embed.serverId, endpointUrl: embed.serverId, serverIdentityId: undefined, accountId: embed.accountId,
             accountLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
+            accountOnlyLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             credentials: embed.credentials, credentialAuthorityKind: 'api_token' as const,
             request: embed.request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose: () => {},
-            resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable, readLaunchProfiles: unavailable, readLaunchProfileSnapshot: unavailable,
-            mutateRawSettings: async (_mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>) => unavailable(), readLiveSettings: () => null,
+            resolveAccountMode: unavailable, resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable, readLaunchProfiles: unavailable, readLaunchProfileSnapshot: unavailable,
+            mutateRawSettings: async (_mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+                options?: RawSettingsMutationOptions) => {
+                    assertCurrent();
+                    options?.signal?.throwIfAborted();
+                    return unavailable();
+                }, readLiveSettings: () => null,
             runPrepared: async <T>(run: () => Promise<T>, effectClass?: ActionEffectClass): Promise<T> => {
                 assertCurrent(); const result = await run(); assertResultCurrent(effectClass); return result;
             },
@@ -115,6 +131,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
     const serverId = resolveServerProfileScopeIdForIdentifier(serverIdRaw);
     const profile = getServerProfileById(serverId);
     if (!profile) throw new Error('action_home_not_found');
+    const endpointUrl = profile.serverUrl;
     const serverIdentityId = profile.serverIdentityId?.trim() || undefined;
     const applied = getAppliedActiveServerSnapshot();
     const currentness = areServerProfileIdentifiersEquivalent(applied.serverId, serverId)
@@ -167,6 +184,17 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 } };
             },
         };
+        // Capability cleanup can outlive user cancellation, but can never
+        // borrow a replacement Account. Reuse the original credential watch.
+        const accountOnlyLifetime = {
+            scope,
+            isCurrent: () => { try { assertAccountCurrent(); return true; } catch { return false; } },
+            onRetire: (cancel: () => void) => {
+                if (controller.signal.aborted) { cancel(); return { dispose: () => {} }; }
+                controller.signal.addEventListener('abort', cancel, { once: true });
+                return { dispose: () => controller.signal.removeEventListener('abort', cancel) };
+            },
+        };
         // Every Action owns an explicit Home target. Resolve it through the
         // canonical scoped carrier so a staged focus change cannot retarget an
         // Action through the ambient focused request path.
@@ -200,8 +228,18 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 cancellation.dispose();
             }
         };
+        const loadAccountMode = async () => {
+            const mode = (await fetchAccountEncryptionMode(credentials, { request })).mode;
+            assertCurrent();
+            return mode;
+        };
+        let accountMode: ReturnType<typeof loadAccountMode> | null = null;
+        const resolveAccountMode = () => {
+            assertCurrent();
+            return (accountMode ??= loadAccountMode());
+        };
         const loadAccountEncryption = async () => {
-            const accountMode = (await fetchAccountEncryptionMode(credentials, { request })).mode;
+            const accountMode = await resolveAccountMode();
             const encryption = accountMode === 'plain' ? null : await createEncryptionFromAuthCredentials(credentials);
             assertCurrent();
             return { accountMode, encryption };
@@ -221,6 +259,10 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             assertCurrent();
             const artifact = await fetchArtifactWithBodyFromApi({ ...await artifactParams(), artifactId, signal: options?.signal ?? signal });
             assertCurrent();
+            if (canPublish()) {
+                if (artifact) storage.getState().applyArtifacts([artifact]);
+                else storage.getState().deleteArtifact(artifactId);
+            }
             return artifact;
         };
         const accessApi = createArtifactAccessApi(credentials, { request });
@@ -231,7 +273,11 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             assertCurrent();
             // A committed self-revocation has no readable audience for this caller.
             // Preserve the mutation result rather than reopening the inaccessible Artifact.
-            if (result.access === null) return result;
+            if (result.access === null) {
+                artifactDataKeys.delete(artifactId);
+                if (canPublish()) storage.getState().deleteArtifact(artifactId);
+                return result;
+            }
             // Opening through the sync owner reuses its exact envelope/key cache
             // and runs the shared preparation pass for the resulting audience.
             const artifact = await fetchArtifact(artifactId, { signal: operationSignal });
@@ -256,22 +302,26 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const openedArtifacts = await decryptArtifactListItems({ ...params, artifacts, includeBody: options.includeBody });
                 assertCurrent();
                 const items = [];
+                let coverage: 'complete' | 'partial' = 'complete';
                 for (const [index, artifact] of artifacts.entries()) {
                     const opened = openedArtifacts[index] ?? null;
                     // Unopened headers cannot be classified; body failures keep
                     // their readable header for the owning document's typed result.
                     const header = opened?.isDecrypted && opened.rawHeader ? opened.rawHeader : {};
+                    if (!opened?.isDecrypted || !opened.rawHeader) coverage = 'partial';
                     items.push({ artifactId: artifact.id, header,
+                        ...(artifact.bodyVersion !== undefined ? { bodyVersion: artifact.bodyVersion } : {}),
                         ...(options.includeBody && opened?.isDecrypted ? { body: opened.body, bodyVersion: opened.bodyVersion,
                             provenance: opened.provenance } : {}),
                         headerVersion: artifact.headerVersion, seq: artifact.seq, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt,
                         ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+                        publicAudience: opened?.publicAudience,
                     });
                 }
                 const last = artifacts.at(-1);
                 const nextCursor = options.limit !== undefined && artifacts.length === options.limit && last
                     ? encodeArtifactListCursor({ artifactId: last.id, updatedAt: last.updatedAt }) : undefined;
-                return { items, ...(nextCursor ? { nextCursor } : {}) };
+                return { items, coverage, ...(nextCursor ? { nextCursor } : {}) };
         };
         const readArtifactHtmlPreview = async (artifact: DecryptedArtifact, operationSignal?: AbortSignal): Promise<Readonly<{ previewUrl?: string; previewError?: 'artifact_html_preview_unavailable' }>> => {
             if (!isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) return {};
@@ -340,9 +390,16 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 if (!artifact) return null;
                 const header = readableRawArtifactHeader(artifact);
                 if (artifact.bodyVersion === undefined || (artifact.body !== null && typeof artifact.body !== 'string')) throw artifactContentUnavailable();
+                const access = requireArtifactAccessProjection(artifact);
+                const sharing = artifactKindHasSharedWidgetInputsV1(header.kind)
+                    ? { shared: await readArtifactSharedAudienceV1({ current: { artifactId, header, ...access,
+                        publicAudience: artifact.publicAudience }, signal: options?.signal,
+                        readGrants: () => artifactAccessGrants.list({ artifactId }, options?.signal) }) } : {};
+                assertCurrent();
                 return { artifactId: artifact.id, header, body: artifact.body,
                     provenance: artifact.provenance,
-                    ...requireArtifactAccessProjection(artifact),
+                    ...access, ...sharing,
+                    publicAudience: artifact.publicAudience,
                     revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
             },
             list: listArtifacts,
@@ -368,25 +425,29 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 }
             },
         };
-        const homeHubArtifactTransport: HomeHubArtifactTransportV1 = {
+        const homeHubArtifactTransport = {
             read: workflowArtifacts.read,
+            list: workflowArtifacts.list,
+            delete: workflowArtifacts.delete,
             create: async input => {
                 const receipt = await createArtifactDocument(input);
                 const artifact = receipt.artifact;
                 if (artifact.body !== null && typeof artifact.body !== 'string') throw artifactContentUnavailable();
-                return { artifactId: receipt.artifactId, header: readableRawArtifactHeader(artifact), body: artifact.body,
-                    revision: receipt.revision, ...requireArtifactAccessProjection(artifact) };
+                const acknowledged = await workflowArtifacts.read(receipt.artifactId, { signal: input.signal });
+                if (!acknowledged) throw artifactContentUnavailable();
+                return acknowledged;
             },
             update: updateArtifactDocument,
-        };
+        } satisfies HomeHubArtifactTransportV1 & Pick<WorkflowDefinitionArtifactOperations, 'list' | 'delete'>;
         const readLaunchProfileSnapshot = async (rawProfiles: unknown) => {
             const artifactsById = await loadAiLaunchProfileArtifacts(rawProfiles, workflowArtifacts, signal);
             assertCurrent();
             return readAiLaunchProfileCollection(rawProfiles, { artifactsById, includeShared: true });
         };
         return {
-            serverId, serverIdentityId, accountId, credentials, credentialAuthorityKind, request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime,
-            resolveAccountEncryption,
+            serverId, endpointUrl, serverIdentityId, accountId, credentials, credentialAuthorityKind,
+            request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime, accountOnlyLifetime,
+            resolveAccountMode, resolveAccountEncryption,
             readLaunchProfileSnapshot,
             readLaunchProfiles: async (rawProfiles: unknown) => {
                 return (await readLaunchProfileSnapshot(rawProfiles)).entries
@@ -399,18 +460,49 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 if (baseline.raw === null && baseline.content !== null) throw artifactContentUnavailable();
                 return baseline.raw ?? {};
             },
-            mutateRawSettings: async (mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>) => {
-                const { accountMode, encryption } = await resolveAccountEncryption();
-                const baseline = await readAccountSettingsBaseline({ request, credentials, encryption, accountMode });
-                assertCurrent();
-                const result = await syncSettings({ credentials, encryption, signal, settingsScope: scope,
-                    requestContext: { scope, endpointUrl: profile.serverUrl, request }, pendingSettings: {}, clearPendingSettings: () => {},
-                    oneShotServerSettingsMutation: { expectedSettingsVersion: baseline.version, rebaseOnConflict: true,
-                        mutate: async (raw) => { assertCurrent(); const settings = await mutate(raw); assertCurrent(); return { settings, value: undefined }; } },
-                });
-                assertCurrent();
-                if (!result) throw new Error('Account Settings mutation did not run');
-                requireOneShotAccountSettingsMutationApplied(result);
+            mutateRawSettings: async (mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>,
+                options?: RawSettingsMutationOptions) => {
+                const cancellation = mergeAbortSignals([signal, options?.signal, controller.signal]);
+                const assertMutationCurrent = () => {
+                    assertCurrent();
+                    cancellation.signal.throwIfAborted();
+                };
+                const mutationRequest: ServerFetch = async (path, init, requestOptions) => {
+                    const requestCancellation = mergeAbortSignals([cancellation.signal, init?.signal ?? undefined]);
+                    try {
+                        assertMutationCurrent();
+                        return await request(path, { ...init, signal: requestCancellation.signal }, requestOptions);
+                    } finally { requestCancellation.dispose(); }
+                };
+                try {
+                    assertMutationCurrent();
+                    const { accountMode, encryption } = await resolveAccountEncryption();
+                    assertMutationCurrent();
+                    const settingsSecretsKeys = await resolveSettingsSecretsKeySet({ credentials, scope });
+                    assertMutationCurrent();
+                    const baseline = await readAccountSettingsBaseline({ request: mutationRequest, credentials, encryption, accountMode });
+                    assertMutationCurrent();
+                    const result = await syncSettings({ credentials, encryption, signal: cancellation.signal, settingsScope: scope,
+                        settingsSecretsKey: settingsSecretsKeys?.writeKey ?? null,
+                        settingsSecretsReadKeys: settingsSecretsKeys?.readKeys ?? [],
+                        requestContext: { scope, endpointUrl: profile.serverUrl, request: mutationRequest }, pendingSettings: {}, clearPendingSettings: () => {},
+                        oneShotServerSettingsMutation: { expectedSettingsVersion: options?.expectedSettingsVersion ?? baseline.version,
+                            rebaseOnConflict: options?.rebaseOnConflict ?? true,
+                            ...(options?.expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision: options.expectedProfileTransferRevision }),
+                            mutate: async (raw) => {
+                                assertMutationCurrent();
+                                const settings = await mutate(raw);
+                                assertMutationCurrent();
+                                return { settings, value: undefined };
+                            } },
+                    });
+                    // A committed effect receipt stays true after retirement. The
+                    // Settings owner separately guards publication into the live scope.
+                    if (result?.status !== 'applied') assertCurrent();
+                    if (!result) throw new Error('Account Settings mutation did not run');
+                    if (!options?.observeOutcome) requireOneShotAccountSettingsMutationApplied(result);
+                    return result;
+                } finally { cancellation.dispose(); }
             },
             readSettings: async (): Promise<Settings> => {
                 const state = storage.getState();

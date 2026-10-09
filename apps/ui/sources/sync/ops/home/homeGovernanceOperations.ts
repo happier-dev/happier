@@ -12,6 +12,7 @@ import {
     HomeSettingsInvalidErrorV1Schema,
     HomeSettingsProjectionV1Schema,
     type HomeAccountDetailV1,
+    type HomeAccountDeleteResultV1,
     type HomeAccountListResultV1,
     type HomeAccountSearchResultV1,
     type HomeAuditListResultV1,
@@ -31,8 +32,11 @@ import {
     type HomeTeamProviderPolicyV1,
     type TeamCreationPolicyV1,
 } from '@happier-dev/protocol/home/governance';
+import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { refreshHomeGovernanceSnapshot } from '@/sync/engine/home/governance/homeGovernanceEngine';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
@@ -109,11 +113,13 @@ async function executeHomeAction(params: Readonly<{
     scope: ServerAccountScope;
     actionId: HomeGovernanceActionIdV1;
     input: unknown;
+    signal?: AbortSignal;
 }>): Promise<HomeActionOutcome> {
     const result = await scopedHomeActionExecutor(params.scope)(params.actionId, params.input, {
         surface: 'ui',
         authority: 'present_user',
         serverId: params.scope.serverId,
+        ...(params.signal ? { signal: params.signal } : {}),
     });
     return classifyHomeActionOutcome(result);
 }
@@ -198,12 +204,33 @@ export function signOutHomeAccountEverywhere(params: Readonly<{
 export async function deleteHomeAccount(params: Readonly<{
     scope: ServerAccountScope;
     accountId: string;
+    managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
+    signal?: AbortSignal;
+    onApprovalPending?: (approval: ActionApprovalRegistration) => void;
 }>): Promise<HomeGovernanceMutationOutcome> {
-    const outcome = await executeHomeAction({
-        scope: params.scope,
-        actionId: 'home.accounts.delete',
-        input: { accountId: params.accountId },
+    const input = { accountId: params.accountId,
+        ...(params.managedResourceDispositions ? { managedResourceDispositions: params.managedResourceDispositions } : {}),
+    };
+    const execute = () => executeHomeAction({ scope: params.scope, actionId: 'home.accounts.delete', input,
+        ...(params.signal ? { signal: params.signal } : {}),
     });
+    const outcome = params.onApprovalPending
+        ? await awaitActionApprovalResult<HomeAccountDeleteResultV1, HomeActionOutcome>({
+            execute: async callbacks => {
+                const result = await execute();
+                if (result.kind !== 'approval_pending') return result;
+                params.onApprovalPending?.(createActionApprovalContinuation<HomeAccountDeleteResultV1, 'home.accounts.delete'>({
+                    artifactId: result.artifactId, actionId: 'home.accounts.delete', scope: params.scope, expectedInput: input,
+                    ...(callbacks.signal ? { signal: callbacks.signal } : {}),
+                    onSucceeded: callbacks.onApprovalSucceeded, onFailed: callbacks.onApprovalFailed,
+                }));
+                return { approvalPending: true };
+            },
+            succeeded: result => ({ kind: 'completed', result }),
+            failed: (code, failure) => ({ kind: 'failed', failure: homeDomainFailureFromActionFailure(failure ?? { errorCode: code }) }),
+            aborted: () => ({ kind: 'failed', failure: homeDomainFailureFromActionFailure({ errorCode: 'aborted' }) }),
+            ...(params.signal ? { signal: params.signal } : {}),
+        }) : await execute();
     if (outcome.kind === 'failed') {
         return Object.freeze({ kind: 'failed' as const, failure: outcome.failure });
     }

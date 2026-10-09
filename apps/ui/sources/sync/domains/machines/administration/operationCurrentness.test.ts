@@ -38,6 +38,18 @@ describe('machine administration operation currentness', () => {
         )).toBe(false);
     });
 
+    it('rejects a replaced installation even when the portable target and daemon generation still match', () => {
+        const captured = { ...expected, machine: { ...expected.machine, installationId: 'installation-a' } };
+        expect(sameMachineAdministrationExecutionTarget(captured, {
+            ...captured, machine: { ...captured.machine, metadataVersion: 99 },
+        })).toBe(true);
+        expect(isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: captured,
+            resolveCurrentTarget: () => ({ ...captured, machine: { ...captured.machine, installationId: 'installation-b' } }),
+        })).toBe(false);
+        expect(sameMachineAdministrationExecutionTarget(expected, expected)).toBe(true);
+    });
+
     it('also fences a screen operation to its captured selection key', () => {
         expect(isMachineAdministrationExecutionTargetCurrent({
             expectedTarget: expected,

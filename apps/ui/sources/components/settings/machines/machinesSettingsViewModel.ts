@@ -10,6 +10,8 @@ import {
 } from '@/sync/domains/state/storage';
 import { useHomeViewSelectionSettings } from '@/hooks/server/useHomeViewSelectionSettings';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { useManagedMachineInventory } from './managed/useManagedMachineInventory';
+import { useMachinePresets } from './managed/useMachinePresets';
 
 export type MachinesSettingsViewModel = ReturnType<typeof useMachinesSettingsViewModel>;
 
@@ -45,10 +47,15 @@ export function useMachinesSettingsViewModel() {
         },
     });
 
+    const managedServerIds = React.useMemo(() => activeSelectionMachineGroups.visibleMachineGroups.map(group => group.serverId),
+        [activeSelectionMachineGroups.visibleMachineGroups]);
+    const managedInventory = useManagedMachineInventory(managedServerIds);
+    const presetInventory = useMachinePresets(managedServerIds);
+
     const isLoadingMachines = React.useMemo(() => {
         const status = machineListStatusByServerId[activeServerSnapshot.serverId] ?? 'loading';
-        return allMachines.length === 0 && status === 'loading';
-    }, [activeServerSnapshot.serverId, allMachines.length, machineListStatusByServerId]);
+        return allMachines.length === 0 && (status === 'loading' || managedInventory.loading);
+    }, [activeServerSnapshot.serverId, allMachines.length, machineListStatusByServerId, managedInventory.loading]);
 
     const machineRows = React.useMemo(() => {
         return activeSelectionMachineGroups.visibleMachineGroups.flatMap((group) =>
@@ -64,10 +71,14 @@ export function useMachinesSettingsViewModel() {
     return {
         activeServerId: activeServerSnapshot.serverId,
         allMachines,
-        hasMachines: activeSelectionMachineGroups.hasAnyVisibleMachines,
+        hasMachines: activeSelectionMachineGroups.hasAnyVisibleMachines || Object.values(managedInventory.machinesByServerId).some(rows => rows.length > 0),
         isLoadingMachines,
         machineRows,
         showMachinesGroupedByServer: activeSelectionMachineGroups.showMachinesGroupedByServer,
         visibleMachineGroups: activeSelectionMachineGroups.visibleMachineGroups,
+        managedByServerId: managedInventory.machinesByServerId,
+        managedInventory,
+        presetsByServerId: presetInventory.presetsByServerId,
+        presetInventory,
     };
 }

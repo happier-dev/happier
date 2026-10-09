@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { HomeAccountDetailV1, HomeRoleV1 } from '@happier-dev/protocol/home/governance';
+import { HomeGovernanceErrorV1Schema, type HomeAccountDetailV1, type HomeRoleV1 } from '@happier-dev/protocol/home/governance';
+import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import { confirmForCapturedAccount } from '@/components/settings/apiTokens/confirmForCapturedAccount';
+import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { teamRoleLabel } from '@/components/settings/teams/teamLabels';
 import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -15,6 +17,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useHomeAccountDetail } from '@/hooks/home/useHomeAccountDetail';
 import { Modal } from '@/modal';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
@@ -22,7 +25,7 @@ import {
     resolveHomeAccountAdministrationActions,
     type HomeAccountActionAvailability,
 } from '@/sync/domains/home/governance/homeAccountAdministration';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
     deleteHomeAccount,
     disableHomeAccount,
@@ -115,7 +118,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
 
     const run = React.useCallback(async (
         action: PendingAction,
-        operation: () => Promise<HomeGovernanceMutationOutcome>,
+        operation: () => Promise<HomeGovernanceMutationOutcome | null>,
     ): Promise<HomeGovernanceMutationOutcome | null> => {
         // The visible disabled state follows on the next render; this ref also
         // closes the same-frame double-activation window on fast pointer/touch.
@@ -124,6 +127,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
         setPendingAction(action);
         try {
             const outcome = await operation();
+            if (!outcome) return null;
             if (outcome.kind === 'succeeded') {
                 announceAccessibilityMessage(`${pendingActionLabel(action)}. ${t('common.success')}`);
                 onChanged();
@@ -163,7 +167,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
     const confirmThenRun = React.useCallback(async (
         action: PendingAction,
         confirm: () => Promise<boolean>,
-        operation: (scope: ServerAccountScope) => Promise<HomeGovernanceMutationOutcome>,
+        operation: (scope: ServerAccountScope, target: ServerAccountScopeLifetime) => Promise<HomeGovernanceMutationOutcome | null>,
     ): Promise<HomeGovernanceMutationOutcome | null> => {
         if (operationInFlightRef.current) return null;
         const target = await confirmForCapturedAccount(
@@ -171,7 +175,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
             confirm,
         );
         if (!target) return null;
-        return await run(action, () => operation(target.scope));
+        return await run(action, () => operation(target.scope, target));
     }, [context, run]);
 
     const changeRole = React.useCallback((nextRole: HomeRoleV1) => {
@@ -231,11 +235,36 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
                 t('homeGovernance.deleteBody', { home: context.homeName }),
                 { confirmText: t('homeGovernance.deleteConfirm'), destructive: true },
             ),
-            (scope) => deleteHomeAccount({ scope, accountId: detail.accountId }),
+            async (scope, target) => {
+                const abort = new AbortController();
+                const retirement = target.onRetire(() => abort.abort());
+                let managedResourceDispositions: readonly ManagedResourceDispositionV1[] | undefined;
+                try {
+                    while (target.isCurrent() && !abort.signal.aborted) {
+                        const result = await deleteHomeAccount({ scope, accountId: detail.accountId, signal: abort.signal,
+                            ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
+                            ...(context.requestApproval ? { onApprovalPending: context.requestApproval } : {}),
+                        });
+                        if (!target.isCurrent() || abort.signal.aborted) return null;
+                        if (result.kind !== 'failed') return result;
+                        const review = HomeGovernanceErrorV1Schema.safeParse(result.failure.details);
+                        if (!review.success || review.data.error !== 'account_erasure_managed_resources_review_required') return result;
+                        const resources = review.data.resources;
+                        let reviewed: readonly ManagedResourceDispositionV1[] | null = null;
+                        const current = await confirmForCapturedAccount({ captureDestructiveTarget: () => target }, async () => {
+                            reviewed = await reviewManagedResourceRemoval(resources);
+                            return reviewed !== null;
+                        });
+                        if (!current || !reviewed) return null;
+                        managedResourceDispositions = reviewed;
+                    }
+                    return null;
+                } finally { retirement.dispose(); }
+            },
         );
         // Only a finished deletion removes the person this page is about.
         if (outcome?.kind === 'succeeded') router.back();
-    }, [confirmThenRun, context.homeName, detail.accountId, name, router]);
+    }, [confirmThenRun, context.homeName, context.requestApproval, detail.accountId, name, router]);
 
     // A Retired Account whose deletion did not finish is retried with the same
     // authorized operation, so the destructive verb stays honest.
@@ -483,8 +512,20 @@ const PersonLookup = React.memo(function PersonLookup(props: Readonly<{
     const canView = context.projection.capabilities.viewAdministration;
     const person = useHomeAccountDetail(context.scope, accountId, canView);
 
-    if (person.detail) {
-        return <PersonDetail context={context} detail={person.detail} onChanged={person.reload} banners={props.banners} />;
+    if (canView && person.detail) {
+        return <PersonDetail context={context} detail={person.detail} onChanged={person.reload} banners={(
+            <>
+                {props.banners}
+                {person.error ? (
+                    <SurfaceFreshnessLine
+                        testID="home-account-refresh-error"
+                        tone="warning"
+                        reason={homeGovernanceFailureNotice(person.error, { effect: 'read' }).body}
+                        action={person.error.retryable ? { label: t('homeGovernance.retry'), onPress: person.reload } : undefined}
+                    />
+                ) : null}
+            </>
+        )} />;
     }
 
     // Until the person is read the page is titled by its destination, with the Home's banners.
@@ -507,6 +548,13 @@ const PersonLookup = React.memo(function PersonLookup(props: Readonly<{
     }
 
     if (person.error) {
+        if (person.error.kind === 'forbidden' || person.error.kind === 'unauthorized') {
+            return withHeader(
+                <ItemGroup description={t('homeGovernance.forbiddenBody')}>
+                    <Item testID="home-account-forbidden" title={t('homeGovernance.forbiddenTitle')} mode="info" showChevron={false} />
+                </ItemGroup>,
+            );
+        }
         if (person.error.code === 'home_account_not_found') {
             return withHeader(
                 <ItemGroup description={t('homeGovernance.accountUnavailableBody')}>

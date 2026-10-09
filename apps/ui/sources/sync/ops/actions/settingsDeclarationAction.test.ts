@@ -16,6 +16,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 const themeRuntime = vi.hoisted(() => ({
     setTheme: vi.fn(),
+    updateTheme: vi.fn<(name: string, update: (theme: import('@/theme').Theme) => import('@/theme').Theme) => void>(),
     setRootViewBackgroundColor: vi.fn(),
     setStatusBarStyle: vi.fn(),
 }));
@@ -38,6 +39,7 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock({ runtime: {
         setTheme: themeRuntime.setTheme,
+        updateTheme: themeRuntime.updateTheme,
         setRootViewBackgroundColor: themeRuntime.setRootViewBackgroundColor,
     } });
 });
@@ -67,6 +69,12 @@ import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySetti
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { captureLazyActionAccountContext } from './actionAccountContext';
+import { readAcpCatalogInContext } from '@/sync/api/account/apiAcpCatalog';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { darkTheme } from '@/theme';
 
 describe('exact Account Settings history purge declaration', () => {
     it('requires incumbent approval and refuses execution without an Account history transport', async () => {
@@ -119,12 +127,10 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
     let account = { ...initialAccount };
     let local = { ...localSettingsDefaults };
     const openedInteractions: string[] = [];
-    const readScmDiffSummaryCatalog = createScmDiffSummarySettingsCatalogReader({
-        serverId: 'test-home',
-        accountLifetime: { scope: { serverId: 'test-home', accountId: 'test-account' },
-            isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
-        assertCurrent() {}, readLiveSettings: () => account,
-    });
+    const readScmDiffSummaryCatalog: ReturnType<typeof createScmDiffSummarySettingsCatalogReader> = async (settings, storedValue) => {
+        const captured = await readSummaryCatalogAccount();
+        return createScmDiffSummarySettingsCatalogReader({ ...captured, readLiveSettings: () => account })(settings, storedValue);
+    };
     // These ports substitute only the persisted Account and device storage boundaries.
     const action = createSettingsDeclarationAction({
         host,
@@ -400,15 +406,43 @@ describe('navigation placement Settings Actions', () => {
     });
 });
 
+let summaryCatalogAccount: Promise<Awaited<ReturnType<typeof captureLazyActionAccountContext>>> | null = null;
+
+/** Serve Account rows at HTTP/credential boundaries; capture, catalog parsing and admission stay real. */
+function readSummaryCatalogAccount() {
+    if (!summaryCatalogAccount) {
+        const capture = (async () => {
+            const network = await installSessionOpsNetworkBoundary();
+            let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
+            onTestFinished(() => { account?.dispose(); network.dispose(); summaryCatalogAccount = null; });
+            const home = await network.addHome('https://settings-summary.example.test', 'settings-summary-account');
+            network.setHttpResponder(async (url, init) => {
+                expect(init?.method ?? 'GET').toBe('GET');
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 1,
+                    content: { t: 'plain', v: { v: 1, definitions: [] } } });
+                return null;
+            });
+            account = await captureLazyActionAccountContext(home.id);
+            return account;
+        })();
+        summaryCatalogAccount = capture;
+    }
+    return summaryCatalogAccount;
+}
+
 /** Seed only device storage; model descriptors, catalog projection and admission stay real. */
-function offeredSummaryProfiles() {
+async function offeredSummaryProfiles() {
     const before = storage.getState();
     onTestFinished(() => storage.setState(before, true));
     storage.setState({ settings: settingsDefaults });
+    const { catalog } = await readAcpCatalogInContext(await readSummaryCatalogAccount());
     return getResolvedBackendCatalogEntries({
         enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settingsDefaults.backendEnabledByTargetKey }),
         backendEnabledByTargetKey: settingsDefaults.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settingsDefaults.acpCatalogSettingsV1,
+        acpCatalogSnapshot: catalog,
     }).flatMap(entry => buildScmDiffSummaryModelProfiles({
         backendTarget: readBackendTargetRefV2(entry.backendTarget),
         models: getAgentStaticModels(entry.agentId, { catalogOnly: true }),
@@ -416,8 +450,8 @@ function offeredSummaryProfiles() {
     }));
 }
 
-function supportedSummaryPreference() {
-    const profile = offeredSummaryProfiles().find(candidate => candidate.structuredOutput === 'supported');
+async function supportedSummaryPreference() {
+    const profile = (await offeredSummaryProfiles()).find(candidate => candidate.structuredOutput === 'supported');
     if (!profile) throw new Error('Expected a genuinely supported offered Summary model');
     return profile.catalogId;
 }
@@ -703,7 +737,7 @@ describe('declared settings owner', () => {
     });
 
     it('rejects offered Summary models without proven support and unknown choices without changing the scalar preference', async () => {
-        const profiles = offeredSummaryProfiles().filter(profile => profile.structuredOutput !== 'supported');
+        const profiles = (await offeredSummaryProfiles()).filter(profile => profile.structuredOutput !== 'supported');
         expect(profiles.length).toBeGreaterThan(0);
         const owner = createOwner(undefined, true);
         for (const value of [...profiles.map(profile => profile.catalogId), 'unknown-summary-model']) {
@@ -713,7 +747,7 @@ describe('declared settings owner', () => {
         }
     });
     it('refuses enabling preparation after turns when no supported Summary model is selected', async () => {
-        offeredSummaryProfiles();
+        await offeredSummaryProfiles();
         const owner = createOwner(undefined, true);
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.prepareAfterTurn', value: true } }))
             .toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
@@ -728,7 +762,7 @@ describe('declared settings owner', () => {
         expect(owner.account()['scm.diffSummary.prefetch']).toBe(false);
     });
     it('admits a proven model through the unchanged codec and rechecks the selected model during a preparation CAS rebase', async () => {
-        const value = supportedSummaryPreference();
+        const value = await supportedSummaryPreference();
         const owner = createOwner(undefined, true);
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'sourceControl.summaryModel', value } }))
             .toEqual({ anchor: 'sourceControl.summaryModel', value });
@@ -996,8 +1030,10 @@ describe('declared settings owner', () => {
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voicePrivacy.recentMessagesCount', value: 7 } }))
             .toEqual({ anchor: 'voicePrivacy.recentMessagesCount', value: 7 });
         expect(owner.account().voice.privacy).toMatchObject({ shareRecentMessages: false, recentMessagesCount: 7, shareToolNames: true });
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voicePrivacy.recentMessagesCount', value: 51 } }))
-            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        for (const value of [-1, 1.5, '7']) {
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voicePrivacy.recentMessagesCount', value } }))
+                .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        }
         expect(owner.account().voice.privacy.recentMessagesCount).toBe(7);
         expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'voicePrivacy.recentMessagesCount' } }))
             .toEqual({ anchor: 'voicePrivacy.recentMessagesCount', value: 7 });
@@ -1168,6 +1204,7 @@ describe('declared settings owner', () => {
         };
         owner.local().themeProfiles = profiles;
         themeRuntime.setTheme.mockClear();
+        themeRuntime.updateTheme.mockClear();
         themeRuntime.setRootViewBackgroundColor.mockClear();
         themeRuntime.setStatusBarStyle.mockClear();
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.themeMode', value: 'dark' } }))
@@ -1175,7 +1212,10 @@ describe('declared settings owner', () => {
         expect(owner.local().themePreference).toBe('dark');
         expect(owner.local().themeProfiles).toEqual(profiles);
         expect(themeRuntime.setTheme).toHaveBeenLastCalledWith('dark');
-        expect(themeRuntime.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#123456');
+        const updateDarkTheme = themeRuntime.updateTheme.mock.calls.filter(([name]) => name === 'dark').at(-1)?.[1];
+        expect(updateDarkTheme?.(darkTheme).colors.background.canvas).toBe('#123456');
+        // Web roots consume the registered theme; an imperative write would race that mounted owner.
+        expect(themeRuntime.setRootViewBackgroundColor).not.toHaveBeenCalled();
         expect(themeRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
         expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'appearance.themeMode' } }))
             .toEqual({ anchor: 'appearance.themeMode', value: 'dark' });
@@ -1248,7 +1288,7 @@ describe('declared settings owner', () => {
             // Desktop setting commits reach the native window, which is the only substituted boundary.
             const invoke = vi.spyOn(desktopHostBoundary, 'invokeDesktopHost').mockResolvedValue(undefined);
             onTestFinished(() => invoke.mockRestore());
-            const value = supportedSummaryPreference();
+            const value = await supportedSummaryPreference();
             const owner = createOwner(host, true, true, applySettings(settingsDefaults, {
                 'scm.diffSummary.modelProfileOverride': value,
             }));

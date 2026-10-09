@@ -22,6 +22,18 @@ const options = { choices: [
 ] };
 
 describe('managed configurator draft owner', () => {
+    it('retains preset setup in the draft and receipt while keeping one-off acquisition free of setup authority', () => {
+        const environment = { setupScript: 'echo ready', secretRefs: { v: 1 as const, bindings: { API_TOKEN: { ref: 'setup-token' } } } };
+        const initial = createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest', environment,
+            preset: { id: 'with-environment', revision: 2 } });
+        const selected = selectManagedConfiguratorChoice(refreshManagedConfiguratorOptions(initial, options), 'small');
+        const refreshed = refreshManagedConfiguratorOptions(selected, options);
+        expect(refreshed.environment).toEqual(environment);
+        expect(managedConfiguratorFacts(refreshed)?.environment).toEqual(environment);
+        const acquired = managedConfiguratorAcquireInput(refreshed, 'home');
+        expect(acquired?.selection).not.toHaveProperty('environment');
+        expect(acquired?.reviewedFacts?.environment).toBeUndefined();
+    });
     it('drops coordinator selection from a reviewed direct Crabbox launch and restores its requirement for coordinator transport', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CRABBOX_PLUGIN.manifest.contributes.machineProvisioners?.[0]);
         const contribution = { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id };

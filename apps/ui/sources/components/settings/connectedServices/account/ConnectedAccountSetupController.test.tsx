@@ -22,6 +22,16 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveQualifiedConnectedAccountLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import type { ApprovalRequestV2 } from '@happier-dev/protocol';
+import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -47,6 +57,7 @@ import {
     QualifiedConnectedAccountGroupV4Schema,
     QualifiedConnectedAccountGroupListResponseV4Schema,
     ConnectedServiceAuthGroupPolicyV1Schema,
+    ActionsSettingsV1Schema,
     type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { ConnectedAccountSetupController, ConnectedAccountServiceView } from './ConnectedAccountServiceView';
@@ -60,6 +71,8 @@ const platform = vi.hoisted(() => ({
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+// Keep the real machine picker beneath a deterministic portal/window measurement boundary.
+vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 vi.mock('expo-router', async () => {
     const mocked = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ params: () => platform.params }).module;
     const router = { ...mocked.router, canGoBack: () => false };
@@ -253,6 +266,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
     });
 
     afterEach(async () => {
+        installDisconnectedServerSocketBoundary();
         standardCleanup();
         resetServerFeaturesClientForTests();
         vi.restoreAllMocks();
@@ -307,6 +321,9 @@ describe('ConnectedAccountSetupController real ownership', () => {
         storage.setState({ isDataReady: false });
         const screen = await focusedScreen();
         expect(screen.findHostByTestId('connected-account-choose-machine'), JSON.stringify(screen.tree.toJSON())).not.toBeNull();
+        expect(screen.findHostByTestId('connected-account-choose-machine:action') !== null).toBe(true);
+        await screen.pressByTestIdAsync('connected-account-choose-machine:action');
+        expect(screen.findByTestId('connected-account-target.chip')?.props.accessibilityState?.expanded).toBe(true);
         expect(controlCommands).toEqual([]);
         expect(authenticationCommands).toEqual([]);
     });
@@ -783,6 +800,189 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([]);
     });
 
+    it('retains connected-account custody until the canonical default Ask is approved', async () => {
+        const targetAccount: QualifiedConnectedAccountProfileV4 = {
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        };
+        const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        installDescription({ ...described, accounts: [targetAccount] });
+        const approvals: ApprovalRequestV2[] = [];
+        const settingsWrites: unknown[] = [];
+        handleHttp = async (rawUrl, init) => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/account/settings') {
+                if (init?.method === 'POST') settingsWrites.push(JSON.parse(String(init.body)));
+                return Response.json({ content: { t: 'plain', v: storage.getState().settings }, version: 2 });
+            }
+            if (url.pathname === '/v1/artifacts' && init?.method === 'POST') {
+                // The persisted approval is produced by the real executor and
+                // Artifact owner; only their HTTP boundary is replaced.
+                const create = JSON.parse(String(init.body)) as ArtifactCreateRequest;
+                const content = decodePlainArtifactStoredContent(create.body);
+                if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing approval Artifact body');
+                const request = StoredApprovalRequestSchema.parse(JSON.parse(content.body));
+                if (request.v !== 2) throw new Error('Missing current approval authority');
+                approvals.push(request);
+                return Response.json({ ...create, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            }
+            if (url.pathname === '/v1/artifacts') return Response.json([]);
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        };
+        handleControl = command => command.operation === 'revokeAccount'
+            ? { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' }
+            : command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
+        const screen = await focusedScreen();
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
+        // An awaited final approval may keep this invocation open. Unmount's
+        // real controller lifetime cancels it during the standard cleanup.
+        void screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        await vi.waitFor(() => expect(approvals, JSON.stringify({ commands: controlCommands,
+            requests: httpRequests.map(url => url.pathname), tree: screen.tree.toJSON() })).toHaveLength(1));
+        expect(approvals[0]).toMatchObject({ actionId: 'connectedServices.accounts.revoke', status: 'open', actionArgs: {
+            machineId: selection.selectedTarget!.machineId, account: targetAccount.ref, cleanupGroupReferences: false,
+            expectedCredentialRevision: credentialRevision,
+        } });
+        // The actual installed Action's persisted Ask is the confirmation owner,
+        // not an additional local destructive-confirmation gate in this view.
+        expect(platform.confirm).not.toHaveBeenCalled();
+        expect(controlCommands.filter(command => command.operation === 'revokeAccount')).toEqual([]);
+        expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings).toEqual(bindings);
+        // Account setup may publish its normalized settings projection. None
+        // of those writes may discard references to an unrevoked credential.
+        for (const write of settingsWrites) {
+            expect(AccountSettingsV2UpdateRequestSchema.parse(write).content).toMatchObject({
+                t: 'plain', v: { connectedAccountPurposeBindingsV1: { bindings } },
+            });
+        }
+    });
+
+    it.each([false, true])('reviews retained native resources before an explicit manual-responsibility revoke retry (confirmed: %s)', async (confirmed) => {
+        const targetAccount: QualifiedConnectedAccountProfileV4 = {
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [],
+        };
+        const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
+        installDescription({ ...described, accounts: [targetAccount] });
+        storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
+        }) }, 3);
+        const resource = createManagedResourceDependencyFixture();
+        const renewedResource = createManagedResourceDependencyFixture(resource.intentRevision + 1);
+        let serverContent: unknown = { t: 'plain', v: storage.getState().settings };
+        let serverVersion = 3;
+        handleHttp = async (rawUrl, init) => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/account/settings') {
+                if (init?.method === 'POST') {
+                    const write = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                    expect(write.expectedVersion).toBe(serverVersion);
+                    serverContent = write.content;
+                    return Response.json({ success: true, version: ++serverVersion });
+                }
+                return Response.json({ content: serverContent, version: serverVersion });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        };
+        const revokes: ControlCommand[] = [];
+        handleControl = command => {
+            if (command.operation === 'revokeAccount') {
+                revokes.push(command);
+                return command.managedResourceDispositions
+                    ? command.managedResourceDispositions[0]?.expectedIntentRevision === resource.intentRevision
+                        ? { status: 'removalReviewRequired', account: targetAccount.ref, resources: [renewedResource] }
+                        : { status: 'outcomeUnknown', account: targetAccount.ref }
+                    : { status: 'removalReviewRequired', account: targetAccount.ref, resources: [resource] };
+            }
+            return command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
+        };
+        platform.confirm.mockResolvedValue(confirmed);
+        const screen = await focusedScreen();
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
+        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        expect(revokes, JSON.stringify({ commands: controlCommands, requests: httpRequests.map(url => url.pathname) })).not.toHaveLength(0);
+        expect(platform.confirm).toHaveBeenCalledTimes(confirmed ? 2 : 1);
+        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('native-1');
+        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('controller-1');
+        expect(revokes).toEqual([
+            { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
+            ...(confirmed ? [resource, renewedResource].map(reviewed => ({
+                operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision,
+                cleanupGroupReferences: false, managedResourceDispositions: [{ managedId: reviewed.managedId,
+                    expectedIntentRevision: reviewed.intentRevision, expectedAllocation: reviewed.allocation,
+                    expectedResource: reviewed.resource, expectedNativeOperationRef: reviewed.nativeOperationRef,
+                    expectedRecovery: reviewed.recovery, responsibility: 'manual' }],
+            })) : []),
+        ]);
+        expect(storage.getState().settings.connectedAccountPurposeBindingsV1.bindings).toEqual(bindings);
+        // An unknown native result opens the existing recovery flow, not the detail's
+        // disconnect button. The exact Account references above remain retained.
+        await vi.waitFor(() => expect(screen.findHostByTestId(confirmed ? 'connected-account:error:retry' : 'qualified-account-detail:action:disconnect'),
+            JSON.stringify([...new Set(screen.tree.root.findAll(node => typeof node.props.testID === 'string').map(node => node.props.testID))])).not.toBeNull());
+    });
+
+    it('does not emit a captured Account revoke after credentials retire during transport setup without a caller signal', async () => {
+        const targetAccount = { service, accountId: 'account-1' };
+        storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
+        }) }, 3);
+        const machineId = selection.selectedTarget!.machineId;
+        let releaseMachine!: () => void;
+        const machineResponse = new Promise<void>(resolve => { releaseMachine = resolve; });
+        let transportAwaiting = false;
+        const emissions: ControlCommand[] = [];
+        // Keep real scoped fallback, Machine mode resolution, codec and
+        // pre-emission callbacks. Only HTTP and Socket.IO are substituted.
+        vi.mocked(apiSocket.machineRPC).mockRestore();
+        installDisconnectedServerSocketBoundary(socket => {
+            socket.connected = true;
+            socket.emitWithAck = vi.fn(async (_event: string, payload: unknown) => {
+                if (payload && typeof payload === 'object' && 'params' in payload) {
+                    const request = ConnectedAccountControlCommandRequestSchema.safeParse(payload.params);
+                    if (request.success) emissions.push(request.data.command);
+                }
+                return { ok: true, result: { status: 'outcomeUnknown', account: targetAccount } };
+            });
+            socket.timeout = vi.fn(() => socket);
+        });
+        handleHttp = async rawUrl => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === `/v1/machines/${machineId}`) {
+                transportAwaiting = true;
+                await machineResponse;
+                return Response.json({ machine: { id: machineId, kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                    metadataVersion: 1, daemonStateVersion: 1 } });
+            }
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        };
+        const result = createDefaultActionExecutor().execute('connectedServices.accounts.revoke', {
+            machineId, account: targetAccount, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false,
+        }, { surface: 'ui', authority: 'present_user', serverId: account.home.id, expectedAccountId: 'account-a' });
+        try {
+            await vi.waitFor(() => expect(transportAwaiting).toBe(true));
+            const replacement = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-b' })).toString('base64url')}.signature` };
+            expect(await TokenStorage.setCredentialsForServerUrl(account.home.serverUrl, { serverId: account.home.id }, replacement)).toBe(true);
+        } finally {
+            releaseMachine();
+        }
+        try {
+            expect(await result).toMatchObject({ ok: false });
+            expect(emissions).toEqual([]);
+        } finally {
+            installDisconnectedServerSocketBoundary();
+            await TokenStorage.setCredentialsForServerUrl(account.home.serverUrl, { serverId: account.home.id }, account.credentials);
+        }
+    });
+
     it.each(['declined', 'revoked', 'conflict'] as const)('cleans only the exact account group references after explicit confirmation (%s)', async (outcome) => {
         const targetAccount: QualifiedConnectedAccountProfileV4 = {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
@@ -791,20 +991,66 @@ describe('ConnectedAccountSetupController real ownership', () => {
         const otherAccount = { ...targetAccount, ref: { service, accountId: 'account-2' } };
         const bindings = seedPurposeDefaults({ kind: 'account', account: targetAccount.ref });
         installDescription({ ...described, accounts: [targetAccount, otherAccount] });
-        handleControl = (command) => command.operation === 'revokeAccount'
-            ? command.cleanupGroupReferences && outcome !== 'conflict'
-                ? { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' }
-                : { status: 'conflict', code: 'connect_credential_referenced_by_group' }
-            : command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
-        platform.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(outcome !== 'declined');
+        // This neighbor exercises a settled reply under an explicit shared
+        // policy waiver. The default Ask's Artifact boundary is covered above.
+        storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'connectedServices.accounts.revoke': ['ui'] },
+        }) }, 3);
+        expect(storage.getState().settings.actionsSettingsV1.approvalWaivedSurfaces?.['connectedServices.accounts.revoke']).toEqual(['ui']);
+        const settingsWrites: unknown[] = [];
+        let serverContent: unknown = { t: 'plain', v: storage.getState().settings };
+        let serverVersion = 3;
+        handleHttp = async (rawUrl, init) => {
+            const url = new URL(String(rawUrl));
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v2/account/settings') {
+                if (init?.method === 'POST') {
+                    const write = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                    expect(write.expectedVersion).toBe(serverVersion);
+                    settingsWrites.push(write);
+                    serverContent = write.content;
+                    return Response.json({ success: true, version: ++serverVersion });
+                }
+                return Response.json({ content: serverContent, version: serverVersion });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        };
+        handleControl = (command) => {
+            if (command.operation === 'revokeAccount') {
+                if (!command.cleanupGroupReferences || outcome === 'conflict') return { status: 'conflict', code: 'connect_credential_referenced_by_group' };
+                description = { ...description, accounts: [otherAccount] };
+                return { status: 'revoked', account: targetAccount.ref, remoteStatus: 'remoteUnsupported' };
+            }
+            return command.operation === 'listPendingAttempts' ? { status: 'pendingAttempts', attempts: [] } : description;
+        };
+        platform.confirm.mockResolvedValueOnce(outcome !== 'declined');
         const screen = await focusedScreen();
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
-        await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledOnce());
         expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([
-            { operation: 'revokeAccount', account: targetAccount.ref, cleanupGroupReferences: false },
-            ...(outcome !== 'declined' ? [{ operation: 'revokeAccount', account: targetAccount.ref, cleanupGroupReferences: true }] : []),
+            { operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
+            ...(outcome !== 'declined' ? [{ operation: 'revokeAccount', account: targetAccount.ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: true }] : []),
         ]);
+        const changedReferenceWrites = settingsWrites.filter(write => {
+            const { content } = AccountSettingsV2UpdateRequestSchema.parse(write);
+            return content?.t === 'plain'
+                && JSON.stringify(content.v.connectedAccountPurposeBindingsV1) !== JSON.stringify({ v: 1, bindings });
+        });
+        if (outcome === 'revoked') {
+            expect(changedReferenceWrites).not.toEqual([]);
+            // A later normalization can acknowledge the same projection again;
+            // every changed projection must preserve the unrelated credential.
+            for (const write of changedReferenceWrites) {
+                expect(AccountSettingsV2UpdateRequestSchema.parse(write).content).toMatchObject({
+                    t: 'plain', v: { connectedAccountPurposeBindingsV1: { v: 1, bindings: bindings.slice(2) } },
+                });
+            }
+        } else {
+            expect(changedReferenceWrites).toEqual([]);
+        }
         if (outcome === 'conflict') {
             expect(screen.findHostByTestId('connected-account:error')).not.toBeNull();
             expect(JSON.stringify(screen.tree.toJSON())).toContain('connectedServices.errors.credentialReferencedByGroup');

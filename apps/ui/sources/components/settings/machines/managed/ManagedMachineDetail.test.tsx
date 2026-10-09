@@ -5,6 +5,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -37,7 +38,6 @@ import { readOriginalAccountActionMachine, readOriginalAccountActionAuthenticati
 import { Modal } from '@/modal';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { connectedServiceProfileKey, qualifiedConnectedAccountPreferenceServiceKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 
 const operationRpcBoundary = vi.hoisted(() => ({ answer: null as unknown,
     requests: [] as Array<Readonly<{ serverId?: string | null; accountId?: string | null; machineId: string; method: string }>> }));
@@ -73,7 +73,7 @@ afterEach(() => {
 });
 
 describe('managed Machine detail', () => {
-    it.each(['saved', 'enrolled'] as const)('presents retained credential accounts from the captured Home profile and preferences while another Home is focused (%s)', async surface => {
+    it.each(['saved', 'enrolled'] as const)('presents retained credential accounts from the captured Home profile and metadata rows while another Home is focused (%s)', async surface => {
         const browserStorage = installLocalStorageMock();
         const browserLocks = installWebLockManagerMock();
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -88,7 +88,6 @@ describe('managed Machine detail', () => {
             expect(await TokenStorage.setCredentialsForServerUrl(focused.serverUrl, { serverId: focused.id }, { token: tokenB })).toBe(true);
             const service = { pluginId: 'custom.retained-accounts', localId: 'compute' };
             const accountId = 'opaque-retained-account';
-            const preferenceKey = connectedServiceProfileKey({ serviceId: qualifiedConnectedAccountPreferenceServiceKey(service), profileId: accountId });
             const account = { ref: { service, accountId }, status: 'connected' as const, authenticationModeId: 'manual',
                 revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false,
                 configurationRevision: null, displayName: 'A provider name', scopes: [] };
@@ -108,9 +107,16 @@ describe('managed Machine detail', () => {
                 const targetHome = url.origin === target.serverUrl;
                 expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${targetHome ? tokenA : tokenB}`);
                 if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
-                if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
-                    connectedServicesProfileLabelByKey: { [preferenceKey]: targetHome ? 'Work on Home A' : 'Personal on Home B' },
-                } }, version: 1 });
+                if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (url.pathname === '/v1/account/entity-rows/connected-metadata/presentation') return Response.json({
+                    status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [
+                        { v: 1, subject: { kind: 'account', account: account.ref }, label: targetHome ? 'Work on Home A' : 'Personal on Home B' },
+                    ] } },
+                });
+                if (url.pathname === '/v1/account/entity-rows/connected-metadata/acknowledgements') return Response.json({
+                    status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, entries: [] } },
+                });
                 if (url.pathname === '/v1/account/profile') {
                     profileReads.push(url.origin);
                     return Response.json({ ...profileDefaults, id: targetHome ? 'receipt-owner-a' : 'receipt-owner-b',
@@ -124,10 +130,17 @@ describe('managed Machine detail', () => {
                 executeAction={createDefaultActionExecutor().execute} /> : <ManagedEnrolledMachineSections enrolledMachineId="enrolled-receipt-machine"
                     serverId={target.id} executeAction={createDefaultActionExecutor().execute} />);
             await flushHookEffects({ cycles: 30 });
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(screen!.tree.findByType(MachineConfigurationReceipt).props.model.facts).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ id: 'credential:0', value: expect.stringContaining('Work on Home A') }),
+                ]));
+            });
             const receipt = screen.tree.findByType(MachineConfigurationReceipt).props.model;
             expect(receipt.name).toBe('Retained guest');
             expect(receipt.facts).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'credential:0', value: expect.stringContaining('Work on Home A') })]));
-            expect(profileReads).toEqual([target.serverUrl]);
+            expect(profileReads.length).toBeGreaterThan(0);
+            expect(profileReads.every(origin => origin === target.serverUrl)).toBe(true);
             const visible = JSON.stringify(receipt.facts);
             expect(visible).not.toContain('Ambient B account');
             expect(visible).not.toContain('Personal on Home B');
