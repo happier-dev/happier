@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { DevcontainerChildProjectionV1Schema } from '../machines/managed/devcontainerV1.js';
+import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js';
 import {
   deriveWorkspaceSyncTopology,
+  resolveWorkspaceSyncEndpoint,
   resolveWorkspaceSyncTransferRoute,
   resolveWorkspaceSyncRelationshipEndpointRoles,
   resolveWorkspaceSyncRelationshipTransferDirection,
@@ -36,6 +39,40 @@ const relationship = (
 });
 
 describe('workspaceSyncTopology', () => {
+  it('maps an admitted native bind namespace to its owned physical ref without a logical child row', () => {
+    const physical = { id: 'physical-source', serverId: 'home', machineId: 'parent', rootPath: '/host/source', createdAtMs: 1 };
+    const admittedNamespace = { serverId: 'home', machineId: 'child', rootPath: '/workspace/source' };
+    const projection = DevcontainerChildProjectionV1Schema.parse({
+      relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer', parentMachineId: 'parent' },
+      observation: { nativeResourceId: 'container-current', user: 'coder', workspaceFolder: '/workspace/source',
+        storage: { kind: 'bind', hostPath: physical.rootPath, childPath: '/workspace/source' } },
+    });
+    const managedMachine = ManagedMachineV1Schema.parse({
+      id: 'managed-child', homeId: 'home', custodianAccountId: 'owner',
+      controller: { machineId: 'parent', installationId: 'parent-current' },
+      launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Child', choices: {} },
+      resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
+        value: {}, devcontainerObservation: projection.observation },
+      enrolledMachineId: 'child', allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now',
+      intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    });
+    const child = { serverId: 'home', machineId: 'child', installationId: 'child-current', projection, managedMachine,
+      controller: { machineId: 'parent', installationId: 'parent-current', available: true } };
+    const input = { namespace: admittedNamespace, workspaceRefs: [physical], childMachines: [child] };
+    const unavailable = { ok: false, code: 'workspace_sync_child_unavailable' };
+
+    expect(resolveWorkspaceSyncEndpoint(input)).toEqual({ ok: true, endpoint: physical });
+    expect(resolveWorkspaceSyncEndpoint({ ...input,
+      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncEndpoint({ ...input, workspaceRefs: [{ ...physical, serverId: 'other-home' }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncEndpoint({ ...input, workspaceRefs: [physical, { ...physical, id: 'ambiguous-source' }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [{ ...child, controller: { ...child.controller,
+      installationId: 'parent-replaced' } }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [{ ...child, projection: { ...projection,
+      observation: { ...projection.observation, nativeResourceId: 'container-replaced' } } }] })).toEqual(unavailable);
+    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [] })).toEqual(unavailable);
+  });
+
   it('derives mixed-policy saved links around their concrete controller-owned hub', () => {
     const ab = relationship('ab', 'a', 'b', 'machine-a', 'keep_synced');
     const ac = relationship('ac', 'a', 'c', 'machine-a', 'keep_both_in_sync', false);
