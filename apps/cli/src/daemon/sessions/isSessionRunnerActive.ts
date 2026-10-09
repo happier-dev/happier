@@ -80,8 +80,16 @@ export async function classifyTrackedSessionRunnerPresence(params: {
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
   getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
 }): Promise<SessionRunnerProcessPresence> {
+  // A Windows Terminal dispatcher can exit before the runner reports. Its
+  // lifetime is not evidence of runner absence; the existing startup finalizer
+  // owns failure/timeout until a correlated runner identity is available.
+  if (params.tracked.hostedTerminal?.mode === 'windows_terminal'
+    && params.tracked.startupCustody
+    && !params.tracked.sessionRunnerPid
+    && !params.tracked.happySessionMetadataFromLocalWebhook
+    && params.tracked.stopRequestedAtMs === undefined) return 'unknown';
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
-  const pidToCheck = childPid ?? params.tracked.pid;
+  const pidToCheck = params.tracked.sessionRunnerPid ?? childPid ?? params.tracked.pid;
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
   const runState = await readProcessRunState(pidToCheck).catch(() => null);
   return await classifyStoredProcessPresence({

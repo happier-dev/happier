@@ -1626,7 +1626,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   }, 120_000);
 
-  it.each(['existing', 'fresh', 'encrypted', 'stale_pid', 'legacy', 'other_machine', 'unknown_process', 'lookup_failed', 'webhook_during_lookup', 'exit_during_lookup', 'locked_runner', 'wrapper'] as const)('handles an accepted %s launch before its session webhook', async (startup) => {
+  it.each(['existing', 'fresh', 'encrypted', 'stale_pid', 'legacy', 'other_machine', 'unknown_process', 'lookup_failed', 'webhook_during_lookup', 'exit_during_lookup', 'locked_runner', 'wrapper', 'windows_dispatcher'] as const)('handles an accepted %s launch before its session webhook', async (startup) => {
     const isFresh = startup !== 'existing';
     const spawnBoundary = spawnHappyCliBoundary;
     spawnHappyCLI.mockImplementationOnce(spawnBoundary).mockImplementationOnce((argv, options) => {
@@ -1637,7 +1637,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const readFingerprint = processInstanceBoundary.readProcessInstanceFingerprintSync;
     const fingerprintSpy = vi.spyOn(processInstanceBoundary, 'readProcessInstanceFingerprintSync')
       .mockImplementation(pid => pid === 23456 ? 'fixture-current-generation'
-        : pid === 12345 ? (startup === 'wrapper' ? 'fixture-wrapper-generation' : 'fixture-current-generation')
+        : pid === 12345 ? (startup === 'wrapper' || startup === 'windows_dispatcher' ? 'fixture-wrapper-generation' : 'fixture-current-generation')
           : readFingerprint(pid));
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
@@ -1673,11 +1673,18 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const metadata: Metadata = {
       flavor: 'codex', codexSessionId: 'vendor-existing-startup-pending', path: '/tmp',
       machineId: startup === 'other_machine' ? 'machine-other' : 'machine-1',
-      hostPid: startup === 'wrapper' ? 23456 : 12345, startedBy: 'daemon', happyHomeDir: '/tmp/happy-home',
+      hostPid: startup === 'wrapper' || startup === 'windows_dispatcher' ? 23456 : 12345, startedBy: 'daemon', happyHomeDir: '/tmp/happy-home',
       host: 'fixture-host', homeDir: '/tmp', happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools',
       ...(startup === 'legacy' ? {} : { hostProcessInstanceFingerprint:
         startup === 'stale_pid' ? 'fixture-previous-generation' : 'fixture-current-generation' }),
     };
+    if (startup === 'windows_dispatcher') {
+      const { buildWindowsHostedTerminalAttachment } = await import('./platform/windows/windowsHostedSessionRuntime');
+      metadata.terminal = buildWindowsHostedTerminalAttachment({
+        actualMode: 'windows_terminal', requestedMode: 'windows_terminal', pid: 23456,
+        windowId: 'fresh-window', title: 'fresh-title',
+      });
+    }
     const rawSession = createSessionRecordFixture({
       id: sessionId,
       encryptionMode: startup === 'encrypted' ? 'e2ee' : 'plain',
@@ -1737,6 +1744,14 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       if (!trackedChild) throw new Error('Expected accepted child');
       if (startup === 'wrapper') {
         trackedChild.sessionRunnerPid = 23456;
+      }
+      if (startup === 'windows_dispatcher') {
+        const { buildWindowsHostedTerminalAttachment } = await import('./platform/windows/windowsHostedSessionRuntime');
+        trackedChild.hostedTerminal = buildWindowsHostedTerminalAttachment({
+          actualMode: 'windows_terminal', requestedMode: 'windows_terminal', pid: 12345,
+          windowId: 'fresh-window', title: 'fresh-title',
+        });
+        sessionRunnerActivityBoundaryMocks.readProcessRunState.mockImplementation(async pid => pid === 12345 ? 'dead' : 'servable');
       }
       if (startup === 'locked_runner') {
         sessionRunnerActivityBoundaryMocks.readSessionRunnerLockStatus.mockResolvedValue({
@@ -1799,7 +1814,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           expect(trackedChild.happySessionId).toBe('sess_actual_fresh_child');
         }
       }
-      if (startup === 'fresh' || startup === 'encrypted' || startup === 'unknown_process' || startup === 'wrapper') {
+      if (startup === 'fresh' || startup === 'encrypted' || startup === 'unknown_process' || startup === 'wrapper' || startup === 'windows_dispatcher') {
         expect(trackedChild.happySessionId).toBe(sessionId);
         expect(reportParams.pidToAwaiter.has(12345)).toBe(true);
       }

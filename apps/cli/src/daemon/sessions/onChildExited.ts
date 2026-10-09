@@ -6,6 +6,7 @@ import type { TrackedSession } from '../types';
 import { removeSessionMarker, updateSessionMarkerActiveTurn } from '../sessionRegistry';
 import { cleanupPidSessionResources } from './cleanupPidSessionResources';
 import { stageObservedExit } from './stageObservedExit';
+import { classifyTrackedSessionRunnerPresence } from './isSessionRunnerActive';
 
 export type ChildExit = { reason: string; code: number | null; signal: string | null };
 
@@ -86,9 +87,30 @@ export function createOnChildExited(params: Readonly<{
   return async (pid: number, exit: ChildExit) => {
     logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
+    if (tracked?.startupCustody && exit.reason === 'process-missing') {
+      const presence = await classifyTrackedSessionRunnerPresence({ tracked });
+      // Presence reads may overlap promotion, reports, or explicit cancellation.
+      if (pidToTrackedSession.get(pid) !== tracked || tracked.reportMarkerCustody?.retiring) return;
+      if (tracked.startupCustody && tracked.stopRequestedAtMs === undefined
+        && presence !== 'absent' && (presence !== 'present' || !tracked.sessionRunnerPid)) {
+        logger.infoFile('[DAEMON RUN] Retaining pending startup after an unproven runner exit', { pid, presence });
+        return;
+      }
+    }
     const runnerPid = tracked?.sessionRunnerPid;
     const override = tracked && isExitUnexpectedOverride ? isExitUnexpectedOverride(tracked, exit) : null;
-    if (tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidAlive(runnerPid)) {
+    let canPromoteRunner = Boolean(tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidAlive(runnerPid));
+    if (tracked && canPromoteRunner && tracked.processInstanceFingerprint) {
+      const presence = await classifyTrackedSessionRunnerPresence({ tracked });
+      if (pidToTrackedSession.get(pid) !== tracked || tracked.sessionRunnerPid !== runnerPid
+        || tracked.reportMarkerCustody?.retiring) return;
+      if (presence === 'unknown' || presence === 'recoverable_stopped') {
+        logger.infoFile('[DAEMON RUN] Retaining wrapper custody until runner identity is resolved', { pid, runnerPid, presence });
+        return;
+      }
+      canPromoteRunner = presence === 'present';
+    }
+    if (tracked && typeof runnerPid === 'number' && canPromoteRunner) {
       logger.debug(`[DAEMON RUN] Wrapper PID ${pid} exited; promoting tracked session to runner PID ${runnerPid}`);
       const spawnCleanup = spawnResourceCleanupByPid.get(pid);
       if (spawnCleanup) {
