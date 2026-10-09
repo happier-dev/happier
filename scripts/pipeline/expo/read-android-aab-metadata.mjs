@@ -38,6 +38,9 @@ function fields(buffer) {
   return result;
 }
 
+// Shared Android bundle protobuf decoding for manifest identity and packaging.
+export { fields as readAndroidBundleProtobufFields };
+
 function message(entries, number) {
   const entry = entries.find((entry) => entry.number === number && entry.wire === 2);
   if (!entry || !Buffer.isBuffer(entry.value)) throw new Error('Missing protobuf message');
