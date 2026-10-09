@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
+import { MYSQL_USER_KV_KEY_MAX_CHARACTERS } from '../sources/app/kv/userKvKeyStorage';
 
 export function normalizeSchemaText(input: string): string {
     return input.replace(/\r\n/g, '\n').trimEnd() + '\n';
@@ -101,9 +102,16 @@ function generateProviderSchemaFromPostgres(
 
     if (opts.provider === "sqlite") {
         body = stripRelationMapArguments(body);
+        // SQLite String already maps to TEXT and has no native @db.Text annotation.
+        body = body.replace(/[ \t]+@db\.Text\b/g, "");
     }
 
     if (opts.provider === "mysql") {
+        // Preserve the String API and full Account/key identity index. Column
+        // collation is enforced by the MySQL migration, not expressible in Prisma.
+        body = body.replace(/^model\s+UserKVStore\s+\{[\s\S]*?^\}/gm,
+            (model) => model.replace(/^([ \t]*key\s+String)(?![^\n]*@db\.)/m,
+                `$1 @db.VarChar(${MYSQL_USER_KV_KEY_MAX_CHARACTERS})`));
         // Artifact migrations use LONGBLOB for stored content and wrapped keys;
         // Prisma's default Bytes mapping is BLOB and would disagree with that storage contract.
         body = body.replace(/^model\s+(?:Artifact|ArtifactRevision|ArtifactKeyEnvelope)\s+\{[\s\S]*?^\}/gm,
@@ -165,7 +173,7 @@ function generateProviderSchemaFromPostgres(
 
         body = annotateMySqlVoiceIdentityFields(body);
 
-        body = annotateMySqlMachinePoolFields(body);
+        body = annotateMySqlMachineCollectionFields(body);
 	    }
 
     const header = [
@@ -339,9 +347,9 @@ function annotateMySqlTeamFields(schemaBody: string): string {
  * Pool display text is unindexed administrative content with no product length ceiling, so MySQL
  * must not infer its VARCHAR(191) default for it.
  */
-function annotateMySqlMachinePoolFields(schemaBody: string): string {
+function annotateMySqlMachineCollectionFields(schemaBody: string): string {
     return schemaBody.replace(
-        /^model\s+MachinePool\s+\{[\s\S]*?^\}\s*$/gm,
+        /^model\s+(?:MachinePool|ManagedMachinePreset)\s+\{[\s\S]*?^\}\s*$/gm,
         (model) => model
             .replace(/^([ \t]*name\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText")
             .replace(/^([ \t]*description\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),

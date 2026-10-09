@@ -7,9 +7,50 @@ import {
 
 import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
+const serverRoot = join(import.meta.dirname, "..");
+
 describe("schemaSync", () => {
+    it("preserves exact retained KV identities within MySQL's full compound index capacity", () => {
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        const kv = mysql.match(/model UserKVStore\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
+        // ProfileRecordIdV1 has no retained-id bound. The full utf8mb4 unique
+        // index reserves 191 characters for accountId and four bytes per character.
+        const maximumKeyCharacters = (3_072 / 4) - 191;
+        expect(kv).toMatch(new RegExp(`^\\s*key\\s+String\\s+@db\\.VarChar\\(${maximumKeyCharacters}\\)`, "mu"));
+        expect(kv).toContain("@@unique([accountId, key])");
+        const migration = readFileSync(join(serverRoot,
+            "prisma/mysql/migrations/20261009100000_preserve_exact_user_kv_keys/migration.sql"), "utf8");
+        expect(migration).toMatch(new RegExp("`key` VARCHAR\\(" + maximumKeyCharacters
+            + "\\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL", "u"));
+        expect(migration).not.toMatch(/(?:SUBSTRING|LEFT|SHA|MD5|DROP\s+(?:TABLE|COLUMN|INDEX))/iu);
+        for (const schema of [postgres, generateSqliteSchemaFromPostgres(postgres)]) {
+            const unchanged = schema.match(/model UserKVStore\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
+            expect(unchanged).not.toMatch(/key\s+String\s+@db\./u);
+        }
+    });
+    it("preserves preset names as text without a MySQL-only length restriction", () => {
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        const preset = mysql.match(/model ManagedMachinePreset\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
+        expect(preset).toMatch(/name\s+String\s+@db\.LongText/u);
+        expect(preset).not.toMatch(/@@index\([^\n]*\bname\b/u);
+        const migration = readFileSync(join(serverRoot, "prisma/mysql/migrations/20261008143000_add_managed_machine_authority/migration.sql"), "utf8");
+        expect(migration).toMatch(/`name` LONGTEXT NOT NULL/u);
+    });
+    it("projects PostgreSQL Text fields to native SQLite strings without narrowing MySQL storage", () => {
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
+        const sqlite = generateSqliteSchemaFromPostgres(postgres);
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        const sqliteSource = sqlite.match(/model ProjectSource\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
+        const mysqlSource = mysql.match(/model ProjectSource\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
+        for (const [field, optional] of [["name", false], ["defaultRef", true], ["subdir", true]] as const) {
+            expect(sqliteSource).toMatch(new RegExp(`^\\s*${field}\\s+String${optional ? "\\?" : ""}\\s*$`, "mu"));
+            expect(mysqlSource).toMatch(new RegExp(`^\\s*${field}\\s+String${optional ? "\\?" : ""}\\s+@db\\.Text\\s*$`, "mu"));
+        }
+    });
     it("preserves serialized review workspace references beyond MySQL's default string width", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         for (const name of ["ReviewComment", "ReviewCommentEvent"]) {
             const model = mysql.match(new RegExp(`model ${name}\\s*\\{([\\s\\S]*?)^\\}`, "mu"))?.[1] ?? "";
@@ -17,13 +58,13 @@ describe("schemaSync", () => {
         }
     });
     it("does not narrow serialized Workflow invocation identity to MySQL's default string width", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         const turn = mysql.match(/model SessionTurn\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
         expect(turn).toMatch(/workflowInvocationJson\s+String\?\s+@db\.LongText/u);
     });
     it("keeps scoped governance enums and projects invitation and Team presentation storage without narrowing it", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const sqlite = generateSqliteSchemaFromPostgres(postgres);
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         for (const schema of [sqlite, mysql]) {
@@ -39,7 +80,7 @@ describe("schemaSync", () => {
         }
     });
     it("realizes the complete native email locator and evidence widths on MySQL", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         const identity = mysql.match(/model AccountIdentity\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
         expect(identity).toMatch(/providerUserId\s+String\s+@db\.VarChar\(512\)/u);
@@ -56,7 +97,7 @@ describe("schemaSync", () => {
             "prisma/sqlite/schema.prisma",
             "prisma/mysql/schema.prisma",
         ]) {
-            const schema = readFileSync(join(process.cwd(), schemaPath), "utf8");
+            const schema = readFileSync(join(serverRoot, schemaPath), "utf8");
             expect(schema).toMatch(/^\s*unreadSince\s+DateTime\?\s*$/mu);
             expect(schema).toMatch(/^\s*needsAttention\s+Boolean\s+@default\(dbgenerated\(\)\)\s*$/mu);
             expect(schema).toMatch(
@@ -68,7 +109,7 @@ describe("schemaSync", () => {
     it("keeps Session Follow edge invariants provider-complete", () => {
         for (const providerDir of ["prisma", "prisma/sqlite"]) {
             const migration = readFileSync(join(
-                process.cwd(),
+                serverRoot,
                 providerDir,
                 "migrations/20260905230000_add_session_follow_edges/migration.sql",
             ), "utf8");
@@ -83,7 +124,7 @@ describe("schemaSync", () => {
         }
 
         const mysql = readFileSync(join(
-            process.cwd(),
+            serverRoot,
             "prisma/mysql/migrations/20260905230000_add_session_follow_edges/migration.sql",
         ), "utf8");
         // MySQL rejects a CHECK over a column that also participates in an
@@ -100,11 +141,11 @@ describe("schemaSync", () => {
     });
 
     it("keeps the Automation catalog identity within MySQL's exact key boundary", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         const catalog = mysql.match(/model AutomationEventSourceCatalogStatus\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
         const migration = readFileSync(join(
-            process.cwd(),
+            serverRoot,
             "prisma/mysql/migrations/20260816231000_add_event_automations_v1/migration.sql",
         ), "utf8");
         // Plugin ids are ASCII and capped at 256 bytes by PluginIdSchema. The
@@ -134,7 +175,7 @@ describe("schemaSync", () => {
             "prisma/sqlite/schema.prisma",
             "prisma/mysql/schema.prisma",
         ]) {
-            const schema = readFileSync(join(process.cwd(), schemaPath), "utf8");
+            const schema = readFileSync(join(serverRoot, schemaPath), "utf8");
             const teamGrant = schema.match(/model SessionTeamGrant\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
             const groupGrant = schema.match(/model SessionGroupGrant\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
             const session = schema.match(/model Session\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
@@ -158,12 +199,12 @@ describe("schemaSync", () => {
 
         for (const providerDir of ["prisma", "prisma/sqlite", "prisma/mysql"]) {
             const grantsMigration = readFileSync(join(
-                process.cwd(),
+                serverRoot,
                 providerDir,
                 "migrations/20260905230000_add_session_team_group_grants/migration.sql",
             ), "utf8");
             const responsibilityMigration = readFileSync(join(
-                process.cwd(),
+                serverRoot,
                 providerDir,
                 "migrations/20260906000000_add_session_responsible_account/migration.sql",
             ), "utf8");
@@ -181,7 +222,7 @@ describe("schemaSync", () => {
     });
 
     it("preserves predecessor enum lineage and provider-safe Account Directory widths", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
 
         expect(postgres).toMatch(/enum AutomationScheduleKind\s*\{[^}]*\bmanual\b[^}]*\}/su);
@@ -198,7 +239,7 @@ describe("schemaSync", () => {
             "prisma/sqlite/schema.prisma",
             "prisma/mysql/schema.prisma",
         ]) {
-            const schema = readFileSync(join(process.cwd(), schemaPath), "utf8");
+            const schema = readFileSync(join(serverRoot, schemaPath), "utf8");
             const entry = schema.match(/model AccountHomeDirectoryEntry\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
             const link = schema.match(/model AccountDirectoryLink\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
             const pairing = schema.match(/model AuthPairingSession\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
@@ -228,7 +269,7 @@ describe("schemaSync", () => {
             "prisma/sqlite/schema.prisma",
             "prisma/mysql/schema.prisma",
         ]) {
-            const schema = readFileSync(join(process.cwd(), schemaPath), "utf8");
+            const schema = readFileSync(join(serverRoot, schemaPath), "utf8");
             const accountAuth = schema.match(/model AccountAuthRequest\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
 
             if (schemaPath === "prisma/mysql/schema.prisma") {
@@ -242,7 +283,7 @@ describe("schemaSync", () => {
             "prisma/migrations/20260830142000_add_account_auth_encrypted_result/migration.sql",
             "prisma/sqlite/migrations/20260830142000_add_account_auth_encrypted_result/migration.sql",
             "prisma/mysql/migrations/20260830142000_add_account_auth_encrypted_result/migration.sql",
-        ].map((migrationPath) => readFileSync(join(process.cwd(), migrationPath), "utf8"));
+        ].map((migrationPath) => readFileSync(join(serverRoot, migrationPath), "utf8"));
 
         expect(migrations[0]).toMatch(/ADD COLUMN "tokenEncrypted" TEXT/u);
         expect(migrations[1]).toMatch(/ADD COLUMN "tokenEncrypted" TEXT/u);
@@ -256,7 +297,7 @@ describe("schemaSync", () => {
                 "20260830140000_add_home_assertion_approval_fields",
                 "20260830141000_add_qr_requested_binding_proof",
             ].map((migrationId) => readFileSync(
-                join(process.cwd(), providerDir, "migrations", migrationId, "migration.sql"),
+                join(serverRoot, providerDir, "migrations", migrationId, "migration.sql"),
                 "utf8",
             )).join("\n");
 
@@ -266,7 +307,7 @@ describe("schemaSync", () => {
             expect(migrations).toMatch(/ALTER\s+TABLE\s+["`]AuthPairingSession["`]/u);
 
             const predecessorReconciliation = readFileSync(join(
-                process.cwd(),
+                serverRoot,
                 providerDir,
                 "migrations/20260725110000_reconcile_predecessor_migration_lineage/migration.sql",
             ), "utf8");
@@ -280,7 +321,7 @@ describe("schemaSync", () => {
     });
 
     it("projects managed-provider protocol bounds without MySQL-only narrowing", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         expect(mysql).toMatch(/^\s*displayName\s+String\s+@db\.VarChar\(256\)$/m);
         expect(mysql).toMatch(/^\s*lastSuccessfulTestRuntimeFingerprint\s+String\?\s+@db\.VarChar\(1024\)$/m);
@@ -291,7 +332,7 @@ describe("schemaSync", () => {
     });
 
     it("keeps Lane 10 accepted values provider-equivalent on MySQL", () => {
-        const postgres = readFileSync(join(process.cwd(), "prisma/schema.prisma"), "utf8");
+        const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         const model = (name: string) => mysql.match(new RegExp(`model ${name}\\s*\\{([\\s\\S]*?)^\\}`, "mu"))?.[1] ?? "";
         const teamCredentialResource = mysql.match(/model TeamCredentialResource\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
@@ -1078,7 +1119,7 @@ model ConnectedServiceAuthGroup {
     });
 
     it("generates provider schemas from the canonical SessionTurn storage contract", () => {
-        const master = readFileSync(join(process.cwd(), "prisma", "schema.prisma"), "utf-8");
+        const master = readFileSync(join(serverRoot, "prisma", "schema.prisma"), "utf-8");
 
         for (const generated of [generateSqliteSchemaFromPostgres(master), generateMySqlSchemaFromPostgres(master)]) {
             expect(generated).toMatch(/^\s*agentRollbackOrdinal\s+Int\?\s*$/m);
